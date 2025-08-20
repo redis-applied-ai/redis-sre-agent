@@ -1,0 +1,19 @@
+# Docker Compose override for integration testing scenarios
+# Use: docker-compose -f docker-compose.yml -f docker-compose.test.yml up
+
+version: '3.8'
+
+services:
+  redis:
+    ports:
+      - "7942:6379"  # Use unusual port 7942 externally
+    volumes:
+      - ./monitoring/redis-low-memory.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    
+  sre-agent:
+    environment:
+      - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
+      - PROMETHEUS_URL=http://prometheus:9090
+      - GRAFANA_URL=http://grafana:3000
+      - LOG_LEVEL=DEBUG

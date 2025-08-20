@@ -264,10 +264,11 @@ async def check_service_health(
             "health_checks": health_results,
         }
 
-        # Store result in Redis
+        # Store result in Redis (serialize complex data)
+        import json
         client = get_redis_client()
         result_key = f"sre:health:{result['task_id']}"
-        await client.hset(result_key, mapping=result)
+        await client.set(result_key, json.dumps(result))
         await client.expire(result_key, 1800)  # 30 minutes TTL
 
         logger.info(f"Health check completed: {service_name} is {overall_status}")

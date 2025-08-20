@@ -152,13 +152,13 @@ class SRELangGraphAgent:
                     "type": "function",
                     "function": {
                         "name": "check_service_health",
-                        "description": "Check health and operational status of Redis services",
+                        "description": "ALWAYS use this tool first when investigating concerning Redis behavior. Provides comprehensive health diagnostics including memory usage, performance metrics, connection patterns, slow queries, configuration issues, and operational status. This tool will identify specific problem areas such as memory pressure, high latency, connection issues, performance degradation, configuration problems, or slow operations. Run this immediately for any Redis troubleshooting scenario.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "service_name": {
                                     "type": "string",
-                                    "description": "Name of the service to check",
+                                    "description": "Name of the service to check (use 'redis' for Redis diagnostics)",
                                 },
                                 "endpoints": {
                                     "type": "array",
