@@ -2,7 +2,8 @@
 
 import click
 
-from redis_sre_agent.cli.pipeline import pipeline
+from .pipeline import pipeline
+from .runbook import runbook
 
 
 @click.group()
@@ -11,8 +12,9 @@ def main():
     pass
 
 
-# Add pipeline commands
+# Add commands
 main.add_command(pipeline)
+main.add_command(runbook)
 
 
 @main.command()

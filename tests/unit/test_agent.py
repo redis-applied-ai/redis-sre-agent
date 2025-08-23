@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
 
@@ -46,7 +47,17 @@ def mock_sre_tasks():
                     mocks["ingest_sre_document"] = mock_ingest
                     mock_ingest.return_value = {"status": "ingested", "document_id": "doc-456"}
 
-                    yield mocks
+                    with patch(
+                        "redis_sre_agent.agent.langgraph_agent.get_detailed_redis_diagnostics"
+                    ) as mock_diagnostics:
+                        mocks["get_detailed_redis_diagnostics"] = mock_diagnostics
+                        mock_diagnostics.return_value = {
+                            "task_id": "test-789",
+                            "status": "success",
+                            "diagnostics": {},
+                        }
+
+                        yield mocks
 
 
 class TestSRELangGraphAgent:
@@ -59,11 +70,12 @@ class TestSRELangGraphAgent:
         assert agent.settings == mock_settings
         assert agent.llm is not None
         assert agent.llm_with_tools is not None
-        assert len(agent.sre_tools) == 4
+        assert len(agent.sre_tools) == 5
         assert "analyze_system_metrics" in agent.sre_tools
         assert "search_runbook_knowledge" in agent.sre_tools
         assert "check_service_health" in agent.sre_tools
         assert "ingest_sre_document" in agent.sre_tools
+        assert "get_detailed_redis_diagnostics" in agent.sre_tools
 
     def test_tool_mapping(self, mock_settings, mock_llm):
         """Test that SRE tools are properly mapped."""
@@ -74,6 +86,7 @@ class TestSRELangGraphAgent:
             "search_runbook_knowledge",
             "check_service_health",
             "ingest_sre_document",
+            "get_detailed_redis_diagnostics",
         ]
 
         assert set(agent.sre_tools.keys()) == set(expected_tools)
@@ -82,9 +95,7 @@ class TestSRELangGraphAgent:
     async def test_process_query_simple(self, mock_settings, mock_llm):
         """Test processing a simple query without tool calls."""
         # Mock LLM response without tool calls
-        mock_response = MagicMock()
-        mock_response.content = "This is a simple response to your SRE question."
-        mock_response.tool_calls = None
+        mock_response = AIMessage(content="This is a simple response to your SRE question.")
 
         mock_llm_with_tools = MagicMock()
         mock_llm_with_tools.invoke = AsyncMock(return_value=mock_response)
@@ -134,12 +145,12 @@ class TestSRELangGraphAgent:
         with patch.object(SRELangGraphAgent, "__init__", lambda self: None):
             agent = SRELangGraphAgent()
 
-            # Mock app state
+            # Mock app state with real message objects
             mock_state = MagicMock()
             mock_state.values = {
                 "messages": [
-                    MagicMock(content="Hello", __class__=MagicMock(__name__="HumanMessage")),
-                    MagicMock(content="Hi there!", __class__=MagicMock(__name__="AIMessage")),
+                    HumanMessage(content="Hello"),
+                    AIMessage(content="Hi there!"),
                 ]
             }
 
@@ -147,21 +158,13 @@ class TestSRELangGraphAgent:
             mock_app.aget_state = AsyncMock(return_value=mock_state)
             agent.app = mock_app
 
-            # Mock message type checking
-            from langchain_core.messages import AIMessage, HumanMessage
+            history = await agent.get_conversation_history("test-session")
 
-            mock_state.values["messages"][0].__class__ = HumanMessage
-            mock_state.values["messages"][1].__class__ = AIMessage
-
-            with patch("redis_sre_agent.agent.langgraph_agent.HumanMessage", HumanMessage):
-                with patch("redis_sre_agent.agent.langgraph_agent.AIMessage", AIMessage):
-                    history = await agent.get_conversation_history("test-session")
-
-                    assert len(history) == 2
-                    assert history[0]["role"] == "user"
-                    assert history[0]["content"] == "Hello"
-                    assert history[1]["role"] == "assistant"
-                    assert history[1]["content"] == "Hi there!"
+            assert len(history) == 2
+            assert history[0]["role"] == "user"
+            assert history[0]["content"] == "Hello"
+            assert history[1]["role"] == "assistant"
+            assert history[1]["content"] == "Hi there!"
 
     def test_clear_conversation(self, mock_settings, mock_llm):
         """Test clearing conversation history."""
@@ -211,7 +214,7 @@ class TestAgentToolBindings:
         # Get the tool definitions that were passed
         tool_definitions = mock_llm.bind_tools.call_args[0][0]
 
-        assert len(tool_definitions) == 4
+        assert len(tool_definitions) == 5
 
         # Check that all expected tools are defined
         tool_names = [tool["function"]["name"] for tool in tool_definitions]
@@ -220,6 +223,7 @@ class TestAgentToolBindings:
             "search_runbook_knowledge",
             "check_service_health",
             "ingest_sre_document",
+            "get_detailed_redis_diagnostics",
         ]
 
         assert set(tool_names) == set(expected_names)

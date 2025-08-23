@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import Enum
@@ -175,7 +176,7 @@ class ArtifactStorage:
 
         batches = []
         for item in self.base_path.iterdir():
-            if item.is_dir() and item.name.match(r"^\d{4}-\d{2}-\d{2}$"):
+            if item.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", item.name):
                 batches.append(item.name)
 
         return sorted(batches)

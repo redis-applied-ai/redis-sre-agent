@@ -37,14 +37,20 @@ class TestHealthEndpoints:
                 "redis_sre_agent.api.health.initialize_redis_infrastructure",
                 return_value=mock_infrastructure_status,
             ),
-            patch("redis_sre_agent.api.health.test_task_system", return_value=True),
-            patch("docket.Docket") as mock_docket,
+            patch(
+                "redis_sre_agent.api.health.test_task_system",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("redis_sre_agent.api.health.Docket") as mock_docket,
         ):
             # Mock worker status
             mock_docket_instance = AsyncMock()
             mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
             mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_docket_instance.workers.return_value = ["worker1", "worker2"]  # Active workers
+            mock_docket_instance.workers = AsyncMock(
+                return_value=["worker1", "worker2"]
+            )  # Active workers
             mock_docket.return_value = mock_docket_instance
 
             response = test_client.get("/health")
@@ -143,13 +149,17 @@ class TestHealthEndpoints:
                     "vector_search": "available",
                 },
             ),
-            patch("redis_sre_agent.api.health.test_task_system", return_value=True),
-            patch("docket.Docket") as mock_docket,
+            patch(
+                "redis_sre_agent.api.health.test_task_system",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("redis_sre_agent.api.health.Docket") as mock_docket,
         ):
             mock_docket_instance = AsyncMock()
             mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
             mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_docket_instance.workers.return_value = ["worker1"]
+            mock_docket_instance.workers = AsyncMock(return_value=["worker1"])
             mock_docket.return_value = mock_docket_instance
 
             response = test_client.head("/health")

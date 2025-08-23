@@ -263,7 +263,7 @@ class TestSREAgentBehavior:
 Evaluate this SRE agent response based on SRE best practices and expected behavior:
 
 CATEGORY: {test_case["category"]}
-USER INPUT: "{test_case["user_input"]}"  
+USER INPUT: "{test_case["user_input"]}"
 THREAD CONTEXT: {json.dumps(test_case.get("thread_context", []), indent=2)}
 EXPECTED BEHAVIOR: {test_case["expected_behavior"]}
 
@@ -279,7 +279,7 @@ SRE EVALUATION CRITERIA:
 
 SPECIFIC SRE GUIDELINES:
 - Incident responses should be immediate and action-oriented
-- Monitoring questions should provide specific metrics and thresholds  
+- Monitoring questions should provide specific metrics and thresholds
 - Performance issues should include systematic troubleshooting steps
 - Capacity planning should include specific calculations and recommendations
 - Brief acknowledgments should be concise and professional
@@ -373,18 +373,6 @@ Rate the response 1-10 for SRE effectiveness:
         """Test agent behavior during escalating incident scenarios."""
         # Test cases that simulate real incident escalation
 
-        escalation_scenarios = [
-            {
-                "scenario": "database_outage",
-                "messages": [
-                    "Database seems slow",
-                    "Now we're getting connection timeouts",
-                    "Database is completely down, users can't login",
-                ],
-                "expected_escalation": "Should recognize escalating severity and provide increasingly urgent response steps",
-            }
-        ]
-
         pytest.skip("LangGraph agent not yet implemented")
 
     @pytest.mark.asyncio
@@ -392,24 +380,6 @@ Rate the response 1-10 for SRE effectiveness:
     async def test_sre_tool_integration_behavior(self, redis_container):
         """Test that agent appropriately uses SRE tools."""
         # Test cases that require tool usage
-
-        tool_scenarios = [
-            {
-                "query": "Check the health status of our Redis cluster",
-                "expected_tools": ["check_service_health"],
-                "tool_params": {"service_name": "redis", "endpoints": ["redis:6379/health"]},
-            },
-            {
-                "query": "Search for runbooks about high CPU usage",
-                "expected_tools": ["search_runbook_knowledge"],
-                "tool_params": {"query": "high CPU usage", "category": "incident"},
-            },
-            {
-                "query": "Analyze memory usage metrics for the last hour",
-                "expected_tools": ["analyze_system_metrics"],
-                "tool_params": {"metric_query": "memory_usage", "time_range": "1h"},
-            },
-        ]
 
         pytest.skip("LangGraph agent not yet implemented")
 

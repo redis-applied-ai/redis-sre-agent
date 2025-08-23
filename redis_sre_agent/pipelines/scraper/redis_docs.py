@@ -30,8 +30,8 @@ class RedisDocsScraper(BaseScraper):
         self.config = {
             "oss_base_url": "https://redis.io/docs/",
             "enterprise_base_url": "https://docs.redis.com/latest/",
-            "max_pages": 100,
-            "delay_between_requests": 1.0,
+            "max_pages": 500,  # Increased for comprehensive scraping
+            "delay_between_requests": 0.5,  # Faster but still respectful
             "timeout": 30,
             **self.config,
         }
@@ -68,7 +68,7 @@ class RedisDocsScraper(BaseScraper):
         base_url = self.config["oss_base_url"]
         documents = []
 
-        # Key OSS documentation sections
+        # Comprehensive OSS documentation sections
         oss_sections = [
             ("get-started/", DocumentType.TUTORIAL, SeverityLevel.HIGH),
             ("connect/", DocumentType.DOCUMENTATION, SeverityLevel.HIGH),
@@ -77,6 +77,61 @@ class RedisDocsScraper(BaseScraper):
             ("management/", DocumentType.RUNBOOK, SeverityLevel.HIGH),
             ("operate/", DocumentType.RUNBOOK, SeverityLevel.CRITICAL),
             ("latest/operate/", DocumentType.RUNBOOK, SeverityLevel.CRITICAL),
+            # Deep technical sections
+            ("latest/operate/oss_and_stack/", DocumentType.RUNBOOK, SeverityLevel.CRITICAL),
+            (
+                "latest/operate/oss_and_stack/stack-with-enterprise/",
+                DocumentType.RUNBOOK,
+                SeverityLevel.CRITICAL,
+            ),
+            (
+                "latest/operate/oss_and_stack/stack-with-enterprise/search/",
+                DocumentType.REFERENCE,
+                SeverityLevel.HIGH,
+            ),
+            (
+                "latest/operate/oss_and_stack/stack-with-enterprise/json/",
+                DocumentType.REFERENCE,
+                SeverityLevel.HIGH,
+            ),
+            (
+                "latest/operate/oss_and_stack/stack-with-enterprise/timeseries/",
+                DocumentType.REFERENCE,
+                SeverityLevel.MEDIUM,
+            ),
+            (
+                "latest/operate/oss_and_stack/stack-with-enterprise/bloom/",
+                DocumentType.REFERENCE,
+                SeverityLevel.MEDIUM,
+            ),
+            (
+                "latest/operate/oss_and_stack/stack-with-enterprise/graph/",
+                DocumentType.REFERENCE,
+                SeverityLevel.MEDIUM,
+            ),
+            ("latest/operate/oss_and_stack/management/", DocumentType.RUNBOOK, SeverityLevel.HIGH),
+            (
+                "latest/operate/oss_and_stack/management/admin/",
+                DocumentType.RUNBOOK,
+                SeverityLevel.CRITICAL,
+            ),
+            (
+                "latest/operate/oss_and_stack/management/config/",
+                DocumentType.RUNBOOK,
+                SeverityLevel.CRITICAL,
+            ),
+            (
+                "latest/operate/oss_and_stack/management/optimization/",
+                DocumentType.RUNBOOK,
+                SeverityLevel.HIGH,
+            ),
+            (
+                "latest/operate/oss_and_stack/management/security/",
+                DocumentType.RUNBOOK,
+                SeverityLevel.CRITICAL,
+            ),
+            ("latest/integrate/", DocumentType.DOCUMENTATION, SeverityLevel.HIGH),
+            ("latest/develop/", DocumentType.DOCUMENTATION, SeverityLevel.MEDIUM),
         ]
 
         for section, doc_type, severity in oss_sections:
@@ -84,7 +139,7 @@ class RedisDocsScraper(BaseScraper):
 
             try:
                 section_docs = await self._scrape_section(
-                    section_url, DocumentCategory.OSS, doc_type, severity, max_depth=2
+                    section_url, DocumentCategory.OSS, doc_type, severity, max_depth=4
                 )
                 documents.extend(section_docs)
 
@@ -116,7 +171,7 @@ class RedisDocsScraper(BaseScraper):
 
             try:
                 section_docs = await self._scrape_section(
-                    section_url, DocumentCategory.ENTERPRISE, doc_type, severity, max_depth=2
+                    section_url, DocumentCategory.ENTERPRISE, doc_type, severity, max_depth=4
                 )
                 documents.extend(section_docs)
 
@@ -172,7 +227,7 @@ class RedisDocsScraper(BaseScraper):
             if current_depth < max_depth - 1:
                 links = await self._find_documentation_links(soup, section_url)
 
-                for link_url in links[:10]:  # Limit to prevent excessive scraping
+                for link_url in links[:50]:  # Increased limit for comprehensive scraping
                     try:
                         subdocs = await self._scrape_section(
                             link_url, category, doc_type, severity, max_depth, current_depth + 1
@@ -283,18 +338,51 @@ class RedisDocsScraper(BaseScraper):
                         "mailto:",
                         ".pdf",
                         ".zip",
+                        ".png",
+                        ".jpg",
+                        ".jpeg",
+                        ".gif",
+                        ".svg",
+                        ".webp",
+                        "/images/",
                         "/download",
                         "/blog",
                         "/community",
-                        "/search",
+                        "?search=",  # Changed from /search to avoid excluding search docs
                     ]
                 ):
                     continue
 
-                if full_url not in links and full_url != base_url:
+                # Include documentation paths specifically
+                if (
+                    any(
+                        include in full_url
+                        for include in [
+                            "/docs/",
+                            "/operate/",
+                            "/develop/",
+                            "/integrate/",
+                            "/commands/",
+                            "/data-types/",
+                            "/management/",
+                            "/stack-with-enterprise/",
+                            "/search/",
+                            "/json/",
+                            "/timeseries/",
+                            "/bloom/",
+                            "/graph/",
+                            "/admin/",
+                            "/config/",
+                            "/optimization/",
+                            "/security/",
+                        ]
+                    )
+                    and full_url not in links
+                    and full_url != base_url
+                ):
                     links.append(full_url)
 
-        return links[:20]  # Limit number of links
+        return links[:100]  # Increased limit for comprehensive documentation
 
     def _extract_section_from_url(self, url: str) -> str:
         """Extract section name from URL path."""

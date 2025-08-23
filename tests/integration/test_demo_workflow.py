@@ -22,6 +22,18 @@ from redis_sre_agent.tools.prometheus_client import PrometheusClient
 class TestDemoWorkflow:
     """Test complete demo workflow integration."""
 
+    def setup_method(self):
+        """Clear agent singleton before each test."""
+        import redis_sre_agent.agent.langgraph_agent as agent_module
+
+        agent_module._sre_agent = None
+
+    def teardown_method(self):
+        """Clear agent singleton after each test."""
+        import redis_sre_agent.agent.langgraph_agent as agent_module
+
+        agent_module._sre_agent = None
+
     @pytest.fixture
     async def demo_environment(self):
         """Set up demo environment with all components."""
@@ -37,8 +49,12 @@ class TestDemoWorkflow:
 
             # Mock Redis components to avoid real connections
             with patch("redis_sre_agent.core.redis.get_knowledge_index") as mock_index_func:
-                with patch("redis_sre_agent.pipelines.ingestion.processor.get_knowledge_index") as mock_index_func2:
-                    with patch("redis_sre_agent.pipelines.ingestion.processor.get_vectorizer") as mock_vectorizer_func:
+                with patch(
+                    "redis_sre_agent.pipelines.ingestion.processor.get_knowledge_index"
+                ) as mock_index_func2:
+                    with patch(
+                        "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer"
+                    ) as mock_vectorizer_func:
                         # Create mock instances
                         mock_index = AsyncMock()
                         mock_index.load = AsyncMock()
@@ -52,7 +68,7 @@ class TestDemoWorkflow:
                         # Make both mock functions return the same mock instance
                         mock_index_func.return_value = mock_index
                         mock_index_func2.return_value = mock_index
-                        
+
                         mock_vectorizer = AsyncMock()
                         mock_vectorizer.embed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
                         mock_vectorizer_func.return_value = mock_vectorizer
@@ -73,27 +89,27 @@ class TestDemoWorkflow:
         # Mock successful runbook generation
         sample_runbook = """
 # Redis Memory Management
-        
+
 ## Overview
 This runbook covers Redis memory optimization procedures.
-        
+
 ## Symptoms
 - High memory usage alerts
 - OOM killer activation
-        
+
 ## Diagnostic Steps
 1. Run INFO memory command
 2. Check memory usage patterns
-        
-## Resolution Procedures  
+
+## Resolution Procedures
 1. Analyze memory usage with MEMORY USAGE
 2. Optimize data structures
 3. Configure memory limits
-        
+
 ## Prevention
 - Monitor memory metrics continuously
 - Set appropriate maxmemory policies
-        
+
 ## Escalation
 Contact Redis DBA team for persistent issues
         """
@@ -116,7 +132,7 @@ Contact Redis DBA team for persistent issues
                 )
 
                 scraper.scraped_documents = [mock_doc]
-                
+
                 # Create an async function that saves the document to the file system
                 async def mock_scraping_job():
                     # Actually save the document using the storage system
@@ -126,7 +142,7 @@ Contact Redis DBA team for persistent issues
                         "documents_scraped": 1,
                         "success": True,
                     }
-                
+
                 scraper.run_scraping_job = mock_scraping_job
             else:
                 # Mock other scrapers to return empty results
@@ -201,31 +217,31 @@ Contact Redis DBA team for persistent issues
         # Mock OpenAI standardization
         standardized_runbook = """
 # Redis Latency Optimization
-        
+
 ## Overview
 Comprehensive guide to identifying and resolving Redis latency issues.
-        
-## Symptoms  
+
+## Symptoms
 - Increased response times
 - Application timeouts
 - Performance degradation alerts
-        
+
 ## Diagnostic Steps
 1. Monitor latency with redis-cli --latency-history -i 15
 2. Check command statistics with INFO commandstats
 3. Analyze slow query log
-        
+
 ## Resolution Procedures
 1. Identify slow operations causing blocking
 2. Optimize query patterns
 3. Configure appropriate timeout values
 4. Monitor memory usage patterns
-        
+
 ## Prevention
 - Implement latency monitoring
 - Use appropriate data structures
 - Configure memory policies
-        
+
 ## Escalation
 Escalate to Redis performance team if latency exceeds SLA thresholds
         """
@@ -368,18 +384,6 @@ Contact infrastructure team for persistent connectivity issues
                 mock_agent = AsyncMock()
 
                 # Mock knowledge search results
-                knowledge_search_result = {
-                    "task_id": "search_123",
-                    "query": "redis connection issues",
-                    "results": [
-                        {
-                            "title": "Redis Connection Troubleshooting",
-                            "content": "Guide for diagnosing connection problems...",
-                            "source": "https://redis.io/docs/troubleshooting/connections",
-                            "score": 0.95,
-                        }
-                    ],
-                }
 
                 # Mock agent processing
                 mock_agent.process_query = AsyncMock(
@@ -425,7 +429,7 @@ Would you like me to help you run specific diagnostic commands or check your cur
     @pytest.mark.asyncio
     async def test_end_to_end_monitoring_scenario(self, demo_environment):
         """Test complete monitoring scenario from alert to resolution."""
-        orchestrator = demo_environment["orchestrator"]
+        demo_environment["orchestrator"]
         prometheus_client = demo_environment["prometheus_client"]
 
         # Scenario: High Redis memory usage alert
@@ -465,7 +469,9 @@ Would you like me to help you run specific diagnostic commands or check your cur
                 with patch(
                     "redis_sre_agent.agent.langgraph_agent.SRELangGraphAgent"
                 ) as mock_agent_class:
-                    with patch("redis_sre_agent.agent.langgraph_agent.get_sre_agent") as mock_get_agent:
+                    with patch(
+                        "redis_sre_agent.agent.langgraph_agent.get_sre_agent"
+                    ) as mock_get_agent:
                         mock_agent = AsyncMock()
                         mock_agent.process_query = AsyncMock(
                             return_value="""

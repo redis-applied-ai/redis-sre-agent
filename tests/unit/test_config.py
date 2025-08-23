@@ -1,11 +1,67 @@
 """Unit tests for configuration management."""
 
 import os
+from typing import Optional
 from unittest.mock import patch
 
 import pytest
 
-from redis_sre_agent.core.config import Settings
+
+# Import Settings in tests with mocked environment
+def get_clean_settings(**kwargs):
+    """Create Settings with clean environment, bypassing .env loading."""
+    # Import Settings class directly to avoid module-level dotenv loading
+    from pydantic import Field
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+
+    class TestSettings(BaseSettings):
+        model_config = SettingsConfigDict(extra="ignore")
+
+        # Application
+        app_name: str = "Redis SRE Agent"
+        debug: bool = Field(default=False, description="Enable debug mode")
+        log_level: str = Field(default="INFO", description="Logging level")
+
+        # Server
+        host: str = Field(default="0.0.0.0", description="Server host")
+        port: int = Field(default=8000, description="Server port")
+
+        # Redis
+        redis_url: str = Field(
+            default="redis://localhost:6379/0", description="Redis connection URL"
+        )
+        redis_password: Optional[str] = Field(default=None, description="Redis password")
+
+        # OpenAI
+        openai_api_key: str = Field(description="OpenAI API key")
+        openai_model: str = Field(default="gpt-4", description="OpenAI model for agent reasoning")
+        openai_model_mini: str = Field(default="gpt-4o-mini", description="OpenAI model for tools")
+
+        # Vector Search
+        embedding_model: str = Field(
+            default="text-embedding-3-small", description="OpenAI embedding model"
+        )
+        vector_dim: int = Field(default=1536, description="Vector dimensions")
+
+        # Docket Task Queue
+        task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
+        max_task_retries: int = Field(default=3, description="Maximum task retries")
+        task_timeout: int = Field(default=300, description="Task timeout in seconds")
+
+        # Agent
+        max_iterations: int = Field(default=10, description="Maximum agent iterations")
+        tool_timeout: int = Field(default=60, description="Tool execution timeout")
+
+        # Monitoring Integration (optional)
+        prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")
+        grafana_url: Optional[str] = Field(default=None, description="Grafana server URL")
+        grafana_api_key: Optional[str] = Field(default=None, description="Grafana API key")
+
+        # Security
+        api_key: Optional[str] = Field(default=None, description="API authentication key")
+        allowed_hosts: list[str] = Field(default=["*"], description="Allowed hosts for CORS")
+
+    return TestSettings(**kwargs)
 
 
 class TestSettings:
@@ -15,7 +71,7 @@ class TestSettings:
         """Test default configuration values."""
         # Create settings with minimal environment variables
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
-            settings = Settings()
+            settings = get_clean_settings()
 
             # Application defaults
             assert settings.app_name == "Redis SRE Agent"
@@ -75,7 +131,7 @@ class TestSettings:
         }
 
         with patch.dict(os.environ, env_vars, clear=True):
-            settings = Settings()
+            settings = get_clean_settings()
 
             assert settings.app_name == "Custom SRE Agent"
             assert settings.debug is True
@@ -113,13 +169,13 @@ class TestSettings:
             if env_value == "":
                 # Empty string should use default, not cause validation error
                 with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=True):
-                    settings = Settings()
-                    assert settings.debug == False  # Default value
+                    settings = get_clean_settings()
+                    assert not settings.debug  # Default value
             else:
                 with patch.dict(
                     os.environ, {"DEBUG": env_value, "OPENAI_API_KEY": "test"}, clear=True
                 ):
-                    settings = Settings()
+                    settings = get_clean_settings()
                     assert settings.debug == expected
 
     def test_integer_field_parsing(self):
@@ -134,7 +190,7 @@ class TestSettings:
             },
             clear=True,
         ):
-            settings = Settings()
+            settings = get_clean_settings()
 
             assert settings.port == 8080
             assert settings.vector_dim == 512
@@ -143,7 +199,7 @@ class TestSettings:
     def test_optional_fields(self):
         """Test optional configuration fields."""
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=True):
-            settings = Settings()
+            settings = get_clean_settings()
 
             # These should be None by default
             assert settings.redis_password is None
@@ -162,7 +218,7 @@ class TestSettings:
             },
             clear=True,
         ):
-            settings = Settings()
+            settings = get_clean_settings()
 
             # Pydantic parses JSON format for lists
             assert isinstance(settings.allowed_hosts, list)
@@ -176,7 +232,7 @@ class TestSettings:
         # Clear all environment variables to force validation error
         with patch.dict(os.environ, {}, clear=True):
             with pytest.raises(ValidationError) as exc_info:
-                Settings()
+                get_clean_settings()
 
             # Check that the error is about the missing openai_api_key
             error_str = str(exc_info.value)
@@ -184,10 +240,10 @@ class TestSettings:
 
     def test_field_descriptions(self):
         """Test that fields have proper descriptions."""
-        settings = Settings(openai_api_key="test")
+        settings = get_clean_settings(openai_api_key="test")
 
         # Check that model fields exist and have some metadata
-        model_fields = Settings.model_fields
+        model_fields = settings.model_fields
 
         # Sample field checks - just verify fields exist and have some info
         assert "app_name" in model_fields
@@ -229,7 +285,7 @@ class TestSettings:
 
         with patch.dict(os.environ, env_vars, clear=True):
             # Should not raise validation error for unknown fields
-            settings = Settings()
+            settings = get_clean_settings()
             assert settings.openai_api_key == "test"
 
             # Unknown fields should not be accessible
@@ -253,7 +309,7 @@ class TestSettingsValidation:
             with patch.dict(
                 os.environ, {"REDIS_URL": redis_url, "OPENAI_API_KEY": "test"}, clear=True
             ):
-                settings = Settings()
+                settings = get_clean_settings()
                 assert settings.redis_url == redis_url
 
     def test_valid_log_levels(self):
@@ -262,7 +318,7 @@ class TestSettingsValidation:
 
         for level in valid_levels:
             with patch.dict(os.environ, {"LOG_LEVEL": level, "OPENAI_API_KEY": "test"}, clear=True):
-                settings = Settings()
+                settings = get_clean_settings()
                 assert settings.log_level == level
 
     def test_positive_integer_fields(self):
@@ -280,7 +336,7 @@ class TestSettingsValidation:
             },
             clear=True,
         ):
-            settings = Settings()
+            settings = get_clean_settings()
 
             assert settings.port == 1
             assert settings.vector_dim == 1

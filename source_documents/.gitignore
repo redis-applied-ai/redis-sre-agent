@@ -1,0 +1,7 @@
+# Ignore any temporary or generated files
+*.tmp
+*.bak
+*~
+
+# But keep all runbook source files
+!*.md

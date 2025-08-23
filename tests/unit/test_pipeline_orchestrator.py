@@ -43,7 +43,7 @@ class TestPipelineOrchestrator:
             content="This is test content for Redis operations and troubleshooting.",
             source_url="https://redis.io/docs/test",
             category=DocumentCategory.OSS,
-            doc_type=DocumentType.GUIDE,
+            doc_type=DocumentType.DOCUMENTATION,
             severity=SeverityLevel.MEDIUM,
             metadata={"test": True},
         )
@@ -301,14 +301,14 @@ class TestPipelineOrchestrator:
     async def test_cleanup_old_batches(self, orchestrator, tmp_path):
         """Test cleanup of old batch directories."""
         # Create some batch directories with different dates
-        old_date = "2024-12-20"  # More than 30 days old
-        recent_date = "2025-01-15"  # Recent
+        old_date = "2025-06-20"  # More than 30 days old
+        recent_date = "2025-08-15"  # Recent
         current_date = orchestrator.storage.current_date
 
         # Create directories
-        (tmp_path / old_date).mkdir()
-        (tmp_path / recent_date).mkdir()
-        (tmp_path / current_date).mkdir()
+        (tmp_path / old_date).mkdir(exist_ok=True)
+        (tmp_path / recent_date).mkdir(exist_ok=True)
+        (tmp_path / current_date).mkdir(exist_ok=True)
 
         with patch.object(orchestrator.storage, "list_available_batches") as mock_batches:
             mock_batches.return_value = [old_date, recent_date, current_date]

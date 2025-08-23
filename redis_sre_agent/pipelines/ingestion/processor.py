@@ -2,14 +2,20 @@
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ulid import ULID
-
 from ...core.redis import get_knowledge_index, get_vectorizer
-from ...pipelines.scraper.base import ArtifactStorage, ScrapedDocument
+from ...pipelines.scraper.base import (
+    ArtifactStorage,
+    DocumentCategory,
+    DocumentType,
+    ScrapedDocument,
+    SeverityLevel,
+)
+from .deduplication import DocumentDeduplicator
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +81,17 @@ class DocumentProcessor:
         self, document: ScrapedDocument, content: str, chunk_index: int
     ) -> Dict[str, Any]:
         """Create a chunk object for vector storage."""
-        chunk_id = str(ULID())
+        # Use document hash + chunk index for deterministic IDs instead of random ULID
+        # This allows proper deduplication when re-ingesting the same document
 
         # Create title for chunk
         if chunk_index == 0:
             chunk_title = document.title
         else:
             chunk_title = f"{document.title} (Part {chunk_index + 1})"
+
+        # Generate deterministic ID based on document hash and chunk index
+        chunk_id = f"{document.content_hash}_{chunk_index}"
 
         return {
             "id": chunk_id,
@@ -140,6 +150,9 @@ class IngestionPipeline:
             index = get_knowledge_index()
             vectorizer = get_vectorizer()
 
+            # Initialize deduplicator
+            deduplicator = DocumentDeduplicator(index)
+
             # Process each category
             for category in ["oss", "enterprise", "shared"]:
                 category_path = batch_path / category
@@ -147,7 +160,7 @@ class IngestionPipeline:
                     continue
 
                 category_stats = await self._process_category(
-                    category_path, category, index, vectorizer
+                    category_path, category, index, vectorizer, deduplicator
                 )
 
                 ingestion_stats["categories_processed"][category] = category_stats
@@ -173,7 +186,12 @@ class IngestionPipeline:
         return ingestion_stats
 
     async def _process_category(
-        self, category_path: Path, category: str, index: Any, vectorizer: Any
+        self,
+        category_path: Path,
+        category: str,
+        index: Any,
+        vectorizer: Any,
+        deduplicator: DocumentDeduplicator,
     ) -> Dict[str, Any]:
         """Process all documents in a category folder."""
         logger.info(f"Processing category: {category}")
@@ -202,8 +220,8 @@ class IngestionPipeline:
                 chunks = self.processor.chunk_document(document)
                 stats["chunks_created"] += len(chunks)
 
-                # Index chunks
-                indexed_count = await self._index_chunks(chunks, index, vectorizer)
+                # Index chunks with deduplication
+                indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
                 stats["chunks_indexed"] += indexed_count
 
                 stats["documents_processed"] += 1
@@ -215,39 +233,6 @@ class IngestionPipeline:
                 stats["errors"].append(error_msg)
 
         return stats
-
-    async def _index_chunks(self, chunks: List[Dict[str, Any]], index: Any, vectorizer: Any) -> int:
-        """Index document chunks in the vector store."""
-        if not chunks:
-            return 0
-
-        try:
-            # Generate embeddings for all chunks
-            chunk_texts = [chunk["content"] for chunk in chunks]
-            embeddings = await vectorizer.embed_many(chunk_texts)
-
-            # Prepare documents for indexing
-            documents_to_index = []
-            for i, chunk in enumerate(chunks):
-                doc_for_index = {
-                    **chunk,
-                    "vector": embeddings[i],
-                    "created_at": datetime.now(timezone.utc).timestamp(),
-                }
-                documents_to_index.append(doc_for_index)
-
-            # Create keys for each document
-            keys = [f"sre_knowledge:{chunk['id']}" for chunk in chunks]
-
-            # Index in Redis
-            await index.load(data=documents_to_index, id_field="id", keys=keys)
-
-            logger.debug(f"Indexed {len(documents_to_index)} chunks")
-            return len(documents_to_index)
-
-        except Exception as e:
-            logger.error(f"Failed to index chunks: {e}")
-            raise
 
     async def _save_ingestion_manifest(self, batch_date: str, stats: Dict[str, Any]) -> None:
         """Save ingestion manifest with processing results."""
@@ -286,3 +271,169 @@ class IngestionPipeline:
         # This would require tracking which documents came from which batch
 
         return await self.ingest_batch(batch_date)
+
+    def _parse_markdown_metadata(self, content: str) -> Dict[str, str]:
+        """Extract metadata from markdown document."""
+        metadata = {}
+
+        # Extract title (first # heading)
+        title_match = re.search(r"^# (.+)", content, re.MULTILINE)
+        if title_match:
+            metadata["title"] = title_match.group(1).strip()
+
+        # Extract metadata lines (**Key**: value)
+        metadata_pattern = r"^\*\*(\w+)\*\*:\s*(.+)$"
+        for match in re.finditer(metadata_pattern, content, re.MULTILINE):
+            key = match.group(1).lower()
+            value = match.group(2).strip()
+            metadata[key] = value
+
+        return metadata
+
+    def _create_scraped_document_from_markdown(self, md_file: Path) -> ScrapedDocument:
+        """Convert a markdown file to a ScrapedDocument for processing."""
+        content = md_file.read_text(encoding="utf-8")
+        metadata = self._parse_markdown_metadata(content)
+
+        # Extract or generate title
+        title = metadata.get("title", md_file.stem.replace("-", " ").title())
+
+        # Map category strings to DocumentCategory enum
+        category_str = metadata.get("category", "shared")
+        if category_str == "connection_troubleshooting":
+            category = DocumentCategory.SHARED  # Use shared for runbooks
+        else:
+            category = DocumentCategory.SHARED
+
+        # Map severity strings to SeverityLevel enum
+        severity_str = metadata.get("severity", "medium")
+        severity_map = {
+            "critical": SeverityLevel.CRITICAL,
+            "high": SeverityLevel.HIGH,
+            "warning": SeverityLevel.MEDIUM,
+            "medium": SeverityLevel.MEDIUM,
+            "low": SeverityLevel.LOW,
+            "info": SeverityLevel.LOW,
+        }
+        severity = severity_map.get(severity_str.lower(), SeverityLevel.MEDIUM)
+
+        return ScrapedDocument(
+            title=title,
+            source_url=f"file://{md_file.absolute()}",
+            content=content,
+            category=category,
+            doc_type=DocumentType.RUNBOOK,
+            severity=severity,
+            metadata={
+                "file_path": str(md_file),
+                "file_size": md_file.stat().st_size,
+                "original_category": category_str,
+                "original_severity": severity_str,
+                **metadata,
+            },
+        )
+
+    async def ingest_source_documents(self, source_dir: Path) -> List[Dict[str, Any]]:
+        """Ingest runbook source documents from the source_documents directory."""
+        logger.info(f"Ingesting source documents from: {source_dir}")
+
+        if not source_dir.exists():
+            raise ValueError(f"Source directory does not exist: {source_dir}")
+
+        # Find all markdown files (excluding README files)
+        markdown_files = list(source_dir.rglob("*.md"))
+        markdown_files = [f for f in markdown_files if f.name.lower() != "readme.md"]
+
+        if not markdown_files:
+            logger.warning(f"No markdown files found in {source_dir}")
+            return []
+
+        logger.info(f"Found {len(markdown_files)} markdown files to process")
+
+        # Get Redis components
+        index = get_knowledge_index()
+        vectorizer = get_vectorizer()
+
+        # Initialize deduplicator
+        deduplicator = DocumentDeduplicator(index)
+
+        results = []
+
+        for md_file in markdown_files:
+            logger.info(f"Processing: {md_file.name}")
+
+            try:
+                # Convert markdown to ScrapedDocument
+                document = self._create_scraped_document_from_markdown(md_file)
+
+                # Process document into chunks
+                chunks = self.processor.chunk_document(document)
+
+                # Index chunks with deduplication
+                indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
+
+                result = {
+                    "file": md_file.name,
+                    "title": document.title,
+                    "category": document.category,
+                    "severity": document.severity,
+                    "status": "success",
+                    "chunks_created": len(chunks),
+                    "chunks_indexed": indexed_count,
+                }
+
+                results.append(result)
+                logger.info(
+                    f"✅ Processed {md_file.name}: {len(chunks)} chunks, {indexed_count} indexed"
+                )
+
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"❌ Failed to process {md_file.name}: {error_msg}")
+
+                result = {"file": md_file.name, "status": "error", "error": error_msg}
+                results.append(result)
+
+        return results
+
+    async def _index_chunks(self, chunks: List[Dict[str, Any]], index: Any, vectorizer: Any) -> int:
+        """Index chunks in the vector store.
+
+        Args:
+            chunks: List of chunk dictionaries to index
+            index: Vector store index instance
+            vectorizer: Vectorizer instance for embedding generation
+
+        Returns:
+            Number of chunks successfully indexed
+        """
+        if not chunks:
+            return 0
+
+        try:
+            # Extract content for vectorization
+            texts = [chunk["content"] for chunk in chunks]
+
+            # Generate embeddings
+            embeddings = await vectorizer.embed_many(texts)
+
+            # Prepare chunks with embeddings for indexing
+            indexed_chunks = []
+            keys = []
+            for chunk, embedding in zip(chunks, embeddings):
+                chunk_with_embedding = {
+                    **chunk,
+                    "vector": embedding,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                indexed_chunks.append(chunk_with_embedding)
+                keys.append(f"sre_knowledge:{chunk['id']}")
+
+            # Load chunks into index with expected parameters
+            await index.load(id_field="id", keys=keys, data=indexed_chunks)
+
+            return len(chunks)
+
+        except Exception as e:
+            logger.error(f"Failed to index {len(chunks)} chunks: {e}")
+            raise

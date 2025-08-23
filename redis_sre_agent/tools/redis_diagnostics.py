@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import redis.asyncio as redis
 
@@ -41,10 +41,6 @@ class RedisDiagnostics:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "redis_url": self.redis_url,
             "diagnostics": {},
-            "overall_status": "unknown",
-            "critical_issues": [],
-            "warnings": [],
-            "recommendations": [],
         }
 
         try:
@@ -59,22 +55,51 @@ class RedisDiagnostics:
             results["diagnostics"]["keyspace"] = await self._analyze_keyspace(client)
             results["diagnostics"]["slowlog"] = await self._check_slowlog(client)
             results["diagnostics"]["clients"] = await self._analyze_client_connections(client)
+            results["diagnostics"]["replication"] = await self._analyze_replication(client)
+            results["diagnostics"]["persistence"] = await self._analyze_persistence(client)
+            results["diagnostics"]["cpu"] = await self._analyze_cpu_usage(client)
 
-            # Determine overall status
-            results["overall_status"] = self._determine_overall_status(results["diagnostics"])
-            results["critical_issues"] = self._identify_critical_issues(results["diagnostics"])
-            results["warnings"] = self._identify_warnings(results["diagnostics"])
-            results["recommendations"] = self._generate_recommendations(results["diagnostics"])
+            # Calculate overall status
+            results["overall_status"] = self._calculate_overall_status(results["diagnostics"])
 
-            logger.info(f"Redis diagnostics completed: {results['overall_status']}")
+            logger.info("Redis diagnostics completed successfully")
 
         except Exception as e:
             logger.error(f"Redis diagnostics failed: {e}")
             results["diagnostics"]["error"] = str(e)
             results["overall_status"] = "error"
-            results["critical_issues"].append(f"Diagnostic failure: {str(e)}")
 
         return results
+
+    def _calculate_overall_status(self, diagnostics: Dict[str, Any]) -> str:
+        """Calculate overall Redis health status based on all diagnostics."""
+        critical_issues = []
+        warnings = []
+
+        # Check memory status
+        memory_status = diagnostics.get("memory", {}).get("status", "healthy")
+        if memory_status == "critical":
+            critical_issues.append("Memory usage critical")
+        elif memory_status == "warning":
+            warnings.append("Memory usage warning")
+
+        # Check for connection issues
+        connection = diagnostics.get("connection", {})
+        if not connection.get("ping_response", True):
+            critical_issues.append("Connection failed")
+
+        # Check for errors in any diagnostic
+        for key, value in diagnostics.items():
+            if isinstance(value, dict) and "error" in value:
+                warnings.append(f"{key} diagnostic failed")
+
+        # Determine overall status
+        if critical_issues:
+            return "critical"
+        elif warnings:
+            return "warning"
+        else:
+            return "healthy"
 
     async def _test_connection(self, client: redis.Redis) -> Dict[str, Any]:
         """Test Redis connection and basic operations."""
@@ -91,18 +116,16 @@ class RedisDiagnostics:
             await client.delete(test_key)
 
             return {
-                "status": "healthy",
                 "ping_response": pong,
                 "ping_duration_ms": round(ping_duration, 2),
-                "basic_operations": "working" if test_value == "test_value" else "failed",
+                "basic_operations_test": test_value == "test_value",
             }
 
         except Exception as e:
             return {
-                "status": "error",
                 "error": str(e),
                 "ping_duration_ms": None,
-                "basic_operations": "failed",
+                "basic_operations_test": False,
             }
 
     async def _get_redis_info(self, client: redis.Redis) -> Dict[str, Any]:
@@ -145,6 +168,36 @@ class RedisDiagnostics:
             if maxmemory > 0:
                 memory_usage_pct = (used_memory / maxmemory) * 100
 
+            # Determine memory status
+            status = "healthy"
+            issues = []
+
+            if maxmemory > 0:
+                if memory_usage_pct >= 95:
+                    status = "critical"
+                    issues.append("Memory usage above 95% - immediate action required")
+                elif memory_usage_pct >= 85:
+                    status = "warning"
+                    issues.append("Memory usage above 85% - monitor closely")
+                elif memory_usage_pct >= 75:
+                    status = "caution"
+                    issues.append("Memory usage above 75% - consider optimization")
+            else:
+                # No maxmemory set - check absolute usage
+                used_mb = used_memory / (1024 * 1024)
+                if used_mb > 1000:  # 1GB
+                    status = "warning"
+                    issues.append(
+                        "No memory limit set with high usage - consider setting maxmemory"
+                    )
+
+            # Check fragmentation
+            fragmentation_ratio = info.get("mem_fragmentation_ratio", 1.0)
+            if fragmentation_ratio > 1.5:
+                if status == "healthy":
+                    status = "warning"
+                issues.append(f"High memory fragmentation ratio: {fragmentation_ratio}")
+
             # Get memory breakdown
             memory_breakdown = {}
             for key, value in info.items():
@@ -152,22 +205,32 @@ class RedisDiagnostics:
                     memory_breakdown[key] = value
 
             return {
+                "status": status,
+                "issues": issues,
                 "used_memory_bytes": used_memory,
                 "used_memory_human": info.get("used_memory_human"),
                 "max_memory_bytes": maxmemory,
                 "max_memory_human": info.get("maxmemory_human"),
-                "memory_usage_percentage": round(memory_usage_pct, 2),
+                "memory_usage_percentage": round(memory_usage_pct, 2) if maxmemory > 0 else None,
                 "memory_fragmentation_ratio": info.get("mem_fragmentation_ratio"),
                 "memory_breakdown": memory_breakdown,
-                "status": (
-                    "critical"
-                    if memory_usage_pct > 90
-                    else "warning" if memory_usage_pct > 80 else "healthy"
-                ),
+                "used_memory_rss": info.get("used_memory_rss"),
+                "used_memory_peak": info.get("used_memory_peak"),
+                "used_memory_peak_human": info.get("used_memory_peak_human"),
+                "used_memory_overhead": info.get("used_memory_overhead"),
+                "used_memory_startup": info.get("used_memory_startup"),
+                "used_memory_dataset": info.get("used_memory_dataset"),
+                "mem_allocator": info.get("mem_allocator"),
+                "mem_fragmentation_bytes": info.get("mem_fragmentation_bytes"),
+                "mem_not_counted_for_evict": info.get("mem_not_counted_for_evict"),
+                "mem_replication_backlog": info.get("mem_replication_backlog"),
+                "active_defrag_running": info.get("active_defrag_running"),
+                "lazyfree_pending_objects": info.get("lazyfree_pending_objects"),
+                "raw_memory_info": info,
             }
 
         except Exception as e:
-            return {"error": str(e), "status": "error"}
+            return {"error": str(e)}
 
     async def _check_performance_metrics(self, client: redis.Redis) -> Dict[str, Any]:
         """Check Redis performance metrics."""
@@ -187,44 +250,81 @@ class RedisDiagnostics:
                 "total_commands_processed": info.get("total_commands_processed"),
                 "keyspace_hits": keyspace_hits,
                 "keyspace_misses": keyspace_misses,
-                "hit_rate_percentage": round(hit_rate, 2),
+                "total_keyspace_operations": total_keyspace,
+                "hit_rate_percentage": round(hit_rate, 2) if total_keyspace > 0 else None,
                 "expired_keys": info.get("expired_keys"),
                 "evicted_keys": info.get("evicted_keys"),
                 "rejected_connections": info.get("rejected_connections"),
-                "status": "warning" if hit_rate < 80 else "healthy",
+                "total_connections_received": info.get("total_connections_received"),
+                "instantaneous_input_kbps": info.get("instantaneous_input_kbps"),
+                "instantaneous_output_kbps": info.get("instantaneous_output_kbps"),
+                "sync_full": info.get("sync_full"),
+                "sync_partial_ok": info.get("sync_partial_ok"),
+                "sync_partial_err": info.get("sync_partial_err"),
+                "pubsub_channels": info.get("pubsub_channels"),
+                "pubsub_patterns": info.get("pubsub_patterns"),
+                "migrate_cached_sockets": info.get("migrate_cached_sockets"),
+                "slave_expires_tracked_keys": info.get("slave_expires_tracked_keys"),
+                "active_defrag_hits": info.get("active_defrag_hits"),
+                "active_defrag_misses": info.get("active_defrag_misses"),
+                "active_defrag_key_hits": info.get("active_defrag_key_hits"),
+                "active_defrag_key_misses": info.get("active_defrag_key_misses"),
+                "raw_stats_info": info,
             }
 
         except Exception as e:
-            return {"error": str(e), "status": "error"}
+            return {"error": str(e)}
 
     async def _check_configuration(self, client: redis.Redis) -> Dict[str, Any]:
         """Check Redis configuration for SRE best practices."""
         try:
             config = await client.config_get("*")
 
-            # Key configuration checks
-            checks = {
-                "persistence_enabled": {
-                    "save": config.get("save"),
-                    "appendonly": config.get("appendonly") == "yes",
-                },
-                "memory_policy": config.get("maxmemory-policy"),
+            # Extract key configuration values
+            return {
+                "maxmemory": config.get("maxmemory"),
+                "maxmemory_policy": config.get("maxmemory-policy"),
+                "maxmemory_samples": config.get("maxmemory-samples"),
+                "save": config.get("save"),
+                "appendonly": config.get("appendonly"),
+                "appendfsync": config.get("appendfsync"),
                 "timeout": config.get("timeout"),
                 "tcp_keepalive": config.get("tcp-keepalive"),
-                "slowlog_threshold": config.get("slowlog-log-slower-than"),
-            }
-
-            # Configuration recommendations
-            recommendations = []
-            if config.get("maxmemory-policy") == "noeviction":
-                recommendations.append("Consider setting a memory eviction policy")
-
-            if config.get("save") == "":
-                recommendations.append("Consider enabling periodic saves for data persistence")
-
-            return {
-                "configuration_checks": checks,
-                "recommendations": recommendations,
+                "slowlog_log_slower_than": config.get("slowlog-log-slower-than"),
+                "slowlog_max_len": config.get("slowlog-max-len"),
+                "databases": config.get("databases"),
+                "maxclients": config.get("maxclients"),
+                "port": config.get("port"),
+                "bind": config.get("bind"),
+                "protected_mode": config.get("protected-mode"),
+                "requirepass": config.get("requirepass"),
+                "masterauth": config.get("masterauth"),
+                "auto_aof_rewrite_percentage": config.get("auto-aof-rewrite-percentage"),
+                "auto_aof_rewrite_min_size": config.get("auto-aof-rewrite-min-size"),
+                "hash_max_ziplist_entries": config.get("hash-max-ziplist-entries"),
+                "hash_max_ziplist_value": config.get("hash-max-ziplist-value"),
+                "list_max_ziplist_size": config.get("list-max-ziplist-size"),
+                "set_max_intset_entries": config.get("set-max-intset-entries"),
+                "zset_max_ziplist_entries": config.get("zset-max-ziplist-entries"),
+                "zset_max_ziplist_value": config.get("zset-max-ziplist-value"),
+                "hll_sparse_max_bytes": config.get("hll-sparse-max-bytes"),
+                "stream_node_max_bytes": config.get("stream-node-max-bytes"),
+                "stream_node_max_entries": config.get("stream-node-max-entries"),
+                "activerehashing": config.get("activerehashing"),
+                "client_output_buffer_limit_normal": config.get(
+                    "client-output-buffer-limit normal"
+                ),
+                "client_output_buffer_limit_replica": config.get(
+                    "client-output-buffer-limit replica"
+                ),
+                "client_output_buffer_limit_pubsub": config.get(
+                    "client-output-buffer-limit pubsub"
+                ),
+                "hz": config.get("hz"),
+                "dynamic_hz": config.get("dynamic-hz"),
+                "rdb_compression": config.get("rdbcompression"),
+                "rdb_checksum": config.get("rdbchecksum"),
+                "stop_writes_on_bgsave_error": config.get("stop-writes-on-bgsave-error"),
                 "raw_config": config,
             }
 
@@ -241,11 +341,15 @@ class RedisDiagnostics:
 
             for db_key, db_info in info.items():
                 if db_key.startswith("db"):
-                    # Parse db info string like "keys=2,expires=0,avg_ttl=0"
-                    db_stats = {}
-                    for stat in db_info.split(","):
-                        key, value = stat.split("=")
-                        db_stats[key] = int(value)
+                    # Handle both string format and dict format from different Redis client versions
+                    if isinstance(db_info, dict):
+                        db_stats = db_info
+                    else:
+                        # Parse db info string like "keys=2,expires=0,avg_ttl=0"
+                        db_stats = {}
+                        for stat in db_info.split(","):
+                            key, value = stat.split("=")
+                            db_stats[key] = int(value)
 
                     keyspace_analysis[db_key] = db_stats
                     total_keys += db_stats.get("keys", 0)
@@ -253,11 +357,11 @@ class RedisDiagnostics:
             return {
                 "total_keys": total_keys,
                 "databases": keyspace_analysis,
-                "status": "warning" if total_keys > 1000000 else "healthy",
+                "raw_keyspace_info": info,
             }
 
         except Exception as e:
-            return {"error": str(e), "status": "error"}
+            return {"error": str(e)}
 
     async def _check_slowlog(self, client: redis.Redis) -> Dict[str, Any]:
         """Check Redis slow query log."""
@@ -268,7 +372,7 @@ class RedisDiagnostics:
             # Analyze slow queries
             slow_commands = {}
             for entry in slowlog_entries:
-                command = entry["command"][0] if entry["command"] else "unknown"
+                command = str(entry["command"][0]) if entry["command"] else "unknown"
                 if command not in slow_commands:
                     slow_commands[command] = 0
                 slow_commands[command] += 1
@@ -281,16 +385,26 @@ class RedisDiagnostics:
                     {
                         "id": entry["id"],
                         "timestamp": entry["start_time"],
+                        "duration_microseconds": entry["duration"],
                         "duration_ms": entry["duration"] / 1000,
-                        "command": " ".join(entry["command"][:3]),  # First 3 parts of command
+                        "command": " ".join(
+                            str(x) for x in entry["command"][:3]
+                        ),  # First 3 parts of command
+                        "full_command": (
+                            " ".join(str(x) for x in entry["command"])
+                            if len(entry["command"]) <= 10
+                            else " ".join(str(x) for x in entry["command"][:10]) + "..."
+                        ),
+                        "client_ip": entry.get("client_ip"),
+                        "client_port": entry.get("client_port"),
+                        "client_name": entry.get("client_name"),
                     }
-                    for entry in slowlog_entries[:5]  # Only show top 5
+                    for entry in slowlog_entries
                 ],
-                "status": "warning" if slowlog_len > 50 else "healthy",
             }
 
         except Exception as e:
-            return {"error": str(e), "status": "error"}
+            return {"error": str(e)}
 
     async def _analyze_client_connections(self, client: redis.Redis) -> Dict[str, Any]:
         """Analyze client connection information."""
@@ -308,103 +422,148 @@ class RedisDiagnostics:
                     connection_types[client_type] = 0
                 connection_types[client_type] += 1
 
-                if client_info.get("idle", 0) > 300:  # 5 minutes
+                if int(client_info.get("idle", 0)) > 300:  # 5 minutes
                     idle_connections += 1
+
+            # Analyze idle times
+            idle_time_distribution = {"<1min": 0, "1-5min": 0, "5-30min": 0, ">30min": 0}
+            client_details = []
+
+            for client_info in clients_list:
+                idle_time = int(client_info.get("idle", 0))
+                if idle_time < 60:
+                    idle_time_distribution["<1min"] += 1
+                elif idle_time < 300:
+                    idle_time_distribution["1-5min"] += 1
+                elif idle_time < 1800:
+                    idle_time_distribution["5-30min"] += 1
+                else:
+                    idle_time_distribution[">30min"] += 1
+
+                client_details.append(
+                    {
+                        "id": client_info.get("id"),
+                        "name": client_info.get("name"),
+                        "addr": client_info.get("addr"),
+                        "idle": idle_time,
+                        "flags": client_info.get("flags"),
+                        "db": client_info.get("db"),
+                        "sub": client_info.get("sub"),
+                        "psub": client_info.get("psub"),
+                        "multi": client_info.get("multi"),
+                        "qbuf": client_info.get("qbuf"),
+                        "qbuf_free": client_info.get("qbuf-free"),
+                        "obl": client_info.get("obl"),
+                        "oll": client_info.get("oll"),
+                        "omem": client_info.get("omem"),
+                        "cmd": client_info.get("cmd"),
+                    }
+                )
 
             return {
                 "connected_clients": info.get("connected_clients"),
                 "client_recent_max_input_buffer": info.get("client_recent_max_input_buffer"),
                 "client_recent_max_output_buffer": info.get("client_recent_max_output_buffer"),
                 "blocked_clients": info.get("blocked_clients"),
+                "tracking_clients": info.get("tracking_clients"),
+                "clients_in_timeout_table": info.get("clients_in_timeout_table"),
                 "connection_distribution": connection_types,
-                "idle_connections": idle_connections,
-                "status": "warning" if idle_connections > 10 else "healthy",
+                "idle_connections_count": idle_connections,
+                "idle_time_distribution": idle_time_distribution,
+                "total_clients_analyzed": len(clients_list),
+                "client_connections": client_details[
+                    :20
+                ],  # Limit to first 20 clients for performance
+                "raw_client_info": info,
             }
 
         except Exception as e:
-            return {"error": str(e), "status": "error"}
+            return {"error": str(e)}
 
-    def _determine_overall_status(self, diagnostics: Dict[str, Any]) -> str:
-        """Determine overall Redis health status."""
-        statuses = []
+    async def _analyze_replication(self, client: redis.Redis) -> Dict[str, Any]:
+        """Analyze Redis replication information."""
+        try:
+            info = await client.info("replication")
 
-        for section, data in diagnostics.items():
-            if isinstance(data, dict) and "status" in data:
-                statuses.append(data["status"])
+            return {
+                "role": info.get("role"),
+                "connected_slaves": info.get("connected_slaves"),
+                "master_replid": info.get("master_replid"),
+                "master_replid2": info.get("master_replid2"),
+                "master_repl_offset": info.get("master_repl_offset"),
+                "second_repl_offset": info.get("second_repl_offset"),
+                "repl_backlog_active": info.get("repl_backlog_active"),
+                "repl_backlog_size": info.get("repl_backlog_size"),
+                "repl_backlog_first_byte_offset": info.get("repl_backlog_first_byte_offset"),
+                "repl_backlog_histlen": info.get("repl_backlog_histlen"),
+                "master_host": info.get("master_host"),
+                "master_port": info.get("master_port"),
+                "master_link_status": info.get("master_link_status"),
+                "master_last_io_seconds_ago": info.get("master_last_io_seconds_ago"),
+                "master_sync_in_progress": info.get("master_sync_in_progress"),
+                "slave_repl_offset": info.get("slave_repl_offset"),
+                "slave_priority": info.get("slave_priority"),
+                "slave_read_only": info.get("slave_read_only"),
+                "raw_replication_info": info,
+            }
 
-        if "error" in statuses or "critical" in statuses:
-            return "critical"
-        elif "warning" in statuses:
-            return "warning"
-        elif "healthy" in statuses:
-            return "healthy"
-        else:
-            return "unknown"
+        except Exception as e:
+            return {"error": str(e)}
 
-    def _identify_critical_issues(self, diagnostics: Dict[str, Any]) -> List[str]:
-        """Identify critical issues requiring immediate attention."""
-        issues = []
+    async def _analyze_persistence(self, client: redis.Redis) -> Dict[str, Any]:
+        """Analyze Redis persistence information."""
+        try:
+            info = await client.info("persistence")
 
-        # Memory usage
-        memory = diagnostics.get("memory", {})
-        if memory.get("memory_usage_percentage", 0) > 95:
-            issues.append("Critical: Memory usage above 95%")
+            return {
+                "loading": info.get("loading"),
+                "rdb_changes_since_last_save": info.get("rdb_changes_since_last_save"),
+                "rdb_bgsave_in_progress": info.get("rdb_bgsave_in_progress"),
+                "rdb_last_save_time": info.get("rdb_last_save_time"),
+                "rdb_last_bgsave_status": info.get("rdb_last_bgsave_status"),
+                "rdb_last_bgsave_time_sec": info.get("rdb_last_bgsave_time_sec"),
+                "rdb_current_bgsave_time_sec": info.get("rdb_current_bgsave_time_sec"),
+                "rdb_last_cow_size": info.get("rdb_last_cow_size"),
+                "aof_enabled": info.get("aof_enabled"),
+                "aof_rewrite_in_progress": info.get("aof_rewrite_in_progress"),
+                "aof_rewrite_scheduled": info.get("aof_rewrite_scheduled"),
+                "aof_last_rewrite_time_sec": info.get("aof_last_rewrite_time_sec"),
+                "aof_current_rewrite_time_sec": info.get("aof_current_rewrite_time_sec"),
+                "aof_last_bgrewrite_status": info.get("aof_last_bgrewrite_status"),
+                "aof_last_write_status": info.get("aof_last_write_status"),
+                "aof_last_cow_size": info.get("aof_last_cow_size"),
+                "module_fork_in_progress": info.get("module_fork_in_progress"),
+                "module_fork_last_cow_size": info.get("module_fork_last_cow_size"),
+                "aof_current_size": info.get("aof_current_size"),
+                "aof_base_size": info.get("aof_base_size"),
+                "aof_pending_rewrite": info.get("aof_pending_rewrite"),
+                "aof_buffer_length": info.get("aof_buffer_length"),
+                "aof_rewrite_buffer_length": info.get("aof_rewrite_buffer_length"),
+                "aof_pending_bio_fsync": info.get("aof_pending_bio_fsync"),
+                "aof_delayed_fsync": info.get("aof_delayed_fsync"),
+                "raw_persistence_info": info,
+            }
 
-        # Connection issues
-        connection = diagnostics.get("connection", {})
-        if connection.get("status") == "error":
-            issues.append("Critical: Redis connection failed")
+        except Exception as e:
+            return {"error": str(e)}
 
-        # Performance issues
-        performance = diagnostics.get("performance", {})
-        if performance.get("hit_rate_percentage", 100) < 50:
-            issues.append("Critical: Cache hit rate below 50%")
+    async def _analyze_cpu_usage(self, client: redis.Redis) -> Dict[str, Any]:
+        """Analyze Redis CPU usage information."""
+        try:
+            info = await client.info("cpu")
 
-        return issues
+            return {
+                "used_cpu_sys": info.get("used_cpu_sys"),
+                "used_cpu_user": info.get("used_cpu_user"),
+                "used_cpu_sys_children": info.get("used_cpu_sys_children"),
+                "used_cpu_user_children": info.get("used_cpu_user_children"),
+                "used_cpu_sys_main_thread": info.get("used_cpu_sys_main_thread"),
+                "used_cpu_user_main_thread": info.get("used_cpu_user_main_thread"),
+                "raw_cpu_info": info,
+            }
 
-    def _identify_warnings(self, diagnostics: Dict[str, Any]) -> List[str]:
-        """Identify warning conditions that need attention."""
-        warnings = []
-
-        # Memory warnings
-        memory = diagnostics.get("memory", {})
-        memory_pct = memory.get("memory_usage_percentage", 0)
-        if 80 <= memory_pct <= 95:
-            warnings.append(f"Memory usage at {memory_pct}%")
-
-        # Performance warnings
-        performance = diagnostics.get("performance", {})
-        hit_rate = performance.get("hit_rate_percentage", 100)
-        if 50 <= hit_rate < 80:
-            warnings.append(f"Cache hit rate at {hit_rate}%")
-
-        # Slow queries
-        slowlog = diagnostics.get("slowlog", {})
-        if slowlog.get("slowlog_length", 0) > 10:
-            warnings.append(f"Slow query log has {slowlog['slowlog_length']} entries")
-
-        return warnings
-
-    def _generate_recommendations(self, diagnostics: Dict[str, Any]) -> List[str]:
-        """Generate SRE recommendations based on diagnostics."""
-        recommendations = []
-
-        # Memory recommendations
-        memory = diagnostics.get("memory", {})
-        if memory.get("memory_usage_percentage", 0) > 80:
-            recommendations.append("Consider scaling Redis or implementing memory optimization")
-
-        # Performance recommendations
-        performance = diagnostics.get("performance", {})
-        if performance.get("hit_rate_percentage", 100) < 90:
-            recommendations.append("Review caching strategy and key expiration policies")
-
-        # Configuration recommendations
-        config = diagnostics.get("configuration", {})
-        if config.get("recommendations"):
-            recommendations.extend(config["recommendations"])
-
-        return recommendations
+        except Exception as e:
+            return {"error": str(e)}
 
 
 # Singleton instance for the diagnostics tool
@@ -417,3 +576,461 @@ def get_redis_diagnostics() -> RedisDiagnostics:
     if _redis_diagnostics is None:
         _redis_diagnostics = RedisDiagnostics()
     return _redis_diagnostics
+
+
+async def capture_redis_diagnostics(
+    sections: Optional[Union[str, List[str]]] = None,
+    time_window_seconds: Optional[int] = None,
+    redis_url: Optional[str] = None,
+    include_raw_data: bool = True,
+) -> Dict[str, Any]:
+    """
+    Capture Redis diagnostic data for analysis.
+
+    This function provides the same interface for both external tools (baseline capture)
+    and agent tools (follow-up investigation). It returns raw metric data without
+    pre-calculated assessments, allowing the agent to perform its own analysis.
+
+    Args:
+        sections: Which diagnostic sections to capture. Options:
+            - None or "all": Capture all sections
+            - "memory": Memory usage and fragmentation
+            - "performance": Hit rates, ops/sec, command statistics
+            - "clients": Connection analysis and client patterns
+            - "slowlog": Slow query log analysis
+            - "configuration": Current Redis configuration
+            - "keyspace": Database and key statistics
+            - "replication": Master/slave replication status
+            - "persistence": RDB/AOF persistence status
+            - "cpu": CPU usage statistics
+            - ["memory", "clients"]: Multiple sections as list
+
+        time_window_seconds: For metrics that support time-based analysis (future enhancement)
+        redis_url: Redis connection URL (defaults to configured URL)
+        include_raw_data: Whether to include raw Redis INFO output (default: True)
+
+    Returns:
+        Dict containing requested diagnostic data with raw metrics only.
+        Agent is responsible for calculating percentages, ratios, and assessments.
+
+    Example:
+        # External baseline capture
+        baseline = await capture_redis_diagnostics()
+
+        # Agent targeted investigation
+        memory_data = await capture_redis_diagnostics(sections="memory")
+        client_data = await capture_redis_diagnostics(sections=["clients", "slowlog"])
+    """
+    # Initialize diagnostics instance
+    diagnostics = RedisDiagnostics(redis_url) if redis_url else get_redis_diagnostics()
+
+    # Normalize sections parameter
+    if sections is None or sections == "all":
+        requested_sections = {
+            "memory",
+            "performance",
+            "clients",
+            "slowlog",
+            "configuration",
+            "keyspace",
+            "replication",
+            "persistence",
+            "cpu",
+        }
+    elif isinstance(sections, str):
+        requested_sections = {sections}
+    else:
+        requested_sections = set(sections)
+
+    # Validate sections
+    valid_sections = {
+        "memory",
+        "performance",
+        "clients",
+        "slowlog",
+        "configuration",
+        "keyspace",
+        "replication",
+        "persistence",
+        "cpu",
+    }
+    invalid_sections = requested_sections - valid_sections
+    if invalid_sections:
+        raise ValueError(f"Invalid sections: {invalid_sections}. Valid sections: {valid_sections}")
+
+    # Capture diagnostic data
+    result = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "redis_url": diagnostics.redis_url,
+        "sections_captured": sorted(list(requested_sections)),
+        "time_window_seconds": time_window_seconds,
+        "diagnostics": {},
+    }
+
+    try:
+        client = await diagnostics.get_client()
+
+        # Capture basic connection info for all requests
+        result["diagnostics"]["connection"] = await diagnostics._test_connection(client)
+
+        # Capture requested sections
+        if "memory" in requested_sections:
+            result["diagnostics"]["memory"] = await _capture_memory_metrics(
+                client, include_raw_data
+            )
+
+        if "performance" in requested_sections:
+            result["diagnostics"]["performance"] = await _capture_performance_metrics(
+                client, include_raw_data
+            )
+
+        if "clients" in requested_sections:
+            result["diagnostics"]["clients"] = await _capture_client_metrics(
+                client, include_raw_data
+            )
+
+        if "slowlog" in requested_sections:
+            result["diagnostics"]["slowlog"] = await _capture_slowlog_metrics(
+                client, include_raw_data
+            )
+
+        if "configuration" in requested_sections:
+            result["diagnostics"]["configuration"] = await _capture_config_metrics(
+                client, include_raw_data
+            )
+
+        if "keyspace" in requested_sections:
+            result["diagnostics"]["keyspace"] = await _capture_keyspace_metrics(
+                client, include_raw_data
+            )
+
+        if "replication" in requested_sections:
+            result["diagnostics"]["replication"] = await _capture_replication_metrics(
+                client, include_raw_data
+            )
+
+        if "persistence" in requested_sections:
+            result["diagnostics"]["persistence"] = await _capture_persistence_metrics(
+                client, include_raw_data
+            )
+
+        if "cpu" in requested_sections:
+            result["diagnostics"]["cpu"] = await _capture_cpu_metrics(client, include_raw_data)
+
+        result["capture_status"] = "success"
+
+    except Exception as e:
+        logger.error(f"Failed to capture Redis diagnostics: {e}")
+        result["diagnostics"]["error"] = str(e)
+        result["capture_status"] = "error"
+
+    return result
+
+
+async def _capture_memory_metrics(client: redis.Redis, include_raw: bool = True) -> Dict[str, Any]:
+    """Capture raw memory metrics without pre-calculated assessments."""
+    try:
+        info = await client.info("memory")
+
+        # Return only raw metrics - no status calculations
+        metrics = {
+            "used_memory_bytes": info.get("used_memory", 0),
+            "used_memory_human": info.get("used_memory_human"),
+            "used_memory_rss_bytes": info.get("used_memory_rss", 0),
+            "used_memory_peak_bytes": info.get("used_memory_peak", 0),
+            "used_memory_peak_human": info.get("used_memory_peak_human"),
+            "used_memory_overhead_bytes": info.get("used_memory_overhead", 0),
+            "used_memory_startup_bytes": info.get("used_memory_startup", 0),
+            "used_memory_dataset_bytes": info.get("used_memory_dataset", 0),
+            "maxmemory_bytes": info.get("maxmemory", 0),
+            "maxmemory_human": info.get("maxmemory_human"),
+            "mem_fragmentation_ratio": info.get("mem_fragmentation_ratio", 1.0),
+            "mem_fragmentation_bytes": info.get("mem_fragmentation_bytes", 0),
+            "mem_allocator": info.get("mem_allocator"),
+            "mem_not_counted_for_evict": info.get("mem_not_counted_for_evict", 0),
+            "mem_replication_backlog": info.get("mem_replication_backlog", 0),
+            "active_defrag_running": info.get("active_defrag_running", 0),
+            "lazyfree_pending_objects": info.get("lazyfree_pending_objects", 0),
+        }
+
+        if include_raw:
+            metrics["raw_memory_info"] = info
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_performance_metrics(
+    client: redis.Redis, include_raw: bool = True
+) -> Dict[str, Any]:
+    """Capture raw performance metrics without calculations."""
+    try:
+        info = await client.info("stats")
+
+        metrics = {
+            "instantaneous_ops_per_sec": info.get("instantaneous_ops_per_sec", 0),
+            "total_commands_processed": info.get("total_commands_processed", 0),
+            "keyspace_hits": info.get("keyspace_hits", 0),
+            "keyspace_misses": info.get("keyspace_misses", 0),
+            "expired_keys": info.get("expired_keys", 0),
+            "evicted_keys": info.get("evicted_keys", 0),
+            "rejected_connections": info.get("rejected_connections", 0),
+            "total_connections_received": info.get("total_connections_received", 0),
+            "instantaneous_input_kbps": info.get("instantaneous_input_kbps", 0),
+            "instantaneous_output_kbps": info.get("instantaneous_output_kbps", 0),
+            "sync_full": info.get("sync_full", 0),
+            "sync_partial_ok": info.get("sync_partial_ok", 0),
+            "sync_partial_err": info.get("sync_partial_err", 0),
+            "pubsub_channels": info.get("pubsub_channels", 0),
+            "pubsub_patterns": info.get("pubsub_patterns", 0),
+            "active_defrag_hits": info.get("active_defrag_hits", 0),
+            "active_defrag_misses": info.get("active_defrag_misses", 0),
+            "active_defrag_key_hits": info.get("active_defrag_key_hits", 0),
+            "active_defrag_key_misses": info.get("active_defrag_key_misses", 0),
+        }
+
+        if include_raw:
+            metrics["raw_stats_info"] = info
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_client_metrics(client: redis.Redis, include_raw: bool = True) -> Dict[str, Any]:
+    """Capture raw client connection metrics."""
+    try:
+        info = await client.info("clients")
+        clients_list = await client.client_list()
+
+        # Collect raw client data without analysis
+        client_details = []
+        for client_info in clients_list:
+            client_details.append(
+                {
+                    "id": client_info.get("id"),
+                    "name": client_info.get("name"),
+                    "addr": client_info.get("addr"),
+                    "idle_seconds": int(client_info.get("idle", 0)),
+                    "flags": client_info.get("flags"),
+                    "db": client_info.get("db"),
+                    "sub": client_info.get("sub"),
+                    "psub": client_info.get("psub"),
+                    "multi": client_info.get("multi"),
+                    "qbuf": client_info.get("qbuf"),
+                    "qbuf_free": client_info.get("qbuf-free"),
+                    "obl": client_info.get("obl"),
+                    "oll": client_info.get("oll"),
+                    "omem": client_info.get("omem"),
+                    "cmd": client_info.get("cmd"),
+                }
+            )
+
+        metrics = {
+            "connected_clients": info.get("connected_clients", 0),
+            "client_recent_max_input_buffer": info.get("client_recent_max_input_buffer", 0),
+            "client_recent_max_output_buffer": info.get("client_recent_max_output_buffer", 0),
+            "blocked_clients": info.get("blocked_clients", 0),
+            "tracking_clients": info.get("tracking_clients", 0),
+            "clients_in_timeout_table": info.get("clients_in_timeout_table", 0),
+            "client_connections": client_details,  # Raw client data for agent analysis
+        }
+
+        if include_raw:
+            metrics["raw_client_info"] = info
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_slowlog_metrics(client: redis.Redis, include_raw: bool = True) -> Dict[str, Any]:
+    """Capture raw slowlog metrics."""
+    try:
+        slowlog_len = await client.slowlog_len()
+        slowlog_entries = await client.slowlog_get(50)  # Get more entries for analysis
+
+        # Raw slowlog data without pre-analysis
+        slowlog_data = []
+        for entry in slowlog_entries:
+            slowlog_data.append(
+                {
+                    "id": entry["id"],
+                    "timestamp": entry["start_time"],
+                    "duration_microseconds": entry["duration"],
+                    "command": " ".join(str(x) for x in entry["command"][:5]),  # First 5 parts
+                    "full_command": (
+                        " ".join(str(x) for x in entry["command"])
+                        if len(entry["command"]) <= 15
+                        else " ".join(str(x) for x in entry["command"][:15]) + "..."
+                    ),
+                    "client_ip": entry.get("client_ip"),
+                    "client_port": entry.get("client_port"),
+                    "client_name": entry.get("client_name"),
+                }
+            )
+
+        metrics = {
+            "slowlog_length": slowlog_len,
+            "slowlog_entries": slowlog_data,
+        }
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_config_metrics(client: redis.Redis, include_raw: bool = True) -> Dict[str, Any]:
+    """Capture raw configuration metrics."""
+    try:
+        config = await client.config_get("*")
+
+        # Key configuration values as raw data
+        metrics = {
+            "maxmemory": config.get("maxmemory"),
+            "maxmemory_policy": config.get("maxmemory-policy"),
+            "maxmemory_samples": config.get("maxmemory-samples"),
+            "save": config.get("save"),
+            "appendonly": config.get("appendonly"),
+            "appendfsync": config.get("appendfsync"),
+            "timeout": config.get("timeout"),
+            "tcp_keepalive": config.get("tcp-keepalive"),
+            "slowlog_log_slower_than": config.get("slowlog-log-slower-than"),
+            "slowlog_max_len": config.get("slowlog-max-len"),
+            "databases": config.get("databases"),
+            "maxclients": config.get("maxclients"),
+            "port": config.get("port"),
+            "bind": config.get("bind"),
+            "protected_mode": config.get("protected-mode"),
+        }
+
+        if include_raw:
+            metrics["raw_config"] = config
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_keyspace_metrics(
+    client: redis.Redis, include_raw: bool = True
+) -> Dict[str, Any]:
+    """Capture raw keyspace metrics."""
+    try:
+        info = await client.info("keyspace")
+
+        keyspace_data = {}
+        for db_key, db_info in info.items():
+            if db_key.startswith("db"):
+                if isinstance(db_info, dict):
+                    keyspace_data[db_key] = db_info
+                else:
+                    # Parse db info string
+                    db_stats = {}
+                    for stat in db_info.split(","):
+                        key, value = stat.split("=")
+                        db_stats[key] = int(value)
+                    keyspace_data[db_key] = db_stats
+
+        metrics = {
+            "databases": keyspace_data,
+        }
+
+        if include_raw:
+            metrics["raw_keyspace_info"] = info
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_replication_metrics(
+    client: redis.Redis, include_raw: bool = True
+) -> Dict[str, Any]:
+    """Capture raw replication metrics."""
+    try:
+        info = await client.info("replication")
+
+        metrics = {
+            "role": info.get("role"),
+            "connected_slaves": info.get("connected_slaves", 0),
+            "master_replid": info.get("master_replid"),
+            "master_repl_offset": info.get("master_repl_offset"),
+            "repl_backlog_active": info.get("repl_backlog_active"),
+            "repl_backlog_size": info.get("repl_backlog_size"),
+            "master_host": info.get("master_host"),
+            "master_port": info.get("master_port"),
+            "master_link_status": info.get("master_link_status"),
+            "master_last_io_seconds_ago": info.get("master_last_io_seconds_ago"),
+            "master_sync_in_progress": info.get("master_sync_in_progress"),
+            "slave_repl_offset": info.get("slave_repl_offset"),
+        }
+
+        if include_raw:
+            metrics["raw_replication_info"] = info
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_persistence_metrics(
+    client: redis.Redis, include_raw: bool = True
+) -> Dict[str, Any]:
+    """Capture raw persistence metrics."""
+    try:
+        info = await client.info("persistence")
+
+        metrics = {
+            "loading": info.get("loading", 0),
+            "rdb_changes_since_last_save": info.get("rdb_changes_since_last_save", 0),
+            "rdb_bgsave_in_progress": info.get("rdb_bgsave_in_progress", 0),
+            "rdb_last_save_time": info.get("rdb_last_save_time"),
+            "rdb_last_bgsave_status": info.get("rdb_last_bgsave_status"),
+            "rdb_last_bgsave_time_sec": info.get("rdb_last_bgsave_time_sec"),
+            "aof_enabled": info.get("aof_enabled", 0),
+            "aof_rewrite_in_progress": info.get("aof_rewrite_in_progress", 0),
+            "aof_last_rewrite_time_sec": info.get("aof_last_rewrite_time_sec"),
+            "aof_last_bgrewrite_status": info.get("aof_last_bgrewrite_status"),
+            "aof_current_size": info.get("aof_current_size"),
+            "aof_base_size": info.get("aof_base_size"),
+        }
+
+        if include_raw:
+            metrics["raw_persistence_info"] = info
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_cpu_metrics(client: redis.Redis, include_raw: bool = True) -> Dict[str, Any]:
+    """Capture raw CPU metrics."""
+    try:
+        info = await client.info("cpu")
+
+        metrics = {
+            "used_cpu_sys": info.get("used_cpu_sys", 0.0),
+            "used_cpu_user": info.get("used_cpu_user", 0.0),
+            "used_cpu_sys_children": info.get("used_cpu_sys_children", 0.0),
+            "used_cpu_user_children": info.get("used_cpu_user_children", 0.0),
+            "used_cpu_sys_main_thread": info.get("used_cpu_sys_main_thread", 0.0),
+            "used_cpu_user_main_thread": info.get("used_cpu_user_main_thread", 0.0),
+        }
+
+        if include_raw:
+            metrics["raw_cpu_info"] = info
+
+        return metrics
+
+    except Exception as e:
+        return {"error": str(e)}

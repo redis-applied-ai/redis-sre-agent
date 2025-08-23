@@ -132,37 +132,14 @@ SOURCE CONTENT TO STANDARDIZE:
                     logger.warning(f"No content extracted from {url}")
                     continue
 
-                # Generate standardized runbook using GPT-4o
-                standardized_runbook = await self._generate_standardized_runbook(raw_content, url)
-                if not standardized_runbook:
-                    logger.warning(f"Failed to generate runbook from {url}")
+                # Generate multiple runbooks from the content
+                runbook_documents = await self._generate_multiple_runbooks(raw_content, url)
+                if not runbook_documents:
+                    logger.warning(f"Failed to generate runbooks from {url}")
                     continue
 
-                # Extract title and categorize
-                title, category, severity = await self._analyze_runbook_metadata(
-                    standardized_runbook, url
-                )
-
-                # Create document
-                document = ScrapedDocument(
-                    title=title,
-                    content=standardized_runbook,
-                    source_url=url,
-                    category=category,
-                    doc_type=DocumentType.RUNBOOK,
-                    severity=severity,
-                    metadata={
-                        "generated_by": "runbook_generator",
-                        "source_type": self._detect_source_type(url),
-                        "standardized_at": datetime.now(timezone.utc).isoformat(),
-                        "original_length": len(raw_content),
-                        "standardized_length": len(standardized_runbook),
-                        "processing_model": self.config["openai_model"],
-                    },
-                )
-
-                documents.append(document)
-                logger.info(f"Generated standardized runbook: {title}")
+                documents.extend(runbook_documents)
+                logger.info(f"Generated {len(runbook_documents)} runbooks from {url}")
 
                 # Rate limiting
                 await asyncio.sleep(self.config["delay_between_requests"])
@@ -537,6 +514,351 @@ SOURCE CONTENT TO STANDARDIZE:
             return "github_repository"
         else:
             return "external_website"
+
+    async def _generate_multiple_runbooks(
+        self, raw_content: str, source_url: str
+    ) -> List[ScrapedDocument]:
+        """Generate multiple focused runbooks from a single source URL.
+
+        For comprehensive documentation pages, this breaks down content into
+        multiple focused runbooks rather than creating one large document.
+
+        Args:
+            raw_content: The scraped raw content from the URL
+            source_url: The source URL being processed
+
+        Returns:
+            List of ScrapedDocument objects, each representing a focused runbook
+        """
+        documents = []
+
+        try:
+            # First, analyze the content to identify distinct topics/sections
+            topics = await self._identify_runbook_topics(raw_content)
+
+            if len(topics) <= 1:
+                # If only one topic or unable to segment, fall back to single runbook
+                logger.info(f"Single topic identified for {source_url}, creating one runbook")
+                standardized_runbook = await self._generate_standardized_runbook(
+                    raw_content, source_url
+                )
+                if standardized_runbook:
+                    title, category, severity = await self._analyze_runbook_metadata(
+                        standardized_runbook, source_url
+                    )
+
+                    document = ScrapedDocument(
+                        title=title,
+                        content=standardized_runbook,
+                        source_url=source_url,
+                        category=category,
+                        doc_type=DocumentType.RUNBOOK,
+                        severity=severity,
+                        metadata={
+                            "generated_by": "runbook_generator",
+                            "source_type": self._detect_source_type(source_url),
+                            "standardized_at": datetime.now(timezone.utc).isoformat(),
+                            "original_length": len(raw_content),
+                            "standardized_length": len(standardized_runbook),
+                            "processing_model": self.config["openai_model"],
+                            "runbook_count": 1,
+                            "topic_index": 0,
+                        },
+                    )
+                    documents.append(document)
+                return documents
+
+            # Generate focused runbooks for each identified topic
+            logger.info(f"Identified {len(topics)} distinct topics in {source_url}")
+
+            for i, topic in enumerate(topics):
+                try:
+                    # Extract relevant content for this topic
+                    topic_content = await self._extract_topic_content(raw_content, topic)
+                    if not topic_content:
+                        logger.warning(f"No content extracted for topic: {topic['title']}")
+                        continue
+
+                    # Generate focused runbook for this topic
+                    focused_runbook = await self._generate_focused_runbook(
+                        topic_content, topic, source_url
+                    )
+                    if not focused_runbook:
+                        logger.warning(f"Failed to generate runbook for topic: {topic['title']}")
+                        continue
+
+                    # Analyze metadata for this specific runbook
+                    title, category, severity = await self._analyze_runbook_metadata(
+                        focused_runbook, source_url
+                    )
+
+                    # Ensure title is unique and descriptive
+                    if len(topics) > 1:
+                        title = (
+                            f"{title} - {topic['title']}"
+                            if topic["title"].lower() not in title.lower()
+                            else title
+                        )
+
+                    document = ScrapedDocument(
+                        title=title,
+                        content=focused_runbook,
+                        source_url=source_url,
+                        category=category,
+                        doc_type=DocumentType.RUNBOOK,
+                        severity=severity,
+                        metadata={
+                            "generated_by": "runbook_generator",
+                            "source_type": self._detect_source_type(source_url),
+                            "standardized_at": datetime.now(timezone.utc).isoformat(),
+                            "original_length": len(raw_content),
+                            "standardized_length": len(focused_runbook),
+                            "processing_model": self.config["openai_model"],
+                            "runbook_count": len(topics),
+                            "topic_index": i,
+                            "topic_title": topic["title"],
+                            "topic_summary": topic.get("summary", ""),
+                        },
+                    )
+
+                    documents.append(document)
+                    logger.info(f"Generated focused runbook: {title}")
+
+                except Exception as e:
+                    logger.error(
+                        f"Error generating runbook for topic '{topic.get('title', 'unknown')}': {e}"
+                    )
+                    continue
+
+            return documents
+
+        except Exception as e:
+            logger.error(f"Error generating multiple runbooks from {source_url}: {e}")
+            # Fallback to single runbook generation
+            standardized_runbook = await self._generate_standardized_runbook(
+                raw_content, source_url
+            )
+            if standardized_runbook:
+                title, category, severity = await self._analyze_runbook_metadata(
+                    standardized_runbook, source_url
+                )
+
+                document = ScrapedDocument(
+                    title=title,
+                    content=standardized_runbook,
+                    source_url=source_url,
+                    category=category,
+                    doc_type=DocumentType.RUNBOOK,
+                    severity=severity,
+                    metadata={
+                        "generated_by": "runbook_generator",
+                        "source_type": self._detect_source_type(source_url),
+                        "standardized_at": datetime.now(timezone.utc).isoformat(),
+                        "original_length": len(raw_content),
+                        "standardized_length": len(standardized_runbook),
+                        "processing_model": self.config["openai_model"],
+                        "runbook_count": 1,
+                        "topic_index": 0,
+                        "fallback_generation": True,
+                    },
+                )
+                return [document]
+            return []
+
+    async def _identify_runbook_topics(self, content: str) -> List[Dict[str, str]]:
+        """Identify distinct topics that could become separate runbooks.
+
+        Args:
+            content: Raw content to analyze
+
+        Returns:
+            List of topic dictionaries with 'title', 'summary', and 'keywords'
+        """
+        try:
+            # Use GPT-4o to identify distinct runbook topics
+            topic_analysis_prompt = """
+Analyze the following technical content and identify distinct, actionable topics that could each become a separate SRE runbook.
+
+Each topic should represent a specific problem, procedure, or operational task that an SRE would need to handle.
+
+Return your analysis as a JSON array where each topic has:
+- "title": Clear, specific title for the runbook (e.g., "Redis Memory Pressure Response", "Redis Replication Lag Troubleshooting")
+- "summary": 2-3 sentence summary of what this runbook covers
+- "keywords": Array of key terms that identify this topic in the content
+
+Only identify topics that have enough actionable content to warrant a separate runbook (at least diagnostic steps and resolution procedures).
+
+If the content represents a single cohesive topic, return an array with just one topic.
+
+Content to analyze:
+{content}
+
+Respond with only the JSON array, no other text.
+"""
+
+            response = await self.openai_client.chat.completions.create(
+                model=self.config["openai_model"],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": topic_analysis_prompt.format(content=content[:8000]),
+                    }  # Limit content length
+                ],
+                temperature=0.3,
+                max_tokens=1500,
+            )
+
+            # Parse the JSON response
+            import json
+
+            topics_json = response.choices[0].message.content.strip()
+
+            # Handle markdown code blocks if present
+            if topics_json.startswith("```json"):
+                topics_json = topics_json[7:]
+            if topics_json.endswith("```"):
+                topics_json = topics_json[:-3]
+            topics_json = topics_json.strip()
+
+            topics = json.loads(topics_json)
+
+            # Validate topics structure
+            validated_topics = []
+            for topic in topics:
+                if isinstance(topic, dict) and "title" in topic and "summary" in topic:
+                    validated_topics.append(
+                        {
+                            "title": topic["title"][:100],  # Limit title length
+                            "summary": topic["summary"][:500],  # Limit summary length
+                            "keywords": topic.get("keywords", [])[:10],  # Limit keywords
+                        }
+                    )
+
+            return validated_topics
+
+        except Exception as e:
+            logger.error(f"Error identifying topics: {e}")
+            return []
+
+    async def _extract_topic_content(
+        self, raw_content: str, topic: Dict[str, str]
+    ) -> Optional[str]:
+        """Extract content relevant to a specific topic from the raw content.
+
+        Args:
+            raw_content: Full raw content
+            topic: Topic dictionary with title, summary, keywords
+
+        Returns:
+            Content relevant to the specific topic, or None if extraction fails
+        """
+        try:
+            extraction_prompt = """
+Extract all content from the provided text that is relevant to the following specific topic:
+
+**Topic Title**: {title}
+**Topic Summary**: {summary}
+**Keywords**: {keywords}
+
+Instructions:
+1. Extract all sections, paragraphs, commands, procedures, and examples related to this topic
+2. Include relevant context but exclude unrelated sections
+3. Maintain the original structure and formatting
+4. If the content contains code blocks, commands, or procedures, include them exactly as written
+5. Include any diagnostic steps, troubleshooting procedures, configuration examples, or best practices related to this topic
+
+Source Content:
+{content}
+
+Return only the extracted relevant content, preserving formatting and structure.
+"""
+
+            response = await self.openai_client.chat.completions.create(
+                model=self.config["openai_model"],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": extraction_prompt.format(
+                            title=topic["title"],
+                            summary=topic["summary"],
+                            keywords=", ".join(topic.get("keywords", [])),
+                            content=raw_content,
+                        ),
+                    }
+                ],
+                temperature=0.1,  # Low temperature for accurate extraction
+                max_tokens=4000,
+            )
+
+            extracted_content = response.choices[0].message.content.strip()
+
+            # Validate that we got meaningful content
+            if len(extracted_content) < 100:  # Too short to be useful
+                logger.warning(f"Extracted content too short for topic: {topic['title']}")
+                return None
+
+            return extracted_content
+
+        except Exception as e:
+            logger.error(f"Error extracting content for topic '{topic['title']}': {e}")
+            return None
+
+    async def _generate_focused_runbook(
+        self, topic_content: str, topic: Dict[str, str], source_url: str
+    ) -> Optional[str]:
+        """Generate a focused runbook for a specific topic.
+
+        Args:
+            topic_content: Content specific to this topic
+            topic: Topic metadata
+            source_url: Original source URL
+
+        Returns:
+            Standardized runbook content for the specific topic
+        """
+        try:
+            focused_prompt = f"""
+{self.standardization_prompt}
+
+SPECIFIC TOPIC: {topic['title']}
+TOPIC CONTEXT: {topic['summary']}
+
+Convert the following content into a focused, actionable runbook specifically for: {topic['title']}
+
+Ensure the runbook is:
+1. Focused specifically on this topic/problem area
+2. Contains actionable diagnostic steps and resolution procedures
+3. Includes Redis-specific commands and examples where relevant
+4. Provides clear escalation paths
+5. Uses the standard SRE runbook format
+
+Content to convert:
+{topic_content}
+
+Generate a complete, professional runbook following the standard format.
+"""
+
+            response = await self.openai_client.chat.completions.create(
+                model=self.config["openai_model"],
+                messages=[{"role": "user", "content": focused_prompt}],
+                temperature=0.3,
+                max_tokens=3000,
+            )
+
+            standardized_content = response.choices[0].message.content.strip()
+
+            # Validate the runbook format
+            if self._validate_runbook_format(standardized_content):
+                return standardized_content
+            else:
+                logger.warning(
+                    f"Generated focused runbook for '{topic['title']}' doesn't meet format requirements"
+                )
+                return None
+
+        except Exception as e:
+            logger.error(f"Error generating focused runbook for topic '{topic['title']}': {e}")
+            return None
 
     async def add_runbook_url(self, url: str) -> bool:
         """Add a new URL to the runbook generation list."""

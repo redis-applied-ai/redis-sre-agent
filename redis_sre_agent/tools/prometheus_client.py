@@ -193,21 +193,26 @@ class PrometheusClient:
         """Parse time range string to start datetime."""
         time_range = time_range.lower().strip()
 
-        # Parse format like "1h", "30m", "1d", etc.
-        if time_range.endswith("s"):
-            seconds = int(time_range[:-1])
-            return end_time - timedelta(seconds=seconds)
-        elif time_range.endswith("m"):
-            minutes = int(time_range[:-1])
-            return end_time - timedelta(minutes=minutes)
-        elif time_range.endswith("h"):
-            hours = int(time_range[:-1])
-            return end_time - timedelta(hours=hours)
-        elif time_range.endswith("d"):
-            days = int(time_range[:-1])
-            return end_time - timedelta(days=days)
-        else:
-            # Default to 1 hour if can't parse
+        try:
+            # Parse format like "1h", "30m", "1d", etc.
+            if time_range.endswith("s"):
+                seconds = int(time_range[:-1])
+                return end_time - timedelta(seconds=seconds)
+            elif time_range.endswith("m"):
+                minutes = int(time_range[:-1])
+                return end_time - timedelta(minutes=minutes)
+            elif time_range.endswith("h"):
+                hours = int(time_range[:-1])
+                return end_time - timedelta(hours=hours)
+            elif time_range.endswith("d"):
+                days = int(time_range[:-1])
+                return end_time - timedelta(days=days)
+            else:
+                # Default to 1 hour if can't parse
+                logger.warning(f"Could not parse time range '{time_range}', using 1h")
+                return end_time - timedelta(hours=1)
+        except ValueError:
+            # Default to 1 hour if can't parse the number
             logger.warning(f"Could not parse time range '{time_range}', using 1h")
             return end_time - timedelta(hours=1)
 

@@ -22,7 +22,7 @@ class TestSRETaskCollection:
 
     def test_sre_task_collection_populated(self):
         """Test that SRE task collection contains expected tasks."""
-        assert len(SRE_TASK_COLLECTION) == 4
+        assert len(SRE_TASK_COLLECTION) == 5
 
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
@@ -30,6 +30,7 @@ class TestSRETaskCollection:
             "search_runbook_knowledge",
             "check_service_health",
             "ingest_sre_document",
+            "process_agent_turn",
         ]
 
         for expected_task in expected_tasks:
@@ -59,7 +60,7 @@ class TestAnalyzeSystemMetrics:
 
         # Verify Redis operations
         mock_redis_client.hset.assert_called_once()
-        mock_redis_client.expire.assert_called_once_with(result["task_id"], 3600)
+        mock_redis_client.expire.assert_called_once_with(f"sre:metrics:{result['task_id']}", 3600)
 
     @pytest.mark.asyncio
     async def test_analyze_metrics_with_retry(self, mock_redis_client):
@@ -156,12 +157,40 @@ class TestCheckServiceHealth:
     @pytest.mark.asyncio
     async def test_health_check_success(self, mock_redis_client):
         """Test successful service health check."""
-        mock_redis_client.hset.return_value = 1
-        mock_redis_client.expire.return_value = True
+        mock_redis_client.set = AsyncMock(return_value=True)
+        mock_redis_client.expire = AsyncMock(return_value=True)
 
         endpoints = ["http://service1/health", "http://service2/health"]
 
-        with patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client):
+        # Mock HTTP responses
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"status": "healthy"})
+
+        # Create async context manager mock for aiohttp
+        class MockSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            def get(self, *args, **kwargs):
+                class MockContextManager:
+                    async def __aenter__(self):
+                        return mock_response
+
+                    async def __aexit__(self, *args):
+                        return None
+
+                return MockContextManager()
+
+        mock_session = MockSession()
+
+        with (
+            patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client),
+            patch("aiohttp.ClientSession", return_value=mock_session),
+        ):
             result = await check_service_health(
                 service_name="my-service", endpoints=endpoints, timeout=60
             )
@@ -180,7 +209,7 @@ class TestCheckServiceHealth:
         assert "timestamp" in health_check
 
         # Verify Redis storage
-        mock_redis_client.hset.assert_called_once()
+        mock_redis_client.set.assert_called_once()
         mock_redis_client.expire.assert_called_once()
 
     @pytest.mark.asyncio
@@ -200,9 +229,37 @@ class TestCheckServiceHealth:
     @pytest.mark.asyncio
     async def test_health_check_redis_failure(self, mock_redis_client):
         """Test health check with Redis storage failure."""
-        mock_redis_client.hset.side_effect = Exception("Redis error")
+        mock_redis_client.set = AsyncMock(side_effect=Exception("Redis error"))
 
-        with patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client):
+        # Mock HTTP responses
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"status": "healthy"})
+
+        # Create async context manager mock for aiohttp
+        class MockSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            def get(self, *args, **kwargs):
+                class MockContextManager:
+                    async def __aenter__(self):
+                        return mock_response
+
+                    async def __aexit__(self, *args):
+                        return None
+
+                return MockContextManager()
+
+        mock_session = MockSession()
+
+        with (
+            patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client),
+            patch("aiohttp.ClientSession", return_value=mock_session),
+        ):
             with pytest.raises(Exception, match="Redis error"):
                 await check_service_health(service_name="test", endpoints=["http://test/health"])
 
@@ -286,30 +343,43 @@ class TestTaskSystemManagement:
     """Test task system management functions."""
 
     @pytest.mark.asyncio
-    async def test_register_sre_tasks_success(self, mock_docket):
+    async def test_register_sre_tasks_success(self):
         """Test successful task registration."""
-        with patch(
-            "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
+        with (
+            patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class,
+            patch(
+                "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
+            ),
         ):
+
+            # Set up the mock properly
+            mock_docket_instance = AsyncMock()
+            mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
+            mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_docket_instance.register = AsyncMock()
+            mock_docket_class.return_value = mock_docket_instance
+
             await register_sre_tasks()
 
-        # Verify Docket was created and tasks registered
-        mock_docket.register.assert_called()
-        assert mock_docket.register.call_count == len(SRE_TASK_COLLECTION)
+            # Verify Docket was created and tasks registered
+            mock_docket_instance.register.assert_called()
+            assert mock_docket_instance.register.call_count == len(SRE_TASK_COLLECTION)
 
     @pytest.mark.asyncio
     async def test_register_sre_tasks_failure(self):
         """Test task registration failure."""
-        with patch("docket.Docket") as mock_docket_class:
+        with (
+            patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class,
+            patch(
+                "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
+            ),
+        ):
             mock_docket_instance = AsyncMock()
-            mock_docket_instance.__aenter__.side_effect = Exception("Connection failed")
+            mock_docket_instance.__aenter__ = AsyncMock(side_effect=Exception("Connection failed"))
             mock_docket_class.return_value = mock_docket_instance
 
-            with patch(
-                "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
-            ):
-                with pytest.raises(Exception, match="Connection failed"):
-                    await register_sre_tasks()
+            with pytest.raises(Exception, match="Connection failed"):
+                await register_sre_tasks()
 
     @pytest.mark.asyncio
     async def test_task_system_test_success(self):
@@ -330,7 +400,7 @@ class TestTaskSystemManagement:
     @pytest.mark.asyncio
     async def test_task_system_test_failure(self):
         """Test task system connectivity test failure."""
-        with patch("docket.Docket") as mock_docket_class:
+        with patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class:
             mock_docket_class.side_effect = Exception("Connection failed")
 
             with patch(

@@ -354,5 +354,73 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
     return asyncio.run(run_runbook_operations())
 
 
+@pipeline.command()
+@click.option("--source-dir", "-s", default="source_documents", help="Source documents directory")
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be ingested without actually ingesting"
+)
+@click.option("--artifacts-path", default="./artifacts", help="Path to artifacts storage")
+def ingest_sources(source_dir: str, dry_run: bool, artifacts_path: str):
+    """Ingest runbooks from source_documents directory using existing ingestion pipeline."""
+
+    async def run_source_ingestion():
+        from pathlib import Path
+
+        from ..pipelines.ingestion.processor import IngestionPipeline
+        from ..pipelines.scraper.base import ArtifactStorage
+
+        source_path = Path(source_dir)
+        if not source_path.exists():
+            click.echo(f"❌ Source directory does not exist: {source_path}")
+            return
+
+        click.echo(f"📂 Ingesting from: {source_path}")
+
+        if dry_run:
+            # Just list what would be processed
+            markdown_files = list(source_path.rglob("*.md"))
+            markdown_files = [f for f in markdown_files if f.name.lower() != "readme.md"]
+
+            click.echo(f"📋 Would process {len(markdown_files)} files:")
+            for md_file in markdown_files:
+                click.echo(f"   • {md_file.relative_to(source_path)}")
+            return
+
+        try:
+            # Use existing ingestion pipeline
+            storage = ArtifactStorage(artifacts_path)
+            pipeline = IngestionPipeline(storage)
+
+            results = await pipeline.ingest_source_documents(source_path)
+
+            successful = [r for r in results if r["status"] == "success"]
+            failed = [r for r in results if r["status"] == "error"]
+
+            click.echo("✅ Source document ingestion completed!")
+            click.echo(f"   📝 Successfully ingested: {len(successful)} documents")
+
+            if successful:
+                total_chunks = sum(r.get("chunks_indexed", 0) for r in successful)
+                click.echo(f"   📦 Total chunks indexed: {total_chunks}")
+
+                click.echo("   📚 Documents processed:")
+                for success in successful[:5]:  # Show first 5
+                    chunks = success.get("chunks_indexed", 0)
+                    click.echo(f"      • {success['title']} ({chunks} chunks)")
+                if len(successful) > 5:
+                    click.echo(f"      ... and {len(successful) - 5} more")
+
+            if failed:
+                click.echo(f"   ❌ Failed to ingest: {len(failed)} documents")
+                for failure in failed:
+                    click.echo(f"      • {failure['file']}: {failure['error']}")
+
+        except Exception as e:
+            click.echo(f"❌ Source ingestion failed: {e}")
+            raise
+
+    return asyncio.run(run_source_ingestion())
+
+
 if __name__ == "__main__":
     pipeline()

@@ -37,11 +37,12 @@ class TestWorkerSystem:
         """Test worker startup failure when Redis URL is missing."""
         with (
             patch("redis_sre_agent.worker.settings") as mock_settings,
-            patch("sys.exit") as mock_exit,
+            patch("sys.exit", side_effect=SystemExit) as mock_exit,
         ):
             mock_settings.redis_url = ""  # Empty Redis URL
 
-            await main()
+            with pytest.raises(SystemExit):
+                await main()
 
             # Should exit with error code 1
             mock_exit.assert_called_once_with(1)

@@ -6,6 +6,8 @@ A LangGraph-based Redis SRE Agent for intelligent infrastructure monitoring and 
 
 **Flow**: API/CLI → LangGraph Agent → SRE Tools → Redis/Monitoring Systems → Automated Response
 
+<img src="images/sre-arch-flow.png" style="max-width: 800px;"/>
+
 ## Core Components
 
 - **LangGraph Agent**: Multi-step workflow with semantic caching and quality evaluation

@@ -94,7 +94,7 @@ class TestOpenAIIntegration:
             assert indices_created is True
 
             # Get real components
-            vectorizer = get_vectorizer()
+            get_vectorizer()
             index = get_knowledge_index()
 
             # Verify index exists

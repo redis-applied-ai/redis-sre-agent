@@ -79,8 +79,8 @@ class TestDocumentProcessor:
         assert chunk["content"] == "This is a small document."
         assert chunk["chunk_index"] == 0
         assert chunk["category"] == "oss"
-        assert chunk["doc_type"] == "guide"
-        assert chunk["severity"] == "high"  # Note: enum conversion
+        assert chunk["doc_type"] == "documentation"
+        assert chunk["severity"] == "medium"
 
     def test_chunk_large_document(self, processor, sample_document):
         """Test chunking a large document into multiple chunks."""
@@ -220,9 +220,12 @@ class TestIngestionPipeline:
         """Mock Redis components for testing."""
         mock_index = AsyncMock()
         mock_vectorizer = AsyncMock()
-        mock_vectorizer.embed_many = AsyncMock(
-            return_value=[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]  # Sample embeddings
-        )
+
+        # Dynamic embeddings based on input size
+        async def mock_embed_many(texts):
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+        mock_vectorizer.embed_many = AsyncMock(side_effect=mock_embed_many)
 
         with patch(
             "redis_sre_agent.pipelines.ingestion.processor.get_knowledge_index"
@@ -288,7 +291,7 @@ class TestIngestionPipeline:
                 "content": f"This is test content for {category} category. " * 10,
                 "source_url": f"https://test.com/{category}",
                 "category": category,
-                "doc_type": "guide",
+                "doc_type": "documentation",
                 "severity": "medium",
                 "metadata": {"test": True},
             }
@@ -337,7 +340,7 @@ class TestIngestionPipeline:
                 "content": f"Content for document {i}. " * 20,
                 "source_url": f"https://test.com/doc{i}",
                 "category": category,
-                "doc_type": "guide",
+                "doc_type": "documentation",
                 "severity": "medium",
                 "metadata": {},
             }
@@ -346,9 +349,19 @@ class TestIngestionPipeline:
             with open(doc_path, "w") as f:
                 json.dump(doc_data, f)
 
-        result = await pipeline._process_category(
-            category_path, category, mock_index, mock_vectorizer
-        )
+        # Create mock deduplicator
+        with patch(
+            "redis_sre_agent.pipelines.ingestion.processor.DocumentDeduplicator"
+        ) as mock_dedup_class:
+            mock_deduplicator = AsyncMock()
+            mock_deduplicator.replace_document_chunks.return_value = (
+                3  # Return number of chunks indexed
+            )
+            mock_dedup_class.return_value = mock_deduplicator
+
+            result = await pipeline._process_category(
+                category_path, category, mock_index, mock_vectorizer, mock_deduplicator
+            )
 
         assert result["category"] == category
         assert result["documents_processed"] == 3
@@ -371,7 +384,7 @@ class TestIngestionPipeline:
             "content": "Valid content",
             "source_url": "https://test.com/valid",
             "category": category,
-            "doc_type": "guide",
+            "doc_type": "documentation",
             "severity": "medium",
             "metadata": {},
         }
@@ -383,9 +396,19 @@ class TestIngestionPipeline:
         with open(category_path / "invalid_doc.json", "w") as f:
             json.dump({"incomplete": "data"}, f)
 
-        result = await pipeline._process_category(
-            category_path, category, mock_index, mock_vectorizer
-        )
+        # Create mock deduplicator
+        with patch(
+            "redis_sre_agent.pipelines.ingestion.processor.DocumentDeduplicator"
+        ) as mock_dedup_class:
+            mock_deduplicator = AsyncMock()
+            mock_deduplicator.replace_document_chunks.return_value = (
+                1  # Return number of chunks indexed
+            )
+            mock_dedup_class.return_value = mock_deduplicator
+
+            result = await pipeline._process_category(
+                category_path, category, mock_index, mock_vectorizer, mock_deduplicator
+            )
 
         assert result["documents_processed"] == 1  # Only valid document
         assert len(result["errors"]) == 1  # One error for invalid document

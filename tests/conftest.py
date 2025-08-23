@@ -13,15 +13,60 @@ from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis as AsyncRedis
 from testcontainers.redis import RedisContainer
 
-# Test environment variables
-os.environ.update(
-    {
-        "REDIS_URL": "redis://localhost:6379/0",
-        "OPENAI_API_KEY": "test-openai-key",
-        "APP_NAME": "Redis SRE Agent Test",
-        "DEBUG": "true",
-    }
-)
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    # dotenv not available, skip loading
+    pass
+
+
+def pytest_addoption(parser):
+    """Add custom pytest command-line options."""
+    parser.addoption(
+        "--run-api-tests",
+        action="store_true",
+        default=False,
+        help="Run tests that make real API calls (OpenAI, etc.)",
+    )
+
+
+def pytest_configure(config):
+    """Configure pytest based on command-line options."""
+    # Set environment variables based on flags
+    if config.getoption("--run-api-tests"):
+        os.environ["OPENAI_INTEGRATION_TESTS"] = "true"
+        os.environ["AGENT_BEHAVIOR_TESTS"] = "true"
+        os.environ["INTEGRATION_TESTS"] = "true"  # Needed for redis_container fixture
+
+
+def pytest_collection_modifyitems(config, items):
+    """Add skip markers to tests based on configuration."""
+    # Skip marker for API tests that require OpenAI
+    skip_api = pytest.mark.skip(reason="Use --run-api-tests to run tests that make real API calls")
+
+    for item in items:
+        # Skip tests that require OpenAI API calls unless --run-api-tests flag is set
+        if (
+            "openai_integration" in item.keywords or "agent_behavior" in item.keywords
+        ) and not config.getoption("--run-api-tests"):
+            item.add_marker(skip_api)
+
+
+# Test environment variables - only set if not already present
+test_env = {
+    "REDIS_URL": "redis://localhost:6379/0",
+    "APP_NAME": "Redis SRE Agent Test",
+    "DEBUG": "true",
+}
+
+# Only set test API key if no real key is present
+if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "":
+    test_env["OPENAI_API_KEY"] = "test-openai-key"
+
+os.environ.update(test_env)
 
 
 @pytest.fixture
@@ -118,14 +163,17 @@ def mock_docket():
 @pytest.fixture
 def app_with_mocks():
     """FastAPI app with all dependencies mocked."""
-    os.environ.update(
-        {
-            "REDIS_URL": "redis://localhost:6379/0",
-            "OPENAI_API_KEY": "test-openai-key",
-            "APP_NAME": "Redis SRE Agent Test",
-            "DEBUG": "true",
-        }
-    )
+    # Don't override OPENAI_API_KEY if it's already set
+    app_test_env = {
+        "REDIS_URL": "redis://localhost:6379/0",
+        "APP_NAME": "Redis SRE Agent Test",
+        "DEBUG": "true",
+    }
+
+    if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "":
+        app_test_env["OPENAI_API_KEY"] = "test-openai-key"
+
+    os.environ.update(app_test_env)
 
     with (
         patch("redis_sre_agent.core.redis.Redis") as mock_redis,
@@ -192,7 +240,12 @@ def redis_container(request):
     container.start()
 
     # Update Redis URL for integration tests
-    redis_url = container.get_connection_url()
+    try:
+        redis_url = container.get_connection_url()
+    except AttributeError:
+        # Try alternative method names
+        redis_url = f"redis://localhost:{container.get_exposed_port(6379)}/0"
+
     os.environ["REDIS_URL"] = redis_url
 
     yield container

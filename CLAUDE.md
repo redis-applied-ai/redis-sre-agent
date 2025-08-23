@@ -62,6 +62,7 @@ docker-compose logs -f redis
 - Configuration: `redis_sre_agent/config.py`
 - Docker config: `docker-compose.yml`
 - Redis config: `monitoring/redis.conf`
+- **Source documents**: `source_documents/runbooks/` - SRE runbooks and troubleshooting guides
 
 ## Testing Scenarios
 The agent handles various Redis issues:

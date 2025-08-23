@@ -165,9 +165,12 @@ async def initialize_redis_infrastructure() -> dict:
     else:
         status["indices_created"] = "unavailable"
 
-    # Test vector search index after creation
-    vector_ok = await test_vector_search()
-    status["vector_search"] = "available" if vector_ok else "unavailable"
+    # Test vector search index after creation (only if Redis is available)
+    if redis_ok:
+        vector_ok = await test_vector_search()
+        status["vector_search"] = "available" if vector_ok else "unavailable"
+    else:
+        status["vector_search"] = "unavailable"
 
     return status
 

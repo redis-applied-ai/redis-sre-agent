@@ -1,12 +1,28 @@
 """Tests for Prometheus client."""
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
 
 from redis_sre_agent.tools.prometheus_client import PrometheusClient, get_prometheus_client
+
+
+def create_mock_session_with_response(mock_response):
+    """Helper to create properly mocked async session with context manager."""
+
+    class MockContextManager:
+        async def __aenter__(self):
+            return mock_response
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    mock_get = MagicMock(side_effect=lambda *args, **kwargs: MockContextManager())
+    mock_session = AsyncMock()
+    mock_session.get = mock_get
+    return mock_session
 
 
 class TestPrometheusClient:
@@ -76,9 +92,18 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
+        # Create a proper async context manager mock
+        class MockContextManager:
+            async def __aenter__(self):
+                return mock_response
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        mock_get = MagicMock(side_effect=lambda *args, **kwargs: MockContextManager())
+
         mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session.get = mock_get
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.query("up")
@@ -100,9 +125,7 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value={"status": "success", "data": {}})
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session = create_mock_session_with_response(mock_response)
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             await prometheus_client.query("cpu_usage", time=test_time)
@@ -119,9 +142,7 @@ class TestPrometheusClient:
         mock_response.status = 404
         mock_response.text = AsyncMock(return_value="Not Found")
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session = create_mock_session_with_response(mock_response)
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.query("invalid_metric")
@@ -137,9 +158,7 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session = create_mock_session_with_response(mock_response)
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.query("invalid{syntax")
@@ -170,9 +189,18 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
+        # Create a proper async context manager mock
+        class MockContextManager:
+            async def __aenter__(self):
+                return mock_response
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        mock_get = MagicMock(side_effect=lambda *args, **kwargs: MockContextManager())
+
         mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session.get = mock_get
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.query_range("cpu_usage", time_range="1h", step="15s")
@@ -200,9 +228,7 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session = create_mock_session_with_response(mock_response)
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.query_range("nonexistent_metric")
@@ -249,9 +275,7 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session = create_mock_session_with_response(mock_response)
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.get_targets()
@@ -269,9 +293,7 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session = create_mock_session_with_response(mock_response)
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.get_labels()
@@ -296,9 +318,7 @@ class TestPrometheusClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_session = create_mock_session_with_response(mock_response)
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.health_check()
@@ -311,8 +331,12 @@ class TestPrometheusClient:
     @pytest.mark.asyncio
     async def test_health_check_connection_error(self, prometheus_client):
         """Test health check with connection error."""
+
+        def mock_get_with_error(*args, **kwargs):
+            raise aiohttp.ClientError("Connection failed")
+
         mock_session = AsyncMock()
-        mock_session.get.side_effect = aiohttp.ClientError("Connection failed")
+        mock_session.get = mock_get_with_error
 
         with patch.object(prometheus_client, "_get_session", return_value=mock_session):
             result = await prometheus_client.health_check()
@@ -405,8 +429,11 @@ class TestPrometheusClientSingleton:
 
     def test_get_prometheus_client_with_default_url(self):
         """Test singleton with default URL when settings don't have prometheus_url."""
-        with patch("redis_sre_agent.tools.prometheus_client.settings", spec=[]) as mock_settings:
-            # Mock settings without prometheus_url attribute
+        with (
+            patch("redis_sre_agent.tools.prometheus_client.settings", spec=[]),
+            patch("redis_sre_agent.tools.prometheus_client._prometheus_client", None),
+        ):
+            # Mock settings without prometheus_url attribute and reset singleton
 
             client = get_prometheus_client()
 

@@ -66,6 +66,11 @@ coverage.xml
 .hypothesis/
 htmlcov/
 
+# Evaluation results
+*_evaluation_*.json
+test_artifacts/
+test_storage/
+
 # Logging
 *.log
 logs/
