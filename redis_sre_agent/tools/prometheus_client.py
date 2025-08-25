@@ -254,12 +254,23 @@ class PrometheusClient:
 
 # Singleton instance
 _prometheus_client: Optional[PrometheusClient] = None
+_prometheus_url_cached: Optional[str] = None
 
 
 def get_prometheus_client() -> PrometheusClient:
-    """Get or create Prometheus client singleton."""
-    global _prometheus_client
-    if _prometheus_client is None:
-        prometheus_url = getattr(settings, "prometheus_url", "http://localhost:9090")
-        _prometheus_client = PrometheusClient(prometheus_url)
+    """Get or create Prometheus client singleton.
+
+    If the configured URL changes between calls (e.g., tests patch settings),
+    recreate the singleton to reflect the new URL. Default to
+    "http://localhost:9090" when no URL is provided.
+    """
+    global _prometheus_client, _prometheus_url_cached
+
+    configured_url = getattr(settings, "prometheus_url", None) or "http://localhost:9090"
+
+    # Recreate client if none exists or URL changed
+    if _prometheus_client is None or _prometheus_url_cached != configured_url:
+        _prometheus_client = PrometheusClient(configured_url)
+        _prometheus_url_cached = configured_url
+
     return _prometheus_client

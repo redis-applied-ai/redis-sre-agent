@@ -111,12 +111,10 @@ async def search_runbook_knowledge(
     index = get_knowledge_index()
     vectorizer = get_vectorizer()
 
-    # Create query embedding
+    # Create query embedding (awaitable shim provided by core.redis.get_vectorizer)
     logger.info("Creating query embedding...")
-    query_vector = vectorizer.embed(query, as_buffer=True)
-    logger.info(
-        f"Query vector created, type: {type(query_vector)}, length: {len(query_vector) if hasattr(query_vector, '__len__') else 'None'}"
-    )
+    vectors = await vectorizer.embed_many([query])
+    query_vector = vectors[0]
 
     # Perform vector search
     from redisvl.query import VectorQuery
@@ -336,8 +334,9 @@ async def ingest_sre_document(
         index = get_knowledge_index()
         vectorizer = get_vectorizer()
 
-        # Create document embedding
-        content_vector = vectorizer.embed(content, as_buffer=True)
+        # Create document embedding (awaitable shim provided)
+        vectors = await vectorizer.embed_many([content])
+        content_vector = vectors[0]
 
         # Prepare document data
         doc_id = str(ULID())

@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Redis - Main database and vector store
   redis:
-    image: redis:8-alpine
+    image: redis:8.2.1
     ports:
       - "6379:6379"
     volumes:

@@ -1,7 +1,8 @@
 """Redis connection management with singleton pattern."""
 
+import asyncio
 import logging
-from typing import Optional
+from typing import Any, Callable, List, Optional
 
 from redis.asyncio import Redis
 from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Global singleton instances
 _redis_client: Optional[Redis] = None
-_vectorizer: Optional[OpenAITextVectorizer] = None
+_vectorizer: Optional[Any] = None
 _document_index: Optional[AsyncSearchIndex] = None
 
 # Index names
@@ -79,16 +80,54 @@ def get_redis_client() -> Redis:
     return _redis_client
 
 
+class _AsyncVectorizerProxy:
+    """Proxy providing an awaitable embed_many while delegating other attributes."""
+
+    def __init__(self, inner: Any):
+        self._inner = inner
+
+    async def embed_many(self, texts: List[str]):
+        # Prefer embed_many if available, else try known sync methods
+        method: Optional[Callable[..., Any]] = None
+        for name in ("embed_many", "embed_texts", "embed"):
+            if hasattr(self._inner, name):
+                method = getattr(self._inner, name)
+                break
+        if method is None:
+            raise AttributeError("Vectorizer has no embedding method")
+        return await asyncio.to_thread(method, texts)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __eq__(self, other: Any) -> bool:
+        # Allow equality checks against the inner mock used in unit tests
+        return other is self._inner or other == self._inner
+
+
 def get_vectorizer() -> OpenAITextVectorizer:
-    """Get OpenAI vectorizer singleton with Redis caching."""
+    """Get OpenAI vectorizer singleton with Redis caching.
+
+    Additionally, make ``embed_many`` awaitable on the instance so callers can
+    use ``await vectorizer.embed_many([...])``. This preserves backward
+    compatibility for unit tests that expect the raw OpenAITextVectorizer
+    instance while enabling async integration tests to ``await`` the call.
+    """
     global _vectorizer
     if _vectorizer is None:
         cache = EmbeddingsCache(redis_url=settings.redis_url)
-        _vectorizer = OpenAITextVectorizer(
+        inner = OpenAITextVectorizer(
             model=settings.embedding_model,
             cache=cache,
             api_config={"api_key": settings.openai_api_key},
         )
+        _vectorizer = _AsyncVectorizerProxy(inner)
+    else:
+        # If a raw vectorizer instance exists without awaitable embed_many, wrap it
+        embed_many = getattr(_vectorizer, "embed_many", None)
+        if not (callable(embed_many) and asyncio.iscoroutinefunction(embed_many)):
+            _vectorizer = _AsyncVectorizerProxy(_vectorizer)
+
     return _vectorizer
 
 

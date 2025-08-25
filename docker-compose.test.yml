@@ -6,10 +6,22 @@ version: '3.8'
 services:
   redis:
     ports:
-      - "7942:6379"  # Use unusual port 7942 externally
+      - "47942:6379"  # Obscure host port to avoid collisions
     volumes:
       - ./monitoring/redis-low-memory.conf:/usr/local/etc/redis/redis.conf
     command: redis-server /usr/local/etc/redis/redis.conf
+  redis-exporter:
+    ports:
+      - "19121:9121"
+  prometheus:
+    ports:
+      - "19090:9090"
+  grafana:
+    ports:
+      - "13000:3000"
+  node-exporter:
+    ports:
+      - "19100:9100"
     
   sre-agent:
     environment:

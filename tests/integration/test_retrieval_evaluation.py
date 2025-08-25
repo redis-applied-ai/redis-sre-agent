@@ -126,7 +126,9 @@ async def run_retrieval_evaluation():
         report = evaluator.generate_report(evaluation)
 
         # Save report
-        report_path = project_root / "retrieval_evaluation_report.md"
+        eval_reports_dir = project_root / "eval_reports"
+        eval_reports_dir.mkdir(exist_ok=True)
+        report_path = eval_reports_dir / "retrieval_evaluation_report.md"
         with open(report_path, "w") as f:
             f.write(report)
 

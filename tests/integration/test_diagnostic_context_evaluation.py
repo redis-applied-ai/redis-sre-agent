@@ -10,6 +10,7 @@ severity assessments.
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List
@@ -564,7 +565,19 @@ async def run_diagnostic_context_evaluation() -> List[Dict[str, Any]]:
 
     # Save detailed results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"diagnostic_context_evaluation_{timestamp}.json"
+    results_file = f"eval_reports/diagnostic_context_evaluation_{timestamp}.json"
+
+    # Ensure eval_reports directory exists
+    os.makedirs("eval_reports", exist_ok=True)
+
+    def json_serializer(obj):
+        """Custom JSON serializer to handle bytes and other non-serializable objects."""
+        if isinstance(obj, bytes):
+            return f"<bytes:{len(obj)} bytes>"
+        elif hasattr(obj, "__dict__"):
+            return str(obj)
+        else:
+            return str(obj)
 
     with open(results_file, "w") as f:
         json.dump(
@@ -583,6 +596,7 @@ async def run_diagnostic_context_evaluation() -> List[Dict[str, Any]]:
             },
             f,
             indent=2,
+            default=json_serializer,
         )
 
     logger.info(f"\n💾 Detailed results saved to: {results_file}")

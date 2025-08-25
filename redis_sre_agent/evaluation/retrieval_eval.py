@@ -58,6 +58,8 @@ class RetrievalEvaluation:
     mean_ndcg_at_k: Dict[int, float]
     mean_average_precision: float
     results: List[RetrievalResult]
+    # Backward-compat alias expected by some tests
+    ndcg_at_k: Optional[Dict[int, float]] = None
 
 
 class RetrievalEvaluator:
@@ -314,7 +316,7 @@ class RetrievalEvaluator:
         average_precisions = [r.average_precision for r in results]
         mean_average_precision = statistics.mean(average_precisions) if average_precisions else 0.0
 
-        return RetrievalEvaluation(
+        eval_result = RetrievalEvaluation(
             test_cases=len(test_cases),
             mean_precision_at_k=mean_precision_at_k,
             mean_recall_at_k=mean_recall_at_k,
@@ -323,6 +325,14 @@ class RetrievalEvaluator:
             mean_average_precision=mean_average_precision,
             results=results,
         )
+
+        # Provide alias used in tests
+        eval_result.ndcg_at_k = mean_ndcg_at_k
+        return eval_result
+
+    # Backward-compat wrapper expected by tests
+    async def evaluate_retrieval(self, test_cases: List[RetrievalTestCase]):
+        return await self.evaluate_test_set(test_cases)
 
     def generate_report(self, evaluation: RetrievalEvaluation) -> str:
         """Generate a detailed evaluation report."""

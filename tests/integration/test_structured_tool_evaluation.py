@@ -8,6 +8,7 @@ reporting of tool usage, knowledge sources, and investigation methodology.
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List
@@ -696,7 +697,10 @@ async def run_structured_tool_evaluation() -> List[Dict[str, Any]]:
 
     # Save detailed results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"structured_tool_evaluation_{timestamp}.json"
+    results_file = f"eval_reports/structured_tool_evaluation_{timestamp}.json"
+
+    # Ensure eval_reports directory exists
+    os.makedirs("eval_reports", exist_ok=True)
 
     with open(results_file, "w") as f:
         json.dump(
@@ -746,9 +750,9 @@ async def test_structured_tool_evaluation():
     # Check structured reporting
     for result in successful_results:
         investigation_summary = result["investigation_summary"]
-        assert investigation_summary[
-            "found"
-        ], "Agent should provide structured investigation summary"
+        assert investigation_summary.get(
+            "found", False
+        ), "Agent should provide structured investigation summary"
 
     # Check tool compliance
     for result in successful_results:

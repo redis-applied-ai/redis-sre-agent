@@ -64,7 +64,7 @@ class DocumentDeduplicator:
             redis_client = self.index.client
             deleted_count = await redis_client.delete(*existing_keys)
             logger.info(f"Deleted {deleted_count} existing chunks for document {document_hash}")
-            return deleted_count
+            return int(deleted_count)
 
         except Exception as e:
             logger.error(f"Failed to delete existing chunks for {document_hash}: {e}")
@@ -119,7 +119,7 @@ class DocumentDeduplicator:
             return None
 
     async def should_replace_document(
-        self, document_hash: str, new_content_hash: str = None
+        self, document_hash: str, new_content_hash: Optional[str] = None
     ) -> bool:
         """Determine if a document should be replaced."""
         existing_metadata = await self.get_document_metadata(document_hash)

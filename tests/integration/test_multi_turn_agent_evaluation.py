@@ -12,6 +12,7 @@ This evaluation system tests the agent's ability to:
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -536,7 +537,10 @@ async def run_multi_turn_evaluation() -> List[Dict[str, Any]]:
 
     # Save detailed results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"multi_turn_evaluation_{timestamp}.json"
+    results_file = f"eval_reports/multi_turn_evaluation_{timestamp}.json"
+
+    # Ensure eval_reports directory exists
+    os.makedirs("eval_reports", exist_ok=True)
 
     with open(results_file, "w") as f:
         json.dump(

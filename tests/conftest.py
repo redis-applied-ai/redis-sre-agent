@@ -3,6 +3,8 @@ Test configuration and fixtures for Redis SRE Agent.
 """
 
 import os
+import subprocess
+import time
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -40,6 +42,34 @@ def pytest_configure(config):
         os.environ["OPENAI_INTEGRATION_TESTS"] = "true"
         os.environ["AGENT_BEHAVIOR_TESTS"] = "true"
         os.environ["INTEGRATION_TESTS"] = "true"  # Needed for redis_container fixture
+
+    # If running full suite and INTEGRATION_TESTS requested, ensure docker compose is up
+    if os.environ.get("INTEGRATION_TESTS") and not os.environ.get("CI"):
+        try:
+            # Start only infra services to avoid building app images during tests
+            subprocess.run(
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "docker-compose.yml",
+                    "-f",
+                    "docker-compose.test.yml",
+                    "up",
+                    "-d",
+                    "redis",
+                    "redis-exporter",
+                    "prometheus",
+                    "node-exporter",
+                    "grafana",
+                ],
+                check=False,
+            )
+            # Give services a moment to start
+            time.sleep(3)
+        except Exception:
+            # Non-fatal; testcontainers fallback will still work
+            pass
 
 
 def pytest_collection_modifyitems(config, items):
@@ -247,6 +277,8 @@ def redis_container(request):
         redis_url = f"redis://localhost:{container.get_exposed_port(6379)}/0"
 
     os.environ["REDIS_URL"] = redis_url
+    # Also expose Prometheus URL default for tests when docker-compose is used
+    os.environ.setdefault("PROMETHEUS_URL", "http://localhost:9090")
 
     yield container
 
@@ -262,7 +294,15 @@ async def async_redis_client(redis_container):
     if not redis_container:
         pytest.skip("Integration tests not enabled")
 
-    redis_url = redis_container.get_connection_url()
+    # Prefer the REDIS_URL set by the redis_container fixture; fall back to exposed port
+    try:
+        redis_url = os.environ.get("REDIS_URL")
+        if not redis_url:
+            # Fallback for older testcontainers APIs without get_connection_url
+            redis_url = f"redis://localhost:{redis_container.get_exposed_port(6379)}/0"
+    except AttributeError:
+        redis_url = f"redis://localhost:{redis_container.get_exposed_port(6379)}/0"
+
     client = AsyncRedis.from_url(redis_url)
     yield client
     await client.aclose()

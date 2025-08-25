@@ -8,11 +8,13 @@ Assesses technical accuracy, practical usefulness, and completeness of retrieved
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict
 
 import openai
 import pytest
+import redis
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.tools.sre_functions import search_runbook_knowledge
@@ -21,6 +23,36 @@ logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
 openai.api_key = settings.openai_api_key
+
+
+def check_redis_search_available() -> bool:
+    """Check if Redis with search capabilities is available (Redis 8+ or Redis Stack)."""
+    try:
+        r = redis.Redis.from_url(settings.redis_url)
+
+        # Test if FT.SEARCH command is available by checking command info
+        try:
+            # Try to get command info for FT.SEARCH
+            r.execute_command("COMMAND", "INFO", "FT.SEARCH")
+            return True
+        except redis.ResponseError:
+            # FT.SEARCH command not available
+            pass
+
+        # Fallback: check for search module in Redis with modules
+        modules = r.module_list()
+        for module in modules:
+            if module[b"name"] in [b"search", b"searchlight"] and module[b"ver"] >= 20600:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+redis_search_available = check_redis_search_available()
+redis_search_required = pytest.mark.skipif(
+    not redis_search_available, reason="Redis 8+ or Redis Stack with search module required"
+)
 
 
 JUDGE_SYSTEM_PROMPT = """You are an expert Redis Site Reliability Engineer with 10+ years of production experience managing Redis at scale. You will evaluate search results from a Redis SRE knowledge base.
@@ -474,7 +506,10 @@ async def run_comprehensive_llm_judge_evaluation():
 
     # Save detailed results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"llm_judge_evaluation_{timestamp}.json"
+    results_file = f"eval_reports/llm_judge_evaluation_{timestamp}.json"
+
+    # Ensure eval_reports directory exists
+    os.makedirs("eval_reports", exist_ok=True)
 
     with open(results_file, "w") as f:
         json.dump(
@@ -498,18 +533,23 @@ async def run_comprehensive_llm_judge_evaluation():
 
     logger.info(f"\n💾 Detailed results saved to: {results_file}")
 
-    if avg_overall >= 4.0:
-        logger.info("\n🎉 EXCELLENT: Redis SRE search quality meets production standards!")
-    elif avg_overall >= 3.0:
-        logger.info("\n✅ GOOD: Strong search quality with room for targeted improvements")
+    # Only emit summary classification when we have valid evaluations
+    if valid_evaluations:
+        if avg_overall >= 4.0:
+            logger.info("\n🎉 EXCELLENT: Redis SRE search quality meets production standards!")
+        elif avg_overall >= 3.0:
+            logger.info("\n✅ GOOD: Strong search quality with room for targeted improvements")
+        else:
+            logger.info("\n⚠️  NEEDS WORK: Search quality requires significant improvements")
     else:
-        logger.info("\n⚠️  NEEDS WORK: Search quality requires significant improvements")
+        logger.info("\n⚠️  No valid evaluations; infrastructure may be unavailable.")
 
     return evaluations
 
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@redis_search_required
 async def test_llm_judge_evaluation():
     """Test comprehensive LLM judge evaluation of Redis SRE search quality."""
     evaluations = await run_comprehensive_llm_judge_evaluation()
@@ -539,6 +579,7 @@ async def test_llm_judge_evaluation():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@redis_search_required
 async def test_single_scenario_evaluation():
     """Test evaluation of a single scenario for faster feedback."""
     # Test just the connection scenario that we know performs well

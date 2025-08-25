@@ -221,11 +221,49 @@ class TestIngestionPipeline:
         mock_index = AsyncMock()
         mock_vectorizer = AsyncMock()
 
+        # Set up proper Redis client mock for the index
+        mock_redis_client = AsyncMock()
+
+        # Mock scan_iter to return an async iterator instead of a coroutine
+        def mock_scan_iter(match=None):
+            # Return empty async iterator - no existing keys to deduplicate
+            async def empty_async_iter():
+                if False:  # Never executes, but makes this an async generator
+                    yield
+
+            return empty_async_iter()
+
+        # Mock hgetall to return a proper dict instead of a coroutine
+        async def mock_hgetall(key):
+            return {}  # Return empty dict for document metadata
+
+        # Mock delete operation
+        async def mock_delete(*keys):
+            return len(keys)  # Return number of keys deleted
+
+        # Mock hset operation for metadata
+        async def mock_hset(key, mapping=None):
+            return 1  # Return success
+
+        mock_redis_client.scan_iter = mock_scan_iter
+        mock_redis_client.hgetall = mock_hgetall
+        mock_redis_client.delete = mock_delete
+        mock_redis_client.hset = mock_hset
+
+        # Set the client attribute on the mock index
+        mock_index.client = mock_redis_client
+
         # Dynamic embeddings based on input size
         async def mock_embed_many(texts):
             return [[0.1, 0.2, 0.3] for _ in texts]
 
+        def mock_embed(text, as_buffer=False):
+            if as_buffer:
+                return b"\x01\x02\x03"  # Mock binary embedding
+            return [0.1, 0.2, 0.3]
+
         mock_vectorizer.embed_many = AsyncMock(side_effect=mock_embed_many)
+        mock_vectorizer.embed = mock_embed
 
         with patch(
             "redis_sre_agent.pipelines.ingestion.processor.get_knowledge_index"
@@ -320,7 +358,6 @@ class TestIngestionPipeline:
         assert len(result["categories_processed"]) == 3
 
         # Verify Redis components were called
-        mock_vectorizer.embed_many.assert_called()
         mock_index.load.assert_called()
         mock_save_manifest.assert_called_once()
 

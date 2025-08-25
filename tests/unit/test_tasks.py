@@ -1,7 +1,7 @@
 """Unit tests for Docket task system and SRE tasks."""
 
 from datetime import timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from docket import Retry
@@ -356,7 +356,7 @@ class TestTaskSystemManagement:
             mock_docket_instance = AsyncMock()
             mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
             mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_docket_instance.register = AsyncMock()
+            mock_docket_instance.register = Mock()  # Synchronous, not async
             mock_docket_class.return_value = mock_docket_instance
 
             await register_sre_tasks()

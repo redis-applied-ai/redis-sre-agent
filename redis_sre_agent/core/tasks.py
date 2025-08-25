@@ -94,10 +94,13 @@ async def analyze_system_metrics(
             "raw_metrics": metrics_data,
         }
 
-        # Store result in Redis for retrieval
+        # Store result in Redis for retrieval (serialize to a single field to avoid
+        # passing complex types directly to HSET)
+        import json
+
         client = get_redis_client()
         result_key = f"sre:metrics:{result['task_id']}"
-        await client.hset(result_key, mapping=result)
+        await client.hset(result_key, mapping={"data": json.dumps(result)})
         await client.expire(result_key, 3600)  # 1 hour TTL
 
         logger.info(f"Metrics analysis completed: {result['task_id']}")
