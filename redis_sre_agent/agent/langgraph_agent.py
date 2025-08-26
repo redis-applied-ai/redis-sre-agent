@@ -691,7 +691,12 @@ Please review this Redis SRE agent response for factual accuracy and provide you
 
         except Exception as e:
             logger.error(f"Error during fact-checking: {e}")
-            return {"has_errors": False, "validation_notes": "Fact-checking failed due to error"}
+            # For demo purposes, don't block on fact-check failures
+            return {
+                "has_errors": False, 
+                "validation_notes": f"Fact-checking unavailable ({str(e)[:50]}...)",
+                "demo_mode": True
+            }
 
     async def process_query_with_fact_check(
         self, query: str, session_id: str, user_id: str, max_iterations: int = 10
@@ -713,7 +718,7 @@ Please review this Redis SRE agent response for factual accuracy and provide you
         # Fact-check the response
         fact_check_result = await self._fact_check_response(response)
 
-        if fact_check_result.get("has_errors"):
+        if fact_check_result.get("has_errors") and not fact_check_result.get("demo_mode"):
             logger.warning("Fact-check identified errors in agent response")
 
             # Create research query based on suggested topics
@@ -728,20 +733,27 @@ My original query was: {query}
 Please use the search_runbook_knowledge tool extensively to find authoritative information about these Redis concepts, then provide a corrected and more accurate response."""
 
                 logger.info("Initiating corrective research query")
-                # Process the corrective query
-                corrected_response = await self.process_query(
-                    research_query, session_id, user_id, max_iterations
-                )
+                try:
+                    # Process the corrective query
+                    corrected_response = await self.process_query(
+                        research_query, session_id, user_id, max_iterations
+                    )
 
-                # Add a note about the correction
-                final_response = f"""## Corrected Response
+                    # Add a note about the correction
+                    final_response = f"""## Corrected Response
 
 {corrected_response}
 
 ---
 *Note: This response has been fact-checked and corrected to ensure technical accuracy.*
 """
-                return final_response
+                    return final_response
+                except Exception as correction_error:
+                    logger.error(f"Error during correction attempt: {correction_error}")
+                    # Fall back to original response rather than failing
+                    return f"{response}\n\n*Note: Attempted fact-check correction but encountered an error.*"
+        elif fact_check_result.get("demo_mode"):
+            logger.info("Fact-check completed: Using original response (demo mode)")
 
         return response
 
