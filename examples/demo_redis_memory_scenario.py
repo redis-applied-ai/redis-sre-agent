@@ -321,60 +321,130 @@ class RedisSREDemo:
         clients_info = self.redis_client.info("clients")
         current_clients = clients_info.get("connected_clients", 0)
 
-        # Get maxclients setting
+        # Get original maxclients setting
         try:
             maxclients_result = self.redis_client.config_get("maxclients")
-            maxclients = int(maxclients_result.get("maxclients", 10000))
+            original_maxclients = int(maxclients_result.get("maxclients", 10000))
         except Exception:
-            maxclients = 10000
+            original_maxclients = 10000
 
         print(f"   Current connected clients: {current_clients}")
-        print(f"   Maximum clients allowed: {maxclients}")
-        print(f"   Connection utilization: {(current_clients / maxclients * 100):.1f}%")
+        print(f"   Original maximum clients: {original_maxclients}")
 
-        self.print_step(2, "Simulating multiple client connections")
+        self.print_step(2, "Creating connection pressure scenario")
 
-        # Create multiple connections to simulate load
+        # Set a low connection limit to create a realistic demo scenario
+        # This simulates a constrained environment or misconfiguration
+        demo_maxclients = 75  # Low limit to create pressure with our test connections
+        
+        print(f"   Setting maxclients to {demo_maxclients} for connection pressure demo...")
+        self.redis_client.config_set("maxclients", str(demo_maxclients))
+        
+        # Verify the setting was applied
+        updated_result = self.redis_client.config_get("maxclients")
+        current_maxclients = int(updated_result.get("maxclients", demo_maxclients))
+        print(f"   Connection limit reduced to: {current_maxclients}")
+        print(f"   Current utilization: {(current_clients / current_maxclients * 100):.1f}%")
+
+        self.print_step(3, "Simulating connection flood attack")
+
+        # Create connections that will approach the limit
         test_connections = []
-        max_test_connections = min(50, maxclients // 4)  # Don't exceed 25% of limit
+        # Target 85-90% of the connection limit
+        target_connections = int(current_maxclients * 0.85) - current_clients
+        target_connections = max(20, min(target_connections, 60))  # Ensure reasonable range
 
-        print(f"   Creating {max_test_connections} test connections...")
+        print(f"   Attempting to create {target_connections} concurrent connections...")
+        print(f"   This will push utilization to ~85% of the {current_maxclients} connection limit")
 
+        connection_errors = 0
+        successful_connections = 0
+        
         try:
-            for i in range(max_test_connections):
-                conn = redis.Redis(host="localhost", port=self.redis_port, decode_responses=True)
-                conn.ping()  # Ensure connection is established
-                test_connections.append(conn)
+            for i in range(target_connections):
+                try:
+                    conn = redis.Redis(
+                        host="localhost", 
+                        port=self.redis_port, 
+                        decode_responses=True,
+                        socket_connect_timeout=2,  # Short timeout to detect connection issues
+                        socket_timeout=2
+                    )
+                    conn.ping()  # Ensure connection is established
+                    test_connections.append(conn)
+                    successful_connections += 1
 
-                if i % 10 == 0:
-                    print(f"   Created {i + 1}/{max_test_connections} connections")
+                    if (i + 1) % 15 == 0 or i == target_connections - 1:
+                        print(f"   Progress: {i + 1}/{target_connections} connections attempted...")
+                    
+                    # Add some delay to simulate realistic connection patterns
+                    time.sleep(0.05)
+                    
+                except redis.ConnectionError as e:
+                    connection_errors += 1
+                    if connection_errors == 1:
+                        print(f"   ⚠️  Connection rejected: {str(e)}")
+                        print(f"   This indicates we're hitting Redis connection limits!")
+                    break  # Stop trying once we hit the limit
+                except Exception as e:
+                    connection_errors += 1
+                    if connection_errors <= 3:  # Don't spam errors
+                        print(f"   ❌ Connection error: {str(e)}")
 
             # Check connection state after simulation
             time.sleep(1)
             clients_info_after = self.redis_client.info("clients")
             clients_after = clients_info_after.get("connected_clients", 0)
 
-            print(f"   Connections after simulation: {clients_after}")
-            print(f"   Connection increase: +{clients_after - current_clients}")
+            print(f"   ✅ Successfully created: {successful_connections} connections")
+            print(f"   ❌ Connection errors: {connection_errors}")
+            print(f"   📊 Total connected clients: {clients_after}")
+            print(f"   📈 Connection utilization: {(clients_after / current_maxclients * 100):.1f}%")
 
-            if clients_after / maxclients > 0.8:
+            if clients_after / current_maxclients > 0.9:
+                print("   🚨 CRITICAL: Connection exhaustion imminent!")
+            elif clients_after / current_maxclients > 0.8:
                 print("   🚨 HIGH CONNECTION USAGE DETECTED!")
-            elif clients_after / maxclients > 0.6:
+            elif clients_after / current_maxclients > 0.6:
                 print("   ⚠️  ELEVATED CONNECTION USAGE")
+
+            # Add some blocked clients by trying to create more connections
+            if connection_errors == 0:  # Only if we haven't hit limits yet
+                print("   🧪 Testing connection limit by creating additional connections...")
+                extra_attempts = 5
+                blocked_attempts = 0
+                for i in range(extra_attempts):
+                    try:
+                        extra_conn = redis.Redis(
+                            host="localhost", 
+                            port=self.redis_port, 
+                            socket_connect_timeout=1
+                        )
+                        extra_conn.ping()
+                        test_connections.append(extra_conn)
+                    except:
+                        blocked_attempts += 1
+                
+                if blocked_attempts > 0:
+                    print(f"   🚨 {blocked_attempts}/{extra_attempts} additional connection attempts blocked!")
 
             # Run diagnostics and agent consultation
             await self._run_diagnostics_and_agent_query(
-                f"Redis connection analysis - currently {clients_after} connections out of {maxclients} maximum ({(clients_after / maxclients * 100):.1f}% utilization). Need guidance on connection management and troubleshooting potential connection issues."
+                "The application team has reported user complaints. Please analyze the Redis diagnostics and provide recommendations."
             )
 
         finally:
             # Cleanup test connections
-            self.print_step(4, "Cleaning up test connections")
+            self.print_step(4, "Cleaning up test connections and restoring settings")
             for conn in test_connections:
                 try:
                     conn.close()
                 except Exception:
                     pass
+
+            # Restore original maxclients setting
+            self.redis_client.config_set("maxclients", str(original_maxclients))
+            print(f"   Restored maxclients to original value: {original_maxclients}")
 
             time.sleep(1)
             final_clients_info = self.redis_client.info("clients")
