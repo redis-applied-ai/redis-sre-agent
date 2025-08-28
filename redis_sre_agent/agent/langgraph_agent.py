@@ -39,7 +39,7 @@ SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering
 **STEP 2**: **MANDATORY INVESTIGATION**: Examine sample keys, TTL coverage, and persistence config to determine data type
 **STEP 3**: DETERMINE if Redis is used for cache (high TTL %, no persistence) or persistent data (low TTL %, persistence enabled)
 **STEP 4**: INVESTIGATE memory consumers - which key patterns are consuming the most memory
-**STEP 5**: SEARCH knowledge base for solutions appropriate to the CONFIRMED usage pattern  
+**STEP 5**: SEARCH knowledge base for solutions appropriate to the CONFIRMED usage pattern
 **STEP 6**: PROVIDE remediation steps that are SAFE for the detected usage pattern
 
 **DIAGNOSTIC DATA**: Most queries will include current Redis diagnostic data. Analyze this data first to identify problems.
@@ -55,7 +55,7 @@ SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering
 ## Tool Usage for Follow-up
 
 **`get_detailed_redis_diagnostics`**: When you need deeper analysis of specific problem areas (memory, performance, etc.)
-**`search_runbook_knowledge`**: To find immediate remediation steps for discovered problems  
+**`search_runbook_knowledge`**: To find immediate remediation steps for discovered problems
 **`check_service_health`**: Only if no diagnostic data was provided in the query
 
 ## Immediate Action Focus
@@ -99,7 +99,7 @@ When you find problems, prioritize:
 
 Search for immediate remediation steps for discovered problems (examples):
 - "Redis OOM prevention" (when memory approaching limits with noeviction)
-- "Redis memory pressure immediate response" (when memory usage critical) 
+- "Redis memory pressure immediate response" (when memory usage critical)
 - "Redis slow query analysis" (when slowlog shows performance issues)
 - "Redis configuration emergency fixes" (when dangerous settings detected)
 - Search for any specific problem patterns you discover in the diagnostic data
@@ -416,7 +416,7 @@ class SRELangGraphAgent:
                     initial_delay=self.settings.llm_initial_delay,
                     backoff_factor=self.settings.llm_backoff_factor,
                 )
-                logger.debug(f"Agent LLM call successful after potential retries")
+                logger.debug("Agent LLM call successful after potential retries")
             except Exception as e:
                 logger.error(f"Agent LLM call failed after all retries: {str(e)}")
                 # Fallback response to prevent workflow failure
@@ -811,9 +811,9 @@ Please review this Redis SRE agent response for factual accuracy and provide you
             logger.error(f"Error during fact-checking: {e}")
             # For demo purposes, don't block on fact-check failures
             return {
-                "has_errors": False, 
+                "has_errors": False,
                 "validation_notes": f"Fact-checking unavailable ({str(e)[:50]}...)",
-                "demo_mode": True
+                "demo_mode": True,
             }
 
     async def process_query_with_fact_check(
@@ -880,11 +880,11 @@ Provide a corrected response that eliminates all safety violations. Focus on saf
                             return corrected_response
                         else:
                             logger.error("Correction still unsafe - manual review required")
-                            return f"⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
+                            return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
 
                     except Exception as correction_error:
                         logger.error(f"Error during safety correction: {correction_error}")
-                        return f"⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks."
+                        return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks."
 
         # Fact-check the response (if it passed safety evaluation)
         fact_check_result = await self._fact_check_response(response)

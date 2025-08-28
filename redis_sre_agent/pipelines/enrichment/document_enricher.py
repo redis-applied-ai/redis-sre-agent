@@ -217,7 +217,7 @@ class DocumentEnricher:
             batch = documents[i : i + batch_size]
 
             logger.info(
-                f"Enriching batch {i//batch_size + 1}/{(len(documents) + batch_size - 1)//batch_size}"
+                f"Enriching batch {i // batch_size + 1}/{(len(documents) + batch_size - 1) // batch_size}"
             )
 
             # Process batch concurrently
@@ -227,7 +227,7 @@ class DocumentEnricher:
             # Handle results and exceptions
             for j, result in enumerate(batch_results):
                 if isinstance(result, Exception):
-                    logger.error(f"Failed to enrich document {i+j}: {result}")
+                    logger.error(f"Failed to enrich document {i + j}: {result}")
                     enriched_docs.append(batch[j])  # Keep original if enrichment fails
                 else:
                     enriched_docs.append(result)

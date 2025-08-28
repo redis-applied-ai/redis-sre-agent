@@ -271,9 +271,7 @@ redis-cli CONFIG GET "*"</pre>
         # Mock OpenAI response
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[
-            0
-        ].message.content = """# Redis Memory Management
+        mock_response.choices[0].message.content = """# Redis Memory Management
 
 ## Overview
 Redis memory optimization procedures for production environments.

@@ -312,25 +312,25 @@ class MultiTurnAgentEvaluator:
         """Use LLM judge to evaluate agent performance."""
 
         evaluation_prompt = f"""
-## Scenario: {scenario['scenario']}
+## Scenario: {scenario["scenario"]}
 
-**Context**: {scenario['description']}
+**Context**: {scenario["description"]}
 
-**User Query**: "{scenario['user_query']}"
+**User Query**: "{scenario["user_query"]}"
 
-**Required Tools**: {scenario.get('required_tools', [])}
+**Required Tools**: {scenario.get("required_tools", [])}
 
 ## Agent Performance Analysis
 
 **Tool Usage Summary**:
-- Total tool calls: {tool_analysis['total_tool_calls']}
-- Tools used: {list(tool_analysis['tool_counts'].keys())}
-- Tool sequence: {tool_analysis['tool_sequence']}
-- Required tools covered: {tool_analysis['required_coverage']:.1%}
-- Missing required tools: {tool_analysis['missing_tools']}
+- Total tool calls: {tool_analysis["total_tool_calls"]}
+- Tools used: {list(tool_analysis["tool_counts"].keys())}
+- Tool sequence: {tool_analysis["tool_sequence"]}
+- Required tools covered: {tool_analysis["required_coverage"]:.1%}
+- Missing required tools: {tool_analysis["missing_tools"]}
 
 **Agent Response**:
-{agent_response.get('content', 'No response content')}
+{agent_response.get("content", "No response content")}
 
 ## Evaluation Required
 
@@ -344,7 +344,7 @@ Assess this agent's performance on a scale of 1-5 for each dimension:
 6. **Completeness**: Did it provide comprehensive guidance?
 
 Also assess whether the agent successfully met these scenario-specific criteria:
-{json.dumps(scenario.get('success_criteria', {}), indent=2)}
+{json.dumps(scenario.get("success_criteria", {}), indent=2)}
 
 Format your response as JSON:
 ```json

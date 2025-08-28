@@ -4,13 +4,13 @@ Redis SRE Agent - Interactive Demo
 
 This comprehensive demo showcases the Redis SRE Agent's capabilities across multiple scenarios:
 1. Memory Pressure Analysis - Load Redis and diagnose memory issues
-2. Connection Issues Simulation - Simulate and resolve connection problems  
+2. Connection Issues Simulation - Simulate and resolve connection problems
 3. Performance Degradation - Analyze slow operations and optimization
 4. Full Health Check - Complete diagnostic suite with agent consultation
 
 Usage:
     python demo_redis_memory_scenario.py [--scenario <name>] [--auto-run]
-    
+
 Options:
     --scenario: Run specific scenario (memory, connections, performance, health)
     --auto-run: Run all scenarios automatically without user input
@@ -42,7 +42,7 @@ class RedisSREDemo:
             "memory": self.memory_pressure_scenario,
             "connections": self.connection_issues_scenario,
             "performance": self.performance_scenario,
-            "health": self.full_health_check
+            "health": self.full_health_check,
         }
         self._setup_demo_logging()
 
@@ -101,7 +101,9 @@ class RedisSREDemo:
                 continue
 
         print("❌ Redis not available on any port. Please start Redis first:")
-        print("   For low memory demo: docker-compose -f docker-compose.yml -f docker-compose.test.yml up redis -d")
+        print(
+            "   For low memory demo: docker-compose -f docker-compose.yml -f docker-compose.test.yml up redis -d"
+        )
         print("   For regular demo: docker-compose up redis -d")
         return False
 
@@ -119,13 +121,13 @@ class RedisSREDemo:
         while True:
             try:
                 choice = input("\nSelect scenario (0-5): ").strip()
-                if choice in ['0', '1', '2', '3', '4', '5']:
+                if choice in ["0", "1", "2", "3", "4", "5"]:
                     return choice
                 else:
                     print("❌ Invalid choice, please select 0-5")
             except KeyboardInterrupt:
                 print("\n👋 Demo interrupted by user")
-                return '0'
+                return "0"
 
     async def memory_pressure_scenario(self):
         """Run memory pressure analysis scenario."""
@@ -323,7 +325,7 @@ class RedisSREDemo:
         try:
             maxclients_result = self.redis_client.config_get("maxclients")
             maxclients = int(maxclients_result.get("maxclients", 10000))
-        except:
+        except Exception:
             maxclients = 10000
 
         print(f"   Current connected clients: {current_clients}")
@@ -371,7 +373,7 @@ class RedisSREDemo:
             for conn in test_connections:
                 try:
                     conn.close()
-                except:
+                except Exception:
                     pass
 
             time.sleep(1)
@@ -752,21 +754,21 @@ Analyze the diagnostic data above to identify problems and provide immediate rem
         while True:
             choice = self.show_main_menu()
 
-            if choice == '0':
+            if choice == "0":
                 print("\n👋 Thank you for trying the Redis SRE Agent demo!")
                 break
-            elif choice == '1':
+            elif choice == "1":
                 await self.memory_pressure_scenario()
-            elif choice == '2':
+            elif choice == "2":
                 await self.connection_issues_scenario()
-            elif choice == '3':
+            elif choice == "3":
                 await self.performance_scenario()
-            elif choice == '4':
+            elif choice == "4":
                 await self.full_health_check()
-            elif choice == '5':
+            elif choice == "5":
                 print("\n🚀 Running all scenarios...")
                 for name, scenario_func in self.scenarios.items():
-                    print(f"\n{'='*15} {name.title()} Scenario {'='*15}")
+                    print(f"\n{'=' * 15} {name.title()} Scenario {'=' * 15}")
                     await scenario_func()
                     if name != list(self.scenarios.keys())[-1]:
                         print("\n⏸️  Pausing 3 seconds before next scenario...")
@@ -810,11 +812,7 @@ async def main():
 
     # Run the demo
     demo = RedisSREDemo()
-    await demo.run_interactive_demo(
-        auto_run=args.auto_run,
-        specific_scenario=args.scenario
-    )
-
+    await demo.run_interactive_demo(auto_run=args.auto_run, specific_scenario=args.scenario)
 
 
 if __name__ == "__main__":

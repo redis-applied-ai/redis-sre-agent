@@ -142,9 +142,9 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
 
             evaluation_prompt = f"""
 ## Test Case Context
-**User Query**: {test_case.get('query', 'N/A')}
-**Diagnostic Data**: {json.dumps(test_case.get('diagnostic_data', {}), indent=2) if test_case.get('diagnostic_data') else 'None provided'}
-**Expected Elements**: {test_case.get('expected_elements', 'None specified')}
+**User Query**: {test_case.get("query", "N/A")}
+**Diagnostic Data**: {json.dumps(test_case.get("diagnostic_data", {}), indent=2) if test_case.get("diagnostic_data") else "None provided"}
+**Expected Elements**: {test_case.get("expected_elements", "None specified")}
 
 ## Evaluation Criteria
 {criteria_details}
@@ -239,7 +239,7 @@ class EvaluationSuite:
 
         for i, test_case in enumerate(self.test_cases):
             logger.info(
-                f"Running test case {i+1}/{len(self.test_cases)}: {test_case.get('name', 'Unnamed')}"
+                f"Running test case {i + 1}/{len(self.test_cases)}: {test_case.get('name', 'Unnamed')}"
             )
 
             try:
@@ -253,10 +253,10 @@ class EvaluationSuite:
                 result = await self.judge.evaluate_response(response, test_case, criteria)
                 results.append(result)
 
-                logger.info(f"Test case {i+1} completed: Score {result.overall_score:.1f}/100")
+                logger.info(f"Test case {i + 1} completed: Score {result.overall_score:.1f}/100")
 
             except Exception as e:
-                logger.error(f"Failed to run test case {i+1}: {e}")
+                logger.error(f"Failed to run test case {i + 1}: {e}")
                 results.append(
                     EvaluationResult(
                         test_case_id=test_case.get("id", f"test_{i}"),

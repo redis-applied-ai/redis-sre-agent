@@ -39,12 +39,14 @@ async def analyze_system_metrics(
         from ..tools.prometheus_client import get_prometheus_client
 
         prometheus = get_prometheus_client()
-        
+
         # Try to query Prometheus, but handle connection failures gracefully
         try:
             metrics_data = await prometheus.query_range(query=metric_query, time_range=time_range)
         except Exception as prom_error:
-            logger.warning(f"Prometheus unavailable ({prom_error}), using simulated metrics for demo")
+            logger.warning(
+                f"Prometheus unavailable ({prom_error}), using simulated metrics for demo"
+            )
             # Provide simulated metrics data for demo purposes
             metrics_data = {
                 "values": [
@@ -91,7 +93,9 @@ async def analyze_system_metrics(
                 "current_value": current_value,
                 "threshold_breached": threshold_breached,
                 "data_points": len(metrics_data.get("values", [])) if metrics_data else 0,
-                "metrics_source": "prometheus" if "values" in metrics_data and len(metrics_data["values"]) > 5 else "simulated",
+                "metrics_source": "prometheus"
+                if "values" in metrics_data and len(metrics_data["values"]) > 5
+                else "simulated",
             },
             "raw_metrics": metrics_data,
         }
@@ -111,15 +115,15 @@ async def search_redis_docs(
 ) -> Dict[str, Any]:
     """
     Search Redis official documentation for commands, configuration, and concepts.
-    
+
     Args:
         query: Search query (command name, configuration option, concept)
         doc_type: Filter by documentation type (commands, config, concepts, modules)
         limit: Maximum number of results (default: 3)
-        
+
     Returns:
         Search results with Redis documentation content
-        
+
     Examples:
         - search_redis_docs("MEMORY USAGE") - Find MEMORY USAGE command docs
         - search_redis_docs("maxmemory-policy", doc_type="config") - Config docs
@@ -127,15 +131,15 @@ async def search_redis_docs(
     """
     try:
         logger.info(f"Searching Redis docs: {query}")
-        
+
         # Redis documentation URLs for different types
         redis_docs_urls = {
             "commands": "https://redis.io/docs/latest/commands/",
-            "config": "https://redis.io/docs/latest/reference/configuration/", 
+            "config": "https://redis.io/docs/latest/reference/configuration/",
             "concepts": "https://redis.io/docs/latest/reference/",
-            "modules": "https://redis.io/docs/latest/modules/"
+            "modules": "https://redis.io/docs/latest/modules/",
         }
-        
+
         # Common Redis commands and their documentation
         command_docs = {
             "memory usage": {
@@ -143,35 +147,50 @@ async def search_redis_docs(
                 "syntax": "MEMORY USAGE key [SAMPLES count]",
                 "description": "Reports the number of bytes that a key and its value require to be stored in RAM.",
                 "returns": "Integer reply: the memory usage in bytes, or nil when the key does not exist.",
-                "examples": ["MEMORY USAGE mykey", "MEMORY USAGE mylist SAMPLES 5"]
+                "examples": ["MEMORY USAGE mykey", "MEMORY USAGE mylist SAMPLES 5"],
             },
             "info": {
-                "command": "INFO", 
+                "command": "INFO",
                 "syntax": "INFO [section ...]",
                 "description": "Returns information and statistics about the server in a format that is simple to parse by computers and easy to read by humans.",
-                "sections": ["memory", "clients", "stats", "replication", "cpu", "keyspace", "persistence"],
-                "examples": ["INFO memory", "INFO stats", "INFO"]
+                "sections": [
+                    "memory",
+                    "clients",
+                    "stats",
+                    "replication",
+                    "cpu",
+                    "keyspace",
+                    "persistence",
+                ],
+                "examples": ["INFO memory", "INFO stats", "INFO"],
             },
             "config get": {
                 "command": "CONFIG GET",
                 "syntax": "CONFIG GET parameter [parameter ...]",
                 "description": "Returns the current configuration parameters.",
-                "examples": ["CONFIG GET maxmemory", "CONFIG GET maxmemory-policy", "CONFIG GET save"]
+                "examples": [
+                    "CONFIG GET maxmemory",
+                    "CONFIG GET maxmemory-policy",
+                    "CONFIG GET save",
+                ],
             },
             "config set": {
-                "command": "CONFIG SET", 
+                "command": "CONFIG SET",
                 "syntax": "CONFIG SET parameter value [parameter value ...]",
                 "description": "Reconfigures the server at run time without the need to restart Redis.",
-                "examples": ["CONFIG SET maxmemory 100mb", "CONFIG SET maxmemory-policy allkeys-lru"]
+                "examples": [
+                    "CONFIG SET maxmemory 100mb",
+                    "CONFIG SET maxmemory-policy allkeys-lru",
+                ],
             },
             "slowlog": {
                 "command": "SLOWLOG",
                 "syntax": "SLOWLOG GET [count]",
                 "description": "Returns the Redis slow queries log.",
-                "examples": ["SLOWLOG GET", "SLOWLOG GET 10", "SLOWLOG LEN", "SLOWLOG RESET"]
-            }
+                "examples": ["SLOWLOG GET", "SLOWLOG GET 10", "SLOWLOG LEN", "SLOWLOG RESET"],
+            },
         }
-        
+
         # Configuration options
         config_docs = {
             "maxmemory": {
@@ -179,112 +198,114 @@ async def search_redis_docs(
                 "description": "Set a memory usage limit to the specified amount of bytes.",
                 "default": "0 (unlimited)",
                 "examples": ["maxmemory 100mb", "maxmemory 1gb"],
-                "related": ["maxmemory-policy", "maxmemory-samples"]
+                "related": ["maxmemory-policy", "maxmemory-samples"],
             },
             "maxmemory-policy": {
-                "option": "maxmemory-policy", 
+                "option": "maxmemory-policy",
                 "description": "How Redis will select what to remove when maxmemory is reached.",
                 "default": "noeviction",
                 "policies": {
                     "noeviction": "Return errors when memory limit reached",
                     "allkeys-lru": "Evict least recently used keys",
                     "volatile-lru": "Evict least recently used keys with expire set",
-                    "allkeys-lfu": "Evict least frequently used keys", 
+                    "allkeys-lfu": "Evict least frequently used keys",
                     "volatile-lfu": "Evict least frequently used keys with expire set",
                     "allkeys-random": "Evict random keys",
                     "volatile-random": "Evict random keys with expire set",
-                    "volatile-ttl": "Evict keys with expire set and shorter TTL first"
-                }
+                    "volatile-ttl": "Evict keys with expire set and shorter TTL first",
+                },
             },
             "save": {
                 "option": "save",
                 "description": "RDB persistence: save the dataset every N seconds if at least M changes occurred.",
                 "format": "save <seconds> <changes>",
-                "examples": ["save 900 1", "save 300 10", "save 60 10000"]
+                "examples": ["save 900 1", "save 300 10", "save 60 10000"],
             },
             "appendonly": {
-                "option": "appendonly", 
+                "option": "appendonly",
                 "description": "Enable AOF persistence mode.",
                 "values": ["yes", "no"],
-                "default": "no"
-            }
+                "default": "no",
+            },
         }
-        
+
         # Search through documentation
         results = []
         query_lower = query.lower()
-        
+
         # Search commands
         if not doc_type or doc_type == "commands":
             for cmd_key, cmd_info in command_docs.items():
-                if (query_lower in cmd_key or 
-                    query_lower in cmd_info["command"].lower() or
-                    query_lower in cmd_info["description"].lower()):
-                    results.append({
-                        "type": "command",
-                        "title": f"Redis Command: {cmd_info['command']}",
-                        "content": cmd_info,
-                        "relevance_score": 0.9 if query_lower in cmd_key else 0.7
-                    })
-        
+                if (
+                    query_lower in cmd_key
+                    or query_lower in cmd_info["command"].lower()
+                    or query_lower in cmd_info["description"].lower()
+                ):
+                    results.append(
+                        {
+                            "type": "command",
+                            "title": f"Redis Command: {cmd_info['command']}",
+                            "content": cmd_info,
+                            "relevance_score": 0.9 if query_lower in cmd_key else 0.7,
+                        }
+                    )
+
         # Search configuration
         if not doc_type or doc_type == "config":
             for config_key, config_info in config_docs.items():
-                if (query_lower in config_key or
-                    query_lower in config_info["description"].lower()):
-                    results.append({
-                        "type": "configuration",
-                        "title": f"Redis Config: {config_info['option']}",
-                        "content": config_info,
-                        "relevance_score": 0.9 if query_lower in config_key else 0.7
-                    })
-        
+                if query_lower in config_key or query_lower in config_info["description"].lower():
+                    results.append(
+                        {
+                            "type": "configuration",
+                            "title": f"Redis Config: {config_info['option']}",
+                            "content": config_info,
+                            "relevance_score": 0.9 if query_lower in config_key else 0.7,
+                        }
+                    )
+
         # Add conceptual documentation for common topics
         if not doc_type or doc_type == "concepts":
             concepts = {
                 "eviction": {
                     "title": "Redis Memory Eviction Policies",
-                    "content": "Redis eviction policies determine how Redis selects keys to evict when maxmemory limit is reached. Choose based on use case: LRU for caches, LFU for frequency-based access, volatile-* for keys with TTL only."
+                    "content": "Redis eviction policies determine how Redis selects keys to evict when maxmemory limit is reached. Choose based on use case: LRU for caches, LFU for frequency-based access, volatile-* for keys with TTL only.",
                 },
                 "persistence": {
                     "title": "Redis Persistence (RDB vs AOF)",
-                    "content": "RDB: Point-in-time snapshots, good for backups. AOF: Logs every write operation, better durability. Can use both together for maximum data safety."
+                    "content": "RDB: Point-in-time snapshots, good for backups. AOF: Logs every write operation, better durability. Can use both together for maximum data safety.",
                 },
                 "memory": {
-                    "title": "Redis Memory Management", 
-                    "content": "Redis is in-memory database. Monitor used_memory, set maxmemory limits, choose appropriate eviction policy. Use MEMORY commands to analyze usage patterns."
-                }
+                    "title": "Redis Memory Management",
+                    "content": "Redis is in-memory database. Monitor used_memory, set maxmemory limits, choose appropriate eviction policy. Use MEMORY commands to analyze usage patterns.",
+                },
             }
-            
+
             for concept_key, concept_info in concepts.items():
                 if query_lower in concept_key or query_lower in concept_info["content"].lower():
-                    results.append({
-                        "type": "concept",
-                        "title": concept_info["title"],
-                        "content": concept_info["content"],
-                        "relevance_score": 0.8
-                    })
-        
+                    results.append(
+                        {
+                            "type": "concept",
+                            "title": concept_info["title"],
+                            "content": concept_info["content"],
+                            "relevance_score": 0.8,
+                        }
+                    )
+
         # Sort by relevance and limit results
         results.sort(key=lambda x: x["relevance_score"], reverse=True)
         results = results[:limit]
-        
+
         return {
             "query": query,
             "doc_type": doc_type,
             "results_count": len(results),
             "results": results,
-            "documentation_urls": redis_docs_urls
+            "documentation_urls": redis_docs_urls,
         }
-        
+
     except Exception as e:
         logger.error(f"Redis docs search failed: {e}")
-        return {
-            "query": query,
-            "error": str(e),
-            "results_count": 0,
-            "results": []
-        }
+        return {"query": query, "error": str(e), "results_count": 0, "results": []}
 
 
 async def search_runbook_knowledge(
@@ -373,13 +394,15 @@ async def search_runbook_knowledge(
     # If we got 0 results with a category filter, try again without category
     retry_attempted = False
     if len(formatted_results) == 0 and category is not None:
-        logger.info(f"No results found with category '{category}', retrying without category filter")
+        logger.info(
+            f"No results found with category '{category}', retrying without category filter"
+        )
         retry_attempted = True
-        
+
         # Retry the same search without category
         retry_results = await index.query(vector_query)
         logger.info(f"Retry query results: {len(retry_results) if retry_results else 0} found")
-        
+
         # Format retry results
         for i, result in enumerate(retry_results):
             if isinstance(result, dict):
@@ -424,10 +447,12 @@ async def search_runbook_knowledge(
     }
 
     if retry_attempted and len(formatted_results) > 0:
-        logger.info(f"Knowledge search completed after retry: {len(formatted_results)} results found")
+        logger.info(
+            f"Knowledge search completed after retry: {len(formatted_results)} results found"
+        )
     else:
         logger.info(f"Knowledge search completed: {len(formatted_results)} results found")
-    
+
     return result
 
 

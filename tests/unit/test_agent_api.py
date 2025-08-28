@@ -117,7 +117,8 @@ class TestAgentQueryEndpoint:
     def test_query_empty_query(self, client):
         """Test query with empty query string."""
         response = client.post(
-            "/api/v1/agent/query", json={"query": "", "user_id": "test-user"}  # Empty query
+            "/api/v1/agent/query",
+            json={"query": "", "user_id": "test-user"},  # Empty query
         )
 
         assert response.status_code == 422  # Validation error

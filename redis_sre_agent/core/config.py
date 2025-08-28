@@ -51,10 +51,12 @@ class Settings(BaseSettings):
     # Agent
     max_iterations: int = Field(default=10, description="Maximum agent iterations")
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
-    
+
     # LLM Retry Configuration
     llm_max_retries: int = Field(default=3, description="Maximum retries for LLM calls")
-    llm_initial_delay: float = Field(default=1.0, description="Initial delay for LLM retries (seconds)")
+    llm_initial_delay: float = Field(
+        default=1.0, description="Initial delay for LLM retries (seconds)"
+    )
     llm_backoff_factor: float = Field(default=2.0, description="Backoff factor for LLM retries")
 
     # Monitoring Integration (optional)

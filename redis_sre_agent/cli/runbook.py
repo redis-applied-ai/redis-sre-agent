@@ -233,11 +233,13 @@ def evaluate(input_dir: str, output_file: Optional[str]):
             click.echo("=" * 60)
             click.echo(f"📈 Average Score: {avg_score:.2f}/5.0")
             click.echo(
-                f"🟢 Excellent (≥4.0): {excellent}/{len(results)} ({excellent/len(results)*100:.1f}%)"
+                f"🟢 Excellent (≥4.0): {excellent}/{len(results)} ({excellent / len(results) * 100:.1f}%)"
             )
-            click.echo(f"🟡 Good (3.0-3.9): {good}/{len(results)} ({good/len(results)*100:.1f}%)")
             click.echo(
-                f"🔴 Needs Improvement (<3.0): {needs_improvement}/{len(results)} ({needs_improvement/len(results)*100:.1f}%)"
+                f"🟡 Good (3.0-3.9): {good}/{len(results)} ({good / len(results) * 100:.1f}%)"
+            )
+            click.echo(
+                f"🔴 Needs Improvement (<3.0): {needs_improvement}/{len(results)} ({needs_improvement / len(results) * 100:.1f}%)"
             )
 
             # Save results if requested

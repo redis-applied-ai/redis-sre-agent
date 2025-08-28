@@ -494,20 +494,20 @@ class StructuredToolEvaluator:
         """Expert LLM evaluation of overall response quality."""
 
         evaluation_prompt = f"""
-## Scenario Evaluation: {scenario['scenario']}
+## Scenario Evaluation: {scenario["scenario"]}
 
-**Context**: {scenario.get('description', 'Complex Redis troubleshooting scenario')}
+**Context**: {scenario.get("description", "Complex Redis troubleshooting scenario")}
 
-**User Query**: "{scenario['user_query']}"
+**User Query**: "{scenario["user_query"]}"
 
 **Agent Response**:
 {response}
 
 **Investigation Summary Analysis**:
-- Investigation summary found: {investigation_summary.get('found', False)}
-- Tools used: {investigation_summary.get('tools_used', {})}
-- Knowledge sources: {investigation_summary.get('knowledge_sources', {})}
-- Methodology steps: {len(investigation_summary.get('methodology', []))}
+- Investigation summary found: {investigation_summary.get("found", False)}
+- Tools used: {investigation_summary.get("tools_used", {})}
+- Knowledge sources: {investigation_summary.get("knowledge_sources", {})}
+- Methodology steps: {len(investigation_summary.get("methodology", []))}
 
 ## Evaluation Criteria
 
@@ -521,7 +521,7 @@ Rate each dimension (1-5) for this Redis SRE response:
 6. **Production Readiness** (1-5): Suitability for real incident response
 
 Special evaluation criteria for this scenario:
-{json.dumps(scenario.get('evaluation_criteria', {}), indent=2)}
+{json.dumps(scenario.get("evaluation_criteria", {}), indent=2)}
 
 Format response as JSON:
 ```json
@@ -621,7 +621,9 @@ Format response as JSON:
             "assessment_grade": (
                 "Excellent"
                 if composite_score >= 4.0
-                else "Good" if composite_score >= 3.0 else "Needs Improvement"
+                else "Good"
+                if composite_score >= 3.0
+                else "Needs Improvement"
             ),
         }
 
@@ -750,9 +752,9 @@ async def test_structured_tool_evaluation():
     # Check structured reporting
     for result in successful_results:
         investigation_summary = result["investigation_summary"]
-        assert investigation_summary.get(
-            "found", False
-        ), "Agent should provide structured investigation summary"
+        assert investigation_summary.get("found", False), (
+            "Agent should provide structured investigation summary"
+        )
 
     # Check tool compliance
     for result in successful_results:

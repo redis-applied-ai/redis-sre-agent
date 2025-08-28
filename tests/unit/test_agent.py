@@ -300,55 +300,57 @@ class TestAgentWorkflow:
         uuid.UUID(tool_call.tool_call_id)  # Should not raise exception
 
 
-@pytest.mark.asyncio 
+@pytest.mark.asyncio
 class TestAgentRetryLogic:
     """Test the retry functionality for LLM responses."""
 
     async def test_retry_with_backoff_success(self, mock_settings, mock_llm):
         """Test retry logic succeeds on second attempt."""
         agent = SRELangGraphAgent()
-        
+
         call_count = 0
+
         async def failing_func():
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise Exception("First attempt fails")
             return "success"
-        
+
         result = await agent._retry_with_backoff(failing_func, max_retries=2, initial_delay=0.01)
-        
+
         assert result == "success"
         assert call_count == 2
 
     async def test_retry_with_backoff_all_fail(self, mock_settings, mock_llm):
         """Test retry logic when all attempts fail."""
         agent = SRELangGraphAgent()
-        
+
         call_count = 0
+
         async def always_failing_func():
             nonlocal call_count
             call_count += 1
             raise ValueError(f"Attempt {call_count} failed")
-        
+
         with pytest.raises(ValueError, match="Attempt 3 failed"):
             await agent._retry_with_backoff(always_failing_func, max_retries=2, initial_delay=0.01)
-        
+
         assert call_count == 3  # Initial attempt + 2 retries
 
     async def test_safety_evaluator_handles_errors_gracefully(self, mock_settings, mock_llm):
         """Test safety evaluator handles errors gracefully and returns safe fallback."""
         agent = SRELangGraphAgent()
-        
+
         # Mock LLM that returns unparseable content
         mock_response = MagicMock()
         mock_response.content = "unparseable content"
-        
+
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
         agent.llm = mock_llm
-        
+
         result = await agent._safety_evaluate_response("test query", "test response")
-        
+
         # Should return safe=False for JSON parsing errors, indicating manual review needed
         assert result["safe"] is False
         assert len(result["violations"]) > 0

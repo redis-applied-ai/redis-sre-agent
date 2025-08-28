@@ -1,0 +1,45 @@
+name: Security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6 AM
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.5.7"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Run safety check for known vulnerabilities
+      run: uv run safety check --json --output safety-report.json || true
+
+    - name: Run bandit security linter
+      run: uv run bandit -r redis_sre_agent/ -f json -o bandit-report.json || true
+
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          safety-report.json
+          bandit-report.json

@@ -99,13 +99,13 @@ async def run_retrieval_evaluation():
         # Count perfect queries (MRR = 1.0)
         perfect_queries = sum(1 for r in evaluation.results if r.reciprocal_rank == 1.0)
         print(
-            f"   Perfect queries (MRR=1.0): {perfect_queries}/{len(evaluation.results)} ({perfect_queries/len(evaluation.results)*100:.1f}%)"
+            f"   Perfect queries (MRR=1.0): {perfect_queries}/{len(evaluation.results)} ({perfect_queries / len(evaluation.results) * 100:.1f}%)"
         )
 
         # Count queries with no relevant results in top-5
         no_results = sum(1 for r in evaluation.results if r.precision_at_k[5] == 0.0)
         print(
-            f"   Queries with no results in top-5: {no_results}/{len(evaluation.results)} ({no_results/len(evaluation.results)*100:.1f}%)"
+            f"   Queries with no results in top-5: {no_results}/{len(evaluation.results)} ({no_results / len(evaluation.results) * 100:.1f}%)"
         )
 
         # Show best and worst performing queries

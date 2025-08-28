@@ -53,7 +53,7 @@ class TestRedisMemoryDemo:
             initial_info = redis_client.info("memory")
             initial_memory = initial_info.get("used_memory", 0)
 
-            print(f"Initial Redis memory usage: {initial_memory / (1024*1024):.2f} MB")
+            print(f"Initial Redis memory usage: {initial_memory / (1024 * 1024):.2f} MB")
 
             # Fill Redis with data to increase memory usage
             # Create keys that will consume memory
@@ -75,7 +75,7 @@ class TestRedisMemoryDemo:
             after_info = redis_client.info("memory")
             after_memory = after_info.get("used_memory", 0)
 
-            print(f"Memory after data load: {after_memory / (1024*1024):.2f} MB")
+            print(f"Memory after data load: {after_memory / (1024 * 1024):.2f} MB")
 
             # Run health check diagnostics
             diagnostics = await health_checker.run_diagnostic_suite()
@@ -91,7 +91,7 @@ class TestRedisMemoryDemo:
             assert memory_diag["used_memory_bytes"] > initial_memory
 
             print(
-                f"Health check detected memory usage: {memory_diag['used_memory_bytes'] / (1024*1024):.2f} MB"
+                f"Health check detected memory usage: {memory_diag['used_memory_bytes'] / (1024 * 1024):.2f} MB"
             )
 
             # Verify diagnostic data is present (no status checks needed)
@@ -213,7 +213,6 @@ Would you like me to help analyze specific Redis INFO output or run diagnostic c
                 "redis_sre_agent.agent.langgraph_agent.SRELangGraphAgent"
             ) as mock_agent_class:
                 with patch("redis_sre_agent.agent.langgraph_agent.get_sre_agent") as mock_get_agent:
-
                     mock_agent = AsyncMock()
 
                     # Simulate agent analyzing the specific memory situation
@@ -268,9 +267,9 @@ Would you like me to help you run specific diagnostic commands or analyze your c
                             "diagnostic",
                         ]
                     )
-                    assert (
-                        memory_related
-                    ), f"Response doesn't seem memory-related: {response[:100]}..."
+                    assert memory_related, (
+                        f"Response doesn't seem memory-related: {response[:100]}..."
+                    )
                     assert "CONFIG GET maxmemory" in response
                     assert "MEMORY USAGE" in response
 

@@ -820,10 +820,10 @@ Return only the extracted relevant content, preserving formatting and structure.
             focused_prompt = f"""
 {self.standardization_prompt}
 
-SPECIFIC TOPIC: {topic['title']}
-TOPIC CONTEXT: {topic['summary']}
+SPECIFIC TOPIC: {topic["title"]}
+TOPIC CONTEXT: {topic["summary"]}
 
-Convert the following content into a focused, actionable runbook specifically for: {topic['title']}
+Convert the following content into a focused, actionable runbook specifically for: {topic["title"]}
 
 Ensure the runbook is:
 1. Focused specifically on this topic/problem area

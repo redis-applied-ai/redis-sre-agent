@@ -351,7 +351,6 @@ class TestTaskSystemManagement:
                 "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
             ),
         ):
-
             # Set up the mock properly
             mock_docket_instance = AsyncMock()
             mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)

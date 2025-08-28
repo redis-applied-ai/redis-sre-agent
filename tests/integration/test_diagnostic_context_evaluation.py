@@ -383,7 +383,9 @@ class DiagnosticContextEvaluator:
             "raw_data_analysis_quality": (
                 "high"
                 if calculations_performed >= total_expected * 0.8
-                else "medium" if calculations_performed >= total_expected * 0.5 else "low"
+                else "medium"
+                if calculations_performed >= total_expected * 0.5
+                else "low"
             ),
         }
 
@@ -490,7 +492,9 @@ class DiagnosticContextEvaluator:
             "assessment_grade": (
                 "Excellent"
                 if composite_score >= 4.0
-                else "Good" if composite_score >= 3.0 else "Needs Improvement"
+                else "Good"
+                if composite_score >= 3.0
+                else "Needs Improvement"
             ),
             "evaluation_focus": "diagnostic_analysis_with_raw_data",
         }
@@ -628,25 +632,25 @@ async def test_diagnostic_context_evaluation():
     # Check diagnostic data capture
     for result in successful_results:
         baseline_diagnostics = result["baseline_diagnostics"]
-        assert (
-            baseline_diagnostics["capture_status"] == "success"
-        ), "Should capture baseline diagnostics successfully"
+        assert baseline_diagnostics["capture_status"] == "success", (
+            "Should capture baseline diagnostics successfully"
+        )
         assert "diagnostics" in baseline_diagnostics, "Should have diagnostic data"
 
     # Check analytical capabilities
     for result in successful_results:
         analytical_analysis = result["analytical_analysis"]
         assert "analytical_score" in analytical_analysis, "Should evaluate analytical capabilities"
-        assert (
-            analytical_analysis["calculations_performed"] > 0
-        ), "Should show evidence of calculations"
+        assert analytical_analysis["calculations_performed"] > 0, (
+            "Should show evidence of calculations"
+        )
 
     # Check overall assessment quality
     for result in successful_results:
         assessment = result["overall_assessment"]
-        assert (
-            assessment["evaluation_focus"] == "diagnostic_analysis_with_raw_data"
-        ), "Should focus on diagnostic analysis"
+        assert assessment["evaluation_focus"] == "diagnostic_analysis_with_raw_data", (
+            "Should focus on diagnostic analysis"
+        )
         assert 0 <= assessment["composite_score"] <= 5, "Score should be in valid range"
 
 

@@ -200,7 +200,6 @@ class TestProcessAgentTurn:
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
             patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
         ):
-
             # Mock thread manager
             mock_manager = AsyncMock()
             mock_manager.get_thread_state.return_value = ThreadState(
@@ -263,7 +262,6 @@ class TestProcessAgentTurn:
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
             patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
         ):
-
             # Mock thread manager
             mock_manager = AsyncMock()
             mock_manager.get_thread_state.return_value = ThreadState(

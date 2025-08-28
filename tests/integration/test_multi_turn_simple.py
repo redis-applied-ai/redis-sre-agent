@@ -197,9 +197,9 @@ async def evaluate_with_llm(scenario: Dict[str, Any], response: str) -> Dict[str
     """Use LLM to evaluate response quality."""
 
     evaluation_prompt = f"""
-## Scenario: {scenario['scenario']}
+## Scenario: {scenario["scenario"]}
 
-**User Query**: "{scenario['user_query']}"
+**User Query**: "{scenario["user_query"]}"
 
 **Agent Response**:
 {response}
@@ -214,8 +214,8 @@ Please evaluate this Redis SRE agent response on these 5 dimensions (1-5 scale):
 4. **Actionability**: Are there clear, executable steps?
 5. **Completeness**: Does it address immediate and long-term needs?
 
-Expected tools: {scenario.get('expected_tools', [])}
-Expected content: {scenario.get('expected_content', [])}
+Expected tools: {scenario.get("expected_tools", [])}
+Expected content: {scenario.get("expected_content", [])}
 
 Format as JSON:
 ```json

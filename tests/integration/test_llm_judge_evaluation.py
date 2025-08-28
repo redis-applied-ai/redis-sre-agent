@@ -306,13 +306,13 @@ async def evaluate_search_with_llm_judge(scenario: Dict[str, Any]) -> Dict[str, 
 
     # Prepare context for the judge
     judge_prompt = f"""
-## Scenario: {scenario['scenario']}
+## Scenario: {scenario["scenario"]}
 
-**Context**: {scenario['context']}
+**Context**: {scenario["context"]}
 
-**Search Query**: "{scenario['query']}"
+**Search Query**: "{scenario["query"]}"
 
-**Expected SRE Needs**: {', '.join(scenario['expected_needs'])}
+**Expected SRE Needs**: {", ".join(scenario["expected_needs"])}
 
 ## Retrieved Documents:
 
@@ -472,13 +472,13 @@ async def run_comprehensive_llm_judge_evaluation():
 
         logger.info("\nPerformance Distribution:")
         logger.info(
-            f"  🟢 Excellent (≥4.0): {excellent}/{len(valid_evaluations)} ({excellent/len(valid_evaluations)*100:.1f}%)"
+            f"  🟢 Excellent (≥4.0): {excellent}/{len(valid_evaluations)} ({excellent / len(valid_evaluations) * 100:.1f}%)"
         )
         logger.info(
-            f"  🟡 Good (3.0-3.9): {good}/{len(valid_evaluations)} ({good/len(valid_evaluations)*100:.1f}%)"
+            f"  🟡 Good (3.0-3.9): {good}/{len(valid_evaluations)} ({good / len(valid_evaluations) * 100:.1f}%)"
         )
         logger.info(
-            f"  🔴 Needs Improvement (<3.0): {needs_improvement}/{len(valid_evaluations)} ({needs_improvement/len(valid_evaluations)*100:.1f}%)"
+            f"  🔴 Needs Improvement (<3.0): {needs_improvement}/{len(valid_evaluations)} ({needs_improvement / len(valid_evaluations) * 100:.1f}%)"
         )
 
         # Detailed per-scenario results
@@ -492,11 +492,13 @@ async def run_comprehensive_llm_judge_evaluation():
             performance_level = (
                 "🟢 Excellent"
                 if score >= 4.0
-                else "🟡 Good" if score >= 3.0 else "🔴 Needs Improvement"
+                else "🟡 Good"
+                if score >= 3.0
+                else "🔴 Needs Improvement"
             )
 
             logger.info(f"\n{scenario}: {performance_level} ({score:.1f}/5.0)")
-            logger.info(f"  Query: \"{evaluation['query']}\"")
+            logger.info(f'  Query: "{evaluation["query"]}"')
             logger.info(f"  Best Document: {evaluation.get('best_document', 'N/A')}")
 
             if evaluation.get("strengths"):

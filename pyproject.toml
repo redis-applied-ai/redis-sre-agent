@@ -76,6 +76,8 @@ dev-dependencies = [
     "mypy>=1.8.0",
     "testcontainers>=3.7.0",
     "pre-commit>=3.6.0",
+    "safety>=3.0.0",
+    "bandit>=1.7.0",
 ]
 
 [tool.pytest.ini_options]

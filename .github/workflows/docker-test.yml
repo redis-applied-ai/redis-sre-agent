@@ -1,0 +1,61 @@
+name: Docker Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  docker-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Start services
+      run: |
+        docker-compose up -d redis
+        sleep 10
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.5.7"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Wait for Redis to be ready
+      run: |
+        timeout 30 bash -c 'until docker-compose exec -T redis redis-cli ping; do sleep 1; done'
+
+    - name: Run Docker integration tests
+      run: uv run pytest tests/ -m "integration" -v --tb=short
+      env:
+        REDIS_URL: redis://localhost:6379/0
+
+    - name: Run demo scenario test
+      run: |
+        timeout 60 uv run python examples/demo_redis_memory_scenario.py --scenario memory || true
+      env:
+        REDIS_URL: redis://localhost:6379/0
+
+    - name: Show service logs on failure
+      if: failure()
+      run: |
+        echo "=== Redis logs ==="
+        docker-compose logs redis
+        echo "=== Docker compose ps ==="
+        docker-compose ps
+
+    - name: Clean up
+      if: always()
+      run: docker-compose down -v
