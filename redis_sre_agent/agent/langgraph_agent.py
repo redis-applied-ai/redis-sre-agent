@@ -515,16 +515,21 @@ class SRELangGraphAgent:
                 elif isinstance(msg, ToolMessage):
                     conversation_context.append(f"Tool Data: {msg.content}")
 
-            reasoning_prompt = f"""You are an expert Redis SRE analyzing diagnostic data. Based on the conversation and tool results below, provide a comprehensive analysis and recommendations.
+            reasoning_prompt = f"""{SRE_SYSTEM_PROMPT}
+
+## FINAL ANALYSIS TASK
+
+Based on the diagnostic data and tool results below, provide your focused SRE assessment:
 
 {chr(10).join(conversation_context)}
 
-Analyze this step by step:
-1. What usage pattern does the data suggest (cache vs persistent data)?
-2. What are the immediate risks and problems?
-3. What are the safest remediation steps for this specific scenario?
+Follow your SRE workflow exactly:
+1. **Problem Assessment**: What specific issues did you identify from the diagnostic data?
+2. **Usage Pattern Determination**: Cache vs persistent data based on TTL coverage and persistence settings?
+3. **Immediate Actions Required**: Safe remediation steps for this specific usage pattern
+4. **Solution Sources**: What diagnostic evidence supports your recommendations?
 
-Be specific about your reasoning and express appropriate uncertainty when making assumptions."""
+Keep your response concise and action-focused. This is incident triage, not education."""
 
             try:
                 # Use configured model for final analysis
