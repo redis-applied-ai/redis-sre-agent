@@ -57,7 +57,17 @@ def mock_sre_tasks():
                             "diagnostics": {},
                         }
 
-                        yield mocks
+                        with patch(
+                            "redis_sre_agent.agent.langgraph_agent.search_redis_docs"
+                        ) as mock_redis_docs:
+                            mocks["search_redis_docs"] = mock_redis_docs
+                            mock_redis_docs.return_value = {
+                                "query": "test",
+                                "results_count": 0,
+                                "results": [],
+                            }
+
+                            yield mocks
 
 
 class TestSRELangGraphAgent:
@@ -70,9 +80,10 @@ class TestSRELangGraphAgent:
         assert agent.settings == mock_settings
         assert agent.llm is not None
         assert agent.llm_with_tools is not None
-        assert len(agent.sre_tools) == 5
+        assert len(agent.sre_tools) == 6
         assert "analyze_system_metrics" in agent.sre_tools
         assert "search_runbook_knowledge" in agent.sre_tools
+        assert "search_redis_docs" in agent.sre_tools
         assert "check_service_health" in agent.sre_tools
         assert "ingest_sre_document" in agent.sre_tools
         assert "get_detailed_redis_diagnostics" in agent.sre_tools
@@ -84,6 +95,7 @@ class TestSRELangGraphAgent:
         expected_tools = [
             "analyze_system_metrics",
             "search_runbook_knowledge",
+            "search_redis_docs",
             "check_service_health",
             "ingest_sre_document",
             "get_detailed_redis_diagnostics",
@@ -214,13 +226,14 @@ class TestAgentToolBindings:
         # Get the tool definitions that were passed
         tool_definitions = mock_llm.bind_tools.call_args[0][0]
 
-        assert len(tool_definitions) == 5
+        assert len(tool_definitions) == 6
 
         # Check that all expected tools are defined
         tool_names = [tool["function"]["name"] for tool in tool_definitions]
         expected_names = [
             "analyze_system_metrics",
             "search_runbook_knowledge",
+            "search_redis_docs",
             "check_service_health",
             "ingest_sre_document",
             "get_detailed_redis_diagnostics",
@@ -285,3 +298,59 @@ class TestAgentWorkflow:
         import uuid
 
         uuid.UUID(tool_call.tool_call_id)  # Should not raise exception
+
+
+@pytest.mark.asyncio 
+class TestAgentRetryLogic:
+    """Test the retry functionality for LLM responses."""
+
+    async def test_retry_with_backoff_success(self, mock_settings, mock_llm):
+        """Test retry logic succeeds on second attempt."""
+        agent = SRELangGraphAgent()
+        
+        call_count = 0
+        async def failing_func():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("First attempt fails")
+            return "success"
+        
+        result = await agent._retry_with_backoff(failing_func, max_retries=2, initial_delay=0.01)
+        
+        assert result == "success"
+        assert call_count == 2
+
+    async def test_retry_with_backoff_all_fail(self, mock_settings, mock_llm):
+        """Test retry logic when all attempts fail."""
+        agent = SRELangGraphAgent()
+        
+        call_count = 0
+        async def always_failing_func():
+            nonlocal call_count
+            call_count += 1
+            raise ValueError(f"Attempt {call_count} failed")
+        
+        with pytest.raises(ValueError, match="Attempt 3 failed"):
+            await agent._retry_with_backoff(always_failing_func, max_retries=2, initial_delay=0.01)
+        
+        assert call_count == 3  # Initial attempt + 2 retries
+
+    async def test_safety_evaluator_handles_errors_gracefully(self, mock_settings, mock_llm):
+        """Test safety evaluator handles errors gracefully and returns safe fallback."""
+        agent = SRELangGraphAgent()
+        
+        # Mock LLM that returns unparseable content
+        mock_response = MagicMock()
+        mock_response.content = "unparseable content"
+        
+        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+        agent.llm = mock_llm
+        
+        result = await agent._safety_evaluate_response("test query", "test response")
+        
+        # Should return safe=False for JSON parsing errors, indicating manual review needed
+        assert result["safe"] is False
+        assert len(result["violations"]) > 0
+        # Verify LLM was called (retry mechanism should work)
+        assert mock_llm.ainvoke.call_count >= 1

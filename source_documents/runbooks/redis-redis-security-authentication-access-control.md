@@ -1,24 +1,23 @@
-# Redis Security Authentication Access Control
+# Redis Security Authentication and Access Control
 
 **Category**: operational_runbook  
 **Severity**: critical  
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms
-- Unauthorized access attempts logged in Redis logs.
-- Unexpected data access or modification.
-- Alerts from security monitoring tools indicating unauthorized access.
-- Redis instances exposed to the public internet without authentication.
+- Frequent unauthorized access attempts in Redis logs.
+- Misconfigured or absent ACLs leading to overly permissive access.
+- Redis instances accessible without authentication.
 
 ## Root Cause Analysis
 
-### 1. Check Redis Logs for Unauthorized Access
+### 1. Check for Unauthorized Access Attempts
 ```bash
-grep "AUTH" /var/log/redis/redis-server.log
-# Look for repeated failed AUTH attempts indicating unauthorized access attempts.
+grep "AUTH" /var/log/redis/redis-server.log | wc -l
+# Look for a high number of failed authentication attempts indicating unauthorized access attempts.
 ```
 
-### 2. Verify Current Authentication and Access Control Settings
+### 2. Verify Current Authentication and ACL Configuration
 ```bash
 redis-cli CONFIG GET requirepass
 # Check if 'requirepass' is set. If not, Redis is not using password authentication.
@@ -31,70 +30,57 @@ redis-cli ACL LIST
 
 ### Option 1: Enable Password Authentication
 ```bash
-# Edit the Redis configuration file (redis.conf)
-sudo nano /etc/redis/redis.conf
-
-# Add or modify the following line to set a strong password
-requirepass yourStrongPasswordHere
-
-# Restart Redis to apply changes
-sudo systemctl restart redis
-
-# Warning: Ensure the password is stored securely and shared only with authorized personnel.
+redis-cli CONFIG SET requirepass yourStrongPasswordHere
+# Set a strong password for Redis authentication. Ensure this is distributed securely to all authorized users.
 ```
 
-### Option 2: Implement Access Control Lists (ACLs)
-1. Connect to Redis CLI:
+### Option 2: Configure ACLs for Access Control
+1. Enable ACLs if not already enabled:
    ```bash
-   redis-cli
+   redis-cli ACL SETUSER default off
+   # Disable default user access to enforce ACLs.
    ```
 
 2. Create a new user with restricted access:
    ```bash
-   ACL SETUSER limited_user on >yourStrongPasswordHere ~* +@all
+   redis-cli ACL SETUSER limited_user on >yourStrongPasswordHere ~* +@all
+   # Replace 'limited_user' and 'yourStrongPasswordHere' with appropriate values.
    ```
 
 3. Adjust permissions as needed:
    ```bash
-   ACL SETUSER limited_user -@dangerous
-   ```
-
-4. Save the configuration:
-   ```bash
-   ACL SAVE
+   redis-cli ACL SETUSER limited_user +get +set
+   # Grant specific command permissions to the user.
    ```
 
 ## Long-term Prevention
 
-### 1. Network Security Hardening
-- Restrict Redis access to trusted IP addresses using firewall rules.
-- Ensure Redis is bound to localhost or a private network interface:
-  ```bash
-  bind 127.0.0.1
-  ```
+### 1. Implement Strong Password Policies
+- Use complex passwords with a mix of letters, numbers, and symbols.
+- Regularly rotate passwords and update the `requirepass` configuration.
 
-### 2. Regular Security Audits
-- Schedule regular audits of Redis configurations and access logs.
-- Implement automated scripts to check for configuration drift and unauthorized changes.
+### 2. Regularly Audit and Update ACLs
+- Schedule periodic reviews of ACL configurations to ensure they meet current security requirements.
+- Remove unused users and permissions to minimize attack vectors.
 
 ## Monitoring & Alerting
 
 ### Key Metrics to Track
 ```bash
-# Monitor failed authentication attempts
-grep "AUTH" /var/log/redis/redis-server.log | wc -l
+grep "AUTH" /var/log/redis/redis-server.log
+# Monitor for failed authentication attempts.
 
-# Monitor ACL changes
 grep "ACL" /var/log/redis/redis-server.log
+# Monitor for changes to ACL configurations.
 ```
 
 ### Alert Thresholds
-- Alert if failed authentication attempts exceed 5 per minute.
-- Alert on any unauthorized ACL changes.
+- Alert if failed authentication attempts exceed 10 per minute.
+- Alert if any unauthorized ACL changes are detected.
 
 ## Production Checklist
 - [ ] Ensure `requirepass` is set with a strong password.
-- [ ] Implement ACLs for all users with appropriate permissions.
-- [ ] Restrict Redis network access to trusted IPs.
-- [ ] Regularly review and update Redis security configurations.
-- [ ] Set up monitoring and alerting for unauthorized access attempts.
+- [ ] Verify ACLs are configured and enforced for all users.
+- [ ] Implement monitoring for authentication and ACL changes.
+- [ ] Conduct a security audit of Redis configurations regularly.
+- [ ] Document and distribute access credentials securely.

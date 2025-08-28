@@ -5,10 +5,10 @@
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms
-- Applications hanging on Redis operations
-- Errors such as "Pool exhausted" or "Unable to get connection"
-- Increasing number of connections without corresponding releases
-- High latency in Redis operations
+- Application experiencing delays or hanging due to inability to acquire new Redis connections.
+- Redis server logs showing high number of connections.
+- Connection pool metrics indicating maximum pool size reached.
+- Increased latency in Redis operations.
 
 ## Root Cause Analysis
 
@@ -16,41 +16,42 @@
 ```bash
 redis-cli CLIENT LIST
 # Look for a high number of connections with long 'age' and 'idle' times.
-# Identify connections that are not being released properly.
+# Identify if connections are not being released back to the pool.
 ```
 
 ### 2. Analyze Application Logs
 ```bash
-# Check application logs for errors related to connection pool exhaustion.
-# Look for patterns or specific operations that might be causing leaks.
+# Review application logs for connection pool usage patterns.
+# Look for errors or warnings related to connection acquisition or release.
 ```
 
 ## Immediate Remediation
 
-### Option 1: Restart Application Services
+### Option 1: Restart Application
 ```bash
-# Restart the application services to release all connections.
-# WARNING: This is a temporary fix and may cause a brief downtime.
+# Restart the application to release all connections.
+# Warning: This may cause temporary downtime or service disruption.
 ```
 
-### Option 2: Increase Connection Pool Size
-1. Identify the current pool size in your application configuration.
-2. Increase the pool size temporarily to accommodate more connections.
-3. Monitor the application to ensure stability.
+### Option 2: Increase Connection Pool Size Temporarily
+1. Access the application configuration.
+2. Increase the maximum connection pool size.
+3. Restart the application to apply changes.
+4. Monitor the application to ensure stability.
 
 ## Long-term Prevention
 
-### 1. Implement Connection Lifecycle Management
-- Ensure that connections are properly closed after use.
-- Use connection pooling libraries that support automatic connection release.
+### 1. Optimize Connection Pooling
+- Ensure the application uses a connection pooling library that supports automatic connection release.
+- Set a reasonable maximum pool size based on application load and Redis server capacity.
 
 ### 2. Set Connection Timeouts
-- Configure connection timeouts to automatically close idle connections.
-- Example configuration for a Redis client:
-  ```yaml
-  connectionTimeout: 2000
-  idleTimeout: 30000
+- Configure connection timeouts to close idle connections:
+  ```bash
+  # Example configuration for a connection pooling library
+  maxIdleTime=30000 # 30 seconds
   ```
+- Implement logic to handle connection timeouts gracefully in the application.
 
 ## Monitoring & Alerting
 
@@ -58,16 +59,17 @@ redis-cli CLIENT LIST
 ```bash
 # Monitor the number of active connections:
 redis-cli INFO clients | grep connected_clients
-# Track the number of rejected connections:
-redis-cli INFO stats | grep rejected_connections
+
+# Monitor connection pool usage in the application:
+# Use application-specific monitoring tools to track pool metrics.
 ```
 
 ### Alert Thresholds
-- Alert if `connected_clients` exceeds 80% of the pool size.
-- Alert if `rejected_connections` increases significantly over a short period.
+- Alert if `connected_clients` exceeds 80% of the Redis server's maximum connection limit.
+- Alert if application connection pool usage consistently exceeds 90% of its maximum size.
 
 ## Production Checklist
-- [ ] Verify that all application components are using the correct connection pool settings.
-- [ ] Ensure that connection timeouts are configured and tested.
-- [ ] Implement automated alerts for connection pool metrics.
-- [ ] Conduct regular reviews of application logs for connection-related errors.
+- [ ] Verify connection pooling library supports automatic connection release.
+- [ ] Configure and test connection timeouts in a staging environment.
+- [ ] Set up monitoring and alerting for Redis connection metrics.
+- [ ] Document application-specific connection pool configurations and limits.

@@ -34,8 +34,8 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = Field(description="OpenAI API key")
-    openai_model: str = Field(default="gpt-4", description="OpenAI model for agent reasoning")
-    openai_model_mini: str = Field(default="gpt-4o-mini", description="OpenAI model for tools")
+    openai_model: str = Field(default="o4-mini", description="OpenAI model for agent reasoning")
+    openai_model_mini: str = Field(default="o4-mini", description="OpenAI model for tools")
 
     # Vector Search
     embedding_model: str = Field(
@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # Agent
     max_iterations: int = Field(default=10, description="Maximum agent iterations")
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
+    
+    # LLM Retry Configuration
+    llm_max_retries: int = Field(default=3, description="Maximum retries for LLM calls")
+    llm_initial_delay: float = Field(default=1.0, description="Initial delay for LLM retries (seconds)")
+    llm_backoff_factor: float = Field(default=2.0, description="Backoff factor for LLM retries")
 
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")

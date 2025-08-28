@@ -4,12 +4,13 @@ This module implements a LangGraph workflow for SRE operations, providing
 multi-turn conversation handling, tool calling integration, and state management.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional, TypedDict
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -21,89 +22,95 @@ from ..tools.sre_functions import (
     check_service_health,
     get_detailed_redis_diagnostics,
     ingest_sre_document,
+    search_redis_docs,
     search_runbook_knowledge,
 )
 
 logger = logging.getLogger(__name__)
 
 # SRE-focused system prompt
-SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering) agent. Your role is to help with Redis infrastructure monitoring, troubleshooting, performance optimization, and incident response.
+SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering) agent specialized in precise problem identification, triage, and solution development.
 
-## Your Core Capabilities
+## Your Mission: Focused Problem Solving
 
-You have access to specialized SRE tools for:
-- **System Monitoring**: Analyze system metrics, performance data, and health indicators
-- **Knowledge Base**: Search runbook procedures, best practices, and troubleshooting guides
-- **Health Checks**: Verify service status, connectivity, and operational readiness
-- **Documentation**: Ingest and manage SRE knowledge for the team
+**YOUR WORKFLOW FOR EVERY REQUEST**:
 
-## CRITICAL: Tool Usage Requirements
+**STEP 1**: ANALYZE the diagnostic data provided - identify actual problems from metrics
+**STEP 2**: **MANDATORY INVESTIGATION**: Examine sample keys, TTL coverage, and persistence config to determine data type
+**STEP 3**: DETERMINE if Redis is used for cache (high TTL %, no persistence) or persistent data (low TTL %, persistence enabled)
+**STEP 4**: INVESTIGATE memory consumers - which key patterns are consuming the most memory
+**STEP 5**: SEARCH knowledge base for solutions appropriate to the CONFIRMED usage pattern  
+**STEP 6**: PROVIDE remediation steps that are SAFE for the detected usage pattern
 
-**YOU MUST EXTENSIVELY USE YOUR TOOLS** to ground your responses in factual data:
+**DIAGNOSTIC DATA**: Most queries will include current Redis diagnostic data. Analyze this data first to identify problems.
 
-1. **ALWAYS start with knowledge search**: Before making ANY technical claims about Redis, search your runbook knowledge base first using `search_runbook_knowledge` to verify facts and get authoritative information.
+## CRITICAL: Data-First Analysis
 
-2. **Use comprehensive health checks**: For ANY Redis troubleshooting scenario, IMMEDIATELY run `check_service_health` to get complete diagnostic data before making recommendations.
+1. **Analyze provided diagnostic data**: Most queries include Redis diagnostic data - examine this first
+2. **Identify specific problems**: Look for dangerous configurations, high utilization, performance issues
+3. **Validate severity**: Determine if problems require immediate action (OOM risk, thrashing, etc.)
+4. **Use tools for follow-up**: Get deeper analysis or search for solutions to discovered problems
+5. **Focus on immediate threats**: Prioritize issues that could cause system failure
 
-3. **Search multiple knowledge categories**: When searching runbooks, try different categories (incident_response, monitoring, performance, troubleshooting, maintenance) to get comprehensive coverage.
+## Tool Usage for Follow-up
 
-4. **Verify technical claims**: If you need to explain how Redis works internally (memory management, keyspace operations, replication, etc.), search the knowledge base first to ensure accuracy.
+**`get_detailed_redis_diagnostics`**: When you need deeper analysis of specific problem areas (memory, performance, etc.)
+**`search_runbook_knowledge`**: To find immediate remediation steps for discovered problems  
+**`check_service_health`**: Only if no diagnostic data was provided in the query
 
-5. **Use metrics analysis**: When discussing performance or capacity issues, use `analyze_system_metrics` to get current data rather than making assumptions.
+## Immediate Action Focus
 
-## MANDATORY: Response Structure with Tool Audit Trail
+When you find problems, prioritize:
+- **OOM Prevention**: Memory at risk of exceeding limits
+- **Performance Degradation**: Slow operations, high latency
+- **Resource Exhaustion**: Connection limits, CPU spikes
+- **Configuration Issues**: Dangerous settings, missing policies
 
-**EVERY RESPONSE MUST END WITH THIS STRUCTURED SECTION** except for brief acknowledgments (e.g., quick thanks/confirmations under 12 words with no technical content). For those cases, reply briefly without the structured section.
+## Response Structure - Problem-Focused
 
----
+### Problem Assessment
+- **Described Issue**: [What the user reported]
+- **Observed Issue**: [What your diagnostics actually show]
+- **Memory Consumers**: [Which specific key patterns are using the most memory]
+- **Severity**: [Based on actual thresholds and data persistence risk]
 
-## 🔍 Investigation Summary
+### Immediate Actions Required (SAFE for detected usage pattern)
 
-### Tools Used:
-- **Knowledge Search**: [List each search_runbook_knowledge call with query terms]
-- **Health Check**: [Describe check_service_health usage and key findings]
-- **Metrics Analysis**: [Detail analyze_system_metrics calls and results]
-- **Other Tools**: [List any additional tools used]
+*
 
-### Knowledge Sources:
-- **Runbook References**: [Cite specific runbooks/documents found, with titles]
-- **Best Practices**: [Reference official Redis documentation sources]
-- **Diagnostic Data**: [Summarize current system state from health checks]
+**IF USAGE PATTERN = CACHE/TEMPORARY:**
+1. **Configure Eviction**: Set appropriate LRU/LFU eviction policy
+2. **Investigate Key Patterns**: Optimize cache usage patterns
+3. **Set TTLs**: Ensure temporary data expires properly
 
-### Investigation Methodology:
-1. [Describe step-by-step approach taken]
-2. [Explain tool selection reasoning]
-3. [Note any limitations or assumptions]
+### Solution Sources
+- **Runbooks Used**: [Specific documents that provided the immediate remediation steps]
+- **Diagnostic Evidence**: [Key metrics that revealed the actual problems]
 
-This structured reporting ensures transparency in your diagnostic process and allows verification of your tool usage and knowledge sources.
+## What NOT to Do
 
-## Response Guidelines
+- Do NOT suggest "capacity planning" or other obvious long-term practices for live incidents
+- Do NOT recommend generic optimizations like "use ziplists" (Redis already uses them automatically)
+- Do NOT explain Redis concepts unless directly relevant to immediate remediation
+- Do NOT provide theoretical advice - focus on actual observed problems requiring immediate action
+- Do NOT give educational overviews - this is incident triage, not training
 
-1. **Evidence-First**: NEVER make claims about Redis behavior without first checking your tools
-2. **Tool-Grounded**: Show your work - reference the specific data from tool calls
-3. **Fact-Check Yourself**: If you're unsure about any technical detail, search for it
-4. **Safety First**: Always consider impact and safety when suggesting operational changes
-5. **Escalation Path**: Know when to suggest escalating issues or seeking additional help
-6. **Complete Tool Audit**: ALWAYS include the investigation summary section
+## Knowledge Search Strategy
 
-## Knowledge Base Search Strategy
+Search for immediate remediation steps for discovered problems (examples):
+- "Redis OOM prevention" (when memory approaching limits with noeviction)
+- "Redis memory pressure immediate response" (when memory usage critical) 
+- "Redis slow query analysis" (when slowlog shows performance issues)
+- "Redis configuration emergency fixes" (when dangerous settings detected)
+- Search for any specific problem patterns you discover in the diagnostic data
 
-When using `search_runbook_knowledge`, be strategic:
-- Search for specific Redis concepts: "keyspace hit rate", "memory fragmentation", "replication lag"
-- Look up operational procedures: "Redis memory pressure response", "Redis performance troubleshooting"
-- Verify configuration details: "Redis eviction policies", "Redis persistence options"
-- Check best practices: "Redis monitoring guidelines", "Redis capacity planning"
+## Redis Usage Pattern Detection
 
-## Communication Style
+Before suggesting solutions, try to determine how Redis is being used:
+    - Is Redis being used as a cache? If so, suggest actions that make sense for caches.
+    - Is Redis being used as a persistent data store? If so, only suggest actions that make sense for persistent data.
 
-- Use technical precision while remaining clear
-- Provide step-by-step procedures when appropriate
-- Include relevant metrics, thresholds, and monitoring points
-- Suggest prevention strategies alongside reactive measures
-- **ALWAYS cite tool results** when making technical claims
-- **MANDATORY**: End with structured investigation summary
-
-Remember: Your credibility depends on factual accuracy AND transparency. Use your tools extensively and document your investigation process to ensure every technical statement is grounded in authoritative knowledge and verifiable through your tool audit trail.
+Remember: You are responding to a live incident. Focus on immediate threats and actionable steps to prevent system failure.
 """
 
 # Fact-checker system prompt
@@ -120,6 +127,7 @@ Review the provided SRE agent response and identify any statements that are:
 ## Common Redis Fact-Check Areas
 
 - **Memory Operations**: Redis is entirely in-memory; no disk access for data retrieval
+- **Detected Usage Pattern**: Whether Redis is being used as a cache or a persistent data store
 - **Keyspace Hit Rate**: Measures key existence (hits) vs non-existence (misses), not memory vs disk
 - **Replication**: Master/slave terminology, replication lag implications
 - **Persistence**: RDB vs AOF, when disk I/O actually occurs
@@ -185,9 +193,9 @@ class SRELangGraphAgent:
         """Initialize the SRE LangGraph agent."""
         self.settings = settings
         self.progress_callback = progress_callback
+        # Single LLM with both reasoning and function calling capabilities
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.1,
+            model=self.settings.openai_model,
             openai_api_key=self.settings.openai_api_key,
         )
 
@@ -198,13 +206,13 @@ class SRELangGraphAgent:
                     "type": "function",
                     "function": {
                         "name": "analyze_system_metrics",
-                        "description": "Analyze system metrics and performance data for Redis infrastructure",
+                        "description": "Analyze system metrics and performance data for Redis infrastructure using Prometheus queries",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "metric_query": {
                                     "type": "string",
-                                    "description": "Query or description of metrics to analyze",
+                                    "description": "Prometheus metric query (e.g., 'redis_memory_used_bytes', 'redis_connected_clients', 'rate(redis_commands_processed_total[1m])'). Must be a valid Prometheus metric name or query expression.",
                                 },
                                 "time_range": {
                                     "type": "string",
@@ -335,6 +343,33 @@ class SRELangGraphAgent:
                         },
                     },
                 },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_redis_docs",
+                        "description": "Search Redis official documentation for commands, configuration options, and concepts. Use this to get authoritative information about Redis functionality, command syntax, configuration parameters, and operational concepts.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "Search query (command name, configuration option, concept)",
+                                },
+                                "doc_type": {
+                                    "type": "string",
+                                    "description": "Filter by documentation type",
+                                    "enum": ["commands", "config", "concepts", "modules"],
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Maximum number of results",
+                                    "default": 3,
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                },
             ]
         )
 
@@ -347,6 +382,7 @@ class SRELangGraphAgent:
         self.sre_tools = {
             "analyze_system_metrics": analyze_system_metrics,
             "search_runbook_knowledge": search_runbook_knowledge,
+            "search_redis_docs": search_redis_docs,
             "check_service_health": check_service_health,
             "ingest_sre_document": ingest_sre_document,
             "get_detailed_redis_diagnostics": get_detailed_redis_diagnostics,
@@ -357,7 +393,7 @@ class SRELangGraphAgent:
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow for SRE operations."""
 
-        def agent_node(state: AgentState) -> AgentState:
+        async def agent_node(state: AgentState) -> AgentState:
             """Main agent node that processes user input and decides on tool calls."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
@@ -368,8 +404,25 @@ class SRELangGraphAgent:
                 system_message = AIMessage(content=SRE_SYSTEM_PROMPT)
                 messages = [system_message] + messages
 
-            # Generate response with tool calling capability
-            response = self.llm_with_tools.invoke(messages)
+            # Generate response with tool calling capability using retry logic
+            async def _agent_llm_call():
+                """Inner function for agent LLM call with retry logic."""
+                return await self.llm_with_tools.ainvoke(messages)
+
+            try:
+                response = await self._retry_with_backoff(
+                    _agent_llm_call,
+                    max_retries=self.settings.llm_max_retries,
+                    initial_delay=self.settings.llm_initial_delay,
+                    backoff_factor=self.settings.llm_backoff_factor,
+                )
+                logger.debug(f"Agent LLM call successful after potential retries")
+            except Exception as e:
+                logger.error(f"Agent LLM call failed after all retries: {str(e)}")
+                # Fallback response to prevent workflow failure
+                response = AIMessage(
+                    content="I apologize, but I'm experiencing technical difficulties processing your request. Please try again in a moment."
+                )
 
             # Update state
             new_messages = messages + [response]
@@ -436,7 +489,7 @@ class SRELangGraphAgent:
 
                 except Exception as e:
                     tool_content = f"Error executing tool '{tool_name}': {str(e)}"
-                    logger.error(f"Tool execution error for {tool_name}: {e}")
+                    logger.error(f"Tool execution error for {tool_name}: {str(e)}")
 
                 # Create tool message
                 tool_message = ToolMessage(content=tool_content, tool_call_id=tool_call_id)
@@ -448,8 +501,56 @@ class SRELangGraphAgent:
 
             return state
 
+        async def reasoning_node(state: AgentState) -> AgentState:
+            """Final reasoning node using O1 model for better analysis."""
+            messages = state["messages"]
+
+            # Create a focused prompt for the reasoning model
+            conversation_context = []
+
+            # Add the original query
+            for msg in messages:
+                if isinstance(msg, HumanMessage):
+                    conversation_context.append(f"User Query: {msg.content}")
+                elif isinstance(msg, ToolMessage):
+                    conversation_context.append(f"Tool Data: {msg.content}")
+
+            reasoning_prompt = f"""You are an expert Redis SRE analyzing diagnostic data. Based on the conversation and tool results below, provide a comprehensive analysis and recommendations.
+
+{chr(10).join(conversation_context)}
+
+Analyze this step by step:
+1. What usage pattern does the data suggest (cache vs persistent data)?
+2. What are the immediate risks and problems?
+3. What are the safest remediation steps for this specific scenario?
+
+Be specific about your reasoning and express appropriate uncertainty when making assumptions."""
+
+            try:
+                # Use configured model for final analysis
+                async def _reasoning_llm_call():
+                    return await self.llm.ainvoke([HumanMessage(content=reasoning_prompt)])
+
+                response = await self._retry_with_backoff(
+                    _reasoning_llm_call,
+                    max_retries=self.settings.llm_max_retries,
+                    initial_delay=self.settings.llm_initial_delay,
+                    backoff_factor=self.settings.llm_backoff_factor,
+                )
+                logger.debug("Reasoning LLM call successful")
+            except Exception as e:
+                logger.error(f"Reasoning LLM call failed after all retries: {str(e)}")
+                # Fallback to a simple response
+                response = AIMessage(
+                    content="I apologize, but I encountered technical difficulties during analysis. Please try again or contact support."
+                )
+
+            # Update state with final reasoning response
+            state["messages"] = messages + [response]
+            return state
+
         def should_continue(state: AgentState) -> str:
-            """Decide whether to continue with tools or end the conversation."""
+            """Decide whether to continue with tools, reasoning, or end the conversation."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
             max_iterations = state.get("max_iterations", 10)
@@ -457,7 +558,7 @@ class SRELangGraphAgent:
             # Check iteration limit
             if iteration_count >= max_iterations:
                 logger.warning(f"Reached max iterations ({max_iterations})")
-                return END
+                return "reasoning"  # Go to reasoning for final analysis
 
             # Check if the last message has tool calls
             if messages and hasattr(messages[-1], "tool_calls"):
@@ -468,6 +569,11 @@ class SRELangGraphAgent:
             if state.get("current_tool_calls"):
                 return "tools"
 
+            # If we've used tools and have no more tool calls, go to reasoning
+            has_tool_messages = any(isinstance(msg, ToolMessage) for msg in messages)
+            if has_tool_messages:
+                return "reasoning"
+
             return END
 
         # Build the state graph
@@ -476,11 +582,15 @@ class SRELangGraphAgent:
         # Add nodes
         workflow.add_node("agent", agent_node)
         workflow.add_node("tools", tool_node)
+        workflow.add_node("reasoning", reasoning_node)
 
         # Add edges
         workflow.set_entry_point("agent")
-        workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
+        workflow.add_conditional_edges(
+            "agent", should_continue, {"tools": "tools", "reasoning": "reasoning", END: END}
+        )
         workflow.add_edge("tools", "agent")
+        workflow.add_edge("reasoning", END)
 
         return workflow
 
@@ -546,7 +656,7 @@ class SRELangGraphAgent:
                 )
 
         except Exception as e:
-            logger.error(f"Error processing SRE query: {e}")
+            logger.error(f"Error processing SRE query: {str(e)}")
 
             class AgentResponseStr(str):
                 def get(self, key: str, default: Any = None):
@@ -642,8 +752,7 @@ class SRELangGraphAgent:
         try:
             # Create fact-checker LLM (separate from main agent)
             fact_checker = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.0,  # Zero temperature for consistent fact-checking
+                model=self.settings.openai_model,
                 openai_api_key=self.settings.openai_api_key,
             )
 
@@ -663,11 +772,10 @@ Please review this Redis SRE agent response for factual accuracy and provide you
                 {"role": "user", "content": fact_check_input},
             ]
 
-            fact_check_response = await fact_checker.ainvoke(messages)
-
-            # Parse JSON response
-            try:
-                import json
+            # Retry fact-check with parsing
+            async def _fact_check_with_retry():
+                """Inner function for fact-check retry logic."""
+                fact_check_response = await fact_checker.ainvoke(messages)
 
                 # Handle markdown code blocks if present
                 response_text = fact_check_response.content.strip()
@@ -677,16 +785,26 @@ Please review this Redis SRE agent response for factual accuracy and provide you
                     response_text = response_text[:-3]  # Remove ```
                 response_text = response_text.strip()
 
+                # Parse JSON response - this will raise JSONDecodeError if parsing fails
                 result = json.loads(response_text)
+                return result
+
+            try:
+                result = await self._retry_with_backoff(
+                    _fact_check_with_retry,
+                    max_retries=self.settings.llm_max_retries,
+                    initial_delay=self.settings.llm_initial_delay,
+                    backoff_factor=self.settings.llm_backoff_factor,
+                )
                 logger.info(
                     f"Fact-check completed: {'errors found' if result.get('has_errors') else 'no errors'}"
                 )
                 return result
-            except json.JSONDecodeError:
-                logger.error("Fact-checker returned invalid JSON")
+            except json.JSONDecodeError as e:
+                logger.error(f"Fact-checker returned invalid JSON after retries: {e}")
                 return {
                     "has_errors": False,
-                    "validation_notes": "Fact-checker response parsing failed",
+                    "validation_notes": f"Fact-checker response parsing failed after {2 + 1} attempts",
                 }
 
         except Exception as e:
@@ -715,7 +833,60 @@ Please review this Redis SRE agent response for factual accuracy and provide you
         # First attempt - normal processing
         response = await self.process_query(query, session_id, user_id, max_iterations)
 
-        # Fact-check the response
+        # Safety evaluation - check for dangerous recommendations
+        safety_result = await self._safety_evaluate_response(query, response)
+
+        if not safety_result.get("safe", True):
+            logger.warning(f"Safety evaluation failed: {safety_result}")
+
+            if safety_result.get("risk_level") in ["high", "critical"]:
+                # For high/critical risks, force correction
+                logger.error(f"CRITICAL SAFETY VIOLATION: {safety_result.get('violations')}")
+
+                correction_guidance = safety_result.get("corrective_guidance", "")
+                if correction_guidance:
+                    try:
+                        # Create correction query with safety guidance
+                        correction_query = f"""SAFETY VIOLATION - CORRECTION REQUIRED: {correction_guidance}
+
+ORIGINAL QUERY: {query}
+
+PREVIOUS RESPONSE (UNSAFE): {response}
+
+CRITICAL SAFETY VIOLATIONS DETECTED:
+{"; ".join(safety_result.get("violations", []))}
+
+Provide a corrected response that eliminates all safety violations. Focus on safe alternatives only."""
+
+                        # Retry the safety correction with backoff
+                        async def _safety_correction():
+                            return await self.process_query(
+                                correction_query, session_id, user_id, max_iterations
+                            )
+
+                        corrected_response = await self._retry_with_backoff(
+                            _safety_correction,
+                            max_retries=self.settings.llm_max_retries,
+                            initial_delay=self.settings.llm_initial_delay,
+                            backoff_factor=self.settings.llm_backoff_factor,
+                        )
+
+                        # Verify the correction is safer
+                        safety_recheck = await self._safety_evaluate_response(
+                            query, corrected_response
+                        )
+                        if safety_recheck.get("safe", True):
+                            logger.info("Response corrected after safety evaluation")
+                            return corrected_response
+                        else:
+                            logger.error("Correction still unsafe - manual review required")
+                            return f"⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
+
+                    except Exception as correction_error:
+                        logger.error(f"Error during safety correction: {correction_error}")
+                        return f"⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks."
+
+        # Fact-check the response (if it passed safety evaluation)
         fact_check_result = await self._fact_check_response(response)
 
         if fact_check_result.get("has_errors") and not fact_check_result.get("demo_mode"):
@@ -730,28 +901,30 @@ Please review this Redis SRE agent response for factual accuracy and provide you
 
 My original query was: {query}
 
-Please use the search_runbook_knowledge tool extensively to find authoritative information about these Redis concepts, then provide a corrected and more accurate response."""
+Please use the search_runbook_knowledge tool extensively to find authoritative information about these Redis concepts, then provide a comprehensive and accurate response."""
 
                 logger.info("Initiating corrective research query")
                 try:
-                    # Process the corrective query
-                    corrected_response = await self.process_query(
-                        research_query, session_id, user_id, max_iterations
+                    # Process the corrective query with retry logic
+                    async def _fact_check_correction():
+                        return await self.process_query(
+                            research_query, session_id, user_id, max_iterations
+                        )
+
+                    corrected_response = await self._retry_with_backoff(
+                        _fact_check_correction,
+                        max_retries=self.settings.llm_max_retries,
+                        initial_delay=self.settings.llm_initial_delay,
+                        backoff_factor=self.settings.llm_backoff_factor,
                     )
 
-                    # Add a note about the correction
-                    final_response = f"""## Corrected Response
-
-{corrected_response}
-
----
-*Note: This response has been fact-checked and corrected to ensure technical accuracy.*
-"""
-                    return final_response
+                    # Return the corrected response without exposing internal fact-checking
+                    return corrected_response
                 except Exception as correction_error:
                     logger.error(f"Error during correction attempt: {correction_error}")
                     # Fall back to original response rather than failing
-                    return f"{response}\n\n*Note: Attempted fact-check correction but encountered an error.*"
+                    # Fall back to original response without exposing error details to user
+                    return response
         elif fact_check_result.get("demo_mode"):
             logger.info("Fact-check completed: Using original response (demo mode)")
 
@@ -902,6 +1075,144 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         )
 
         return "\n".join(lines)
+
+    async def _retry_with_backoff(
+        self, func, max_retries: int = 3, initial_delay: float = 1.0, backoff_factor: float = 2.0
+    ):
+        """
+        Retry a function with exponential backoff.
+
+        Args:
+            func: Async function to retry
+            max_retries: Maximum number of retry attempts
+            initial_delay: Initial delay in seconds
+            backoff_factor: Multiplier for delay between retries
+
+        Returns:
+            Function result on success
+
+        Raises:
+            Last exception if all retries fail
+        """
+        delay = initial_delay
+        last_exception = None
+
+        for attempt in range(max_retries + 1):  # +1 for initial attempt
+            try:
+                return await func()
+            except Exception as e:
+                last_exception = e
+                if attempt == max_retries:  # Last attempt failed
+                    logger.error(f"All {max_retries + 1} attempts failed. Last error: {str(e)}")
+                    raise e
+
+                logger.warning(
+                    f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {delay:.1f}s..."
+                )
+                await asyncio.sleep(delay)
+                delay *= backoff_factor
+
+        # This should never be reached, but just in case
+        raise last_exception
+
+    async def _safety_evaluate_response(self, original_query: str, response: str) -> Dict[str, Any]:
+        """
+        Evaluate response for dangerous recommendations that could cause data loss.
+
+        This safety evaluator specifically checks for Redis data persistence safety:
+        - Ensures eviction policies aren't suggested for persistent data stores
+        - Validates that recommendations align with identified usage patterns
+        - Flags logic contradictions between analysis and recommendations
+
+        Args:
+            original_query: The original user query (may contain diagnostic data)
+            response: The agent's response to evaluate
+
+        Returns:
+            Dict containing safety evaluation results
+        """
+        safety_prompt = """You are a Redis SRE Safety Evaluator. Your job is to identify recommendations that could cause unintended consequences or data loss.
+
+EVALUATE THIS RESPONSE FOR SAFETY CONCERNS:
+
+ORIGINAL QUERY:
+{original_query}
+
+AGENT RESPONSE:
+{response}
+
+Analyze whether the agent's recommendations are consistent with the data patterns and configuration it identified. Look for any logical inconsistencies between the analysis and the suggested actions.
+
+RESPONSE FORMAT:
+{{
+    "safe": true/false,
+    "violations": ["list of specific concerns found"],
+    "corrective_guidance": "guidance for addressing any issues identified",
+    "reasoning": "explanation of your safety assessment"
+}}
+
+Focus on logical consistency between analysis and recommendations. Identify any cases where the suggested actions don't align with the data characteristics the agent identified.
+"""
+
+        async def _evaluate_with_retry():
+            """Inner function for retry logic."""
+            try:
+                # Safely convert objects to strings, handling MagicMock objects
+                def safe_str(obj):
+                    try:
+                        return str(obj)
+                    except Exception:
+                        return repr(obj)
+
+                query_str = safe_str(original_query)
+                response_str = safe_str(response)
+
+                # Use safer string replacement to avoid MagicMock formatting issues
+                formatted_prompt = safety_prompt.replace("{original_query}", query_str)
+                formatted_prompt = formatted_prompt.replace("{response}", response_str)
+
+                safety_response = await self.llm.ainvoke([SystemMessage(content=formatted_prompt)])
+            except Exception as format_error:
+                logger.error(f"Error formatting safety prompt: {format_error}")
+                raise
+
+            # Parse the JSON response - this will raise JSONDecodeError if parsing fails
+            result = json.loads(safety_response.content)
+            return result
+
+        try:
+            # Use retry logic for both LLM call and JSON parsing
+            result = await self._retry_with_backoff(
+                _evaluate_with_retry,
+                max_retries=self.settings.llm_max_retries,
+                initial_delay=self.settings.llm_initial_delay,
+                backoff_factor=self.settings.llm_backoff_factor,
+            )
+            return result
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Safety evaluation JSON parsing failed after retries: {str(e)}")
+            return {
+                "safe": False,
+                "violations": [
+                    "Could not parse safety evaluation response after multiple attempts"
+                ],
+                "corrective_guidance": "Manual safety review required due to persistent parsing error",
+                "reasoning": f"Safety evaluation response was not in expected JSON format after {self.settings.llm_max_retries + 1} attempts",
+            }
+        except Exception as e:
+            try:
+                error_str = str(e)
+            except Exception:
+                error_str = repr(e)
+            logger.error(f"Safety evaluation failed after retries: {error_str}")
+            return {
+                "safe": False,
+                "violations": ["Safety evaluation failed"],
+                "risk_level": "high",
+                "corrective_guidance": "Manual review required - safety evaluation error",
+                "reasoning": f"Safety evaluation error after retries: {str(e)}",
+            }
 
 
 # Singleton instance
