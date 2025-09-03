@@ -62,15 +62,6 @@ curl -X POST http://localhost:8000/agent/query \\
   -d '{"query": "Check Redis cluster health and memory usage"}'
 ```
 
-**CLI** (TODO):
-```bash
-# Direct agent queries
-redis-sre-agent query "What's the current Redis memory usage?"
-
-# System status
-redis-sre-agent status
-```
-
 ## Configuration
 
 Essential environment variables:
@@ -97,9 +88,7 @@ The agent has access to these SRE-specific tools:
 
 ## Testing
 
-Comprehensive test suite with 79% coverage across unit and integration tests.
-
-### Unit Tests (Fast)
+### Unit Tests
 ```bash
 # Run all unit tests
 uv run pytest tests/unit/ -v
@@ -111,7 +100,7 @@ uv run pytest tests/unit/ --cov=redis_sre_agent --cov-report=html --cov-report=t
 uv run pytest tests/unit/ -v --tb=short
 ```
 
-### Integration Tests (Require Services)
+### Integration Tests (Require Service Keys)
 
 **Redis Integration Tests:**
 ```bash
@@ -141,32 +130,8 @@ export DOCKET_INTEGRATION_TESTS=true
 uv run pytest tests/integration/test_docket_sre_integration.py -v -m docket_integration
 ```
 
-**Agent Behavior Tests:**
-```bash
-# Enable agent behavior tests (when agent is implemented)
-export AGENT_BEHAVIOR_TESTS=true
-
 # Run end-to-end agent tests (real OpenAI + Redis)
 uv run pytest tests/integration/test_agent_behavior.py -v -m agent_behavior
-```
-
-### Test Categories
-
-- **Unit Tests**: Mock all external dependencies, fast execution
-- **Integration Tests**: Real Redis, real services, slower but thorough
-- **OpenAI Tests**: Real OpenAI API calls, validates embeddings and search
-- **Agent Behavior Tests**: Full end-to-end workflows with quality evaluation
-
-### Running Specific Test Types
-```bash
-# Skip expensive tests
-uv run pytest -m "not openai_integration and not agent_behavior"
-
-# Only integration tests
-uv run pytest -m integration
-
-# Everything except agent behavior
-uv run pytest -m "not agent_behavior"
 ```
 
 ### Development
@@ -203,21 +168,23 @@ Docket tasks for:
 docker-compose up -d
 ```
 
-**Production**: Docker containers with Redis 8 and monitoring integration.
+**Production**: Docker containers with Redis 8 (or 7.x with RediSearch module) and monitoring integration.
 
 ## Project Status
 
 🚧 **Under Development** - Core infrastructure and basic agent workflow in progress.
 
 ### Roadmap
-- [ ] Core project structure and configuration
-- [ ] FastAPI foundation with health checks
-- [ ] Redis infrastructure (RedisVL + Docket)
-- [ ] LangGraph agent implementation  
-- [ ] SRE tools (metrics, logs, health checks)
-- [ ] Data pipeline for knowledge ingestion
-- [ ] API endpoints and CLI
-- [ ] Monitoring system integrations
+- [x] Core project structure and configuration
+- [x] FastAPI foundation with health checks
+- [x] Redis infrastructure (RedisVL + Docket)
+- [x] LangGraph agent implementation  
+- [x] POC of SRE tools (metrics, logs, health checks)
+- [x] POC of data pipeline for knowledge ingestion
+- [x] API endpoints
+- [ ] CLI
+- [ ] Monitoring system integrations (in profress)
+- [ ] Safety systems / guardrails (in progress)
 - [ ] Deployment and testing
 
 ---
