@@ -19,7 +19,7 @@ A LangGraph-based Redis SRE Agent for intelligent infrastructure monitoring and 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.12+, Redis 8+, UV package manager
+- Python 3.12+, Redis 8+ or 7.x with RediSearch module, UV package manager
 - OpenAI API key
 - Optional: Prometheus, Grafana access for monitoring integration
 
