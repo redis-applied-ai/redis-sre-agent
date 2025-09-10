@@ -16,14 +16,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 COPY pyproject.toml uv.lock ./
 COPY README.md ./
 
-# Install dependencies
-RUN uv sync --frozen --no-dev
-
 # Copy application code
 COPY . .
 
-# Install the package
-RUN uv pip install -e .
+# Install dependencies and package in editable mode
+RUN uv sync --frozen --no-dev
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
@@ -34,4 +31,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Default command (can be overridden)
-CMD ["uvicorn", "redis_sre_agent.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "redis_sre_agent.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

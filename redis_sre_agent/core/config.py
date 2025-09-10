@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, description="Server port")
 
     # Redis
-    redis_url: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")
+    redis_url: str = Field(default="redis://localhost:7843/0", description="Redis connection URL")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
 
     # OpenAI

@@ -1,15 +1,28 @@
-version: '3.8'
-
 services:
-  # Redis - Main database and vector store
+  # Redis - Agent operational database and vector store
   redis:
     image: redis:8.2.1
     ports:
-      - "6379:6379"
+      - "7843:6379"  # Agent operational Redis
     volumes:
       - redis_data:/data
       - ./monitoring/redis.conf:/usr/local/etc/redis/redis.conf
     command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - sre-network
+
+  # Redis Demo - Target instance for testing scenarios
+  redis-demo:
+    image: redis:8.2.1
+    ports:
+      - "7844:6379"  # Demo/testing Redis
+    volumes:
+      - redis_demo_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -54,7 +67,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
@@ -91,7 +104,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
       - PROMETHEUS_URL=http://prometheus:9090
       - GRAFANA_URL=http://grafana:3000
     depends_on:
@@ -102,7 +115,7 @@ services:
     volumes:
       - .env:/app/.env
       - ./artifacts:/app/artifacts  # For data pipeline
-    command: uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000
+    command: uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000
     networks:
       - sre-network
 
@@ -112,7 +125,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
       - PROMETHEUS_URL=http://prometheus:9090
     depends_on:
       redis:
@@ -120,7 +133,7 @@ services:
     volumes:
       - .env:/app/.env
       - ./artifacts:/app/artifacts
-    command: python -m redis_sre_agent.worker
+    command: uv run python -m redis_sre_agent.worker
     networks:
       - sre-network
 
@@ -130,5 +143,6 @@ networks:
 
 volumes:
   redis_data:
+  redis_demo_data:
   prometheus_data:
   grafana_data:

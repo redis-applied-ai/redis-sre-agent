@@ -1,6 +1,14 @@
 """CLI interface for Redis SRE Agent."""
 
+import warnings
 import click
+
+# Suppress Pydantic protected namespace warning from dependencies
+warnings.filterwarnings(
+    "ignore", 
+    message=r"Field \"model_name\" in .* has conflict with protected namespace \"model_\"",
+    category=UserWarning
+)
 
 from .pipeline import pipeline
 from .runbook import runbook

@@ -430,6 +430,30 @@ async def search_runbook_knowledge(
                     }
                 )
 
+    # Format results for better LLM readability with clear source attribution
+    formatted_output = f"""
+SEARCH RESULTS for query: "{query}"
+Found {len(formatted_results)} relevant documents:
+
+"""
+    
+    for i, doc in enumerate(formatted_results, 1):
+        doc_type = "RUNBOOK" if "runbook" in doc.get("source", "").lower() else "DOCUMENTATION"
+        formatted_output += f"""
+--- RESULT {i} ---
+📋 TITLE: {doc.get('title', 'Unknown')}
+📁 SOURCE: {doc.get('source', 'Unknown')} ({doc_type})
+🏷️  CATEGORY: {doc.get('category', 'general')} | SEVERITY: {doc.get('severity', 'info')}
+📊 RELEVANCE SCORE: {doc.get('score', 0.0):.3f}
+
+CONTENT:
+{doc.get('content', '')[:800]}{'...' if len(doc.get('content', '')) > 800 else ''}
+
+"""
+    
+    if retry_attempted:
+        formatted_output += "\n⚠️  NOTE: Initial category search returned no results, broadened search was performed.\n"
+    
     result = {
         "task_id": str(ULID()),
         "query": query,
@@ -439,6 +463,7 @@ async def search_runbook_knowledge(
         "status": "completed",
         "results_count": len(formatted_results),
         "results": formatted_results,
+        "formatted_output": formatted_output,
         "search_metadata": {
             "index_name": index.name if hasattr(index, "name") else "sre_knowledge",
             "vector_field": "vector",
@@ -453,7 +478,9 @@ async def search_runbook_knowledge(
     else:
         logger.info(f"Knowledge search completed: {len(formatted_results)} results found")
 
-    return result
+    # Return the formatted output for better LLM readability while preserving the full result
+    # LangGraph will convert this to string for the LLM
+    return formatted_output
 
 
 async def check_service_health(

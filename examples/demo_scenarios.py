@@ -22,6 +22,7 @@ import logging
 import os
 import random
 import time
+import warnings
 from typing import Optional
 
 import redis
@@ -29,6 +30,13 @@ import redis
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.tools.redis_diagnostics import RedisDiagnostics
 from redis_sre_agent.tools.sre_functions import get_detailed_redis_diagnostics
+
+# TODO: Suppress Pydantic protected namespace warning from dependencies
+warnings.filterwarnings(
+    "ignore",
+    message=r"Field \"model_name\" in .* has conflict with protected namespace \"model_\"",
+    category=UserWarning
+)
 
 
 class RedisSREDemo:
@@ -87,24 +95,32 @@ class RedisSREDemo:
 
     async def setup_redis_connection(self) -> bool:
         """Establish Redis connection and setup health checker."""
-        redis_ports = [7942, 6379]  # Try low-memory test port first, then default
+        # Use separate Redis instance for demo scenarios to avoid interference with agent operational data
+        demo_ports = [7844, 7942, 6379]  # Try demo-specific port first, then fallbacks
 
-        for port in redis_ports:
+        for port in demo_ports:
             try:
+                # Connect to separate Redis instance for demo scenarios
                 self.redis_client = redis.Redis(host="localhost", port=port, decode_responses=True)
                 self.redis_client.ping()
                 self.redis_port = port
                 self.health_checker = RedisDiagnostics(f"redis://localhost:{port}/0")
-                print(f"✅ Redis connection established on port {port}")
+
+                # Clear any existing data from previous demo runs to ensure clean state
+                try:
+                    self.redis_client.flushdb()
+                    print(f"✅ Redis connection established on port {port} (database cleared for clean demo)")
+                except:
+                    print(f"✅ Redis connection established on port {port}")
+
                 return True
             except redis.ConnectionError:
                 continue
 
         print("❌ Redis not available on any port. Please start Redis first:")
-        print(
-            "   For low memory demo: docker-compose -f docker-compose.yml -f docker-compose.test.yml up redis -d"
-        )
-        print("   For regular demo: docker-compose up redis -d")
+        print("   Recommended: Start Redis on port 7843 for isolated demo:")
+        print("   redis-server --port 7843 --save '' --appendonly no")
+        print("   Alternative: docker-compose up redis -d")
         return False
 
     def show_main_menu(self) -> str:
@@ -315,11 +331,14 @@ class RedisSREDemo:
         """Simulate connection issues and demonstrate troubleshooting."""
         self.print_header("Connection Issues Analysis Scenario", "🔗")
 
-        self.print_step(1, "Analyzing current connection state")
+        self.print_step(1, "Establishing clean baseline connection state")
 
-        # Get connection info
-        clients_info = self.redis_client.info("clients")
-        current_clients = clients_info.get("connected_clients", 0)
+        # Ensure we're starting with a clean slate
+        self.redis_client.flushdb()
+
+        # Get baseline connection info (should be just our demo connection)
+        baseline_info = self.redis_client.info("clients")
+        baseline_clients = baseline_info.get("connected_clients", 0)
 
         # Get original maxclients setting
         try:
@@ -328,44 +347,51 @@ class RedisSREDemo:
         except Exception:
             original_maxclients = 10000
 
-        print(f"   Current connected clients: {current_clients}")
+        print(f"   Baseline connected clients: {baseline_clients} (should be 1-2 for clean demo)")
         print(f"   Original maximum clients: {original_maxclients}")
+
+        # Verify we have a clean environment
+        if baseline_clients > 3:
+            print(f"   ⚠️  Warning: {baseline_clients} existing connections detected")
+            print("   This may indicate a shared Redis instance - results may be affected")
 
         self.print_step(2, "Creating connection pressure scenario")
 
         # Set a low connection limit to create a realistic demo scenario
         # This simulates a constrained environment or misconfiguration
-        demo_maxclients = 75  # Low limit to create pressure with our test connections
-        
+        demo_maxclients = 25  # Very low limit to ensure we can hit it with demo connections
+
         print(f"   Setting maxclients to {demo_maxclients} for connection pressure demo...")
         self.redis_client.config_set("maxclients", str(demo_maxclients))
-        
+
         # Verify the setting was applied
         updated_result = self.redis_client.config_get("maxclients")
         current_maxclients = int(updated_result.get("maxclients", demo_maxclients))
         print(f"   Connection limit reduced to: {current_maxclients}")
-        print(f"   Current utilization: {(current_clients / current_maxclients * 100):.1f}%")
+        print(f"   Current utilization: {(baseline_clients / current_maxclients * 100):.1f}%")
 
-        self.print_step(3, "Simulating connection flood attack")
+        self.print_step(3, "Simulating connection pressure and creating blocked clients")
 
         # Create connections that will approach the limit
         test_connections = []
-        # Target 85-90% of the connection limit
-        target_connections = int(current_maxclients * 0.85) - current_clients
-        target_connections = max(20, min(target_connections, 60))  # Ensure reasonable range
+        # Target 90% of the connection limit, accounting for baseline
+        target_total_clients = int(current_maxclients * 0.9)
+        target_new_connections = target_total_clients - baseline_clients
+        target_new_connections = max(15, min(target_new_connections, current_maxclients - baseline_clients - 2))
 
-        print(f"   Attempting to create {target_connections} concurrent connections...")
-        print(f"   This will push utilization to ~85% of the {current_maxclients} connection limit")
+        print(f"   Attempting to create {target_new_connections} concurrent connections...")
+        print(f"   Target total clients: {target_total_clients} (~90% of {current_maxclients} limit)")
+        print("   This should create clear connection pressure metrics...")
 
         connection_errors = 0
         successful_connections = 0
-        
+
         try:
-            for i in range(target_connections):
+            for i in range(target_new_connections):
                 try:
                     conn = redis.Redis(
-                        host="localhost", 
-                        port=self.redis_port, 
+                        host="localhost",
+                        port=self.redis_port,
                         decode_responses=True,
                         socket_connect_timeout=2,  # Short timeout to detect connection issues
                         socket_timeout=2
@@ -376,15 +402,15 @@ class RedisSREDemo:
 
                     if (i + 1) % 15 == 0 or i == target_connections - 1:
                         print(f"   Progress: {i + 1}/{target_connections} connections attempted...")
-                    
+
                     # Add some delay to simulate realistic connection patterns
                     time.sleep(0.05)
-                    
+
                 except redis.ConnectionError as e:
                     connection_errors += 1
                     if connection_errors == 1:
                         print(f"   ⚠️  Connection rejected: {str(e)}")
-                        print(f"   This indicates we're hitting Redis connection limits!")
+                        print("   This indicates we're hitting Redis connection limits!")
                     break  # Stop trying once we hit the limit
                 except Exception as e:
                     connection_errors += 1
@@ -401,36 +427,94 @@ class RedisSREDemo:
             print(f"   📊 Total connected clients: {clients_after}")
             print(f"   📈 Connection utilization: {(clients_after / current_maxclients * 100):.1f}%")
 
-            if clients_after / current_maxclients > 0.9:
+            # Create blocked client scenario using BLPOP operations
+            print("   🧪 Creating blocked clients to demonstrate client queue issues...")
+            blocked_clients_created = 0
+
+            # Use some of the existing connections to create blocking operations
+            for i in range(min(10, len(test_connections))):
+                try:
+                    conn = test_connections[i]
+                    # Start BLPOP operations on non-existent keys (will block indefinitely)
+                    # Use asyncio to run these in background without blocking the demo
+                    import threading
+                    def blocking_operation(connection, key_name):
+                        try:
+                            # This will block until timeout or key appears
+                            connection.blpop([key_name], timeout=30)
+                        except:
+                            pass  # Expected timeout or connection error
+
+                    thread = threading.Thread(
+                        target=blocking_operation,
+                        args=(conn, f"nonexistent_blocking_key_{i}")
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    blocked_clients_created += 1
+                    time.sleep(0.1)  # Brief delay between blocking operations
+                except Exception as e:
+                    print(f"   Warning: Could not create blocking operation: {e}")
+                    break
+
+            # Wait for blocked clients to register
+            time.sleep(2)
+
+            # Check for blocked clients in metrics
+            final_clients_info = self.redis_client.info("clients")
+            blocked_clients = final_clients_info.get("blocked_clients", 0)
+            total_clients = final_clients_info.get("connected_clients", 0)
+
+            print(f"   📋 Blocked clients created: {blocked_clients_created}")
+            print(f"   📊 Redis reports blocked clients: {blocked_clients}")
+            print(f"   📊 Total connected clients: {total_clients}")
+
+            if blocked_clients > 0:
+                print("   🚨 BLOCKED CLIENTS DETECTED - This indicates client queue issues!")
+
+            utilization = (total_clients / current_maxclients * 100) if current_maxclients > 0 else 0
+
+            if utilization > 90:
                 print("   🚨 CRITICAL: Connection exhaustion imminent!")
-            elif clients_after / current_maxclients > 0.8:
+            elif utilization > 80:
                 print("   🚨 HIGH CONNECTION USAGE DETECTED!")
-            elif clients_after / current_maxclients > 0.6:
+            elif utilization > 60:
                 print("   ⚠️  ELEVATED CONNECTION USAGE")
 
-            # Add some blocked clients by trying to create more connections
-            if connection_errors == 0:  # Only if we haven't hit limits yet
-                print("   🧪 Testing connection limit by creating additional connections...")
-                extra_attempts = 5
-                blocked_attempts = 0
-                for i in range(extra_attempts):
-                    try:
-                        extra_conn = redis.Redis(
-                            host="localhost", 
-                            port=self.redis_port, 
-                            socket_connect_timeout=1
-                        )
-                        extra_conn.ping()
-                        test_connections.append(extra_conn)
-                    except:
-                        blocked_attempts += 1
-                
-                if blocked_attempts > 0:
-                    print(f"   🚨 {blocked_attempts}/{extra_attempts} additional connection attempts blocked!")
+            # Force additional connection attempts to generate rejection metrics
+            print("   🧪 Testing connection rejection behavior...")
+            extra_attempts = 8
+            rejected_attempts = 0
+            rejection_errors = []
 
-            # Run diagnostics and agent consultation
+            for i in range(extra_attempts):
+                try:
+                    extra_conn = redis.Redis(
+                        host="localhost",
+                        port=self.redis_port,
+                        socket_connect_timeout=1,
+                        socket_timeout=1
+                    )
+                    extra_conn.ping()
+                    test_connections.append(extra_conn)
+                except redis.ConnectionError as e:
+                    rejected_attempts += 1
+                    rejection_errors.append(str(e))
+                except Exception as e:
+                    rejected_attempts += 1
+                    rejection_errors.append(f"Connection error: {str(e)}")
+
+            if rejected_attempts > 0:
+                print(f"   🚨 {rejected_attempts}/{extra_attempts} connection attempts rejected!")
+                print("   📊 This creates visible connection_rejected_* metrics in Redis")
+
+            # Get comprehensive diagnostics showing connection problems
+            print("   📊 Getting diagnostic data to show connection issues...")
+            diagnostics = await get_detailed_redis_diagnostics()
+
+            # Run diagnostics and agent consultation with connection-focused query
             await self._run_diagnostics_and_agent_query(
-                "The application team has reported user complaints. Please analyze the Redis diagnostics and provide recommendations."
+                f"Application users are reporting connection timeouts and service unavailability. Current metrics show {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, and {rejected_attempts} recent connection rejections. Please analyze the connection issues and provide immediate remediation steps."
             )
 
         finally:
@@ -493,20 +577,62 @@ class RedisSREDemo:
                 self.redis_client.lpush(key, f"item_{j}_{random.randint(1000, 9999)}")
         print(f"   ✅ Created {test_data['list_keys']} list keys")
 
-        self.print_step(2, "Running performance analysis")
+        self.print_step(2, "Running performance analysis and creating slow operations")
 
-        # Simulate some potentially slow operations
-        print("   Testing key scanning performance...")
-        start_time = time.time()
-        all_keys = self.redis_client.keys("demo:perf:*")
-        scan_time = time.time() - start_time
-        print(f"   KEYS scan found {len(all_keys)} keys in {scan_time:.3f} seconds")
+        # Create intentionally slow Lua script to generate real slowlog entries
+        slow_lua_script = """
+        -- Intentionally slow Lua script for performance demo
+        local start_time = redis.call('TIME')
+        local iterations = tonumber(ARGV[1]) or 100000
+        
+        -- Simulate CPU-intensive work
+        local result = 0
+        for i = 1, iterations do
+            for j = 1, 100 do
+                result = result + (i * j) % 1000
+            end
+        end
+        
+        -- Also do some Redis operations to make it realistic
+        for i = 1, 10 do
+            redis.call('SET', 'temp:slow:' .. i, 'processing_' .. result .. '_' .. i)
+            redis.call('GET', 'temp:slow:' .. i)
+            redis.call('DEL', 'temp:slow:' .. i)
+        end
+        
+        local end_time = redis.call('TIME')
+        return {result, end_time[1] - start_time[1], end_time[2] - start_time[2]}
+        """
 
-        if scan_time > 0.1:
-            print("   ⚠️  SLOW KEYS operation detected!")
+        print("   Creating intentionally slow operations to populate slowlog...")
 
-        # Test individual operations
-        print("   Testing individual operation performance...")
+        # Execute slow Lua script multiple times to create slowlog entries
+        slow_times = []
+        for i in range(3):
+            try:
+                print(f"   Executing slow operation {i+1}/3...")
+                start_time = time.time()
+                # Adjust iterations to create operations that take 100-500ms
+                result = self.redis_client.eval(slow_lua_script, 0, str(50000 + i * 10000))
+                duration = time.time() - start_time
+                slow_times.append(duration * 1000)  # Convert to milliseconds
+                print(f"   Slow operation {i+1} completed in {duration * 1000:.1f}ms")
+                time.sleep(0.5)  # Brief pause between slow operations
+            except Exception as e:
+                print(f"   Warning: Slow operation {i+1} failed: {e}")
+
+        # Add some additional slow KEYS operations for variety in slowlog
+        print("   Adding slow KEYS operations...")
+        keys_times = []
+        for pattern in ["demo:perf:*", "*perf*", "demo:*"]:
+            start_time = time.time()
+            keys = self.redis_client.keys(pattern)
+            duration = time.time() - start_time
+            keys_times.append(duration * 1000)
+            print(f"   KEYS {pattern} found {len(keys)} keys in {duration * 1000:.1f}ms")
+
+        # Test normal operations for comparison
+        print("   Testing normal operation performance for comparison...")
 
         # Test string operations
         start_time = time.time()
@@ -526,12 +652,42 @@ class RedisSREDemo:
             f"   50 HGETALL operations: {hash_time:.3f} seconds ({hash_time / 50 * 1000:.2f}ms avg)"
         )
 
-        if hash_time / 50 > 0.01:  # > 10ms per operation
-            print("   ⚠️  SLOW HASH operations detected!")
+        # Show performance comparison
+        avg_slow_time = sum(slow_times) / len(slow_times) if slow_times else 0
+        avg_keys_time = sum(keys_times) / len(keys_times) if keys_times else 0
 
-        # Run diagnostics and agent consultation
+        print("\n   📊 Performance Summary:")
+        print(f"   🐌 Average slow Lua script: {avg_slow_time:.1f}ms")
+        print(f"   🐌 Average KEYS operation: {avg_keys_time:.1f}ms")
+        print(f"   ✅ Average GET operation: {string_time / 100 * 1000:.2f}ms")
+        print(f"   ✅ Average HGETALL operation: {hash_time / 50 * 1000:.2f}ms")
+
+        if avg_slow_time > 50:
+            print("   🚨 SLOW OPERATIONS DETECTED - These should appear in Redis slowlog!")
+
+        # Check slowlog to verify our slow operations were recorded
+        try:
+            slowlog_entries = self.redis_client.slowlog_get(10)
+            print(f"   📋 Current slowlog contains {len(slowlog_entries)} entries")
+
+            if slowlog_entries:
+                latest_entry = slowlog_entries[0]
+                duration_us = latest_entry.get('duration', 0)
+                command = ' '.join(latest_entry.get('command', []))[:50] + '...'
+                print(f"   🐌 Latest slow command: {command} ({duration_us}μs)")
+        except Exception as e:
+            print(f"   Warning: Could not check slowlog: {e}")
+
+        # Run diagnostics and agent consultation with comprehensive performance data
+        slowlog_count = 0
+        try:
+            slowlog_entries = self.redis_client.slowlog_get(10)
+            slowlog_count = len(slowlog_entries)
+        except:
+            pass
+
         await self._run_diagnostics_and_agent_query(
-            f"Redis performance analysis completed. KEYS scan took {scan_time:.3f}s for {len(all_keys)} keys, average GET latency {string_time / 100 * 1000:.2f}ms, average HGETALL latency {hash_time / 50 * 1000:.2f}ms. Please analyze performance and suggest optimizations."
+            f"Application performance issues reported. Performance analysis shows: slow Lua operations averaging {avg_slow_time:.1f}ms, KEYS operations averaging {avg_keys_time:.1f}ms, normal GET operations {string_time / 100 * 1000:.2f}ms, HGETALL operations {hash_time / 50 * 1000:.2f}ms. Slowlog contains {slowlog_count} entries. Please analyze the performance issues and provide optimization recommendations."
         )
 
         # Cleanup

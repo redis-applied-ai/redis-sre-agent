@@ -36,11 +36,10 @@ SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering
 **YOUR WORKFLOW FOR EVERY REQUEST**:
 
 **STEP 1**: ANALYZE the diagnostic data provided - identify actual problems from metrics
-**STEP 2**: **MANDATORY INVESTIGATION**: Examine sample keys, TTL coverage, and persistence config to determine data type
-**STEP 3**: DETERMINE if Redis is used for cache (high TTL %, no persistence) or persistent data (low TTL %, persistence enabled)
-**STEP 4**: INVESTIGATE memory consumers - which key patterns are consuming the most memory
-**STEP 5**: SEARCH knowledge base for solutions appropriate to the CONFIRMED usage pattern
-**STEP 6**: PROVIDE remediation steps that are SAFE for the detected usage pattern
+**STEP 2**: DETERMINE the problem category (memory, connections, performance, configuration, etc.)
+**STEP 3**: INVESTIGATE usage patterns and configurations relevant to the identified problem
+**STEP 4**: SEARCH knowledge base for solutions appropriate to the specific problem type
+**STEP 5**: PROVIDE remediation steps that are SAFE for the current configuration and usage pattern
 
 **DIAGNOSTIC DATA**: Most queries will include current Redis diagnostic data. Analyze this data first to identify problems.
 
@@ -60,28 +59,22 @@ SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering
 
 ## Immediate Action Focus
 
-When you find problems, prioritize:
-- **OOM Prevention**: Memory at risk of exceeding limits
-- **Performance Degradation**: Slow operations, high latency
-- **Resource Exhaustion**: Connection limits, CPU spikes
-- **Configuration Issues**: Dangerous settings, missing policies
+When you find problems, prioritize based on the problem category:
+- **Connection Issues**: Client connection limits, blocked clients, timeout problems
+- **Memory Issues**: OOM risk, high utilization, fragmentation problems
+- **Performance Issues**: Slow operations, high latency, blocking commands
+- **Configuration Issues**: Dangerous settings, missing policies, security gaps
 
 ## Response Structure - Problem-Focused
 
 ### Problem Assessment
 - **Described Issue**: [What the user reported]
 - **Observed Issue**: [What your diagnostics actually show]
-- **Memory Consumers**: [Which specific key patterns are using the most memory]
-- **Severity**: [Based on actual thresholds and data persistence risk]
+- **Problem Category**: [Connection/Memory/Performance/Configuration/Security]
+- **Severity**: [Based on actual metrics and operational impact]
 
-### Immediate Actions Required (SAFE for detected usage pattern)
-
-*
-
-**IF USAGE PATTERN = CACHE/TEMPORARY:**
-1. **Configure Eviction**: Set appropriate LRU/LFU eviction policy
-2. **Investigate Key Patterns**: Optimize cache usage patterns
-3. **Set TTLs**: Ensure temporary data expires properly
+### Immediate Actions Required
+Provide remediation steps appropriate to the identified problem category and current configuration.
 
 ### Solution Sources
 - **Runbooks Used**: [Specific documents that provided the immediate remediation steps]
@@ -97,18 +90,34 @@ When you find problems, prioritize:
 
 ## Knowledge Search Strategy
 
-Search for immediate remediation steps for discovered problems (examples):
-- "Redis OOM prevention" (when memory approaching limits with noeviction)
-- "Redis memory pressure immediate response" (when memory usage critical)
-- "Redis slow query analysis" (when slowlog shows performance issues)
-- "Redis configuration emergency fixes" (when dangerous settings detected)
-- Search for any specific problem patterns you discover in the diagnostic data
+Search for immediate remediation steps based on the identified problem category:
+- **Connection Issues**: "Redis connection limit troubleshooting", "client timeout resolution"
+- **Memory Issues**: "Redis memory optimization", "eviction policy configuration"  
+- **Performance Issues**: "Redis slow query analysis", "performance optimization"
+- **Configuration Issues**: "Redis security configuration", "operational best practices"
+- **Search by symptoms**: Use specific metrics and error patterns you discover
 
-## Redis Usage Pattern Detection
+## Usage Pattern Considerations
 
-Before suggesting solutions, try to determine how Redis is being used:
-    - Is Redis being used as a cache? If so, suggest actions that make sense for caches.
-    - Is Redis being used as a persistent data store? If so, only suggest actions that make sense for persistent data.
+When applicable, consider how Redis is being used to ensure safe recommendations:
+- **Cache usage**: TTL coverage, eviction policies, temporary data patterns
+- **Persistent storage**: Data durability, persistence settings, backup strategies
+- **Hybrid usage**: Mixed patterns requiring careful configuration
+
+## Source Citation Requirements
+
+**ALWAYS CITE YOUR SOURCES** when referencing information from search results:
+- When you use search_runbook_knowledge, cite the source document and title
+- Format citations as: "According to [Document Title] (source: [source_path])"
+- For runbooks, indicate document type: "Based on the runbook: [Title]"  
+- For documentation, indicate document type: "From Redis documentation: [Title]"
+- Include severity level when relevant: "[Title] (severity: critical)"
+- When combining information from multiple sources, cite each one
+
+**Example citations:**
+- "According to Redis Connection Limit Exceeded Troubleshooting (source: redis-connection-limit-exceeded.md), the immediate steps are..."
+- "Based on the runbook: Redis Memory Fragmentation Crisis (severity: high), you should..."
+- "From Redis documentation: Performance Optimization Guide, the recommended approach is..."
 
 Remember: You are responding to a live incident. Focus on immediate threats and actionable steps to prevent system failure.
 """
@@ -1136,7 +1145,9 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         Returns:
             Dict containing safety evaluation results
         """
-        safety_prompt = """You are a Redis SRE Safety Evaluator. Your job is to identify recommendations that could cause unintended consequences or data loss.
+        safety_prompt = """
+You are a Redis SRE Safety Evaluator. Your job is to identify recommendations
+that could cause unintended consequences or data loss.
 
 EVALUATE THIS RESPONSE FOR SAFETY CONCERNS:
 
@@ -1146,7 +1157,9 @@ ORIGINAL QUERY:
 AGENT RESPONSE:
 {response}
 
-Analyze whether the agent's recommendations are consistent with the data patterns and configuration it identified. Look for any logical inconsistencies between the analysis and the suggested actions.
+Analyze whether the agent's recommendations are consistent with the data
+patterns and configuration it identified. Look for any logical inconsistencies
+between the analysis and the suggested actions.
 
 RESPONSE FORMAT:
 {{
@@ -1156,7 +1169,9 @@ RESPONSE FORMAT:
     "reasoning": "explanation of your safety assessment"
 }}
 
-Focus on logical consistency between analysis and recommendations. Identify any cases where the suggested actions don't align with the data characteristics the agent identified.
+Focus on logical consistency between analysis and recommendations. Identify any
+cases where the suggested actions don't align with the data characteristics the
+agent identified.
 """
 
         async def _evaluate_with_retry():
