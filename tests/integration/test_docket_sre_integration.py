@@ -15,7 +15,7 @@ from redis_sre_agent.core.tasks import (
     check_service_health,
     ingest_sre_document,
     register_sre_tasks,
-    search_runbook_knowledge,
+    search_knowledge_base,
     test_task_system,
 )
 
@@ -159,7 +159,7 @@ class TestDocketSREIntegration:
 
     @pytest.mark.asyncio
     async def test_knowledge_search_task_real_execution(self, redis_container):
-        """Test search_runbook_knowledge task with real Redis."""
+        """Test search_knowledge_base task with real Redis."""
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
@@ -185,7 +185,7 @@ class TestDocketSREIntegration:
                     ]
 
                     # Execute the task
-                    result = await search_runbook_knowledge(
+                    result = await search_knowledge_base(
                         query="Docket task system integration", category="testing", limit=5
                     )
 
@@ -341,7 +341,7 @@ class TestDocketWorkerIntegration:
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
             "analyze_system_metrics",
-            "search_runbook_knowledge",
+            "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",
         ]

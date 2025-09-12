@@ -17,7 +17,7 @@ import statistics
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from redis_sre_agent.tools.sre_functions import search_runbook_knowledge
+from redis_sre_agent.tools.sre_functions import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ class RetrievalEvaluator:
 
         # Perform search
         try:
-            search_results = await search_runbook_knowledge(
+            search_results = await search_knowledge_base(
                 query=test_case.query, category=test_case.category, limit=limit
             )
 

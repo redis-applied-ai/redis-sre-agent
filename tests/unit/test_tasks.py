@@ -12,7 +12,7 @@ from redis_sre_agent.core.tasks import (
     check_service_health,
     ingest_sre_document,
     register_sre_tasks,
-    search_runbook_knowledge,
+    search_knowledge_base,
     test_task_system,
 )
 
@@ -27,7 +27,7 @@ class TestSRETaskCollection:
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
             "analyze_system_metrics",
-            "search_runbook_knowledge",
+            "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",
             "process_agent_turn",
@@ -87,7 +87,7 @@ class TestAnalyzeSystemMetrics:
 
 
 class TestSearchRunbookKnowledge:
-    """Test search_runbook_knowledge task."""
+    """Test search_knowledge_base task."""
 
     @pytest.mark.asyncio
     async def test_search_knowledge_success(self, mock_search_index, mock_vectorizer):
@@ -110,7 +110,7 @@ class TestSearchRunbookKnowledge:
             patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
         ):
-            result = await search_runbook_knowledge(
+            result = await search_knowledge_base(
                 query="redis memory issues", category="monitoring", limit=3
             )
 
@@ -135,7 +135,7 @@ class TestSearchRunbookKnowledge:
             patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
         ):
-            result = await search_runbook_knowledge(query="general help", category=None)
+            result = await search_knowledge_base(query="general help", category=None)
 
         assert result["query"] == "general help"
         assert result["category"] is None
@@ -148,7 +148,7 @@ class TestSearchRunbookKnowledge:
 
         with patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer):
             with pytest.raises(Exception, match="OpenAI API error"):
-                await search_runbook_knowledge("test query")
+                await search_knowledge_base("test query")
 
 
 class TestCheckServiceHealth:

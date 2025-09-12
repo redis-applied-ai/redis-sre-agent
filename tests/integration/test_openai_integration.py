@@ -11,9 +11,9 @@ from redis_sre_agent.core.redis import (
     get_knowledge_index,
     get_vectorizer,
 )
-from redis_sre_agent.core.tasks import (
+from redis_sre_agent.tools.sre_functions import (
     ingest_sre_document,
-    search_runbook_knowledge,
+    search_knowledge_base,
 )
 
 
@@ -139,7 +139,7 @@ class TestOpenAIIntegration:
             assert "task_id" in result
 
             # Test searching for the ingested document
-            search_result = await search_runbook_knowledge(
+            search_result = await search_knowledge_base(
                 query="Redis memory usage high", category="monitoring", limit=3
             )
 
@@ -212,10 +212,10 @@ class TestOpenAIIntegration:
                 )
 
             # Test semantic search - should find Redis-related documents for Redis query
-            redis_search = await search_runbook_knowledge(query="Redis performance issues", limit=5)
+            redis_search = await search_knowledge_base(query="Redis performance issues", limit=5)
 
             # Test category filtering
-            optimization_search = await search_runbook_knowledge(
+            optimization_search = await search_knowledge_base(
                 query="performance optimization", category="optimization", limit=3
             )
 
@@ -429,7 +429,7 @@ class TestRealWorkflowIntegration:
             ]
 
             for scenario in search_scenarios:
-                search_result = await search_runbook_knowledge(query=scenario["query"], limit=3)
+                search_result = await search_knowledge_base(query=scenario["query"], limit=3)
 
                 print(f"\n🔍 Search: '{scenario['query']}'")
                 print(f"   Results: {search_result['results_count']}")
@@ -451,7 +451,7 @@ class TestRealWorkflowIntegration:
                     assert 0.0 <= top_result["score"] <= 1.0
 
             # 4. Test category filtering
-            monitoring_results = await search_runbook_knowledge(
+            monitoring_results = await search_knowledge_base(
                 query="system monitoring", category="monitoring", limit=2
             )
 

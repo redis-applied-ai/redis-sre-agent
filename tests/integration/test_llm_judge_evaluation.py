@@ -17,7 +17,7 @@ import pytest
 import redis
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.tools.sre_functions import search_runbook_knowledge
+from redis_sre_agent.tools.sre_functions import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +301,7 @@ async def evaluate_search_with_llm_judge(scenario: Dict[str, Any]) -> Dict[str, 
     logger.info(f"🔍 Evaluating: {scenario['scenario']}")
 
     # Perform the search
-    search_result = await search_runbook_knowledge(scenario["query"], limit=5)
+    search_result = await search_knowledge_base(scenario["query"], limit=5)
     retrieved_docs = search_result.get("results", [])
 
     # Prepare context for the judge

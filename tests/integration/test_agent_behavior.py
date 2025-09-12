@@ -127,7 +127,7 @@ class TestSREAgentBehavior:
                 "category": "agent_capabilities",
                 "weight": 1.5,
                 "user_input": "What can this SRE agent help me with?",
-                "expected_behavior": "Should clearly explain SRE agent capabilities: system monitoring, incident response, performance troubleshooting, capacity planning, and knowledge base search. Should mention specific tools like search_runbook_knowledge, analyze_metrics, check_health.",
+                "expected_behavior": "Should clearly explain SRE agent capabilities: system monitoring, incident response, performance troubleshooting, capacity planning, and knowledge base search. Should mention specific tools like search_knowledge_base, analyze_metrics, check_health.",
                 "thread_context": [],
             },
         ]
@@ -185,7 +185,7 @@ class TestSREAgentBehavior:
         tool_test_cases = [
             {
                 "query": "Search for information about Redis memory troubleshooting procedures",
-                "expected_tool": "search_runbook_knowledge",
+                "expected_tool": "search_knowledge_base",
                 "session_id": "tool-test-search",
             },
             {

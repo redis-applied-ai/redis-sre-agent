@@ -16,6 +16,32 @@ from redis_sre_agent.core.redis import (
 logger = logging.getLogger(__name__)
 
 
+async def validate_url(url: str, timeout: float = 5.0) -> Dict[str, Any]:
+    """
+    Validate that a URL is accessible and returns a successful response.
+
+    Args:
+        url: URL to validate
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dict with validation results
+    """
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            async with session.head(url) as response:
+                return {
+                    "url": url,
+                    "valid": 200 <= response.status < 400,
+                    "status_code": response.status,
+                    "error": None,
+                }
+    except Exception as e:
+        return {"url": url, "valid": False, "status_code": None, "error": str(e)}
+
+
 async def analyze_system_metrics(
     metric_query: str,
     time_range: str = "1h",
@@ -108,223 +134,25 @@ async def analyze_system_metrics(
         raise
 
 
-async def search_redis_docs(
-    query: str,
-    doc_type: Optional[str] = None,
-    limit: int = 3,
-) -> Dict[str, Any]:
-    """
-    Search Redis official documentation for commands, configuration, and concepts.
 
-    Args:
-        query: Search query (command name, configuration option, concept)
-        doc_type: Filter by documentation type (commands, config, concepts, modules)
-        limit: Maximum number of results (default: 3)
-
-    Returns:
-        Search results with Redis documentation content
-
-    Examples:
-        - search_redis_docs("MEMORY USAGE") - Find MEMORY USAGE command docs
-        - search_redis_docs("maxmemory-policy", doc_type="config") - Config docs
-        - search_redis_docs("eviction policies", doc_type="concepts") - Conceptual docs
-    """
-    try:
-        logger.info(f"Searching Redis docs: {query}")
-
-        # Redis documentation URLs for different types
-        redis_docs_urls = {
-            "commands": "https://redis.io/docs/latest/commands/",
-            "config": "https://redis.io/docs/latest/reference/configuration/",
-            "concepts": "https://redis.io/docs/latest/reference/",
-            "modules": "https://redis.io/docs/latest/modules/",
-        }
-
-        # Common Redis commands and their documentation
-        command_docs = {
-            "memory usage": {
-                "command": "MEMORY USAGE",
-                "syntax": "MEMORY USAGE key [SAMPLES count]",
-                "description": "Reports the number of bytes that a key and its value require to be stored in RAM.",
-                "returns": "Integer reply: the memory usage in bytes, or nil when the key does not exist.",
-                "examples": ["MEMORY USAGE mykey", "MEMORY USAGE mylist SAMPLES 5"],
-            },
-            "info": {
-                "command": "INFO",
-                "syntax": "INFO [section ...]",
-                "description": "Returns information and statistics about the server in a format that is simple to parse by computers and easy to read by humans.",
-                "sections": [
-                    "memory",
-                    "clients",
-                    "stats",
-                    "replication",
-                    "cpu",
-                    "keyspace",
-                    "persistence",
-                ],
-                "examples": ["INFO memory", "INFO stats", "INFO"],
-            },
-            "config get": {
-                "command": "CONFIG GET",
-                "syntax": "CONFIG GET parameter [parameter ...]",
-                "description": "Returns the current configuration parameters.",
-                "examples": [
-                    "CONFIG GET maxmemory",
-                    "CONFIG GET maxmemory-policy",
-                    "CONFIG GET save",
-                ],
-            },
-            "config set": {
-                "command": "CONFIG SET",
-                "syntax": "CONFIG SET parameter value [parameter value ...]",
-                "description": "Reconfigures the server at run time without the need to restart Redis.",
-                "examples": [
-                    "CONFIG SET maxmemory 100mb",
-                    "CONFIG SET maxmemory-policy allkeys-lru",
-                ],
-            },
-            "slowlog": {
-                "command": "SLOWLOG",
-                "syntax": "SLOWLOG GET [count]",
-                "description": "Returns the Redis slow queries log.",
-                "examples": ["SLOWLOG GET", "SLOWLOG GET 10", "SLOWLOG LEN", "SLOWLOG RESET"],
-            },
-        }
-
-        # Configuration options
-        config_docs = {
-            "maxmemory": {
-                "option": "maxmemory",
-                "description": "Set a memory usage limit to the specified amount of bytes.",
-                "default": "0 (unlimited)",
-                "examples": ["maxmemory 100mb", "maxmemory 1gb"],
-                "related": ["maxmemory-policy", "maxmemory-samples"],
-            },
-            "maxmemory-policy": {
-                "option": "maxmemory-policy",
-                "description": "How Redis will select what to remove when maxmemory is reached.",
-                "default": "noeviction",
-                "policies": {
-                    "noeviction": "Return errors when memory limit reached",
-                    "allkeys-lru": "Evict least recently used keys",
-                    "volatile-lru": "Evict least recently used keys with expire set",
-                    "allkeys-lfu": "Evict least frequently used keys",
-                    "volatile-lfu": "Evict least frequently used keys with expire set",
-                    "allkeys-random": "Evict random keys",
-                    "volatile-random": "Evict random keys with expire set",
-                    "volatile-ttl": "Evict keys with expire set and shorter TTL first",
-                },
-            },
-            "save": {
-                "option": "save",
-                "description": "RDB persistence: save the dataset every N seconds if at least M changes occurred.",
-                "format": "save <seconds> <changes>",
-                "examples": ["save 900 1", "save 300 10", "save 60 10000"],
-            },
-            "appendonly": {
-                "option": "appendonly",
-                "description": "Enable AOF persistence mode.",
-                "values": ["yes", "no"],
-                "default": "no",
-            },
-        }
-
-        # Search through documentation
-        results = []
-        query_lower = query.lower()
-
-        # Search commands
-        if not doc_type or doc_type == "commands":
-            for cmd_key, cmd_info in command_docs.items():
-                if (
-                    query_lower in cmd_key
-                    or query_lower in cmd_info["command"].lower()
-                    or query_lower in cmd_info["description"].lower()
-                ):
-                    results.append(
-                        {
-                            "type": "command",
-                            "title": f"Redis Command: {cmd_info['command']}",
-                            "content": cmd_info,
-                            "relevance_score": 0.9 if query_lower in cmd_key else 0.7,
-                        }
-                    )
-
-        # Search configuration
-        if not doc_type or doc_type == "config":
-            for config_key, config_info in config_docs.items():
-                if query_lower in config_key or query_lower in config_info["description"].lower():
-                    results.append(
-                        {
-                            "type": "configuration",
-                            "title": f"Redis Config: {config_info['option']}",
-                            "content": config_info,
-                            "relevance_score": 0.9 if query_lower in config_key else 0.7,
-                        }
-                    )
-
-        # Add conceptual documentation for common topics
-        if not doc_type or doc_type == "concepts":
-            concepts = {
-                "eviction": {
-                    "title": "Redis Memory Eviction Policies",
-                    "content": "Redis eviction policies determine how Redis selects keys to evict when maxmemory limit is reached. Choose based on use case: LRU for caches, LFU for frequency-based access, volatile-* for keys with TTL only.",
-                },
-                "persistence": {
-                    "title": "Redis Persistence (RDB vs AOF)",
-                    "content": "RDB: Point-in-time snapshots, good for backups. AOF: Logs every write operation, better durability. Can use both together for maximum data safety.",
-                },
-                "memory": {
-                    "title": "Redis Memory Management",
-                    "content": "Redis is in-memory database. Monitor used_memory, set maxmemory limits, choose appropriate eviction policy. Use MEMORY commands to analyze usage patterns.",
-                },
-            }
-
-            for concept_key, concept_info in concepts.items():
-                if query_lower in concept_key or query_lower in concept_info["content"].lower():
-                    results.append(
-                        {
-                            "type": "concept",
-                            "title": concept_info["title"],
-                            "content": concept_info["content"],
-                            "relevance_score": 0.8,
-                        }
-                    )
-
-        # Sort by relevance and limit results
-        results.sort(key=lambda x: x["relevance_score"], reverse=True)
-        results = results[:limit]
-
-        return {
-            "query": query,
-            "doc_type": doc_type,
-            "results_count": len(results),
-            "results": results,
-            "documentation_urls": redis_docs_urls,
-        }
-
-    except Exception as e:
-        logger.error(f"Redis docs search failed: {e}")
-        return {"query": query, "error": str(e), "results_count": 0, "results": []}
-
-
-async def search_runbook_knowledge(
+async def search_knowledge_base(
     query: str,
     category: Optional[str] = None,
     limit: int = 5,
 ) -> Dict[str, Any]:
     """
-    Search the SRE knowledge base for relevant information.
+    Search the comprehensive knowledge base for relevant information including runbooks, 
+    Redis documentation, troubleshooting guides, and SRE procedures.
 
     Args:
         query: Search query
-        category: Filter by category (incident, runbook, monitoring, etc.)
+        category: Filter by category (incident, runbook, monitoring, redis_commands, redis_config, etc.)
         limit: Maximum number of results
 
     Returns:
-        Search results with relevant SRE knowledge
+        Search results with relevant knowledge base content
     """
-    logger.info(f"Searching runbook knowledge: {query}")
+    logger.info(f"Searching knowledge base: {query}")
 
     # Get components
     index = get_knowledge_index()
@@ -436,24 +264,24 @@ SEARCH RESULTS for query: "{query}"
 Found {len(formatted_results)} relevant documents:
 
 """
-    
+
     for i, doc in enumerate(formatted_results, 1):
         doc_type = "RUNBOOK" if "runbook" in doc.get("source", "").lower() else "DOCUMENTATION"
         formatted_output += f"""
 --- RESULT {i} ---
-📋 TITLE: {doc.get('title', 'Unknown')}
-📁 SOURCE: {doc.get('source', 'Unknown')} ({doc_type})
-🏷️  CATEGORY: {doc.get('category', 'general')} | SEVERITY: {doc.get('severity', 'info')}
-📊 RELEVANCE SCORE: {doc.get('score', 0.0):.3f}
+📋 TITLE: {doc.get("title", "Unknown")}
+📁 SOURCE: {doc.get("source", "Unknown")} ({doc_type})
+🏷️  CATEGORY: {doc.get("category", "general")} | SEVERITY: {doc.get("severity", "info")}
+📊 RELEVANCE SCORE: {doc.get("score", 0.0):.3f}
 
 CONTENT:
-{doc.get('content', '')[:800]}{'...' if len(doc.get('content', '')) > 800 else ''}
+{doc.get("content", "")[:800]}{"..." if len(doc.get("content", "")) > 800 else ""}
 
 """
-    
+
     if retry_attempted:
         formatted_output += "\n⚠️  NOTE: Initial category search returned no results, broadened search was performed.\n"
-    
+
     result = {
         "task_id": str(ULID()),
         "query": query,

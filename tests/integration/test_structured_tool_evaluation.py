@@ -32,7 +32,7 @@ STRUCTURED_EVALUATION_SCENARIOS = [
         "scenario": "Complete Memory Crisis Investigation",
         "user_query": "URGENT: Redis memory spiked from 2GB to 8GB in 20 minutes, users getting timeouts and checkout failures. I need immediate investigation and step-by-step recovery guidance.",
         "required_tools": {
-            "search_runbook_knowledge": {
+            "search_knowledge_base": {
                 "min_calls": 2,
                 "expected_queries": ["memory", "troubleshooting"],
             },
@@ -63,7 +63,7 @@ STRUCTURED_EVALUATION_SCENARIOS = [
         "scenario": "Connection Flood Root Cause Analysis",
         "user_query": "Connection count jumped from 300 to 2500 in 5 minutes, getting 'max clients reached' errors. Need to understand what's causing this flood and how to prevent it.",
         "required_tools": {
-            "search_runbook_knowledge": {
+            "search_knowledge_base": {
                 "min_calls": 2,
                 "expected_queries": ["connection", "maxclients"],
             },
@@ -98,7 +98,7 @@ STRUCTURED_EVALUATION_SCENARIOS = [
         "scenario": "Performance Degradation Mystery Investigation",
         "user_query": "Application response times degraded 400% over 3 hours but Redis metrics look normal and traffic hasn't increased. I need a systematic approach to identify the hidden performance bottleneck.",
         "required_tools": {
-            "search_runbook_knowledge": {
+            "search_knowledge_base": {
                 "min_calls": 3,
                 "expected_queries": ["performance", "latency", "troubleshooting"],
             },
@@ -133,7 +133,7 @@ STRUCTURED_EVALUATION_SCENARIOS = [
         "scenario": "Redis Cluster Migration Deadlock Resolution",
         "user_query": "Redis Cluster slot migration stuck at 63% for 4 hours, clients getting intermittent MOVED errors, and migration progress isn't advancing. Need expert analysis and recovery procedure.",
         "required_tools": {
-            "search_runbook_knowledge": {
+            "search_knowledge_base": {
                 "min_calls": 2,
                 "expected_queries": ["cluster", "migration", "deadlock"],
             },
@@ -346,8 +346,8 @@ class StructuredToolEvaluator:
         total_requirements = 0
 
         # Check knowledge search compliance
-        if "search_runbook_knowledge" in required_tools:
-            req = required_tools["search_runbook_knowledge"]
+        if "search_knowledge_base" in required_tools:
+            req = required_tools["search_knowledge_base"]
             searches = tools_used.get("knowledge_search", [])
 
             # Check minimum calls

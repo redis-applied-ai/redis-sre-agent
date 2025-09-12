@@ -28,7 +28,7 @@ def mock_agent():
     mock_agent.clear_conversation = MagicMock(return_value=True)
     mock_agent.sre_tools = {
         "analyze_system_metrics": MagicMock(),
-        "search_runbook_knowledge": MagicMock(),
+        "search_knowledge_base": MagicMock(),
         "check_service_health": MagicMock(),
         "ingest_sre_document": MagicMock(),
     }
@@ -291,7 +291,7 @@ class TestAgentStatusEndpoint:
         assert data["tools_registered"] == 4
         assert set(data["tool_names"]) == {
             "analyze_system_metrics",
-            "search_runbook_knowledge",
+            "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",
         }

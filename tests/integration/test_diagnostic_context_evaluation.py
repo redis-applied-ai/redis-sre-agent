@@ -40,7 +40,7 @@ DIAGNOSTIC_EVALUATION_SCENARIOS = [
                 "min_calls": 1,
                 "sections": ["memory", "performance"],
             },
-            "search_runbook_knowledge": {"min_calls": 2, "queries": ["memory", "performance"]},
+            "search_knowledge_base": {"min_calls": 2, "queries": ["memory", "performance"]},
             "check_service_health": {"min_calls": 0},  # Baseline already provides diagnostic data
         },
         "agent_analytical_tasks": [
@@ -66,7 +66,7 @@ DIAGNOSTIC_EVALUATION_SCENARIOS = [
                 "min_calls": 1,
                 "sections": ["clients", "configuration"],
             },
-            "search_runbook_knowledge": {"min_calls": 2, "queries": ["connection", "maxclients"]},
+            "search_knowledge_base": {"min_calls": 2, "queries": ["connection", "maxclients"]},
         },
         "agent_analytical_tasks": [
             "Analyze client connection data for patterns",
@@ -91,7 +91,7 @@ DIAGNOSTIC_EVALUATION_SCENARIOS = [
                 "min_calls": 1,
                 "sections": ["slowlog", "performance"],
             },
-            "search_runbook_knowledge": {"min_calls": 2, "queries": ["slowlog", "performance"]},
+            "search_knowledge_base": {"min_calls": 2, "queries": ["slowlog", "performance"]},
         },
         "agent_analytical_tasks": [
             "Analyze slowlog entries for concerning patterns",
@@ -116,7 +116,7 @@ DIAGNOSTIC_EVALUATION_SCENARIOS = [
                 "min_calls": 1,
                 "sections": "all or comprehensive list",
             },
-            "search_runbook_knowledge": {
+            "search_knowledge_base": {
                 "min_calls": 3,
                 "queries": ["health", "monitoring", "troubleshooting"],
             },
@@ -233,7 +233,7 @@ class DiagnosticContextEvaluator:
         # Look for tool usage patterns in the response
         diagnostic_tool_usage = {
             "get_detailed_redis_diagnostics": 0,
-            "search_runbook_knowledge": 0,
+            "search_knowledge_base": 0,
             "check_service_health": 0,
         }
 
@@ -255,7 +255,7 @@ class DiagnosticContextEvaluator:
             knowledge_mentions = len(
                 re.findall(r"search.*knowledge|runbook.*search", summary_text, re.IGNORECASE)
             )
-            diagnostic_tool_usage["search_runbook_knowledge"] = knowledge_mentions
+            diagnostic_tool_usage["search_knowledge_base"] = knowledge_mentions
 
             # Count health checks (should be minimal since baseline provides diagnostics)
             if "health.*check|check.*service" in summary_text.lower():

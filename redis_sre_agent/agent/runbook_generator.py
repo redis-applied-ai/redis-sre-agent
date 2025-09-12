@@ -15,7 +15,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.tools.sre_functions import search_runbook_knowledge
+from redis_sre_agent.tools.sre_functions import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +165,7 @@ class RunbookGenerator:
 
         # Search internal knowledge base
         kb_query = f"Redis {request.topic} troubleshooting configuration monitoring"
-        kb_result = await search_runbook_knowledge(kb_query, limit=5)
+        kb_result = await search_knowledge_base(kb_query, limit=5)
         kb_results = kb_result.get("results", [])
 
         # Generate research summary

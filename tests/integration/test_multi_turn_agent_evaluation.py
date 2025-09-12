@@ -37,7 +37,7 @@ MULTI_TURN_SCENARIOS = [
         "description": "Redis memory usage spiked from 2GB to 7GB in 30 minutes during Black Friday traffic. Application experiencing timeouts and some users unable to checkout. Need immediate investigation and resolution.",
         "user_query": "Our Redis instance just spiked from 2GB to 7GB memory usage in 30 minutes and users are experiencing checkout timeouts. What's happening and how do I fix this?",
         "required_tools": [
-            "search_runbook_knowledge",  # Must search for memory troubleshooting guidance
+            "search_knowledge_base",  # Must search for memory troubleshooting guidance
             "check_service_health",  # Must check Redis diagnostics and current state
             "analyze_system_metrics",  # Must analyze memory usage patterns
         ],
@@ -61,7 +61,7 @@ MULTI_TURN_SCENARIOS = [
         "description": "Monitoring alerts show Redis connection count climbing rapidly: 500 → 1200 → 2800 connections in 10 minutes. New connection attempts failing with 'max clients reached'. Multiple microservices affected.",
         "user_query": "URGENT: Redis connections went from 500 to 2800 in 10 minutes, new connections failing with max clients reached. Multiple services down. What tools should I use to diagnose this and what immediate actions should I take?",
         "required_tools": [
-            "search_runbook_knowledge",  # Connection troubleshooting procedures
+            "search_knowledge_base",  # Connection troubleshooting procedures
             "check_service_health",  # Connection diagnostics
             "analyze_system_metrics",  # Connection growth patterns
         ],
@@ -85,7 +85,7 @@ MULTI_TURN_SCENARIOS = [
         "description": "Application latency increased 300% over 2 hours. Redis appears healthy but response times are terrible. No obvious errors in logs. Traffic patterns look normal.",
         "user_query": "Our application latency went up 300% in the last 2 hours but Redis looks fine and traffic is normal. I need help figuring out what's wrong and how to investigate this systematically.",
         "required_tools": [
-            "search_runbook_knowledge",  # Performance troubleshooting methodologies
+            "search_knowledge_base",  # Performance troubleshooting methodologies
             "check_service_health",  # Comprehensive Redis diagnostics
             "analyze_system_metrics",  # Latency and performance metrics
         ],
@@ -109,7 +109,7 @@ MULTI_TURN_SCENARIOS = [
         "description": "Redis Cluster slot migration stuck at 47% for 3 hours. Clients getting MOVED errors for some keys. Traffic unevenly distributed across nodes. Migration progress not advancing.",
         "user_query": "Our Redis Cluster slot migration has been stuck at 47% for 3 hours and clients are getting MOVED errors. How do I diagnose what's blocking the migration and get it unstuck?",
         "required_tools": [
-            "search_runbook_knowledge",  # Cluster troubleshooting procedures
+            "search_knowledge_base",  # Cluster troubleshooting procedures
             "check_service_health",  # Cluster state diagnostics
             "analyze_system_metrics",  # Cluster performance metrics
         ],
@@ -133,7 +133,7 @@ MULTI_TURN_SCENARIOS = [
         "description": "Security team detected unauthorized Redis access attempts from unknown IPs. Need to secure the instance immediately while investigating scope of potential breach.",
         "user_query": "Security detected unauthorized Redis access from unknown IPs. I need to secure this immediately and understand what they might have accessed. Walk me through the security response procedure.",
         "required_tools": [
-            "search_runbook_knowledge",  # Security incident response procedures
+            "search_knowledge_base",  # Security incident response procedures
             "check_service_health",  # Security diagnostics and access logs
             "analyze_system_metrics",  # Access pattern analysis
         ],
@@ -411,19 +411,19 @@ Format your response as JSON:
         tools_used = set(tool_analysis["tool_counts"].keys())
 
         if "must_search_memory_topics" in criteria:
-            results["must_search_memory_topics"] = "search_runbook_knowledge" in tools_used
+            results["must_search_memory_topics"] = "search_knowledge_base" in tools_used
 
         if "must_search_connection_topics" in criteria:
-            results["must_search_connection_topics"] = "search_runbook_knowledge" in tools_used
+            results["must_search_connection_topics"] = "search_knowledge_base" in tools_used
 
         if "must_search_performance_topics" in criteria:
-            results["must_search_performance_topics"] = "search_runbook_knowledge" in tools_used
+            results["must_search_performance_topics"] = "search_knowledge_base" in tools_used
 
         if "must_search_cluster_topics" in criteria:
-            results["must_search_cluster_topics"] = "search_runbook_knowledge" in tools_used
+            results["must_search_cluster_topics"] = "search_knowledge_base" in tools_used
 
         if "must_search_security_topics" in criteria:
-            results["must_search_security_topics"] = "search_runbook_knowledge" in tools_used
+            results["must_search_security_topics"] = "search_knowledge_base" in tools_used
 
         if "must_check_redis_health" in criteria:
             results["must_check_redis_health"] = "check_service_health" in tools_used

@@ -32,7 +32,7 @@ MULTI_TOOL_SCENARIOS = [
         "scenario": "Memory Spike Investigation",
         "user_query": "Our Redis memory usage just spiked from 2GB to 7GB in 30 minutes and users are experiencing timeouts. I need to understand what's happening and get immediate guidance.",
         "expected_tools": [
-            "search_runbook_knowledge",
+            "search_knowledge_base",
             "check_service_health",
             "analyze_system_metrics",
         ],
@@ -42,7 +42,7 @@ MULTI_TOOL_SCENARIOS = [
         "scenario_id": "connection_cascade",
         "scenario": "Connection Cascade Failure",
         "user_query": "URGENT: Redis connections climbed from 500 to 2800 in 10 minutes, new connections failing with max clients reached. Multiple services down. What should I do?",
-        "expected_tools": ["search_runbook_knowledge", "check_service_health"],
+        "expected_tools": ["search_knowledge_base", "check_service_health"],
         "expected_content": ["connection", "maxclients", "immediate", "troubleshooting"],
     },
     {
@@ -50,7 +50,7 @@ MULTI_TOOL_SCENARIOS = [
         "scenario": "Performance Degradation",
         "user_query": "Application latency increased 300% over 2 hours but Redis looks fine and traffic is normal. Help me investigate this systematically.",
         "expected_tools": [
-            "search_runbook_knowledge",
+            "search_knowledge_base",
             "check_service_health",
             "analyze_system_metrics",
         ],

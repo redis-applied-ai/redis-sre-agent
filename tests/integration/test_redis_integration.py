@@ -119,7 +119,7 @@ class TestRedisIntegration:
 
         # Clear global state
         from redis_sre_agent.core import redis
-        from redis_sre_agent.core.tasks import ingest_sre_document, search_runbook_knowledge
+        from redis_sre_agent.core.tasks import ingest_sre_document, search_knowledge_base
 
         redis._document_index = None
         redis._vectorizer = None
@@ -140,7 +140,7 @@ class TestRedisIntegration:
             )
 
             # Search for the document
-            search_result = await search_runbook_knowledge(
+            search_result = await search_knowledge_base(
                 query="Redis performance", category="optimization", limit=5
             )
 

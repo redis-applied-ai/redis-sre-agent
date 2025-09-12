@@ -451,7 +451,7 @@ Would you like me to help you run specific diagnostic commands or check your cur
             )
 
             # 3. Agent should search knowledge base for memory troubleshooting
-            with patch("redis_sre_agent.core.tasks.search_runbook_knowledge") as mock_search:
+            with patch("redis_sre_agent.core.tasks.search_knowledge_base") as mock_search:
                 mock_search.return_value = {
                     "task_id": "search_456",
                     "query": alert_query,

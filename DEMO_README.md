@@ -95,7 +95,7 @@ Visit http://localhost:3000 and create dashboards for:
 - Configuration validation
 
 ### 3. Knowledge Base Search
-- **`search_runbook_knowledge`**: Vector search through SRE procedures
+- **`search_knowledge_base`**: Vector search through SRE procedures
 - Categorized content: OSS, Enterprise, Shared
 - Document types: Runbooks, troubleshooting guides, best practices
 

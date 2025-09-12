@@ -22,14 +22,15 @@ from ..tools.sre_functions import (
     check_service_health,
     get_detailed_redis_diagnostics,
     ingest_sre_document,
-    search_redis_docs,
-    search_runbook_knowledge,
+    search_knowledge_base,
 )
 
 logger = logging.getLogger(__name__)
 
 # SRE-focused system prompt
-SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering) agent specialized in precise problem identification, triage, and solution development.
+SRE_SYSTEM_PROMPT = """
+You are an expert Redis SRE (Site Reliability Engineering) agent specialized in
+precise problem identification, triage, and solution development.
 
 ## Your Mission: Focused Problem Solving
 
@@ -54,7 +55,7 @@ SRE_SYSTEM_PROMPT = """You are an expert Redis SRE (Site Reliability Engineering
 ## Tool Usage for Follow-up
 
 **`get_detailed_redis_diagnostics`**: When you need deeper analysis of specific problem areas (memory, performance, etc.)
-**`search_runbook_knowledge`**: To find immediate remediation steps for discovered problems
+**`search_knowledge_base`**: To find immediate remediation steps for discovered problems
 **`check_service_health`**: Only if no diagnostic data was provided in the query
 
 ## Immediate Action Focus
@@ -97,17 +98,39 @@ Search for immediate remediation steps based on the identified problem category:
 - **Configuration Issues**: "Redis security configuration", "operational best practices"
 - **Search by symptoms**: Use specific metrics and error patterns you discover
 
-## Usage Pattern Considerations
+## Usage Pattern Detection
 
-When applicable, consider how Redis is being used to ensure safe recommendations:
-- **Cache usage**: TTL coverage, eviction policies, temporary data patterns
-- **Persistent storage**: Data durability, persistence settings, backup strategies
-- **Hybrid usage**: Mixed patterns requiring careful configuration
+Redis usage patterns must be inferred from multiple signals - persistence/backup
+settings alone are insufficient. Consider these indicators to determine safe
+recommendations:
+
+### Cache Usage Indicators (Strong Signals)
+- **High TTL coverage**: `expires` count close to total `keys` count in keyspace info
+- **Active expiration**: High `expired_keys` count in stats
+- **No maxmemory policy set**: May indicate oversight, not intentional persistent storage
+- **Key patterns**: Session IDs, temporary tokens, calculated results
+
+### Persistent Storage Indicators (Strong Signals)  
+- **Low TTL coverage**: Few keys with TTL (`expires` << `keys`)
+- **Low expiration activity**: `expired_keys` count is minimal
+- **Maxmemory policy set to avoid eviction**: `noeviction` policy configured
+- **Key patterns**: User data, business entities, permanent application state
+
+### Ambiguous Configurations (Require Caution)
+- **AOF/RDB enabled with high TTL coverage**: May be cache with backup for faster restart
+- **No maxmemory limit with mixed TTL patterns**: Could be intentional or oversight
+- **Eviction policies with persistence enabled**: Hybrid pattern or misconfiguration
+
+### Recommendation Safety Guidelines
+- **When unsure**: Avoid suggesting destructive eviction policies - recommend investigation first
+- **High memory usage without signals**: Don't assume cache - may be growing persistent store
+- **Mixed patterns**: Suggest configuration review rather than policy changes
+- **No clear pattern**: Focus on immediate memory relief without changing eviction behavior
 
 ## Source Citation Requirements
 
 **ALWAYS CITE YOUR SOURCES** when referencing information from search results:
-- When you use search_runbook_knowledge, cite the source document and title
+- When you use search_knowledge_base, cite the source document and title
 - Format citations as: "According to [Document Title] (source: [source_path])"
 - For runbooks, indicate document type: "Based on the runbook: [Title]"  
 - For documentation, indicate document type: "From Redis documentation: [Title]"
@@ -123,7 +146,7 @@ Remember: You are responding to a live incident. Focus on immediate threats and 
 """
 
 # Fact-checker system prompt
-FACT_CHECKER_PROMPT = """You are a Redis technical fact-checker. Your role is to review SRE agent responses for factual accuracy about Redis concepts, metrics, and operations.
+FACT_CHECKER_PROMPT = """You are a Redis technical fact-checker. Your role is to review SRE agent responses for factual accuracy about Redis concepts, metrics, operations, and URLs.
 
 ## Your Task
 
@@ -132,33 +155,36 @@ Review the provided SRE agent response and identify any statements that are:
 2. **Misleading interpretations** of Redis metrics or diagnostic data
 3. **Unsupported claims** that lack evidence from the diagnostic data provided
 4. **Contradictions** between stated facts and the actual data shown
+5. **Invalid URLs** that return 404 errors or are inaccessible
 
 ## Common Redis Fact-Check Areas
 
 - **Memory Operations**: Redis is entirely in-memory; no disk access for data retrieval
-- **Detected Usage Pattern**: Whether Redis is being used as a cache or a persistent data store
+- **Usage Pattern Detection**: Must consider TTL coverage (`expires` vs `keys`), expiration activity (`expired_keys`), and maxmemory policies - not just AOF/RDB settings
 - **Keyspace Hit Rate**: Measures key existence (hits) vs non-existence (misses), not memory vs disk
 - **Replication**: Master/slave terminology, replication lag implications
 - **Persistence**: RDB vs AOF, when disk I/O actually occurs
 - **Eviction Policies**: How different policies work and when they trigger
 - **Configuration**: Default values, valid options, and their implications
+- **Documentation URLs**: Verify that referenced URLs are valid and accessible
 
 ## Response Format
 
-If you find factual errors, respond with:
+If you find factual errors or invalid URLs, respond with:
 ```json
 {
   "has_errors": true,
   "errors": [
     {
-      "claim": "exact text of the incorrect claim",
-      "issue": "explanation of why it's wrong",
-      "category": "redis_internals|metrics_interpretation|configuration|other"
+      "claim": "exact text of the incorrect claim or invalid URL",
+      "issue": "explanation of why it's wrong or URL validation result",
+      "category": "redis_internals|metrics_interpretation|configuration|invalid_url|other"
     }
   ],
   "suggested_research": [
     "specific topics the agent should research to correct the errors"
-  ]
+  ],
+  "url_validation_performed": true
 }
 ```
 
@@ -166,11 +192,12 @@ If no errors are found, respond with:
 ```json
 {
   "has_errors": false,
-  "validation_notes": "brief note about what was verified"
+  "validation_notes": "brief note about what was verified",
+  "url_validation_performed": true
 }
 ```
 
-Be strict but fair - flag clear technical inaccuracies, not minor wording choices or style preferences.
+Be strict but fair - flag clear technical inaccuracies and broken URLs, not minor wording choices or style preferences.
 """
 
 
@@ -236,26 +263,28 @@ class SRELangGraphAgent:
                 {
                     "type": "function",
                     "function": {
-                        "name": "search_runbook_knowledge",
-                        "description": "Search SRE runbooks and knowledge base for procedures and troubleshooting",
+                        "name": "search_knowledge_base",
+                        "description": "Search comprehensive knowledge base including SRE runbooks, Redis documentation, troubleshooting guides, and operational procedures. Use this for finding both Redis-specific documentation (commands, configuration, concepts) and SRE procedures.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "query": {
                                     "type": "string",
-                                    "description": "Search query for runbook procedures or troubleshooting steps",
+                                    "description": "Search query - can include Redis commands (e.g. 'MEMORY USAGE'), configuration options (e.g. 'maxmemory-policy'), concepts (e.g. 'eviction policies'), or SRE procedures (e.g. 'connection limit troubleshooting')",
                                 },
                                 "category": {
                                     "type": "string",
-                                    "description": "Category to focus search on",
+                                    "description": "Optional category to focus search on",
                                     "enum": [
                                         "incident_response",
                                         "monitoring",
                                         "performance",
                                         "troubleshooting",
                                         "maintenance",
+                                        "redis_commands",
+                                        "redis_config",
+                                        "redis_concepts",
                                     ],
-                                    "default": "troubleshooting",
                                 },
                             },
                             "required": ["query"],
@@ -352,33 +381,6 @@ class SRELangGraphAgent:
                         },
                     },
                 },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_redis_docs",
-                        "description": "Search Redis official documentation for commands, configuration options, and concepts. Use this to get authoritative information about Redis functionality, command syntax, configuration parameters, and operational concepts.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "Search query (command name, configuration option, concept)",
-                                },
-                                "doc_type": {
-                                    "type": "string",
-                                    "description": "Filter by documentation type",
-                                    "enum": ["commands", "config", "concepts", "modules"],
-                                },
-                                "limit": {
-                                    "type": "integer",
-                                    "description": "Maximum number of results",
-                                    "default": 3,
-                                },
-                            },
-                            "required": ["query"],
-                        },
-                    },
-                },
             ]
         )
 
@@ -390,8 +392,7 @@ class SRELangGraphAgent:
         # SRE tool mapping
         self.sre_tools = {
             "analyze_system_metrics": analyze_system_metrics,
-            "search_runbook_knowledge": search_runbook_knowledge,
-            "search_redis_docs": search_redis_docs,
+            "search_knowledge_base": search_knowledge_base,
             "check_service_health": check_service_health,
             "ingest_sre_document": ingest_sre_document,
             "get_detailed_redis_diagnostics": get_detailed_redis_diagnostics,
@@ -754,21 +755,54 @@ Keep your response concise and action-focused. This is incident triage, not educ
     async def _fact_check_response(
         self, response: str, diagnostic_data: str = None
     ) -> Dict[str, Any]:
-        """Fact-check an agent response for technical accuracy.
+        """Fact-check an agent response for technical accuracy and URL validity.
 
         Args:
             response: The agent's response to fact-check
             diagnostic_data: Optional diagnostic data that informed the response
 
         Returns:
-            Dict containing fact-check results
+            Dict containing fact-check results including URL validation
         """
         try:
+            # Extract URLs from response for validation
+            import re
+
+            url_pattern = r'https?://[^\s<>"{}|\\^`[\]]+[^\s<>"{}|\\^`[\].,;:!?)]'
+            urls_in_response = re.findall(url_pattern, response)
+
+            # Validate URLs if any were found
+            url_validation_results = []
+            if urls_in_response:
+                logger.info(f"Found {len(urls_in_response)} URLs to validate: {urls_in_response}")
+
+                # Import validation function from tools
+                from ..tools.sre_functions import validate_url
+
+                # Validate each URL (with shorter timeout for fact-checking)
+                for url in urls_in_response:
+                    validation_result = await validate_url(url, timeout=3.0)
+                    url_validation_results.append(validation_result)
+
+                    if not validation_result["valid"]:
+                        logger.warning(
+                            f"Invalid URL detected: {url} - {validation_result['error']}"
+                        )
+
             # Create fact-checker LLM (separate from main agent)
             fact_checker = ChatOpenAI(
                 model=self.settings.openai_model,
                 openai_api_key=self.settings.openai_api_key,
             )
+
+            # Include URL validation results in the fact-check input
+            url_validation_summary = ""
+            if url_validation_results:
+                invalid_urls = [r for r in url_validation_results if not r["valid"]]
+                if invalid_urls:
+                    url_validation_summary = f"\n\n## URL Validation Results:\nINVALID URLs found: {[r['url'] for r in invalid_urls]}"
+                else:
+                    url_validation_summary = f"\n\n## URL Validation Results:\nAll {len(url_validation_results)} URLs are valid and accessible."
 
             # Prepare fact-check prompt
             fact_check_input = f"""
@@ -776,9 +810,9 @@ Keep your response concise and action-focused. This is incident triage, not educ
 {response}
 
 ## Diagnostic Data (if available):
-{diagnostic_data if diagnostic_data else "No diagnostic data provided"}
+{diagnostic_data if diagnostic_data else "No diagnostic data provided"}{url_validation_summary}
 
-Please review this Redis SRE agent response for factual accuracy and provide your assessment.
+Please review this Redis SRE agent response for factual accuracy and URL validity. Include any invalid URLs as errors in your assessment.
 """
 
             messages = [
@@ -915,7 +949,7 @@ Provide a corrected response that eliminates all safety violations. Focus on saf
 
 My original query was: {query}
 
-Please use the search_runbook_knowledge tool extensively to find authoritative information about these Redis concepts, then provide a comprehensive and accurate response."""
+Please use the search_knowledge_base tool extensively to find authoritative information about these Redis concepts, then provide a comprehensive and accurate response."""
 
                 logger.info("Initiating corrective research query")
                 try:

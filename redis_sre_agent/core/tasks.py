@@ -112,7 +112,7 @@ async def analyze_system_metrics(
 
 
 @sre_task
-async def search_runbook_knowledge(
+async def search_knowledge_base(
     query: str,
     category: Optional[str] = None,
     limit: int = 5,

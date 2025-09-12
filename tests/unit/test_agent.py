@@ -33,8 +33,8 @@ def mock_sre_tasks():
         mocks["analyze_system_metrics"] = mock_analyze
         mock_analyze.return_value = {"task_id": "test-123", "status": "completed"}
 
-        with patch("redis_sre_agent.agent.langgraph_agent.search_runbook_knowledge") as mock_search:
-            mocks["search_runbook_knowledge"] = mock_search
+        with patch("redis_sre_agent.agent.langgraph_agent.search_knowledge_base") as mock_search:
+            mocks["search_knowledge_base"] = mock_search
             mock_search.return_value = {"results": [], "results_count": 0}
 
             with patch("redis_sre_agent.agent.langgraph_agent.check_service_health") as mock_health:
@@ -57,17 +57,7 @@ def mock_sre_tasks():
                             "diagnostics": {},
                         }
 
-                        with patch(
-                            "redis_sre_agent.agent.langgraph_agent.search_redis_docs"
-                        ) as mock_redis_docs:
-                            mocks["search_redis_docs"] = mock_redis_docs
-                            mock_redis_docs.return_value = {
-                                "query": "test",
-                                "results_count": 0,
-                                "results": [],
-                            }
-
-                            yield mocks
+                        yield mocks
 
 
 class TestSRELangGraphAgent:
@@ -80,10 +70,9 @@ class TestSRELangGraphAgent:
         assert agent.settings == mock_settings
         assert agent.llm is not None
         assert agent.llm_with_tools is not None
-        assert len(agent.sre_tools) == 6
+        assert len(agent.sre_tools) == 5
         assert "analyze_system_metrics" in agent.sre_tools
-        assert "search_runbook_knowledge" in agent.sre_tools
-        assert "search_redis_docs" in agent.sre_tools
+        assert "search_knowledge_base" in agent.sre_tools
         assert "check_service_health" in agent.sre_tools
         assert "ingest_sre_document" in agent.sre_tools
         assert "get_detailed_redis_diagnostics" in agent.sre_tools
@@ -94,8 +83,7 @@ class TestSRELangGraphAgent:
 
         expected_tools = [
             "analyze_system_metrics",
-            "search_runbook_knowledge",
-            "search_redis_docs",
+            "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",
             "get_detailed_redis_diagnostics",
@@ -226,14 +214,13 @@ class TestAgentToolBindings:
         # Get the tool definitions that were passed
         tool_definitions = mock_llm.bind_tools.call_args[0][0]
 
-        assert len(tool_definitions) == 6
+        assert len(tool_definitions) == 5
 
         # Check that all expected tools are defined
         tool_names = [tool["function"]["name"] for tool in tool_definitions]
         expected_names = [
             "analyze_system_metrics",
-            "search_runbook_knowledge",
-            "search_redis_docs",
+            "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",
             "get_detailed_redis_diagnostics",
