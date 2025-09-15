@@ -180,7 +180,8 @@ async def search_knowledge_base(
     #     vector_query.set_filter(f"@category:{{{category}}}")
 
     logger.info("Executing vector query...")
-    results = await index.query(vector_query)
+    async with index:
+        results = await index.query(vector_query)
     logger.info(
         f"Query results received, type: {type(results)}, count: {len(results) if results else 'None'}"
     )
@@ -228,7 +229,8 @@ async def search_knowledge_base(
         retry_attempted = True
 
         # Retry the same search without category
-        retry_results = await index.query(vector_query)
+        async with index:
+            retry_results = await index.query(vector_query)
         logger.info(f"Retry query results: {len(retry_results) if retry_results else 0} found")
 
         # Format retry results
@@ -313,6 +315,7 @@ CONTENT:
 
 async def check_service_health(
     service_name: str = "redis",
+    redis_url: Optional[str] = None,
     endpoints: Optional[List[str]] = None,
     timeout: float = 10.0,
 ) -> Dict[str, Any]:
@@ -321,6 +324,7 @@ async def check_service_health(
 
     Args:
         service_name: Name of the service to check
+        redis_url: Redis connection URL (required for Redis service checks)
         endpoints: List of health check endpoints
         timeout: Request timeout in seconds
 
@@ -390,24 +394,28 @@ async def check_service_health(
         # Run Redis-specific diagnostics if this is a Redis service
         redis_diagnostics = None
         if service_name.lower() == "redis":
-            try:
-                from ..tools.redis_diagnostics import get_redis_diagnostics
+            if not redis_url:
+                logger.warning("Redis URL not provided for Redis service health check")
+                redis_diagnostics = {"error": "Redis URL required for Redis service checks"}
+            else:
+                try:
+                    from ..tools.redis_diagnostics import get_redis_diagnostics
 
-                redis_client = get_redis_diagnostics()
-                redis_diagnostics = await redis_client.run_diagnostic_suite()
+                    redis_client = get_redis_diagnostics(redis_url)
+                    redis_diagnostics = await redis_client.run_diagnostic_suite()
 
-                # Update overall status based on Redis diagnostics
-                if redis_diagnostics.get("overall_status") == "critical":
-                    overall_status = "critical"
-                elif (
-                    redis_diagnostics.get("overall_status") == "warning"
-                    and overall_status == "healthy"
-                ):
-                    overall_status = "warning"
+                    # Update overall status based on Redis diagnostics
+                    if redis_diagnostics.get("overall_status") == "critical":
+                        overall_status = "critical"
+                    elif (
+                        redis_diagnostics.get("overall_status") == "warning"
+                        and overall_status == "healthy"
+                    ):
+                        overall_status = "warning"
 
-            except Exception as e:
-                logger.warning(f"Redis diagnostics failed: {e}")
-                redis_diagnostics = {"error": str(e)}
+                except Exception as e:
+                    logger.warning(f"Redis diagnostics failed: {e}")
+                    redis_diagnostics = {"error": str(e)}
 
         result = {
             "task_id": str(ULID()),
@@ -493,6 +501,7 @@ async def ingest_sre_document(
 
 
 async def get_detailed_redis_diagnostics(
+    redis_url: str,
     sections: Optional[str] = None,
     time_window_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -504,6 +513,7 @@ async def get_detailed_redis_diagnostics(
     receiving pre-calculated status assessments.
 
     Args:
+        redis_url: Redis connection URL to diagnose (required)
         sections: Comma-separated diagnostic sections to capture:
             - "memory": Memory usage and fragmentation metrics
             - "performance": Hit rates, ops/sec, command statistics
@@ -524,11 +534,11 @@ async def get_detailed_redis_diagnostics(
 
     Example:
         # Get comprehensive diagnostics
-        all_diagnostics = await get_detailed_redis_diagnostics()
+        all_diagnostics = await get_detailed_redis_diagnostics("redis://localhost:6379")
 
         # Get specific sections
-        memory_data = await get_detailed_redis_diagnostics(sections="memory")
-        perf_data = await get_detailed_redis_diagnostics(sections="performance,slowlog")
+        memory_data = await get_detailed_redis_diagnostics("redis://localhost:6379", sections="memory")
+        perf_data = await get_detailed_redis_diagnostics("redis://localhost:6379", sections="performance,slowlog")
     """
     try:
         logger.info(
@@ -545,6 +555,7 @@ async def get_detailed_redis_diagnostics(
 
         # Capture diagnostic data using shared function
         diagnostic_data = await capture_redis_diagnostics(
+            redis_url=redis_url,
             sections=sections_list,
             time_window_seconds=time_window_seconds,
             include_raw_data=True,  # Include raw Redis INFO for comprehensive analysis

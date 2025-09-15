@@ -566,22 +566,21 @@ class RedisDiagnostics:
             return {"error": str(e)}
 
 
-# Singleton instance for the diagnostics tool
-_redis_diagnostics: Optional[RedisDiagnostics] = None
+# Per-URL instances for the diagnostics tool
+_redis_diagnostics_cache: Dict[str, RedisDiagnostics] = {}
 
 
-def get_redis_diagnostics() -> RedisDiagnostics:
-    """Get or create the Redis diagnostics singleton."""
-    global _redis_diagnostics
-    if _redis_diagnostics is None:
-        _redis_diagnostics = RedisDiagnostics()
-    return _redis_diagnostics
+def get_redis_diagnostics(redis_url: str) -> RedisDiagnostics:
+    """Get or create a Redis diagnostics instance for the given URL."""
+    if redis_url not in _redis_diagnostics_cache:
+        _redis_diagnostics_cache[redis_url] = RedisDiagnostics(redis_url)
+    return _redis_diagnostics_cache[redis_url]
 
 
 async def capture_redis_diagnostics(
+    redis_url: str,
     sections: Optional[Union[str, List[str]]] = None,
     time_window_seconds: Optional[int] = None,
-    redis_url: Optional[str] = None,
     include_raw_data: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -606,7 +605,7 @@ async def capture_redis_diagnostics(
             - ["memory", "clients"]: Multiple sections as list
 
         time_window_seconds: For metrics that support time-based analysis (future enhancement)
-        redis_url: Redis connection URL (defaults to configured URL)
+        redis_url: Redis connection URL (required)
         include_raw_data: Whether to include raw Redis INFO output (default: True)
 
     Returns:
@@ -615,14 +614,14 @@ async def capture_redis_diagnostics(
 
     Example:
         # External baseline capture
-        baseline = await capture_redis_diagnostics()
+        baseline = await capture_redis_diagnostics("redis://localhost:6379")
 
         # Agent targeted investigation
-        memory_data = await capture_redis_diagnostics(sections="memory")
-        client_data = await capture_redis_diagnostics(sections=["clients", "slowlog"])
+        memory_data = await capture_redis_diagnostics("redis://localhost:6379", sections="memory")
+        client_data = await capture_redis_diagnostics("redis://localhost:6379", sections=["clients", "slowlog"])
     """
     # Initialize diagnostics instance
-    diagnostics = RedisDiagnostics(redis_url) if redis_url else get_redis_diagnostics()
+    diagnostics = get_redis_diagnostics(redis_url)
 
     # Normalize sections parameter
     if sections is None or sections == "all":

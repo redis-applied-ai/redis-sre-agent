@@ -28,8 +28,10 @@ from typing import Optional
 import redis
 
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
-from redis_sre_agent.tools.redis_diagnostics import RedisDiagnostics
+from redis_sre_agent.tools.redis_diagnostics import get_redis_diagnostics
 from redis_sre_agent.tools.sre_functions import get_detailed_redis_diagnostics
+
+DEMO_PORT = 7844
 
 # TODO: Suppress Pydantic protected namespace warning from dependencies
 warnings.filterwarnings(
@@ -45,7 +47,7 @@ class RedisSREDemo:
     def __init__(self):
         self.redis_client: Optional[redis.Redis] = None
         self.redis_port: Optional[int] = None
-        self.health_checker: Optional[RedisDiagnostics] = None
+        self.redis_url: Optional[str] = None
         self.scenarios = {
             "memory": self.memory_pressure_scenario,
             "connections": self.connection_issues_scenario,
@@ -96,32 +98,24 @@ class RedisSREDemo:
     async def setup_redis_connection(self) -> bool:
         """Establish Redis connection and setup health checker."""
         # Use separate Redis instance for demo scenarios to avoid interference with agent operational data
-        demo_ports = [7844, 7942, 6379]  # Try demo-specific port first, then fallbacks
 
-        for port in demo_ports:
-            try:
-                # Connect to separate Redis instance for demo scenarios
-                self.redis_client = redis.Redis(host="localhost", port=port, decode_responses=True)
-                self.redis_client.ping()
-                self.redis_port = port
-                self.health_checker = RedisDiagnostics(f"redis://localhost:{port}/0")
+        # Connect to separate Redis instance for demo scenarios
+        self.redis_client = redis.Redis(host="localhost", port=DEMO_PORT, decode_responses=True)
+        self.redis_client.ping()
+        self.redis_port = DEMO_PORT
+        self.redis_url = f"redis://localhost:{DEMO_PORT}/0"
 
-                # Clear any existing data from previous demo runs to ensure clean state
-                try:
-                    self.redis_client.flushdb()
-                    print(f"✅ Redis connection established on port {port} (database cleared for clean demo)")
-                except:
-                    print(f"✅ Redis connection established on port {port}")
+        # Clear any existing data from previous demo runs to ensure clean state
+        try:
+            self.redis_client.flushdb()
+            print(
+                f"✅ Redis connection established on port {DEMO_PORT} (database cleared for clean demo)"
+            )
+        except redis.ConnectionError:
+            print(f"❌ Redis connection failed on port {DEMO_PORT}")
+            return False
 
-                return True
-            except redis.ConnectionError:
-                continue
-
-        print("❌ Redis not available on any port. Please start Redis first:")
-        print("   Recommended: Start Redis on port 7843 for isolated demo:")
-        print("   redis-server --port 7843 --save '' --appendonly no")
-        print("   Alternative: docker-compose up redis -d")
-        return False
+        return True
 
     def show_main_menu(self) -> str:
         """Display main menu and get user selection."""
@@ -268,7 +262,7 @@ class RedisSREDemo:
 
         # Get fresh diagnostic data using the agent's diagnostic tool
         print("   Getting current Redis diagnostic data to send to agent...")
-        diagnostics = await get_detailed_redis_diagnostics()
+        diagnostics = await get_detailed_redis_diagnostics(self.redis_url)
 
         # Add key pattern analysis by sampling some keys
         print("   Sampling keys for pattern analysis...")
@@ -400,8 +394,8 @@ class RedisSREDemo:
                     test_connections.append(conn)
                     successful_connections += 1
 
-                    if (i + 1) % 15 == 0 or i == target_connections - 1:
-                        print(f"   Progress: {i + 1}/{target_connections} connections attempted...")
+                    if (i + 1) % 15 == 0 or i == target_new_connections - 1:
+                        print(f"   Progress: {i + 1}/{target_new_connections} connections attempted...")
 
                     # Add some delay to simulate realistic connection patterns
                     time.sleep(0.05)
@@ -510,7 +504,7 @@ class RedisSREDemo:
 
             # Get comprehensive diagnostics showing connection problems
             print("   📊 Getting diagnostic data to show connection issues...")
-            diagnostics = await get_detailed_redis_diagnostics()
+            diagnostics = await get_detailed_redis_diagnostics(self.redis_url)
 
             # Run diagnostics and agent consultation with connection-focused query
             await self._run_diagnostics_and_agent_query(
@@ -705,7 +699,8 @@ class RedisSREDemo:
         self.print_step(1, "Running comprehensive Redis diagnostics")
 
         # Run the full diagnostic suite
-        diagnostics = await self.health_checker.run_diagnostic_suite()
+        health_checker = get_redis_diagnostics(self.redis_url)
+        diagnostics = await health_checker.run_diagnostic_suite()
 
         # Display key results
         diagnostic_data = diagnostics.get("diagnostics", {})
@@ -832,21 +827,27 @@ class RedisSREDemo:
         memory = diagnostic_data.get("memory", {})
         if memory and "error" not in memory:
             lines.append("### Memory Status")
-            lines.append(
-                f"- Used Memory: {memory.get('used_memory_bytes', 0):,} bytes ({memory.get('used_memory_bytes', 0) / (1024 * 1024):.2f} MB)"
-            )
-            lines.append(
-                f"- Max Memory: {memory.get('maxmemory_bytes', 0):,} bytes ({memory.get('maxmemory_bytes', 0) / (1024 * 1024):.2f} MB)"
-            )
-            if memory.get("maxmemory_bytes", 0) > 0:
-                utilization = (
-                    memory.get("used_memory_bytes", 0) / memory.get("maxmemory_bytes", 1)
-                ) * 100
-                lines.append(f"- Memory Utilization: {utilization:.1f}%")
+            used_bytes = memory.get('used_memory_bytes', 0)
+            max_bytes = memory.get('maxmemory_bytes', 0)
+            
+            def format_bytes(bytes_value: int) -> str:
+                """Format bytes into human readable format."""
+                if bytes_value == 0:
+                    return "0 B"
+                for unit in ["B", "KB", "MB", "GB", "TB"]:
+                    if bytes_value < 1024.0:
+                        return f"{bytes_value:.1f} {unit}"
+                    bytes_value /= 1024.0
+                return f"{bytes_value:.1f} PB"
+            
+            if max_bytes > 0:
+                utilization = (used_bytes / max_bytes) * 100
+                lines.append(f"- Used Memory: {format_bytes(used_bytes)} of {format_bytes(max_bytes)} ({utilization:.1f}%)")
             else:
-                lines.append("- Memory Utilization: Unlimited (no maxmemory set)")
+                lines.append(f"- Used Memory: {format_bytes(used_bytes)} (unlimited)")
+            lines.append(f"- Max Memory: {format_bytes(max_bytes)}")
             lines.append(f"- Fragmentation Ratio: {memory.get('mem_fragmentation_ratio', 0):.2f}")
-            lines.append(f"- Peak Memory: {memory.get('used_memory_peak_bytes', 0):,} bytes")
+            lines.append(f"- Peak Memory: {format_bytes(memory.get('used_memory_peak_bytes', 0))}")
             lines.append("")
 
         # Configuration

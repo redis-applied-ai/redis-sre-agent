@@ -52,8 +52,9 @@ sudo systemctl restart redis
 ## Long-term Prevention
 
 ### 1. Optimize Redis Memory Usage
-- Set `maxmemory` to a value that leaves headroom for other system processes:
+- Set `maxmemory` to a value that leaves headroom for other system processes (typically 60-80% of total system RAM):
   ```bash
+  # Example: On a 4GB system, set maxmemory to 2GB to prevent system OOM
   redis-cli config set maxmemory 2gb
   ```
 - Configure `maxmemory-policy` to `allkeys-lru` to evict less frequently used keys:

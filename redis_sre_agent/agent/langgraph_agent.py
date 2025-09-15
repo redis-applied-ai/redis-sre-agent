@@ -98,34 +98,40 @@ Search for immediate remediation steps based on the identified problem category:
 - **Configuration Issues**: "Redis security configuration", "operational best practices"
 - **Search by symptoms**: Use specific metrics and error patterns you discover
 
-## Usage Pattern Detection
+## Usage Pattern Analysis (Express with Uncertainty)
 
 Redis usage patterns must be inferred from multiple signals - persistence/backup
-settings alone are insufficient. Consider these indicators to determine safe
-recommendations:
+settings alone are insufficient. Always express your analysis as **likely patterns** 
+rather than definitive conclusions, and acknowledge the uncertainty inherent in 
+pattern detection.
 
-### Cache Usage Indicators (Strong Signals)
+### Signals That May Suggest Cache Usage
 - **High TTL coverage**: `expires` count close to total `keys` count in keyspace info
 - **Active expiration**: High `expired_keys` count in stats
 - **No maxmemory policy set**: May indicate oversight, not intentional persistent storage
 - **Key patterns**: Session IDs, temporary tokens, calculated results
 
-### Persistent Storage Indicators (Strong Signals)  
+### Signals That May Suggest Persistent Storage
 - **Low TTL coverage**: Few keys with TTL (`expires` << `keys`)
 - **Low expiration activity**: `expired_keys` count is minimal
 - **Maxmemory policy set to avoid eviction**: `noeviction` policy configured
 - **Key patterns**: User data, business entities, permanent application state
 
-### Ambiguous Configurations (Require Caution)
-- **AOF/RDB enabled with high TTL coverage**: May be cache with backup for faster restart
+### Ambiguous Configurations (High Uncertainty)
+- **AOF/RDB enabled with high TTL coverage**: Could be cache with backup for faster restart
 - **No maxmemory limit with mixed TTL patterns**: Could be intentional or oversight
 - **Eviction policies with persistence enabled**: Hybrid pattern or misconfiguration
 
+### Pattern Analysis Language Guidelines
+- Use qualifying language: "**appears to be**", "**likely indicates**", "**suggests**", "**may be**"
+- Always acknowledge uncertainty: "**Based on available indicators**", "**Analysis suggests**"
+- Never state definitively: Avoid "is a cache" or "is persistent storage"
+- Example: "Analysis **suggests** this **may be** a persistent datastore based on 0% TTL coverage and noeviction policy"
+
 ### Recommendation Safety Guidelines
-- **When unsure**: Avoid suggesting destructive eviction policies - recommend investigation first
-- **High memory usage without signals**: Don't assume cache - may be growing persistent store
-- **Mixed patterns**: Suggest configuration review rather than policy changes
-- **No clear pattern**: Focus on immediate memory relief without changing eviction behavior
+- **When uncertain**: Always recommend investigation first before destructive changes
+- **Mixed signals**: Suggest configuration review rather than policy changes
+- **Unclear patterns**: Focus on immediate relief without changing data retention behavior
 
 ## Source Citation Requirements
 
@@ -222,6 +228,9 @@ class SREToolCall(BaseModel):
     )
 
 
+# TODO: Break this out into functions.
+# TODO: Researcher, Safety Evaluator, and Fact-checker should be individual nodes
+#       with conditional edges.
 class SRELangGraphAgent:
     """LangGraph-based SRE Agent with multi-turn conversation and tool calling."""
 
@@ -295,13 +304,17 @@ class SRELangGraphAgent:
                     "type": "function",
                     "function": {
                         "name": "check_service_health",
-                        "description": "ALWAYS use this tool first when investigating concerning Redis behavior. Provides comprehensive health diagnostics including memory usage, performance metrics, connection patterns, slow queries, configuration issues, and operational status. This tool will identify specific problem areas such as memory pressure, high latency, connection issues, performance degradation, configuration problems, or slow operations. Run this immediately for any Redis troubleshooting scenario.",
+                        "description": "ALWAYS use this tool first when investigating concerning Redis behavior. Provides comprehensive health diagnostics including memory usage, performance metrics, connection patterns, slow queries, configuration issues, and operational status. This tool will identify specific problem areas such as memory pressure, high latency, connection issues, performance degradation, configuration problems, or slow operations. Run this immediately for any Redis troubleshooting scenario. IMPORTANT: Always provide the redis_url parameter when checking Redis services.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "service_name": {
                                     "type": "string",
                                     "description": "Name of the service to check (use 'redis' for Redis diagnostics)",
+                                },
+                                "redis_url": {
+                                    "type": "string",
+                                    "description": "Redis connection URL (required for Redis service checks, e.g., 'redis://localhost:6379')",
                                 },
                                 "endpoints": {
                                     "type": "array",
@@ -368,6 +381,10 @@ class SRELangGraphAgent:
                         "parameters": {
                             "type": "object",
                             "properties": {
+                                "redis_url": {
+                                    "type": "string",
+                                    "description": "Redis connection URL to diagnose (required, e.g., 'redis://localhost:6379')",
+                                },
                                 "sections": {
                                     "type": "string",
                                     "description": "Comma-separated diagnostic sections: 'memory', 'performance', 'clients', 'slowlog', 'configuration', 'keyspace', 'replication', 'persistence', 'cpu'. Use 'all' or leave empty for comprehensive diagnostics.",
@@ -377,7 +394,7 @@ class SRELangGraphAgent:
                                     "description": "Time window for metrics analysis (future enhancement)",
                                 },
                             },
-                            "required": [],
+                            "required": ["redis_url"],
                         },
                     },
                 },
@@ -535,11 +552,13 @@ Based on the diagnostic data and tool results below, provide your focused SRE as
 
 Follow your SRE workflow exactly:
 1. **Problem Assessment**: What specific issues did you identify from the diagnostic data?
-2. **Usage Pattern Determination**: Cache vs persistent data based on TTL coverage and persistence settings?
-3. **Immediate Actions Required**: Safe remediation steps for this specific usage pattern
+2. **Usage Pattern Analysis**: What do the indicators **suggest** about cache vs persistent usage? Express with uncertainty.
+3. **Immediate Actions Required**: Safe remediation steps appropriate for the **likely** usage pattern
 4. **Solution Sources**: What diagnostic evidence supports your recommendations?
 
-Keep your response concise and action-focused. This is incident triage, not education."""
+Keep your response concise and action-focused. This is incident triage, not education.
+
+**Format numbers using US conventions with commas** (e.g., "4,950 keys" not "4 950 keys")."""
 
             try:
                 # Use configured model for final analysis
@@ -857,11 +876,11 @@ Please review this Redis SRE agent response for factual accuracy and URL validit
 
         except Exception as e:
             logger.error(f"Error during fact-checking: {e}")
-            # For demo purposes, don't block on fact-check failures
+            # Don't block on fact-check failures - return graceful fallback
             return {
                 "has_errors": False,
                 "validation_notes": f"Fact-checking unavailable ({str(e)[:50]}...)",
-                "demo_mode": True,
+                "fact_check_error": True,
             }
 
     async def process_query_with_fact_check(
@@ -886,25 +905,46 @@ Please review this Redis SRE agent response for factual accuracy and URL validit
 
         if not safety_result.get("safe", True):
             logger.warning(f"Safety evaluation failed: {safety_result}")
-
-            if safety_result.get("risk_level") in ["high", "critical"]:
-                # For high/critical risks, force correction
-                logger.error(f"CRITICAL SAFETY VIOLATION: {safety_result.get('violations')}")
+            
+            risk_level = safety_result.get("risk_level", "medium")
+            violations = safety_result.get("violations", [])
+            
+            # Only trigger corrections for medium risk and above
+            if risk_level in ["medium", "high", "critical"]:
+                logger.error(f"SAFETY VIOLATION DETECTED (risk: {risk_level}): {violations}")
 
                 correction_guidance = safety_result.get("corrective_guidance", "")
-                if correction_guidance:
+                reasoning = safety_result.get("reasoning", "")
+                
+                if correction_guidance or violations:
                     try:
-                        # Create correction query with safety guidance
-                        correction_query = f"""SAFETY VIOLATION - CORRECTION REQUIRED: {correction_guidance}
+                        # Create comprehensive correction query with full safety context
+                        safety_json = json.dumps(safety_result, indent=2)
+                        
+                        correction_query = f"""SAFETY VIOLATION - CORRECTION REQUIRED
 
-ORIGINAL QUERY: {query}
+The following safety evaluation identified problems with my previous response:
 
-PREVIOUS RESPONSE (UNSAFE): {response}
+{safety_json}
 
-CRITICAL SAFETY VIOLATIONS DETECTED:
-{"; ".join(safety_result.get("violations", []))}
+Original user query: {query}
 
-Provide a corrected response that eliminates all safety violations. Focus on safe alternatives only."""
+Previous response (flagged as unsafe): {response}
+
+CORRECTION INSTRUCTIONS:
+1. **Address each specific violation** listed in the safety evaluation above
+2. **Follow the corrective guidance** provided by the safety evaluator
+3. **Provide safer alternatives** that achieve the same operational goals
+4. **Include appropriate warnings** about any remaining risks
+5. **Ensure logical consistency** between your usage pattern analysis and recommendations
+
+SPECIFIC GUIDANCE FOR COMMON ISSUES:
+- If flagged for persistence changes: Suggest gradual migration steps with data backup
+- If flagged for eviction policies: Recommend investigation before policy changes
+- If flagged for restarts: Include steps to ensure data persistence before restart
+- If flagged for contradictions: Align recommendations with your usage pattern analysis
+
+Provide a complete corrected response that maintains the same helpful tone while addressing safety concerns."""
 
                         # Retry the safety correction with backoff
                         async def _safety_correction():
@@ -921,37 +961,62 @@ Provide a corrected response that eliminates all safety violations. Focus on saf
 
                         # Verify the correction is safer
                         safety_recheck = await self._safety_evaluate_response(
-                            query, corrected_response
+                            query, corrected_response, is_correction_recheck=True
                         )
                         if safety_recheck.get("safe", True):
                             logger.info("Response corrected after safety evaluation")
                             return corrected_response
                         else:
-                            logger.error("Correction still unsafe - manual review required")
-                            return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
+                            logger.error(f"Correction still unsafe - recheck violations: {safety_recheck.get('violations', [])}")
+                            logger.error(f"Recheck risk level: {safety_recheck.get('risk_level', 'unknown')}")
+                            # If the correction attempt reduced the risk level, accept it even if not perfect
+                            original_risk = safety_result.get("risk_level", "high")
+                            recheck_risk = safety_recheck.get("risk_level", "high")
+                            risk_levels = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+                            
+                            if risk_levels.get(recheck_risk, 3) <= risk_levels.get(original_risk, 3):
+                                logger.info("Correction reduced risk level - accepting response")
+                                return corrected_response
+                            else:
+                                return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
 
                     except Exception as correction_error:
                         logger.error(f"Error during safety correction: {correction_error}")
                         return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks."
+            else:
+                # Low risk violations - log but don't correct
+                logger.info(f"Low-risk safety issues noted (risk: {risk_level}): {violations}")
 
         # Fact-check the response (if it passed safety evaluation)
         fact_check_result = await self._fact_check_response(response)
 
-        if fact_check_result.get("has_errors") and not fact_check_result.get("demo_mode"):
+        if fact_check_result.get("has_errors") and not fact_check_result.get("fact_check_error"):
             logger.warning("Fact-check identified errors in agent response")
 
-            # Create research query based on suggested topics
+            # Create detailed research query with full fact-check context
+            fact_check_details = fact_check_result.get("errors", [])
             research_topics = fact_check_result.get("suggested_research", [])
-            if research_topics:
-                research_query = f"""I need to correct my previous response. Please help me research these specific topics to provide accurate information:
+            
+            if research_topics or fact_check_details:
+                # Include the full fact-check JSON for context
+                fact_check_json = json.dumps(fact_check_result, indent=2)
+                
+                research_query = f"""FACT-CHECK CORRECTION REQUIRED
 
-{chr(10).join(f"- {topic}" for topic in research_topics)}
+The following fact-check analysis identified technical errors in my previous response:
 
-My original query was: {query}
+{fact_check_json}
 
-Please use the search_knowledge_base tool extensively to find authoritative information about these Redis concepts, then provide a comprehensive and accurate response."""
+Original user query: {query}
 
-                logger.info("Initiating corrective research query")
+Please correct these specific issues by:
+1. Researching the identified topics using search_knowledge_base tool
+2. Providing technically accurate information based on authoritative sources
+3. Ensuring all Redis concepts, metrics, and recommendations are correct
+
+Focus on the specific errors identified in the fact-check analysis above."""
+
+                logger.info("Initiating corrective research query with full fact-check context")
                 try:
                     # Process the corrective query with retry logic
                     async def _fact_check_correction():
@@ -971,10 +1036,9 @@ Please use the search_knowledge_base tool extensively to find authoritative info
                 except Exception as correction_error:
                     logger.error(f"Error during correction attempt: {correction_error}")
                     # Fall back to original response rather than failing
-                    # Fall back to original response without exposing error details to user
                     return response
-        elif fact_check_result.get("demo_mode"):
-            logger.info("Fact-check completed: Using original response (demo mode)")
+        elif fact_check_result.get("fact_check_error"):
+            logger.info("Fact-check completed: Using original response (fact-check unavailable)")
 
         return response
 
@@ -1034,6 +1098,25 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         # Process the enhanced query
         return await self.process_query(enhanced_query, session_id, user_id, max_iterations)
 
+    def _format_bytes(self, bytes_value: int) -> str:
+        """Format bytes into human readable format."""
+        if bytes_value == 0:
+            return "0 B"
+        
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if bytes_value < 1024.0:
+                return f"{bytes_value:.1f} {unit}"
+            bytes_value /= 1024.0
+        return f"{bytes_value:.1f} PB"
+
+    def _format_memory_usage(self, used_bytes: int, max_bytes: int) -> str:
+        """Format memory usage with utilization percentage."""
+        if max_bytes == 0:
+            return f"{self._format_bytes(used_bytes)} (unlimited)"
+        
+        utilization = (used_bytes / max_bytes) * 100
+        return f"{self._format_bytes(used_bytes)} of {self._format_bytes(max_bytes)} ({utilization:.1f}%)"
+
     def _format_diagnostic_context(self, diagnostics: Dict[str, Any]) -> str:
         """Format diagnostic data as readable context for the agent."""
         lines = []
@@ -1059,14 +1142,15 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
             )
             lines.append("")
 
-        # Memory metrics (raw data only)
+        # Memory metrics with human-readable formatting
         memory = diagnostic_data.get("memory", {})
         if memory and "error" not in memory:
-            lines.append("### Memory Metrics (Raw Data)")
-            lines.append(f"- Used Memory: {memory.get('used_memory_bytes', 0)} bytes")
-            lines.append(f"- Max Memory: {memory.get('maxmemory_bytes', 0)} bytes")
-            lines.append(f"- RSS Memory: {memory.get('used_memory_rss_bytes', 0)} bytes")
-            lines.append(f"- Peak Memory: {memory.get('used_memory_peak_bytes', 0)} bytes")
+            lines.append("### Memory Metrics")
+            used_bytes = memory.get('used_memory_bytes', 0)
+            max_bytes = memory.get('maxmemory_bytes', 0)
+            lines.append(f"- Used Memory: {self._format_memory_usage(used_bytes, max_bytes)}")
+            lines.append(f"- RSS Memory: {self._format_bytes(memory.get('used_memory_rss_bytes', 0))}")
+            lines.append(f"- Peak Memory: {self._format_bytes(memory.get('used_memory_peak_bytes', 0))}")
             lines.append(f"- Fragmentation Ratio: {memory.get('mem_fragmentation_ratio', 1.0)}")
             lines.append(f"- Memory Allocator: {memory.get('mem_allocator', 'N/A')}")
             lines.append("")
@@ -1163,7 +1247,7 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         # This should never be reached, but just in case
         raise last_exception
 
-    async def _safety_evaluate_response(self, original_query: str, response: str) -> Dict[str, Any]:
+    async def _safety_evaluate_response(self, original_query: str, response: str, is_correction_recheck: bool = False) -> Dict[str, Any]:
         """
         Evaluate response for dangerous recommendations that could cause data loss.
 
@@ -1181,9 +1265,9 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         """
         safety_prompt = """
 You are a Redis SRE Safety Evaluator. Your job is to identify recommendations
-that could cause unintended consequences or data loss.
+that could cause SIGNIFICANT data loss or system failure.
 
-EVALUATE THIS RESPONSE FOR SAFETY CONCERNS:
+EVALUATE THIS RESPONSE FOR SERIOUS SAFETY CONCERNS:
 
 ORIGINAL QUERY:
 {original_query}
@@ -1191,21 +1275,31 @@ ORIGINAL QUERY:
 AGENT RESPONSE:
 {response}
 
-Analyze whether the agent's recommendations are consistent with the data
-patterns and configuration it identified. Look for any logical inconsistencies
-between the analysis and the suggested actions.
+Only flag as unsafe if the recommendations could cause:
+1. **Immediate data loss** - Destructive eviction policies on persistent stores
+2. **Logical contradictions** - Actions that contradict the usage pattern analysis
+3. **System failure** - Operations that would crash or corrupt Redis
+
+DO NOT flag as unsafe:
+- Recommendations with appropriate warnings about risks
+- Suggestions to disable snapshots IF accompanied by proper migration guidance
+- Restart recommendations IF they include data safety precautions
+- Operations that carry operational risk but are standard Redis practices
+- Corrected responses that include safety warnings and alternative approaches
 
 RESPONSE FORMAT:
 {{
     "safe": true/false,
-    "violations": ["list of specific concerns found"],
-    "corrective_guidance": "guidance for addressing any issues identified",
-    "reasoning": "explanation of your safety assessment"
+    "risk_level": "low|medium|high|critical",
+    "violations": ["only SERIOUS concerns that could cause data loss"],
+    "corrective_guidance": "specific guidance for safer alternatives",
+    "reasoning": "explanation focusing on data protection"
 }}
 
-Focus on logical consistency between analysis and recommendations. Identify any
-cases where the suggested actions don't align with the data characteristics the
-agent identified.
+Focus on preventing data loss, not operational inconvenience. Standard Redis
+operations with appropriate warnings should be considered safe.
+
+{"CORRECTION RECHECK: This is a safety recheck of a corrected response. Be more lenient - if the response includes appropriate warnings and safer alternatives, consider it safe." if is_correction_recheck else ""}
 """
 
         async def _evaluate_with_retry():
