@@ -383,7 +383,7 @@ class TestTaskSystemManagement:
     @pytest.mark.asyncio
     async def test_task_system_test_success(self):
         """Test task system connectivity test success."""
-        with patch("docket.Docket") as mock_docket_class:
+        with patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class:
             mock_docket_instance = AsyncMock()
             mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
             mock_docket_instance.__aexit__ = AsyncMock(return_value=None)

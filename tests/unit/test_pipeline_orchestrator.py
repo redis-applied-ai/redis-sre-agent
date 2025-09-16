@@ -300,9 +300,12 @@ class TestPipelineOrchestrator:
     @pytest.mark.asyncio
     async def test_cleanup_old_batches(self, orchestrator, tmp_path):
         """Test cleanup of old batch directories."""
-        # Create some batch directories with different dates
-        old_date = "2025-06-20"  # More than 30 days old
-        recent_date = "2025-08-15"  # Recent
+        from datetime import datetime, timedelta
+
+        # Create some batch directories with different dates relative to today
+        today = datetime.now()
+        old_date = (today - timedelta(days=45)).strftime("%Y-%m-%d")  # More than 30 days old
+        recent_date = (today - timedelta(days=15)).strftime("%Y-%m-%d")  # Recent
         current_date = orchestrator.storage.current_date
 
         # Create directories
