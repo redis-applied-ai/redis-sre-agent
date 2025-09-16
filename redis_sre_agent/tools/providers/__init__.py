@@ -22,17 +22,15 @@ from .xray_traces import XRayTracesProvider, create_xray_traces_provider
 __all__ = [
     # Individual providers
     "RedisCLIMetricsProvider",
-    "PrometheusMetricsProvider", 
+    "PrometheusMetricsProvider",
     "CloudWatchLogsProvider",
     "GitHubTicketsProvider",
     "GitHubReposProvider",
     "XRayTracesProvider",
-    
     # Comprehensive providers
     "AWSProvider",
-    "GitHubProvider", 
+    "GitHubProvider",
     "RedisProvider",
-    
     # Factory functions
     "create_redis_cli_provider",
     "create_prometheus_provider",

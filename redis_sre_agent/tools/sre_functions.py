@@ -134,14 +134,13 @@ async def analyze_system_metrics(
         raise
 
 
-
 async def search_knowledge_base(
     query: str,
     category: Optional[str] = None,
     limit: int = 5,
 ) -> Dict[str, Any]:
     """
-    Search the comprehensive knowledge base for relevant information including runbooks, 
+    Search the comprehensive knowledge base for relevant information including runbooks,
     Redis documentation, troubleshooting guides, and SRE procedures.
 
     Args:

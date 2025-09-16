@@ -357,16 +357,14 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
 @pipeline.command()
 @click.option("--source-dir", "-s", default="source_documents", help="Source documents directory")
 @click.option("--batch-date", help="Batch date (YYYY-MM-DD), defaults to today")
-@click.option(
-    "--prepare-only", is_flag=True, help="Only prepare batch artifacts, don't ingest"
-)
+@click.option("--prepare-only", is_flag=True, help="Only prepare batch artifacts, don't ingest")
 @click.option("--artifacts-path", default="./artifacts", help="Path to artifacts storage")
 def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifacts_path: str):
     """Prepare source documents as batch artifacts, optionally ingest them."""
 
     async def run_source_preparation():
-        from pathlib import Path
         from datetime import datetime
+        from pathlib import Path
 
         from ..pipelines.ingestion.processor import IngestionPipeline
         from ..pipelines.scraper.base import ArtifactStorage
@@ -387,6 +385,7 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
                 storage.current_batch_path.mkdir(parents=True, exist_ok=True)
                 # Create category subdirectories
                 from ..pipelines.scraper.base import DocumentCategory
+
                 for category in DocumentCategory:
                     (storage.current_batch_path / category.value).mkdir(exist_ok=True)
                 batch_date_to_use = batch_date
@@ -413,33 +412,35 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
 
         try:
             pipeline = IngestionPipeline(storage)
-            
+
             # Prepare artifacts from source documents
             prepared_count = await pipeline.prepare_source_artifacts(source_path, batch_date_to_use)
-            
+
             click.echo(f"✅ Prepared {prepared_count} source documents as batch artifacts")
             click.echo(f"📦 Artifacts saved to: {storage.current_batch_path}")
-            
+
             if not prepare_only:
                 click.echo("🚀 Starting ingestion of prepared artifacts...")
-                
+
                 # Now run the standard ingestion on the prepared batch
                 results = await pipeline.ingest_prepared_batch(batch_date_to_use)
-                
+
                 successful = [r for r in results if r["status"] == "success"]
                 failed = [r for r in results if r["status"] == "error"]
-                
+
                 click.echo("✅ Source document ingestion completed!")
                 click.echo(f"   📝 Successfully ingested: {len(successful)} documents")
-                
+
                 if successful:
                     total_chunks = sum(r.get("chunks_indexed", 0) for r in successful)
                     click.echo(f"   📦 Total chunks indexed: {total_chunks}")
-                
+
                 if failed:
                     click.echo(f"   ❌ Failed to ingest: {len(failed)} documents")
             else:
-                click.echo(f"✋ Artifacts prepared but not ingested (use --batch-date {batch_date_to_use} with 'ingest' command)")
+                click.echo(
+                    f"✋ Artifacts prepared but not ingested (use --batch-date {batch_date_to_use} with 'ingest' command)"
+                )
 
         except Exception as e:
             click.echo(f"❌ Source preparation failed: {e}")
@@ -463,8 +464,10 @@ def ingest_sources(source_dir: str, dry_run: bool, artifacts_path: str):
         from ..pipelines.ingestion.processor import IngestionPipeline
         from ..pipelines.scraper.base import ArtifactStorage
 
-        click.echo("⚠️  WARNING: This command is deprecated. Use 'prepare-sources' for unified workflow.")
-        
+        click.echo(
+            "⚠️  WARNING: This command is deprecated. Use 'prepare-sources' for unified workflow."
+        )
+
         source_path = Path(source_dir)
         if not source_path.exists():
             click.echo(f"❌ Source directory does not exist: {source_path}")

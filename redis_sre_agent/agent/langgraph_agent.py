@@ -93,7 +93,7 @@ Provide remediation steps appropriate to the identified problem category and cur
 
 Search for immediate remediation steps based on the identified problem category:
 - **Connection Issues**: "Redis connection limit troubleshooting", "client timeout resolution"
-- **Memory Issues**: "Redis memory optimization", "eviction policy configuration"  
+- **Memory Issues**: "Redis memory optimization", "eviction policy configuration"
 - **Performance Issues**: "Redis slow query analysis", "performance optimization"
 - **Configuration Issues**: "Redis security configuration", "operational best practices"
 - **Search by symptoms**: Use specific metrics and error patterns you discover
@@ -101,8 +101,8 @@ Search for immediate remediation steps based on the identified problem category:
 ## Usage Pattern Analysis (Express with Uncertainty)
 
 Redis usage patterns must be inferred from multiple signals - persistence/backup
-settings alone are insufficient. Always express your analysis as **likely patterns** 
-rather than definitive conclusions, and acknowledge the uncertainty inherent in 
+settings alone are insufficient. Always express your analysis as **likely patterns**
+rather than definitive conclusions, and acknowledge the uncertainty inherent in
 pattern detection.
 
 ### Signals That May Suggest Cache Usage
@@ -138,7 +138,7 @@ pattern detection.
 **ALWAYS CITE YOUR SOURCES** when referencing information from search results:
 - When you use search_knowledge_base, cite the source document and title
 - Format citations as: "According to [Document Title] (source: [source_path])"
-- For runbooks, indicate document type: "Based on the runbook: [Title]"  
+- For runbooks, indicate document type: "Based on the runbook: [Title]"
 - For documentation, indicate document type: "From Redis documentation: [Title]"
 - Include severity level when relevant: "[Title] (severity: critical)"
 - When combining information from multiple sources, cite each one
@@ -905,22 +905,22 @@ Please review this Redis SRE agent response for factual accuracy and URL validit
 
         if not safety_result.get("safe", True):
             logger.warning(f"Safety evaluation failed: {safety_result}")
-            
+
             risk_level = safety_result.get("risk_level", "medium")
             violations = safety_result.get("violations", [])
-            
+
             # Only trigger corrections for medium risk and above
             if risk_level in ["medium", "high", "critical"]:
                 logger.error(f"SAFETY VIOLATION DETECTED (risk: {risk_level}): {violations}")
 
                 correction_guidance = safety_result.get("corrective_guidance", "")
-                reasoning = safety_result.get("reasoning", "")
-                
+                safety_result.get("reasoning", "")
+
                 if correction_guidance or violations:
                     try:
                         # Create comprehensive correction query with full safety context
                         safety_json = json.dumps(safety_result, indent=2)
-                        
+
                         correction_query = f"""SAFETY VIOLATION - CORRECTION REQUIRED
 
 The following safety evaluation identified problems with my previous response:
@@ -967,14 +967,20 @@ Provide a complete corrected response that maintains the same helpful tone while
                             logger.info("Response corrected after safety evaluation")
                             return corrected_response
                         else:
-                            logger.error(f"Correction still unsafe - recheck violations: {safety_recheck.get('violations', [])}")
-                            logger.error(f"Recheck risk level: {safety_recheck.get('risk_level', 'unknown')}")
+                            logger.error(
+                                f"Correction still unsafe - recheck violations: {safety_recheck.get('violations', [])}"
+                            )
+                            logger.error(
+                                f"Recheck risk level: {safety_recheck.get('risk_level', 'unknown')}"
+                            )
                             # If the correction attempt reduced the risk level, accept it even if not perfect
                             original_risk = safety_result.get("risk_level", "high")
                             recheck_risk = safety_recheck.get("risk_level", "high")
                             risk_levels = {"low": 1, "medium": 2, "high": 3, "critical": 4}
-                            
-                            if risk_levels.get(recheck_risk, 3) <= risk_levels.get(original_risk, 3):
+
+                            if risk_levels.get(recheck_risk, 3) <= risk_levels.get(
+                                original_risk, 3
+                            ):
                                 logger.info("Correction reduced risk level - accepting response")
                                 return corrected_response
                             else:
@@ -996,11 +1002,11 @@ Provide a complete corrected response that maintains the same helpful tone while
             # Create detailed research query with full fact-check context
             fact_check_details = fact_check_result.get("errors", [])
             research_topics = fact_check_result.get("suggested_research", [])
-            
+
             if research_topics or fact_check_details:
                 # Include the full fact-check JSON for context
                 fact_check_json = json.dumps(fact_check_result, indent=2)
-                
+
                 research_query = f"""FACT-CHECK CORRECTION REQUIRED
 
 The following fact-check analysis identified technical errors in my previous response:
@@ -1102,7 +1108,7 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         """Format bytes into human readable format."""
         if bytes_value == 0:
             return "0 B"
-        
+
         for unit in ["B", "KB", "MB", "GB", "TB"]:
             if bytes_value < 1024.0:
                 return f"{bytes_value:.1f} {unit}"
@@ -1113,7 +1119,7 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         """Format memory usage with utilization percentage."""
         if max_bytes == 0:
             return f"{self._format_bytes(used_bytes)} (unlimited)"
-        
+
         utilization = (used_bytes / max_bytes) * 100
         return f"{self._format_bytes(used_bytes)} of {self._format_bytes(max_bytes)} ({utilization:.1f}%)"
 
@@ -1146,11 +1152,15 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         memory = diagnostic_data.get("memory", {})
         if memory and "error" not in memory:
             lines.append("### Memory Metrics")
-            used_bytes = memory.get('used_memory_bytes', 0)
-            max_bytes = memory.get('maxmemory_bytes', 0)
+            used_bytes = memory.get("used_memory_bytes", 0)
+            max_bytes = memory.get("maxmemory_bytes", 0)
             lines.append(f"- Used Memory: {self._format_memory_usage(used_bytes, max_bytes)}")
-            lines.append(f"- RSS Memory: {self._format_bytes(memory.get('used_memory_rss_bytes', 0))}")
-            lines.append(f"- Peak Memory: {self._format_bytes(memory.get('used_memory_peak_bytes', 0))}")
+            lines.append(
+                f"- RSS Memory: {self._format_bytes(memory.get('used_memory_rss_bytes', 0))}"
+            )
+            lines.append(
+                f"- Peak Memory: {self._format_bytes(memory.get('used_memory_peak_bytes', 0))}"
+            )
             lines.append(f"- Fragmentation Ratio: {memory.get('mem_fragmentation_ratio', 1.0)}")
             lines.append(f"- Memory Allocator: {memory.get('mem_allocator', 'N/A')}")
             lines.append("")
@@ -1247,7 +1257,9 @@ Please analyze this situation using your diagnostic tools to perform follow-up i
         # This should never be reached, but just in case
         raise last_exception
 
-    async def _safety_evaluate_response(self, original_query: str, response: str, is_correction_recheck: bool = False) -> Dict[str, Any]:
+    async def _safety_evaluate_response(
+        self, original_query: str, response: str, is_correction_recheck: bool = False
+    ) -> Dict[str, Any]:
         """
         Evaluate response for dangerous recommendations that could cause data loss.
 

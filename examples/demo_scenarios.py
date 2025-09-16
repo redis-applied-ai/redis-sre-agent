@@ -37,7 +37,7 @@ DEMO_PORT = 7844
 warnings.filterwarnings(
     "ignore",
     message=r"Field \"model_name\" in .* has conflict with protected namespace \"model_\"",
-    category=UserWarning
+    category=UserWarning,
 )
 
 
@@ -371,10 +371,14 @@ class RedisSREDemo:
         # Target 90% of the connection limit, accounting for baseline
         target_total_clients = int(current_maxclients * 0.9)
         target_new_connections = target_total_clients - baseline_clients
-        target_new_connections = max(15, min(target_new_connections, current_maxclients - baseline_clients - 2))
+        target_new_connections = max(
+            15, min(target_new_connections, current_maxclients - baseline_clients - 2)
+        )
 
         print(f"   Attempting to create {target_new_connections} concurrent connections...")
-        print(f"   Target total clients: {target_total_clients} (~90% of {current_maxclients} limit)")
+        print(
+            f"   Target total clients: {target_total_clients} (~90% of {current_maxclients} limit)"
+        )
         print("   This should create clear connection pressure metrics...")
 
         connection_errors = 0
@@ -388,14 +392,16 @@ class RedisSREDemo:
                         port=self.redis_port,
                         decode_responses=True,
                         socket_connect_timeout=2,  # Short timeout to detect connection issues
-                        socket_timeout=2
+                        socket_timeout=2,
                     )
                     conn.ping()  # Ensure connection is established
                     test_connections.append(conn)
                     successful_connections += 1
 
                     if (i + 1) % 15 == 0 or i == target_new_connections - 1:
-                        print(f"   Progress: {i + 1}/{target_new_connections} connections attempted...")
+                        print(
+                            f"   Progress: {i + 1}/{target_new_connections} connections attempted..."
+                        )
 
                     # Add some delay to simulate realistic connection patterns
                     time.sleep(0.05)
@@ -419,7 +425,9 @@ class RedisSREDemo:
             print(f"   ✅ Successfully created: {successful_connections} connections")
             print(f"   ❌ Connection errors: {connection_errors}")
             print(f"   📊 Total connected clients: {clients_after}")
-            print(f"   📈 Connection utilization: {(clients_after / current_maxclients * 100):.1f}%")
+            print(
+                f"   📈 Connection utilization: {(clients_after / current_maxclients * 100):.1f}%"
+            )
 
             # Create blocked client scenario using BLPOP operations
             print("   🧪 Creating blocked clients to demonstrate client queue issues...")
@@ -432,16 +440,16 @@ class RedisSREDemo:
                     # Start BLPOP operations on non-existent keys (will block indefinitely)
                     # Use asyncio to run these in background without blocking the demo
                     import threading
+
                     def blocking_operation(connection, key_name):
                         try:
                             # This will block until timeout or key appears
                             connection.blpop([key_name], timeout=30)
-                        except:
+                        except Exception:
                             pass  # Expected timeout or connection error
 
                     thread = threading.Thread(
-                        target=blocking_operation,
-                        args=(conn, f"nonexistent_blocking_key_{i}")
+                        target=blocking_operation, args=(conn, f"nonexistent_blocking_key_{i}")
                     )
                     thread.daemon = True
                     thread.start()
@@ -466,7 +474,9 @@ class RedisSREDemo:
             if blocked_clients > 0:
                 print("   🚨 BLOCKED CLIENTS DETECTED - This indicates client queue issues!")
 
-            utilization = (total_clients / current_maxclients * 100) if current_maxclients > 0 else 0
+            utilization = (
+                (total_clients / current_maxclients * 100) if current_maxclients > 0 else 0
+            )
 
             if utilization > 90:
                 print("   🚨 CRITICAL: Connection exhaustion imminent!")
@@ -487,7 +497,7 @@ class RedisSREDemo:
                         host="localhost",
                         port=self.redis_port,
                         socket_connect_timeout=1,
-                        socket_timeout=1
+                        socket_timeout=1,
                     )
                     extra_conn.ping()
                     test_connections.append(extra_conn)
@@ -504,7 +514,7 @@ class RedisSREDemo:
 
             # Get comprehensive diagnostics showing connection problems
             print("   📊 Getting diagnostic data to show connection issues...")
-            diagnostics = await get_detailed_redis_diagnostics(self.redis_url)
+            _ = await get_detailed_redis_diagnostics(self.redis_url)
 
             # Run diagnostics and agent consultation with connection-focused query
             await self._run_diagnostics_and_agent_query(
@@ -578,7 +588,7 @@ class RedisSREDemo:
         -- Intentionally slow Lua script for performance demo
         local start_time = redis.call('TIME')
         local iterations = tonumber(ARGV[1]) or 100000
-        
+
         -- Simulate CPU-intensive work
         local result = 0
         for i = 1, iterations do
@@ -586,14 +596,14 @@ class RedisSREDemo:
                 result = result + (i * j) % 1000
             end
         end
-        
+
         -- Also do some Redis operations to make it realistic
         for i = 1, 10 do
             redis.call('SET', 'temp:slow:' .. i, 'processing_' .. result .. '_' .. i)
             redis.call('GET', 'temp:slow:' .. i)
             redis.call('DEL', 'temp:slow:' .. i)
         end
-        
+
         local end_time = redis.call('TIME')
         return {result, end_time[1] - start_time[1], end_time[2] - start_time[2]}
         """
@@ -604,16 +614,16 @@ class RedisSREDemo:
         slow_times = []
         for i in range(3):
             try:
-                print(f"   Executing slow operation {i+1}/3...")
+                print(f"   Executing slow operation {i + 1}/3...")
                 start_time = time.time()
                 # Adjust iterations to create operations that take 100-500ms
-                result = self.redis_client.eval(slow_lua_script, 0, str(50000 + i * 10000))
+                self.redis_client.eval(slow_lua_script, 0, str(50000 + i * 10000))
                 duration = time.time() - start_time
                 slow_times.append(duration * 1000)  # Convert to milliseconds
-                print(f"   Slow operation {i+1} completed in {duration * 1000:.1f}ms")
+                print(f"   Slow operation {i + 1} completed in {duration * 1000:.1f}ms")
                 time.sleep(0.5)  # Brief pause between slow operations
             except Exception as e:
-                print(f"   Warning: Slow operation {i+1} failed: {e}")
+                print(f"   Warning: Slow operation {i + 1} failed: {e}")
 
         # Add some additional slow KEYS operations for variety in slowlog
         print("   Adding slow KEYS operations...")
@@ -666,8 +676,8 @@ class RedisSREDemo:
 
             if slowlog_entries:
                 latest_entry = slowlog_entries[0]
-                duration_us = latest_entry.get('duration', 0)
-                command = ' '.join(latest_entry.get('command', []))[:50] + '...'
+                duration_us = latest_entry.get("duration", 0)
+                command = " ".join(latest_entry.get("command", []))[:50] + "..."
                 print(f"   🐌 Latest slow command: {command} ({duration_us}μs)")
         except Exception as e:
             print(f"   Warning: Could not check slowlog: {e}")
@@ -677,7 +687,7 @@ class RedisSREDemo:
         try:
             slowlog_entries = self.redis_client.slowlog_get(10)
             slowlog_count = len(slowlog_entries)
-        except:
+        except Exception:
             pass
 
         await self._run_diagnostics_and_agent_query(
@@ -827,9 +837,9 @@ class RedisSREDemo:
         memory = diagnostic_data.get("memory", {})
         if memory and "error" not in memory:
             lines.append("### Memory Status")
-            used_bytes = memory.get('used_memory_bytes', 0)
-            max_bytes = memory.get('maxmemory_bytes', 0)
-            
+            used_bytes = memory.get("used_memory_bytes", 0)
+            max_bytes = memory.get("maxmemory_bytes", 0)
+
             def format_bytes(bytes_value: int) -> str:
                 """Format bytes into human readable format."""
                 if bytes_value == 0:
@@ -839,10 +849,12 @@ class RedisSREDemo:
                         return f"{bytes_value:.1f} {unit}"
                     bytes_value /= 1024.0
                 return f"{bytes_value:.1f} PB"
-            
+
             if max_bytes > 0:
                 utilization = (used_bytes / max_bytes) * 100
-                lines.append(f"- Used Memory: {format_bytes(used_bytes)} of {format_bytes(max_bytes)} ({utilization:.1f}%)")
+                lines.append(
+                    f"- Used Memory: {format_bytes(used_bytes)} of {format_bytes(max_bytes)} ({utilization:.1f}%)"
+                )
             else:
                 lines.append(f"- Used Memory: {format_bytes(used_bytes)} (unlimited)")
             lines.append(f"- Max Memory: {format_bytes(max_bytes)}")

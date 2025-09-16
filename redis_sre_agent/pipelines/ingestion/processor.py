@@ -422,19 +422,19 @@ class IngestionPipeline:
 
         prepared_count = 0
         prepared_documents = []
-        
+
         for md_file in markdown_files:
             logger.info(f"Preparing artifact for: {md_file.name}")
 
             try:
                 # Convert markdown to ScrapedDocument
                 document = self._create_scraped_document_from_markdown(md_file)
-                
+
                 # Save as artifact using storage
                 self.storage.save_document(document)
                 prepared_documents.append(document)
                 prepared_count += 1
-                
+
                 logger.info(f"✅ Prepared artifact for {md_file.name}")
 
             except Exception as e:
@@ -445,22 +445,24 @@ class IngestionPipeline:
         if prepared_documents:
             self.storage.save_batch_manifest(prepared_documents)
             logger.info(f"✅ Created batch manifest for {len(prepared_documents)} documents")
-        
+
         logger.info(f"Prepared {prepared_count} source documents as batch artifacts")
         return prepared_count
 
     async def ingest_prepared_batch(self, batch_date: str) -> List[Dict[str, Any]]:
         """Ingest a prepared batch using the standard batch ingestion process."""
         logger.info(f"Ingesting prepared batch: {batch_date}")
-        
+
         # Use the existing batch ingestion logic from the main ingest_batch method
         batch_result = await self.ingest_batch(batch_date)
-        
+
         # Convert the result format to match what the CLI expects
         if batch_result.get("success", False):
             return [{"status": "success", "batch_date": batch_date, **batch_result}]
         else:
-            return [{"status": "error", "batch_date": batch_date, "error": "Batch ingestion failed"}]
+            return [
+                {"status": "error", "batch_date": batch_date, "error": "Batch ingestion failed"}
+            ]
 
     async def _index_chunks(self, chunks: List[Dict[str, Any]], index: Any, vectorizer: Any) -> int:
         """Index chunks in the vector store.
