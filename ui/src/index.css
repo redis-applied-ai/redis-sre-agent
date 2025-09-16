@@ -1,0 +1,16 @@
+@import './ui-kit.css';
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+
+/* Fix layout issues by overriding the centered layout behavior */
+main {
+  align-items: flex-start !important; /* Override items-center to align content to top */
+}
+
+/* Fix gap between header and content by reducing top padding */
+main > div {
+  padding-top: 1rem !important; /* Override the default pt-6 (24px) with pt-4 (16px) */
+}

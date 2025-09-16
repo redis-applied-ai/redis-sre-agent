@@ -48,6 +48,7 @@ class TaskStatusResponse(BaseModel):
     action_items: List[Dict[str, Any]] = Field(default_factory=list, description="Action items")
     error_message: Optional[str] = Field(None, description="Error message if failed")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Thread metadata")
+    context: Dict[str, Any] = Field(default_factory=dict, description="Thread context")
 
 
 @router.post(
@@ -95,11 +96,17 @@ async def triage_issue(request: TriageRequest) -> TriageResponse:
             "triage",
         )
 
+        # Generate and update thread subject
+        await thread_manager.update_thread_subject(thread_id, request.query)
+
         # Queue the agent processing task
-        async with Docket(url=await get_redis_url()) as docket:
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Submit the task to process this turn
-            await docket.task(process_agent_turn)(
-                thread_id=thread_id, message=request.query, context=initial_context
+            task_func = docket.add(process_agent_turn)
+            await task_func(
+                thread_id=thread_id,
+                message=request.query,
+                context=initial_context
             )
 
             logger.info(f"Queued agent task for thread {thread_id}")
@@ -179,6 +186,7 @@ async def get_task_status(thread_id: str) -> TaskStatusResponse:
             "session_id": thread_state.metadata.session_id,
             "priority": thread_state.metadata.priority,
             "tags": thread_state.metadata.tags,
+            "subject": thread_state.metadata.subject,
         }
 
         return TaskStatusResponse(
@@ -189,6 +197,7 @@ async def get_task_status(thread_id: str) -> TaskStatusResponse:
             action_items=action_items,
             error_message=thread_state.error_message,
             metadata=metadata,
+            context=thread_state.context,
         )
 
     except HTTPException:
@@ -239,9 +248,12 @@ async def continue_conversation(thread_id: str, request: TriageRequest) -> Triag
         )
 
         # Queue another agent processing task
-        async with Docket(url=await get_redis_url()) as docket:
-            await docket.task(process_agent_turn)(
-                thread_id=thread_id, message=request.query, context=request.context
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            task_func = docket.add(process_agent_turn)
+            await task_func(
+                thread_id=thread_id,
+                message=request.query,
+                context=request.context
             )
 
             logger.info(f"Queued continuation task for thread {thread_id}")
@@ -326,24 +338,61 @@ async def list_tasks(
     user_id: Optional[str] = None, status_filter: Optional[ThreadStatus] = None, limit: int = 50
 ) -> List[TaskStatusResponse]:
     """
-    List recent tasks.
-
-    Note: This is a simplified implementation. In production, you'd want
-    proper pagination and indexing of threads.
+    List recent tasks with proper indexing and filtering.
     """
     try:
-        # This is a placeholder implementation
-        # In production, you'd want to maintain an index of threads
-        # For now, we'll return an empty list with a note
-
         logger.info(
             f"List tasks requested (user_id={user_id}, status={status_filter}, limit={limit})"
         )
 
-        # TODO: Implement proper thread listing with Redis scanning
-        # This would require maintaining thread indices
+        thread_manager = get_thread_manager()
 
-        return []
+        # Get thread summaries
+        thread_summaries = await thread_manager.list_threads(
+            user_id=user_id,
+            status_filter=status_filter,
+            limit=limit,
+            offset=0,
+        )
+
+        # Convert to TaskStatusResponse format
+        tasks = []
+        for summary in thread_summaries:
+            # Create minimal updates list for listing
+            updates = [
+                {
+                    "timestamp": summary.get("updated_at", summary.get("created_at")),
+                    "message": summary.get("latest_message", "No updates"),
+                    "type": "summary",
+                    "metadata": {},
+                }
+            ]
+
+            # Create metadata
+            metadata = {
+                "created_at": summary.get("created_at"),
+                "updated_at": summary.get("updated_at"),
+                "user_id": summary.get("user_id"),
+                "session_id": None,  # Not stored in summary
+                "priority": summary.get("priority", 0),
+                "tags": summary.get("tags", []),
+                "subject": summary.get("subject", "Untitled"),
+            }
+
+            task_response = TaskStatusResponse(
+                thread_id=summary["thread_id"],
+                status=ThreadStatus(summary["status"]),
+                updates=updates,
+                result=None,  # Not included in listing for performance
+                action_items=[],  # Not included in listing for performance
+                error_message=None,  # Not included in listing for performance
+                metadata=metadata,
+            )
+
+            tasks.append(task_response)
+
+        logger.info(f"Returning {len(tasks)} tasks")
+        return tasks
 
     except Exception as e:
         logger.error(f"Failed to list tasks: {e}")

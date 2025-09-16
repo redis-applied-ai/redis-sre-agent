@@ -6,9 +6,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from ulid import ULID
 
+from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ class ThreadMetadata(BaseModel):
     session_id: Optional[str] = None
     priority: int = 0
     tags: List[str] = Field(default_factory=list)
+    subject: Optional[str] = None  # Generated subject for the thread
 
 
 class ThreadActionItem(BaseModel):
@@ -93,6 +96,51 @@ class ThreadManager:
             "error": f"sre:thread:{thread_id}:error",
         }
 
+    async def _generate_thread_subject(self, original_message: str) -> str:
+        """Generate a concise subject for the thread based on the original message."""
+        try:
+            # Use a small, fast model for subject generation
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+            prompt = f"""Generate a concise, descriptive subject line (max 50 characters) for this SRE support request:
+
+"{original_message[:200]}..."
+
+The subject should:
+- Be specific and actionable
+- Include key technical terms
+- Be suitable for a support ticket list
+- Start with the main system/service if mentioned
+
+Examples:
+- "Redis memory usage at 95%"
+- "Connection pool exhausted"
+- "Slow query performance issue"
+- "Cluster failover investigation"
+
+Subject:"""
+
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",  # Fast, cost-effective model
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=20,
+                temperature=0.3,
+            )
+
+            subject = response.choices[0].message.content.strip()
+            # Remove quotes if present and truncate to 50 chars
+            subject = subject.strip('"').strip("'")[:50]
+
+            logger.debug(f"Generated subject: {subject}")
+            return subject
+
+        except Exception as e:
+            logger.warning(f"Failed to generate thread subject: {e}")
+            # Fallback to truncated original message
+            return original_message[:50].strip() + ("..." if len(original_message) > 50 else "")
+
     async def create_thread(
         self,
         user_id: Optional[str] = None,
@@ -112,8 +160,163 @@ class ThreadManager:
 
         await self._save_thread_state(thread_state)
 
+        # Add to thread index for listing
+        await self._add_to_thread_index(thread_id, user_id)
+
         logger.info(f"Created thread {thread_id} for user {user_id}")
         return thread_id
+
+    async def update_thread_subject(self, thread_id: str, original_message: str) -> bool:
+        """Generate and update the thread subject based on the original message."""
+        try:
+            # Generate subject
+            subject = await self._generate_thread_subject(original_message)
+
+            # Update metadata
+            client = await self._get_client()
+            keys = self._get_thread_keys(thread_id)
+
+            await client.hset(keys["metadata"], "subject", subject)
+            await client.hset(
+                keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
+            )
+
+            logger.info(f"Updated thread {thread_id} subject: {subject}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update thread {thread_id} subject: {e}")
+            return False
+
+    async def _add_to_thread_index(self, thread_id: str, user_id: Optional[str] = None) -> bool:
+        """Add thread to index for listing purposes."""
+        try:
+            client = await self._get_client()
+            timestamp = datetime.now(timezone.utc).timestamp()
+
+            # Add to global thread index (sorted by creation time)
+            await client.zadd("sre:threads:index", {thread_id: timestamp})
+
+            # Add to user-specific index if user_id provided
+            if user_id:
+                await client.zadd(f"sre:threads:user:{user_id}", {thread_id: timestamp})
+
+            # Set TTL for indices (30 days)
+            await client.expire("sre:threads:index", 2592000)
+            if user_id:
+                await client.expire(f"sre:threads:user:{user_id}", 2592000)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add thread {thread_id} to index: {e}")
+            return False
+
+    async def _remove_from_thread_index(self, thread_id: str, user_id: Optional[str] = None) -> bool:
+        """Remove thread from index."""
+        try:
+            client = await self._get_client()
+
+            # Remove from global index
+            await client.zrem("sre:threads:index", thread_id)
+
+            # Remove from user index if user_id provided
+            if user_id:
+                await client.zrem(f"sre:threads:user:{user_id}", thread_id)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to remove thread {thread_id} from index: {e}")
+            return False
+
+    async def list_threads(
+        self,
+        user_id: Optional[str] = None,
+        status_filter: Optional[ThreadStatus] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List threads with optional filtering."""
+        try:
+            client = await self._get_client()
+
+            # Choose index based on user_id
+            index_key = f"sre:threads:user:{user_id}" if user_id else "sre:threads:index"
+
+            # Get thread IDs from index (most recent first)
+            thread_ids = await client.zrevrange(
+                index_key, offset, offset + limit - 1, withscores=False
+            )
+
+            if not thread_ids:
+                return []
+
+            # Get thread summaries
+            threads = []
+            for thread_id in thread_ids:
+                thread_id = thread_id.decode() if isinstance(thread_id, bytes) else thread_id
+
+                try:
+                    # Get basic thread info
+                    keys = self._get_thread_keys(thread_id)
+
+                    # Get status, metadata, and latest update
+                    status_data = await client.get(keys["status"])
+                    metadata_data = await client.hgetall(keys["metadata"])
+                    latest_update = await client.lrange(keys["updates"], 0, 0)
+
+                    if not status_data:
+                        continue  # Skip if thread doesn't exist
+
+                    status = status_data.decode()
+
+                    # Apply status filter
+                    if status_filter and status != status_filter.value:
+                        continue
+
+                    # Parse metadata
+                    metadata = {}
+                    if metadata_data:
+                        metadata = {k.decode(): v.decode() for k, v in metadata_data.items()}
+                        if "tags" in metadata:
+                            try:
+                                metadata["tags"] = json.loads(metadata["tags"])
+                            except json.JSONDecodeError:
+                                metadata["tags"] = []
+
+                    # Get latest update message
+                    latest_message = "No updates"
+                    if latest_update:
+                        try:
+                            update_data = json.loads(latest_update[0])
+                            latest_message = update_data.get("message", "No updates")
+                        except json.JSONDecodeError:
+                            pass
+
+                    thread_summary = {
+                        "thread_id": thread_id,
+                        "status": status,
+                        "subject": metadata.get("subject", "Untitled"),
+                        "created_at": metadata.get("created_at"),
+                        "updated_at": metadata.get("updated_at"),
+                        "user_id": metadata.get("user_id"),
+                        "latest_message": latest_message[:100],  # Truncate for summary
+                        "tags": metadata.get("tags", []),
+                        "priority": int(metadata.get("priority", 0)),
+                    }
+
+                    threads.append(thread_summary)
+
+                except Exception as e:
+                    logger.warning(f"Failed to get summary for thread {thread_id}: {e}")
+                    continue
+
+            return threads
+
+        except Exception as e:
+            logger.error(f"Failed to list threads: {e}")
+            return []
 
     async def get_thread_state(self, thread_id: str) -> Optional[ThreadState]:
         """Retrieve complete thread state."""
@@ -164,6 +367,26 @@ class ThreadManager:
                 except Exception as e:
                     logger.warning(f"Failed to parse metadata: {e}")
 
+            # Parse context
+            context = {}
+            if context_data:
+                try:
+                    # Convert Redis hash to context dict and attempt to parse JSON values
+                    for k, v in context_data.items():
+                        key = k.decode() if isinstance(k, bytes) else k
+                        value = v.decode() if isinstance(v, bytes) else v
+
+                        # Try to parse as JSON first (for complex objects like lists)
+                        try:
+                            context[key] = json.loads(value)
+                        except (json.JSONDecodeError, ValueError):
+                            # If not JSON, keep as string
+                            context[key] = value
+                except Exception as e:
+                    logger.warning(f"Failed to parse context: {e}")
+                    # Fallback: just decode bytes to strings
+                    context = {k.decode(): v.decode() for k, v in context_data.items()}
+
             # Parse result and error
             result = None
             if result_data:
@@ -178,7 +401,7 @@ class ThreadManager:
                 thread_id=thread_id,
                 status=ThreadStatus(status.decode()),
                 updates=updates,
-                context=context_data,
+                context=context,
                 action_items=action_items,
                 metadata=metadata,
                 result=result,
@@ -327,10 +550,18 @@ class ThreadManager:
 
             # Set context as hash
             if thread_state.context:
-                # Filter out None values and ensure all values are strings
-                clean_context = {
-                    k: str(v) if v is not None else "" for k, v in thread_state.context.items()
-                }
+                # Filter out None values and serialize complex objects as JSON
+                clean_context = {}
+                for k, v in thread_state.context.items():
+                    if v is None:
+                        clean_context[k] = ""
+                    elif isinstance(v, (dict, list)):
+                        # Serialize complex objects as JSON
+                        clean_context[k] = json.dumps(v)
+                    else:
+                        # Keep simple types as strings
+                        clean_context[k] = str(v)
+
                 if clean_context:
                     pipe.hset(keys["context"], mapping=clean_context)
 
@@ -377,7 +608,18 @@ class ThreadManager:
             client = await self._get_client()
             keys = self._get_thread_keys(thread_id)
 
+            # Get user_id before deletion for index cleanup
+            metadata_data = await client.hgetall(keys["metadata"])
+            user_id = None
+            if metadata_data:
+                metadata = {k.decode(): v.decode() for k, v in metadata_data.items()}
+                user_id = metadata.get("user_id")
+
+            # Delete thread data
             await client.delete(*keys.values())
+
+            # Remove from indices
+            await self._remove_from_thread_index(thread_id, user_id)
 
             logger.info(f"Deleted thread {thread_id}")
             return True

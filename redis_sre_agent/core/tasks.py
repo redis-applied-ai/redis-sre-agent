@@ -356,7 +356,7 @@ async def get_redis_url() -> str:
 async def register_sre_tasks() -> None:
     """Register all SRE tasks with Docket."""
     try:
-        async with Docket(url=await get_redis_url()) as docket:
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Register all SRE tasks
             for task in SRE_TASK_COLLECTION:
                 docket.register(task)
@@ -545,8 +545,9 @@ async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], pro
 
         await progress_callback("Running agent workflow", "agent_processing")
 
-        # Run the agent workflow
-        final_state = await progress_agent.ainvoke(agent_state)
+        # Run the agent workflow using the compiled app
+        thread_config = {"configurable": {"thread_id": agent_state["session_id"]}}
+        final_state = await progress_agent.app.ainvoke(agent_state, config=thread_config)
 
         await progress_callback("Agent workflow completed", "agent_complete")
 
@@ -624,7 +625,7 @@ async def test_task_system() -> bool:
     """Test if the task system is working."""
     try:
         # Try to connect to Docket
-        async with Docket(url=await get_redis_url()):
+        async with Docket(url=await get_redis_url(), name="sre_docket"):
             # Simple connectivity test
             return True
     except Exception as e:
