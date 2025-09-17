@@ -50,6 +50,58 @@ export interface ThreadSummary {
   priority: number;
 }
 
+export interface RedisInstance {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  environment: string;
+  usage: string;
+  description: string;
+  repo_url?: string;
+  notes?: string;
+  status?: string;
+  version?: string;
+  memory?: string;
+  connections?: number;
+  last_checked?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateInstanceRequest {
+  name: string;
+  host: string;
+  port: number;
+  environment: string;
+  usage: string;
+  description: string;
+  repo_url?: string;
+  notes?: string;
+}
+
+export interface UpdateInstanceRequest {
+  name?: string;
+  host?: string;
+  port?: number;
+  environment?: string;
+  usage?: string;
+  description?: string;
+  repo_url?: string;
+  notes?: string;
+  status?: string;
+  version?: string;
+  memory?: string;
+  connections?: number;
+}
+
+export interface ConnectionTestResult {
+  success: boolean;
+  message: string;
+  instance_id: string;
+  tested_at: string;
+}
+
 export interface AgentStatus {
   agent_available: boolean;
   system_health: {
@@ -76,7 +128,8 @@ class SREAgentAPI {
     userId: string,
     sessionId?: string,
     priority: number = 0,
-    tags?: string[]
+    tags?: string[],
+    instanceId?: string
   ): Promise<TriageResponse> {
     const response = await fetch(`${this.tasksBaseUrl}/triage`, {
       method: 'POST',
@@ -89,6 +142,7 @@ class SREAgentAPI {
         session_id: sessionId,
         priority,
         tags,
+        ...(instanceId && { instance_id: instanceId })
       }),
     });
 
@@ -306,10 +360,88 @@ class SREAgentAPI {
     message: string,
     userId: string,
     priority: number = 0,
-    tags?: string[]
+    tags?: string[],
+    instanceId?: string
   ): Promise<string> {
-    const triageResponse = await this.submitTriageRequest(message, userId, undefined, priority, tags);
+    const triageResponse = await this.submitTriageRequest(message, userId, undefined, priority, tags, instanceId);
     return triageResponse.thread_id;
+  }
+
+  // Instance Management Methods
+  async listInstances(): Promise<RedisInstance[]> {
+    const response = await fetch(`${this.baseUrl}/instances`);
+    if (!response.ok) {
+      throw new Error(`Failed to list instances: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async createInstance(request: CreateInstanceRequest): Promise<RedisInstance> {
+    const response = await fetch(`${this.baseUrl}/instances`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `Failed to create instance: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  async getInstance(instanceId: string): Promise<RedisInstance> {
+    const response = await fetch(`${this.baseUrl}/instances/${instanceId}`);
+    if (!response.ok) {
+      throw new Error(`Failed to get instance: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async updateInstance(instanceId: string, request: UpdateInstanceRequest): Promise<RedisInstance> {
+    const response = await fetch(`${this.baseUrl}/instances/${instanceId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `Failed to update instance: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  async deleteInstance(instanceId: string): Promise<{ message: string }> {
+    const response = await fetch(`${this.baseUrl}/instances/${instanceId}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `Failed to delete instance: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  async testInstanceConnection(instanceId: string): Promise<ConnectionTestResult> {
+    const response = await fetch(`${this.baseUrl}/instances/${instanceId}/test-connection`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `Failed to test connection: ${response.statusText}`);
+    }
+
+    return response.json();
   }
 }
 

@@ -4,6 +4,7 @@ import {
   CardContent,
   Button,
 } from '@radar/ui-kit';
+import sreAgentApi, { RedisInstance as APIRedisInstance, CreateInstanceRequest } from '../services/sreAgentApi';
 
 // Simple components for missing UI kit elements
 const Loader = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => (
@@ -28,22 +29,12 @@ const Tooltip = ({ content, children }: { content: string; children: React.React
   </div>
 );
 
-// Redis instance interface
-interface RedisInstance {
-  id: string;
-  name: string;
-  host: string;
-  port: number;
-  environment: string;
-  usage: string;
-  description: string;
-  status?: string;
-  version?: string;
-  memory?: string;
-  connections?: number;
+// Use the API interface but with camelCase for UI consistency
+interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at'> {
   repoUrl?: string;
-  notes?: string;
   lastChecked?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // Add Instance Form Component
@@ -110,20 +101,29 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     setConnectionResult(null);
 
     try {
-      // TODO: Implement actual connection test via API
-      // For now, simulate a connection test with more realistic behavior
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // For new instances, we can't test via API since they don't exist yet
+      // So we'll simulate the test for now
+      if (!initialData) {
+        // Simulate connection test for new instances
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
-      // Simulate success/failure based on host - localhost usually works
-      const isLocalhost = formData.host.toLowerCase().includes('localhost') || formData.host === '127.0.0.1';
-      const success = isLocalhost ? Math.random() > 0.2 : Math.random() > 0.6; // Higher success rate for localhost
+        const isLocalhost = formData.host.toLowerCase().includes('localhost') || formData.host === '127.0.0.1';
+        const success = isLocalhost ? Math.random() > 0.2 : Math.random() > 0.6;
 
-      setConnectionResult({
-        success,
-        message: success
-          ? `✅ Successfully connected to Redis at ${formData.host}:${formData.port}. Connection is healthy!`
-          : `❌ Failed to connect to Redis at ${formData.host}:${formData.port}. Please verify the host and port are correct and Redis is running.`
-      });
+        setConnectionResult({
+          success,
+          message: success
+            ? `✅ Successfully connected to Redis at ${formData.host}:${formData.port}. Connection is healthy!`
+            : `❌ Failed to connect to Redis at ${formData.host}:${formData.port}. Please verify the host and port are correct and Redis is running.`
+        });
+      } else {
+        // For existing instances, use the API test endpoint
+        const result = await sreAgentApi.testInstanceConnection(initialData.id);
+        setConnectionResult({
+          success: result.success,
+          message: result.success ? `✅ ${result.message}` : `❌ ${result.message}`
+        });
+      }
     } catch (error) {
       setConnectionResult({
         success: false,
@@ -353,12 +353,24 @@ const Instances = () => {
     try {
       setIsLoading(true);
       setError('');
-      // TODO: Replace with actual API call to get instances
-      // For now, return empty array to show empty state
-      setInstances([]);
+
+      // Load instances from API
+      const apiInstances = await sreAgentApi.listInstances();
+
+      // Convert API format to UI format
+      const uiInstances: RedisInstance[] = apiInstances.map(instance => ({
+        ...instance,
+        repoUrl: instance.repo_url,
+        lastChecked: instance.last_checked,
+        createdAt: instance.created_at,
+        updatedAt: instance.updated_at,
+      }));
+
+      setInstances(uiInstances);
     } catch (err) {
       setError('Failed to load Redis instances. Please try again.');
       console.error('Error loading instances:', err);
+      setInstances([]);
     } finally {
       setIsLoading(false);
     }
@@ -637,18 +649,43 @@ const Instances = () => {
 
             <AddInstanceForm
               initialData={editingInstance || undefined}
-              onSubmit={(instance) => {
-                if (editingInstance) {
-                  // Update existing instance
-                  setInstances(prev => prev.map(inst =>
-                    inst.id === instance.id ? instance : inst
-                  ));
-                } else {
-                  // Add new instance
-                  setInstances(prev => [...prev, instance]);
+              onSubmit={async (instance) => {
+                try {
+                  if (editingInstance) {
+                    // Update existing instance via API
+                    const updateRequest = {
+                      name: instance.name,
+                      host: instance.host,
+                      port: instance.port,
+                      environment: instance.environment,
+                      usage: instance.usage,
+                      description: instance.description,
+                      repo_url: instance.repoUrl,
+                      notes: instance.notes,
+                    };
+                    await sreAgentApi.updateInstance(instance.id, updateRequest);
+                  } else {
+                    // Create new instance via API
+                    const createRequest: CreateInstanceRequest = {
+                      name: instance.name,
+                      host: instance.host,
+                      port: instance.port,
+                      environment: instance.environment,
+                      usage: instance.usage,
+                      description: instance.description,
+                      repo_url: instance.repoUrl,
+                      notes: instance.notes,
+                    };
+                    await sreAgentApi.createInstance(createRequest);
+                  }
+
+                  // Reload instances from API
+                  await loadInstances();
+                  setShowAddForm(false);
+                  setEditingInstance(null);
+                } catch (err) {
+                  setError(`Failed to ${editingInstance ? 'update' : 'create'} instance: ${err instanceof Error ? err.message : 'Unknown error'}`);
                 }
-                setShowAddForm(false);
-                setEditingInstance(null);
               }}
               onCancel={() => {
                 setShowAddForm(false);

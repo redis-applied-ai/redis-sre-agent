@@ -27,6 +27,7 @@ class TriageRequest(BaseModel):
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
     priority: int = Field(0, description="Priority level (0=normal, 1=high, 2=critical)")
     tags: Optional[List[str]] = Field(None, description="Tags for categorization")
+    instance_id: Optional[str] = Field(None, description="Redis instance ID for context")
 
 
 class TriageResponse(BaseModel):
@@ -78,6 +79,8 @@ async def triage_issue(request: TriageRequest) -> TriageResponse:
             "priority": request.priority,
             "messages": [],
         }
+        if request.instance_id:
+            initial_context["instance_id"] = request.instance_id
         if request.context:
             initial_context.update(request.context)
 

@@ -626,7 +626,7 @@ Keep your response concise and action-focused. This is incident triage, not educ
         return workflow
 
     async def process_query(
-        self, query: str, session_id: str, user_id: str, max_iterations: int = 10
+        self, query: str, session_id: str, user_id: str, max_iterations: int = 10, context: Optional[Dict[str, Any]] = None
     ) -> str:
         """Process a single SRE query through the LangGraph workflow.
 
@@ -635,15 +635,29 @@ Keep your response concise and action-focused. This is incident triage, not educ
             session_id: Session identifier for conversation context
             user_id: User identifier
             max_iterations: Maximum number of workflow iterations
+            context: Additional context including instance_id if specified
 
         Returns:
             Agent's response as a string
         """
         logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
 
+        # Enhance query with instance context if provided
+        enhanced_query = query
+        if context and context.get("instance_id"):
+            instance_id = context["instance_id"]
+            logger.info(f"Processing query with Redis instance context: {instance_id}")
+
+            # Add instance context to the query
+            enhanced_query = f"""User Query: {query}
+
+IMPORTANT CONTEXT: This query is specifically about Redis instance ID: {instance_id}
+
+Please use the available tools to get information about this specific Redis instance and provide targeted troubleshooting and analysis. When using Redis diagnostic tools, make sure to connect to this specific instance."""
+
         # Create initial state
         initial_state: AgentState = {
-            "messages": [HumanMessage(content=query)],
+            "messages": [HumanMessage(content=enhanced_query)],
             "session_id": session_id,
             "user_id": user_id,
             "current_tool_calls": [],

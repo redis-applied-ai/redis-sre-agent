@@ -7,6 +7,7 @@ import {
 } from '@radar/ui-kit';
 import { ConfirmDialog } from '../components/Modal';
 import ReactMarkdown from 'react-markdown';
+import sreAgentApi, { RedisInstance } from '../services/sreAgentApi';
 
 // Simple fallback components for missing UI kit components
 const Loader = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => (
@@ -57,6 +58,8 @@ const Triage = () => {
   const [showSidebar, setShowSidebar] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [threadToDelete, setThreadToDelete] = useState<string | null>(null);
+  const [instances, setInstances] = useState<RedisInstance[]>([]);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingIntervalRef = useRef<number | null>(null);
 
@@ -79,6 +82,9 @@ const Triage = () => {
 
         // Load existing threads
         await loadThreads();
+
+        // Load available instances
+        await loadInstances();
       } catch {
         setAgentStatus('unavailable');
       }
@@ -86,6 +92,16 @@ const Triage = () => {
 
     initializeComponent();
   }, []);
+
+  const loadInstances = async () => {
+    try {
+      const apiInstances = await sreAgentApi.listInstances();
+      setInstances(apiInstances);
+    } catch (err) {
+      console.error('Failed to load instances:', err);
+      // Don't show error to user, just log it
+    }
+  };
 
   // Auto-show new conversation if threads exist but none selected
   useEffect(() => {
@@ -357,7 +373,13 @@ const Triage = () => {
 
       // If no active thread, create a new one
       if (!activeThreadId) {
-        const triageResponse = await sreAgentApi.startNewConversation(messageContent, userId);
+        const triageResponse = await sreAgentApi.startNewConversation(
+          messageContent,
+          userId,
+          0,
+          undefined,
+          selectedInstanceId || undefined
+        );
         threadId = triageResponse;
 
         // Update the active thread ID
@@ -660,6 +682,31 @@ const Triage = () => {
 
               {/* Input Area */}
               <div className="p-4 border-t border-redis-dusk-08">
+                {/* Instance Selection */}
+                {instances.length > 0 && (
+                  <div className="mb-3">
+                    <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                      Redis Instance (optional)
+                    </label>
+                    <select
+                      value={selectedInstanceId}
+                      onChange={(e) => setSelectedInstanceId(e.target.value)}
+                      className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                      disabled={isLoading || agentStatus !== 'available'}
+                    >
+                      <option value="">No specific instance (general troubleshooting)</option>
+                      {instances.map((instance) => (
+                        <option key={instance.id} value={instance.id}>
+                          {instance.name} ({instance.host}:{instance.port}) - {instance.environment}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-redis-xs text-redis-dusk-04 mt-1">
+                      Select a Redis instance to provide context for troubleshooting. The agent will have access to this instance's configuration and can perform targeted diagnostics.
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex gap-2">
                   <textarea
                     value={inputMessage}

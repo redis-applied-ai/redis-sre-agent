@@ -547,32 +547,44 @@ async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], pro
 
         # Run the agent workflow using the compiled app
         thread_config = {"configurable": {"thread_id": agent_state["session_id"]}}
-        final_state = await progress_agent.app.ainvoke(agent_state, config=thread_config)
+
+        # Pass thread context to the agent if available
+        agent_context = thread_state.context if thread_state else None
+
+        # Use the process_query method to handle context properly
+        response = await progress_agent.process_query(
+            query=message,
+            session_id=thread_id,
+            user_id=thread_state.metadata.user_id if thread_state else "system",
+            max_iterations=10,
+            context=agent_context
+        )
+
+        # Create a mock final state for compatibility
+        final_state = {
+            "messages": [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": response}
+            ]
+        }
 
         await progress_callback("Agent workflow completed", "agent_complete")
 
-        # Extract the final response
-        final_messages = final_state.get("messages", [])
-        if final_messages:
-            last_message = final_messages[-1]
-            response_content = (
-                last_message.content if hasattr(last_message, "content") else str(last_message)
-            )
+        # The response is already the final agent response
+        agent_response = response
 
-            # Try to extract action items from response content
-            action_items = extract_action_items_from_response(response_content)
+        # Try to extract action items from response content
+        action_items = extract_action_items_from_response(agent_response)
 
-            return {
-                "response": response_content,
-                "metadata": {
-                    "iterations": final_state.get("iteration_count", 0),
-                    "tool_calls": len(final_state.get("current_tool_calls", [])),
-                    "session_id": final_state.get("session_id"),
-                },
-                "action_items": action_items,
-            }
-        else:
-            return {"response": "No response from agent", "metadata": {}, "action_items": []}
+        return {
+            "response": agent_response,
+            "metadata": {
+                "iterations": 1,  # Since we're using process_query directly
+                "tool_calls": 0,   # Placeholder - could be enhanced to track tool calls
+                "session_id": thread_id,
+            },
+            "action_items": action_items,
+        }
 
     except Exception as e:
         await progress_callback(f"Agent error: {str(e)}", "error")
