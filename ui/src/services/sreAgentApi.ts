@@ -369,7 +369,7 @@ class SREAgentAPI {
 
   // Instance Management Methods
   async listInstances(): Promise<RedisInstance[]> {
-    const response = await fetch(`${this.baseUrl}/instances`);
+    const response = await fetch(`${this.tasksBaseUrl}/instances`);
     if (!response.ok) {
       throw new Error(`Failed to list instances: ${response.statusText}`);
     }
@@ -377,7 +377,7 @@ class SREAgentAPI {
   }
 
   async createInstance(request: CreateInstanceRequest): Promise<RedisInstance> {
-    const response = await fetch(`${this.baseUrl}/instances`, {
+    const response = await fetch(`${this.tasksBaseUrl}/instances`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -394,7 +394,7 @@ class SREAgentAPI {
   }
 
   async getInstance(instanceId: string): Promise<RedisInstance> {
-    const response = await fetch(`${this.baseUrl}/instances/${instanceId}`);
+    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}`);
     if (!response.ok) {
       throw new Error(`Failed to get instance: ${response.statusText}`);
     }
@@ -402,7 +402,7 @@ class SREAgentAPI {
   }
 
   async updateInstance(instanceId: string, request: UpdateInstanceRequest): Promise<RedisInstance> {
-    const response = await fetch(`${this.baseUrl}/instances/${instanceId}`, {
+    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -419,7 +419,7 @@ class SREAgentAPI {
   }
 
   async deleteInstance(instanceId: string): Promise<{ message: string }> {
-    const response = await fetch(`${this.baseUrl}/instances/${instanceId}`, {
+    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}`, {
       method: 'DELETE',
     });
 
@@ -432,7 +432,7 @@ class SREAgentAPI {
   }
 
   async testInstanceConnection(instanceId: string): Promise<ConnectionTestResult> {
-    const response = await fetch(`${this.baseUrl}/instances/${instanceId}/test-connection`, {
+    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}/test-connection`, {
       method: 'POST',
     });
 
