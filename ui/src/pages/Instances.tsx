@@ -1,83 +1,331 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Card,
-  CardHeader,
   CardContent,
   Button,
-  Loader,
-  ErrorMessage,
-  Tooltip,
 } from '@radar/ui-kit';
 
-// Mock data for Redis instances
-const redisInstances = [
-  {
-    id: 'redis-prod-01',
-    name: 'Production Cache',
-    host: 'redis-prod-01.company.com',
-    port: 6379,
-    environment: 'production',
+// Simple components for missing UI kit elements
+const Loader = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => (
+  <div className={`animate-spin rounded-full border-2 border-redis-blue-03 border-t-transparent ${
+    size === 'sm' ? 'h-4 w-4' : size === 'lg' ? 'h-8 w-8' : 'h-6 w-6'
+  }`} />
+);
+
+const ErrorMessage = ({ message, title }: { message: string; title?: string }) => (
+  <div className="bg-redis-red bg-opacity-10 border border-redis-red border-opacity-20 rounded-redis-sm p-4">
+    {title && <h4 className="font-semibold text-redis-red mb-2">{title}</h4>}
+    <p className="text-redis-red text-redis-sm">{message}</p>
+  </div>
+);
+
+const Tooltip = ({ content, children }: { content: string; children: React.ReactNode }) => (
+  <div className="relative group">
+    {children}
+    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-redis-dusk-01 text-white text-redis-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+      {content}
+    </div>
+  </div>
+);
+
+// Redis instance interface
+interface RedisInstance {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  environment: string;
+  usage: string;
+  description: string;
+  status?: string;
+  version?: string;
+  memory?: string;
+  connections?: number;
+  repoUrl?: string;
+  notes?: string;
+  lastChecked?: string;
+}
+
+// Add Instance Form Component
+interface AddInstanceFormProps {
+  onSubmit: (instance: RedisInstance) => void;
+  onCancel: () => void;
+}
+
+const AddInstanceForm = ({ onSubmit, onCancel }: AddInstanceFormProps) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    host: '',
+    port: '6379',
+    environment: 'development',
     usage: 'cache',
-    description: 'Primary cache for user sessions and application data',
-    status: 'healthy',
-    version: '7.2.4',
-    memory: '8GB',
-    connections: 245,
-    repoUrl: 'https://github.com/company/redis-config',
-    notes: 'Critical instance - handles all user session data',
-    lastChecked: '2024-01-15T12:30:00Z'
-  },
-  {
-    id: 'redis-analytics-01',
-    name: 'Analytics Store',
-    host: 'redis-analytics-01.company.com',
-    port: 6379,
-    environment: 'production',
-    usage: 'analytics',
-    description: 'Time-series data storage for analytics and metrics',
-    status: 'healthy',
-    version: '7.2.4',
-    memory: '16GB',
-    connections: 89,
-    repoUrl: 'https://github.com/company/analytics-redis',
-    notes: 'Uses Redis Streams for real-time analytics pipeline',
-    lastChecked: '2024-01-15T12:28:00Z'
-  },
-  {
-    id: 'redis-staging-01',
-    name: 'Staging Environment',
-    host: 'redis-staging-01.company.com',
-    port: 6379,
-    environment: 'staging',
-    usage: 'cache',
-    description: 'Staging environment for testing and development',
-    status: 'warning',
-    version: '7.0.15',
-    memory: '4GB',
-    connections: 12,
-    repoUrl: 'https://github.com/company/redis-config',
-    notes: 'Needs version upgrade to match production',
-    lastChecked: '2024-01-15T12:25:00Z'
-  }
-];
+    description: '',
+    repoUrl: '',
+    notes: ''
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    try {
+      const instance: RedisInstance = {
+        id: `redis-${formData.environment}-${Date.now()}`,
+        name: formData.name,
+        host: formData.host,
+        port: parseInt(formData.port),
+        environment: formData.environment,
+        usage: formData.usage,
+        description: formData.description,
+        repoUrl: formData.repoUrl || undefined,
+        notes: formData.notes || undefined,
+        status: 'unknown',
+        lastChecked: new Date().toISOString()
+      };
+
+      onSubmit(instance);
+    } catch (error) {
+      console.error('Error adding instance:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const testConnection = async () => {
+    setTestingConnection(true);
+    setConnectionResult(null);
+
+    try {
+      // TODO: Implement actual connection test via API
+      // For now, simulate a connection test
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Simulate success/failure
+      const success = Math.random() > 0.3;
+      setConnectionResult({
+        success,
+        message: success
+          ? `Successfully connected to Redis at ${formData.host}:${formData.port}`
+          : `Failed to connect to Redis at ${formData.host}:${formData.port}. Please check the host and port.`
+      });
+    } catch (error) {
+      setConnectionResult({
+        success: false,
+        message: 'Connection test failed. Please try again.'
+      });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+            Instance Name *
+          </label>
+          <input
+            type="text"
+            required
+            value={formData.name}
+            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            placeholder="e.g., Production Cache"
+          />
+        </div>
+
+        <div>
+          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+            Environment *
+          </label>
+          <select
+            required
+            value={formData.environment}
+            onChange={(e) => setFormData(prev => ({ ...prev, environment: e.target.value }))}
+            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          >
+            <option value="development">Development</option>
+            <option value="staging">Staging</option>
+            <option value="production">Production</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2">
+          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+            Host *
+          </label>
+          <input
+            type="text"
+            required
+            value={formData.host}
+            onChange={(e) => setFormData(prev => ({ ...prev, host: e.target.value }))}
+            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            placeholder="e.g., localhost or redis.company.com"
+          />
+        </div>
+
+        <div>
+          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+            Port *
+          </label>
+          <input
+            type="number"
+            required
+            min="1"
+            max="65535"
+            value={formData.port}
+            onChange={(e) => setFormData(prev => ({ ...prev, port: e.target.value }))}
+            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          Usage Type *
+        </label>
+        <select
+          required
+          value={formData.usage}
+          onChange={(e) => setFormData(prev => ({ ...prev, usage: e.target.value }))}
+          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+        >
+          <option value="cache">Cache</option>
+          <option value="analytics">Analytics</option>
+          <option value="session">Session Store</option>
+          <option value="queue">Message Queue</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          Description *
+        </label>
+        <textarea
+          required
+          value={formData.description}
+          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          rows={3}
+          placeholder="Describe what this Redis instance is used for..."
+        />
+      </div>
+
+      <div>
+        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          Repository URL (optional)
+        </label>
+        <input
+          type="url"
+          value={formData.repoUrl}
+          onChange={(e) => setFormData(prev => ({ ...prev, repoUrl: e.target.value }))}
+          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          placeholder="https://github.com/company/redis-config"
+        />
+      </div>
+
+      <div>
+        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          Notes (optional)
+        </label>
+        <textarea
+          value={formData.notes}
+          onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
+          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          rows={2}
+          placeholder="Any additional notes about this instance..."
+        />
+      </div>
+
+      {/* Connection Test */}
+      <div className="border-t border-redis-dusk-06 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-redis-sm font-medium text-redis-dusk-01">Test Connection</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={testConnection}
+            isLoading={testingConnection}
+            disabled={!formData.host || !formData.port}
+          >
+            {testingConnection ? 'Testing...' : 'Test Connection'}
+          </Button>
+        </div>
+
+        {connectionResult && (
+          <div className={`p-3 rounded-redis-sm text-redis-sm ${
+            connectionResult.success
+              ? 'bg-redis-green bg-opacity-10 text-redis-green border border-redis-green border-opacity-20'
+              : 'bg-redis-red bg-opacity-10 text-redis-red border border-redis-red border-opacity-20'
+          }`}>
+            {connectionResult.message}
+          </div>
+        )}
+      </div>
+
+      {/* Form Actions */}
+      <div className="flex gap-3 pt-4 border-t border-redis-dusk-06">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onCancel}
+          disabled={isSubmitting}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="primary"
+          isLoading={isSubmitting}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? 'Adding Instance...' : 'Add Instance'}
+        </Button>
+      </div>
+    </form>
+  );
+};
 
 const Instances = () => {
+  const [instances, setInstances] = useState<RedisInstance[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selectedEnvironment, setSelectedEnvironment] = useState('all');
   const [selectedUsage, setSelectedUsage] = useState('all');
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  // Load instances on component mount
+  useEffect(() => {
+    loadInstances();
+  }, []);
+
+  const loadInstances = async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+      // TODO: Replace with actual API call to get instances
+      // For now, return empty array to show empty state
+      setInstances([]);
+    } catch (err) {
+      setError('Failed to load Redis instances. Please try again.');
+      console.error('Error loading instances:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    setError('');
-
-    // Simulate API call
-    setTimeout(() => {
-      if (Math.random() > 0.8) {
-        setError('Failed to refresh Redis instances data. Please try again.');
-      }
-      setIsRefreshing(false);
-    }, 2000);
+    await loadInstances();
+    setIsRefreshing(false);
   };
 
   const getEnvironmentColor = (environment: string) => {
@@ -113,7 +361,7 @@ const Instances = () => {
     return new Date(dateString).toLocaleString();
   };
 
-  const filteredInstances = redisInstances.filter(instance => {
+  const filteredInstances = instances.filter(instance => {
     const environmentMatch = selectedEnvironment === 'all' || instance.environment === selectedEnvironment;
     const usageMatch = selectedUsage === 'all' || instance.usage === selectedUsage;
     return environmentMatch && usageMatch;
@@ -139,7 +387,10 @@ const Instances = () => {
               {isRefreshing ? <Loader size="sm" /> : 'Refresh'}
             </Button>
           </Tooltip>
-          <Button variant="primary">
+          <Button
+            variant="primary"
+            onClick={() => setShowAddForm(true)}
+          >
             Add Instance
           </Button>
         </div>
@@ -153,162 +404,228 @@ const Instances = () => {
         />
       )}
 
-      {/* Filters */}
-      <Card>
-        <CardContent>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-redis-sm text-redis-dusk-04">Environment:</label>
-              <select
-                value={selectedEnvironment}
-                onChange={(e) => setSelectedEnvironment(e.target.value)}
-                className="px-3 py-1 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-              >
-                <option value="all">All</option>
-                <option value="production">Production</option>
-                <option value="staging">Staging</option>
-                <option value="development">Development</option>
-              </select>
+      {/* Filters - Only show if we have instances */}
+      {instances.length > 0 && (
+        <Card>
+          <CardContent>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <label className="text-redis-sm text-redis-dusk-04">Environment:</label>
+                <select
+                  value={selectedEnvironment}
+                  onChange={(e) => setSelectedEnvironment(e.target.value)}
+                  className="px-3 py-1 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                >
+                  <option value="all">All</option>
+                  <option value="production">Production</option>
+                  <option value="staging">Staging</option>
+                  <option value="development">Development</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-redis-sm text-redis-dusk-04">Usage:</label>
+                <select
+                  value={selectedUsage}
+                  onChange={(e) => setSelectedUsage(e.target.value)}
+                  className="px-3 py-1 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                >
+                  <option value="all">All</option>
+                  <option value="cache">Cache</option>
+                  <option value="analytics">Analytics</option>
+                  <option value="session">Session Store</option>
+                  <option value="queue">Message Queue</option>
+                </select>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <label className="text-redis-sm text-redis-dusk-04">Usage:</label>
-              <select
-                value={selectedUsage}
-                onChange={(e) => setSelectedUsage(e.target.value)}
-                className="px-3 py-1 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-              >
-                <option value="all">All</option>
-                <option value="cache">Cache</option>
-                <option value="analytics">Analytics</option>
-                <option value="session">Session Store</option>
-                <option value="queue">Message Queue</option>
-              </select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Instances List */}
-      <div className="space-y-4">
-        {filteredInstances.length === 0 ? (
+      {/* Loading State */}
+      {isLoading ? (
+        <Card>
+          <CardContent className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <Loader size="lg" />
+              <p className="text-redis-sm text-redis-dusk-04 mt-4">
+                Loading Redis instances...
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Instances List */}
+          <div className="space-y-4">
+            {instances.length === 0 ? (
+              <Card>
+                <CardContent className="flex items-center justify-center py-16">
+                  <div className="text-center max-w-md">
+                    <div className="w-16 h-16 mx-auto mb-6 bg-redis-dusk-08 rounded-full flex items-center justify-center">
+                      <svg className="h-8 w-8 text-redis-dusk-04" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                      </svg>
+                    </div>
+                    <h3 className="text-redis-xl font-semibold text-redis-dusk-01 mb-3">
+                      No Redis instances configured
+                    </h3>
+                    <p className="text-redis-sm text-redis-dusk-04 mb-6">
+                      Get started by adding your first Redis instance. The SRE agent will be able to monitor, diagnose, and help troubleshoot issues with your Redis infrastructure.
+                    </p>
+                    <Button
+                      variant="primary"
+                      size="lg"
+                      onClick={() => setShowAddForm(true)}
+                    >
+                      Add Your First Instance
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              filteredInstances.map((instance) => (
+                <Card key={instance.id} className="hover:shadow-lg transition-shadow">
+                  <CardContent>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <span className="text-redis-sm font-mono text-redis-dusk-04">
+                            {instance.id}
+                          </span>
+                          <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getEnvironmentColor(instance.environment)}`}>
+                            {instance.environment.toUpperCase()}
+                          </span>
+                          <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getUsageColor(instance.usage)}`}>
+                            {instance.usage.toUpperCase()}
+                          </span>
+                          {instance.status && (
+                            <span className={`text-redis-xs font-medium capitalize ${getStatusColor(instance.status)}`}>
+                              ● {instance.status}
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-redis-lg font-semibold text-redis-dusk-01 mb-2">
+                          {instance.name}
+                        </h3>
+                        <p className="text-redis-sm text-redis-dusk-04 mb-3">
+                          {instance.description}
+                        </p>
+                        <div className="grid grid-cols-2 gap-4 mb-3">
+                          <div className="text-redis-xs text-redis-dusk-05">
+                            <div><strong>Host:</strong> {instance.host}:{instance.port}</div>
+                            {instance.version && <div><strong>Version:</strong> {instance.version}</div>}
+                            {instance.memory && <div><strong>Memory:</strong> {instance.memory}</div>}
+                          </div>
+                          <div className="text-redis-xs text-redis-dusk-05">
+                            {instance.connections && <div><strong>Connections:</strong> {instance.connections}</div>}
+                            {instance.lastChecked && <div><strong>Last Checked:</strong> {formatDate(instance.lastChecked)}</div>}
+                          </div>
+                        </div>
+                        {instance.repoUrl && (
+                          <div className="mb-2">
+                            <span className="text-redis-xs text-redis-dusk-04">Repository: </span>
+                            <a href={instance.repoUrl} target="_blank" rel="noopener noreferrer"
+                               className="text-redis-xs text-redis-blue-03 hover:underline">
+                              {instance.repoUrl}
+                            </a>
+                          </div>
+                        )}
+                        {instance.notes && (
+                          <div className="mt-2 p-2 bg-redis-dusk-09 rounded-redis-sm">
+                            <span className="text-redis-xs text-redis-dusk-04">Notes: </span>
+                            <span className="text-redis-xs text-redis-dusk-01">{instance.notes}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2 ml-4">
+                        <Button variant="outline" size="sm">
+                          Edit
+                        </Button>
+                        <Button variant="primary" size="sm">
+                          Test Connection
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Summary Stats - Only show if we have instances */}
+      {instances.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
-            <CardContent className="flex items-center justify-center py-12">
+            <CardContent>
               <div className="text-center">
-                <svg className="h-12 w-12 text-redis-dusk-04 mx-auto mb-4" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6Z"/>
-                </svg>
-                <h3 className="text-redis-lg font-semibold text-redis-dusk-01 mb-2">
-                  No Redis instances found
-                </h3>
-                <p className="text-redis-sm text-redis-dusk-04">
-                  No Redis instances match your current filters.
+                <p className="text-redis-xl font-bold text-redis-green">
+                  {filteredInstances.filter(i => i.status === 'healthy').length}
                 </p>
+                <p className="text-redis-xs text-redis-dusk-04">Healthy Instances</p>
               </div>
             </CardContent>
           </Card>
-        ) : (
-          filteredInstances.map((instance) => (
-            <Card key={instance.id} className="hover:shadow-lg transition-shadow">
-              <CardContent>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-redis-sm font-mono text-redis-dusk-04">
-                        {instance.id}
-                      </span>
-                      <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getEnvironmentColor(instance.environment)}`}>
-                        {instance.environment.toUpperCase()}
-                      </span>
-                      <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getUsageColor(instance.usage)}`}>
-                        {instance.usage.toUpperCase()}
-                      </span>
-                      <span className={`text-redis-xs font-medium capitalize ${getStatusColor(instance.status)}`}>
-                        ● {instance.status}
-                      </span>
-                    </div>
-                    <h3 className="text-redis-lg font-semibold text-redis-dusk-01 mb-2">
-                      {instance.name}
-                    </h3>
-                    <p className="text-redis-sm text-redis-dusk-04 mb-3">
-                      {instance.description}
-                    </p>
-                    <div className="grid grid-cols-2 gap-4 mb-3">
-                      <div className="text-redis-xs text-redis-dusk-05">
-                        <div><strong>Host:</strong> {instance.host}:{instance.port}</div>
-                        <div><strong>Version:</strong> {instance.version}</div>
-                        <div><strong>Memory:</strong> {instance.memory}</div>
-                      </div>
-                      <div className="text-redis-xs text-redis-dusk-05">
-                        <div><strong>Connections:</strong> {instance.connections}</div>
-                        <div><strong>Last Checked:</strong> {formatDate(instance.lastChecked)}</div>
-                      </div>
-                    </div>
-                    {instance.repoUrl && (
-                      <div className="mb-2">
-                        <span className="text-redis-xs text-redis-dusk-04">Repository: </span>
-                        <a href={instance.repoUrl} target="_blank" rel="noopener noreferrer"
-                           className="text-redis-xs text-redis-blue-03 hover:underline">
-                          {instance.repoUrl}
-                        </a>
-                      </div>
-                    )}
-                    {instance.notes && (
-                      <div className="mt-2 p-2 bg-redis-dusk-09 rounded-redis-sm">
-                        <span className="text-redis-xs text-redis-dusk-04">Notes: </span>
-                        <span className="text-redis-xs text-redis-dusk-01">{instance.notes}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2 ml-4">
-                    <Button variant="outline" size="sm">
-                      Edit
-                    </Button>
-                    <Button variant="primary" size="sm">
-                      Test Connection
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
+          <Card>
+            <CardContent>
+              <div className="text-center">
+                <p className="text-redis-xl font-bold text-redis-yellow-500">
+                  {filteredInstances.filter(i => i.status === 'warning').length}
+                </p>
+                <p className="text-redis-xs text-redis-dusk-04">Warning Status</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent>
+              <div className="text-center">
+                <p className="text-redis-xl font-bold text-redis-red">
+                  {filteredInstances.filter(i => i.environment === 'production').length}
+                </p>
+                <p className="text-redis-xs text-redis-dusk-04">Production Instances</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent>
+              <div className="text-center">
+                <p className="text-redis-xl font-bold text-redis-blue-03">
+                  {filteredInstances.reduce((sum, i) => sum + (i.connections || 0), 0)}
+                </p>
+                <p className="text-redis-xs text-redis-dusk-04">Total Connections</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent>
-            <div className="text-center">
-              <p className="text-redis-xl font-bold text-redis-green">{filteredInstances.filter(i => i.status === 'healthy').length}</p>
-              <p className="text-redis-xs text-redis-dusk-04">Healthy Instances</p>
+      {/* Add Instance Form Modal */}
+      {showAddForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-redis-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-redis-xl font-bold text-redis-dusk-01">Add Redis Instance</h2>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddForm(false)}
+              >
+                ✕
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <div className="text-center">
-              <p className="text-redis-xl font-bold text-redis-yellow-500">{filteredInstances.filter(i => i.status === 'warning').length}</p>
-              <p className="text-redis-xs text-redis-dusk-04">Warning Status</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <div className="text-center">
-              <p className="text-redis-xl font-bold text-redis-red">{filteredInstances.filter(i => i.environment === 'production').length}</p>
-              <p className="text-redis-xs text-redis-dusk-04">Production Instances</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <div className="text-center">
-              <p className="text-redis-xl font-bold text-redis-blue-03">{filteredInstances.reduce((sum, i) => sum + i.connections, 0)}</p>
-              <p className="text-redis-xs text-redis-dusk-04">Total Connections</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+
+            <AddInstanceForm
+              onSubmit={(instance) => {
+                // TODO: Add instance to the list and save to backend
+                setInstances(prev => [...prev, instance]);
+                setShowAddForm(false);
+              }}
+              onCancel={() => setShowAddForm(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
