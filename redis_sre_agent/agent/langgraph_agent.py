@@ -304,22 +304,19 @@ class SRELangGraphAgent:
                     "type": "function",
                     "function": {
                         "name": "check_service_health",
-                        "description": "ALWAYS use this tool first when investigating concerning Redis behavior. Provides comprehensive health diagnostics including memory usage, performance metrics, connection patterns, slow queries, configuration issues, and operational status. This tool will identify specific problem areas such as memory pressure, high latency, connection issues, performance degradation, configuration problems, or slow operations. Run this immediately for any Redis troubleshooting scenario. IMPORTANT: Always provide the redis_url parameter when checking Redis services.",
+                        "description": "Check the SRE Agent's own health status and system components. This tool checks the agent service itself (Redis connection, vectorizer, task queue), NOT Redis instances. Use Redis diagnostics tools to check Redis instance health. Only use this when specifically asked about the agent's health or when troubleshooting the agent service itself.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "service_name": {
                                     "type": "string",
-                                    "description": "Name of the service to check (use 'redis' for Redis diagnostics)",
-                                },
-                                "redis_url": {
-                                    "type": "string",
-                                    "description": "Redis connection URL (required for Redis service checks, e.g., 'redis://localhost:6379')",
+                                    "description": "Service to check - use 'sre-agent' to check this agent's health status and components",
+                                    "default": "sre-agent",
                                 },
                                 "endpoints": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "List of health check endpoints to test",
+                                    "description": "Health check endpoints for the SRE agent service (not Redis instances)",
                                     "default": ["http://localhost:8000/health"],
                                 },
                                 "timeout": {
@@ -328,7 +325,7 @@ class SRELangGraphAgent:
                                     "default": 30,
                                 },
                             },
-                            "required": ["service_name"],
+                            "required": [],
                         },
                     },
                 },

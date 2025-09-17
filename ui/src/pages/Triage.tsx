@@ -6,6 +6,7 @@ import {
   Button,
 } from '@radar/ui-kit';
 import { ConfirmDialog } from '../components/Modal';
+import ReactMarkdown from 'react-markdown';
 
 // Simple fallback components for missing UI kit components
 const Loader = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => (
@@ -23,9 +24,13 @@ import sreAgentApi from '../services/sreAgentApi';
 
 interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
   content: string;
   timestamp: string;
+  toolCall?: {
+    name: string;
+    args?: any;
+  };
 }
 
 interface ChatThread {
@@ -159,6 +164,21 @@ const Triage = () => {
               content: update.message,
               timestamp: update.timestamp,
             });
+          } else if (update.type === 'tool_call') {
+            // Show tool calls in a user-friendly way
+            const toolName = update.metadata?.tool_name || 'Unknown Tool';
+            const toolArgs = update.metadata?.tool_args;
+
+            newMessages.push({
+              id: `tool-${index}`,
+              role: 'tool',
+              content: `Making tool call: ${toolName}`,
+              timestamp: update.timestamp,
+              toolCall: {
+                name: toolName,
+                args: toolArgs,
+              },
+            });
           }
         });
 
@@ -275,6 +295,21 @@ const Triage = () => {
             content: update.message,
             timestamp: update.timestamp,
           });
+        } else if (update.type === 'tool_call') {
+          // Show tool calls in a user-friendly way
+          const toolName = update.metadata?.tool_name || 'Unknown Tool';
+          const toolArgs = update.metadata?.tool_args;
+
+          newMessages.push({
+            id: `tool-${index}`,
+            role: 'tool',
+            content: `Making tool call: ${toolName}`,
+            timestamp: update.timestamp,
+            toolCall: {
+              name: toolName,
+              args: toolArgs,
+            },
+          });
         }
       });
 
@@ -334,7 +369,7 @@ const Triage = () => {
           id: threadId,
           name: messageContent.substring(0, 30) + (messageContent.length > 30 ? '...' : ''),
           subject: messageContent.substring(0, 50) + (messageContent.length > 50 ? '...' : ''),
-          lastMessage: 'Processing...',
+          lastMessage: 'Agent is thinking...',
           timestamp: new Date().toISOString(),
           messageCount: 1,
           status: 'queued',
@@ -563,10 +598,35 @@ const Triage = () => {
                         className={`max-w-[80%] p-3 rounded-redis-md ${
                           message.role === 'user'
                             ? 'bg-redis-blue-03 text-white'
+                            : message.role === 'tool'
+                            ? 'bg-orange-100 text-orange-800 border border-orange-200'
                             : 'bg-redis-dusk-09 text-redis-dusk-01'
                         }`}
                       >
-                        <div className="text-redis-sm whitespace-pre-wrap">{message.content}</div>
+                        {message.role === 'tool' ? (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                              </svg>
+                              <span className="font-medium text-sm">Agent is making a tool call</span>
+                            </div>
+                            <div className="text-sm">
+                              <strong>{message.toolCall?.name}</strong>
+                              {message.toolCall?.args && Object.keys(message.toolCall.args).length > 0 && (
+                                <div className="mt-1 text-xs opacity-75 bg-white bg-opacity-50 p-2 rounded">
+                                  <pre className="whitespace-pre-wrap">{JSON.stringify(message.toolCall.args, null, 2)}</pre>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : message.role === 'assistant' ? (
+                          <div className="prose prose-sm max-w-none text-redis-sm">
+                            <ReactMarkdown>{message.content}</ReactMarkdown>
+                          </div>
+                        ) : (
+                          <div className="text-redis-sm whitespace-pre-wrap">{message.content}</div>
+                        )}
                         <div
                           className={`text-redis-xs mt-1 ${
                             message.role === 'user' ? 'text-blue-100' : 'text-redis-dusk-04'
@@ -582,9 +642,7 @@ const Triage = () => {
                       <div className="bg-redis-dusk-09 p-3 rounded-redis-md">
                         <Loader size="sm" />
                         <span className="text-redis-sm text-redis-dusk-04 ml-2">
-                          {isLoading ? 'Submitting request...' :
-                           isPolling ? 'SRE Agent is working...' :
-                           'Processing...'}
+                          Agent is thinking...
                         </span>
                       </div>
                     </div>
@@ -624,7 +682,7 @@ const Triage = () => {
                 <div className="text-redis-xs text-redis-dusk-04 mt-2">
                   {agentStatus === 'available'
                     ? (isPolling
-                        ? 'Agent is processing your request. Updates will appear automatically.'
+                        ? 'Agent is thinking... Updates will appear automatically.'
                         : 'Press Enter to send, Shift+Enter for new line')
                     : agentStatus === 'unavailable'
                     ? 'SRE Agent is currently offline. Please check the backend service.'
