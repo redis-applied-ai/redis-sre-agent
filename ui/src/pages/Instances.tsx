@@ -50,18 +50,24 @@ interface RedisInstance {
 interface AddInstanceFormProps {
   onSubmit: (instance: RedisInstance) => void;
   onCancel: () => void;
+  initialData?: RedisInstance;
 }
 
-const AddInstanceForm = ({ onSubmit, onCancel }: AddInstanceFormProps) => {
+const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormProps) => {
+  // Check if the initial usage is a custom type (not in predefined list)
+  const predefinedUsageTypes = ['cache', 'analytics', 'session', 'queue'];
+  const isCustomUsage = initialData?.usage && !predefinedUsageTypes.includes(initialData.usage);
+
   const [formData, setFormData] = useState({
-    name: '',
-    host: '',
-    port: '6379',
-    environment: 'development',
-    usage: 'cache',
-    description: '',
-    repoUrl: '',
-    notes: ''
+    name: initialData?.name || '',
+    host: initialData?.host || '',
+    port: initialData?.port?.toString() || '6379',
+    environment: initialData?.environment || 'development',
+    usage: isCustomUsage ? 'custom' : (initialData?.usage || 'cache'),
+    customUsage: isCustomUsage ? initialData?.usage || '' : '',
+    description: initialData?.description || '',
+    repoUrl: initialData?.repoUrl || '',
+    notes: initialData?.notes || ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -72,23 +78,28 @@ const AddInstanceForm = ({ onSubmit, onCancel }: AddInstanceFormProps) => {
     setIsSubmitting(true);
 
     try {
+      const finalUsage = formData.usage === 'custom' ? formData.customUsage : formData.usage;
+
       const instance: RedisInstance = {
-        id: `redis-${formData.environment}-${Date.now()}`,
+        id: initialData?.id || `redis-${formData.environment}-${Date.now()}`,
         name: formData.name,
         host: formData.host,
         port: parseInt(formData.port),
         environment: formData.environment,
-        usage: formData.usage,
+        usage: finalUsage,
         description: formData.description,
         repoUrl: formData.repoUrl || undefined,
         notes: formData.notes || undefined,
-        status: 'unknown',
-        lastChecked: new Date().toISOString()
+        status: initialData?.status || 'unknown',
+        version: initialData?.version,
+        memory: initialData?.memory,
+        connections: initialData?.connections,
+        lastChecked: initialData?.lastChecked || new Date().toISOString()
       };
 
       onSubmit(instance);
     } catch (error) {
-      console.error('Error adding instance:', error);
+      console.error('Error saving instance:', error);
     } finally {
       setIsSubmitting(false);
     }
@@ -200,7 +211,21 @@ const AddInstanceForm = ({ onSubmit, onCancel }: AddInstanceFormProps) => {
           <option value="analytics">Analytics</option>
           <option value="session">Session Store</option>
           <option value="queue">Message Queue</option>
+          <option value="custom">Custom (specify below)</option>
         </select>
+
+        {formData.usage === 'custom' && (
+          <div className="mt-2">
+            <input
+              type="text"
+              required
+              value={formData.customUsage}
+              onChange={(e) => setFormData(prev => ({ ...prev, customUsage: e.target.value }))}
+              className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+              placeholder="Enter custom usage type (e.g., 'pub/sub', 'timeseries', 'search')"
+            />
+          </div>
+        )}
       </div>
 
       <div>
@@ -286,7 +311,10 @@ const AddInstanceForm = ({ onSubmit, onCancel }: AddInstanceFormProps) => {
           isLoading={isSubmitting}
           disabled={isSubmitting}
         >
-          {isSubmitting ? 'Adding Instance...' : 'Add Instance'}
+          {isSubmitting
+            ? (initialData ? 'Updating Instance...' : 'Adding Instance...')
+            : (initialData ? 'Update Instance' : 'Add Instance')
+          }
         </Button>
       </div>
     </form>
@@ -301,6 +329,7 @@ const Instances = () => {
   const [selectedEnvironment, setSelectedEnvironment] = useState('all');
   const [selectedUsage, setSelectedUsage] = useState('all');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingInstance, setEditingInstance] = useState<RedisInstance | null>(null);
 
   // Load instances on component mount
   useEffect(() => {
@@ -348,11 +377,15 @@ const Instances = () => {
   };
 
   const getUsageColor = (usage: string) => {
-    switch (usage) {
+    switch (usage.toLowerCase()) {
       case 'cache': return 'bg-redis-blue-03 text-white';
       case 'analytics': return 'bg-redis-green text-white';
       case 'session': return 'bg-redis-lime text-white';
       case 'queue': return 'bg-redis-yellow-300 text-redis-midnight';
+      case 'pub/sub':
+      case 'pubsub': return 'bg-purple-500 text-white';
+      case 'timeseries': return 'bg-orange-500 text-white';
+      case 'search': return 'bg-teal-500 text-white';
       default: return 'bg-redis-dusk-06 text-white';
     }
   };
@@ -434,6 +467,15 @@ const Instances = () => {
                   <option value="analytics">Analytics</option>
                   <option value="session">Session Store</option>
                   <option value="queue">Message Queue</option>
+                  {/* Add dynamic options for custom usage types */}
+                  {Array.from(new Set(instances.map(i => i.usage)))
+                    .filter(usage => !['cache', 'analytics', 'session', 'queue'].includes(usage))
+                    .map(usage => (
+                      <option key={usage} value={usage}>
+                        {usage.charAt(0).toUpperCase() + usage.slice(1)}
+                      </option>
+                    ))
+                  }
                 </select>
               </div>
             </div>
@@ -538,7 +580,11 @@ const Instances = () => {
                         )}
                       </div>
                       <div className="flex gap-2 ml-4">
-                        <Button variant="outline" size="sm">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setEditingInstance(instance)}
+                        >
                           Edit
                         </Button>
                         <Button variant="primary" size="sm">
@@ -600,28 +646,45 @@ const Instances = () => {
         </div>
       )}
 
-      {/* Add Instance Form Modal */}
-      {showAddForm && (
+      {/* Add/Edit Instance Form Modal */}
+      {(showAddForm || editingInstance) && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-redis-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-redis-xl font-bold text-redis-dusk-01">Add Redis Instance</h2>
+              <h2 className="text-redis-xl font-bold text-redis-dusk-01">
+                {editingInstance ? 'Edit Redis Instance' : 'Add Redis Instance'}
+              </h2>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowAddForm(false)}
+                onClick={() => {
+                  setShowAddForm(false);
+                  setEditingInstance(null);
+                }}
               >
                 ✕
               </Button>
             </div>
 
             <AddInstanceForm
+              initialData={editingInstance || undefined}
               onSubmit={(instance) => {
-                // TODO: Add instance to the list and save to backend
-                setInstances(prev => [...prev, instance]);
+                if (editingInstance) {
+                  // Update existing instance
+                  setInstances(prev => prev.map(inst =>
+                    inst.id === instance.id ? instance : inst
+                  ));
+                } else {
+                  // Add new instance
+                  setInstances(prev => [...prev, instance]);
+                }
                 setShowAddForm(false);
+                setEditingInstance(null);
               }}
-              onCancel={() => setShowAddForm(false)}
+              onCancel={() => {
+                setShowAddForm(false);
+                setEditingInstance(null);
+              }}
             />
           </div>
         </div>
