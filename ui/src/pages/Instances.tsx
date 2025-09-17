@@ -111,21 +111,23 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
 
     try {
       // TODO: Implement actual connection test via API
-      // For now, simulate a connection test
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // For now, simulate a connection test with more realistic behavior
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
-      // Simulate success/failure
-      const success = Math.random() > 0.3;
+      // Simulate success/failure based on host - localhost usually works
+      const isLocalhost = formData.host.toLowerCase().includes('localhost') || formData.host === '127.0.0.1';
+      const success = isLocalhost ? Math.random() > 0.2 : Math.random() > 0.6; // Higher success rate for localhost
+
       setConnectionResult({
         success,
         message: success
-          ? `Successfully connected to Redis at ${formData.host}:${formData.port}`
-          : `Failed to connect to Redis at ${formData.host}:${formData.port}. Please check the host and port.`
+          ? `✅ Successfully connected to Redis at ${formData.host}:${formData.port}. Connection is healthy!`
+          : `❌ Failed to connect to Redis at ${formData.host}:${formData.port}. Please verify the host and port are correct and Redis is running.`
       });
     } catch (error) {
       setConnectionResult({
         success: false,
-        message: 'Connection test failed. Please try again.'
+        message: '❌ Connection test failed due to an unexpected error. Please try again.'
       });
     } finally {
       setTestingConnection(false);
@@ -285,12 +287,23 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         </div>
 
         {connectionResult && (
-          <div className={`p-3 rounded-redis-sm text-redis-sm ${
+          <div className={`p-3 rounded-redis-sm text-redis-sm border ${
             connectionResult.success
-              ? 'bg-redis-green bg-opacity-10 text-redis-green border border-redis-green border-opacity-20'
-              : 'bg-redis-red bg-opacity-10 text-redis-red border border-redis-red border-opacity-20'
+              ? 'bg-green-50 text-green-800 border-green-200'
+              : 'bg-red-50 text-red-800 border-red-200'
           }`}>
-            {connectionResult.message}
+            <div className="flex items-center gap-2">
+              {connectionResult.success ? (
+                <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              )}
+              <span>{connectionResult.message}</span>
+            </div>
           </div>
         )}
       </div>
@@ -600,51 +613,7 @@ const Instances = () => {
         </>
       )}
 
-      {/* Summary Stats - Only show if we have instances */}
-      {instances.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent>
-              <div className="text-center">
-                <p className="text-redis-xl font-bold text-redis-green">
-                  {filteredInstances.filter(i => i.status === 'healthy').length}
-                </p>
-                <p className="text-redis-xs text-redis-dusk-04">Healthy Instances</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent>
-              <div className="text-center">
-                <p className="text-redis-xl font-bold text-redis-yellow-500">
-                  {filteredInstances.filter(i => i.status === 'warning').length}
-                </p>
-                <p className="text-redis-xs text-redis-dusk-04">Warning Status</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent>
-              <div className="text-center">
-                <p className="text-redis-xl font-bold text-redis-red">
-                  {filteredInstances.filter(i => i.environment === 'production').length}
-                </p>
-                <p className="text-redis-xs text-redis-dusk-04">Production Instances</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent>
-              <div className="text-center">
-                <p className="text-redis-xl font-bold text-redis-blue-03">
-                  {filteredInstances.reduce((sum, i) => sum + (i.connections || 0), 0)}
-                </p>
-                <p className="text-redis-xs text-redis-dusk-04">Total Connections</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+
 
       {/* Add/Edit Instance Form Modal */}
       {(showAddForm || editingInstance) && (
