@@ -21,7 +21,6 @@ const ErrorMessage = ({ message }: { message: string }) => (
     {message}
   </div>
 );
-import sreAgentApi from '../services/sreAgentApi';
 
 interface ChatMessage {
   id: string;

@@ -31,7 +31,7 @@ const Settings = () => {
                 <input
                   type="url"
                   defaultValue="http://localhost:8000"
-                  className="redis-input-base w-full"
+                  className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                 />
               </div>
               <div>
@@ -41,7 +41,7 @@ const Settings = () => {
                 <input
                   type="number"
                   defaultValue="30"
-                  className="redis-input-base w-full"
+                  className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                 />
               </div>
               <Button variant="primary">Save Configuration</Button>
