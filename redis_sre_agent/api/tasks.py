@@ -287,14 +287,15 @@ async def continue_conversation(thread_id: str, request: TriageRequest) -> Triag
 @router.delete(
     "/tasks/{thread_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Cancel task",
-    description="Cancel a queued or in-progress task.",
+    summary="Cancel or delete task",
+    description="Cancel a queued or in-progress task, or delete a completed task.",
 )
-async def cancel_task(thread_id: str):
+async def cancel_task(thread_id: str, delete: bool = False):
     """
-    Cancel a task.
+    Cancel or delete a task.
 
-    Marks the thread as cancelled and attempts to stop processing.
+    If delete=True, permanently deletes the thread data.
+    Otherwise, marks the thread as cancelled and attempts to stop processing.
     """
     try:
         thread_manager = get_thread_manager()
@@ -306,28 +307,37 @@ async def cancel_task(thread_id: str):
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Thread {thread_id} not found"
             )
 
-        # Check if thread can be cancelled
-        if thread_state.status in [ThreadStatus.DONE, ThreadStatus.FAILED, ThreadStatus.CANCELLED]:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Thread {thread_id} is already {thread_state.status.value} and cannot be cancelled",
+        if delete:
+            # Delete the thread permanently - allowed for any status
+            success = await thread_manager.delete_thread(thread_id)
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to delete thread {thread_id}",
+                )
+            logger.info(f"Deleted thread {thread_id}")
+        else:
+            # Check if thread can be cancelled (only for cancellation, not deletion)
+            if thread_state.status in [ThreadStatus.DONE, ThreadStatus.FAILED, ThreadStatus.CANCELLED]:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Thread {thread_id} is already {thread_state.status.value} and cannot be cancelled",
+                )
+
+            # Mark as cancelled
+            await thread_manager.update_thread_status(thread_id, ThreadStatus.CANCELLED)
+            await thread_manager.add_thread_update(
+                thread_id, "Task cancelled by user request", "cancellation"
             )
-
-        # Mark as cancelled
-        await thread_manager.update_thread_status(thread_id, ThreadStatus.CANCELLED)
-        await thread_manager.add_thread_update(
-            thread_id, "Task cancelled by user request", "cancellation"
-        )
-
-        logger.info(f"Cancelled thread {thread_id}")
+            logger.info(f"Cancelled thread {thread_id}")
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to cancel task {thread_id}: {e}")
+        logger.error(f"Failed to {'delete' if delete else 'cancel'} task {thread_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to cancel task: {str(e)}",
+            detail=f"Failed to {'delete' if delete else 'cancel'} task: {str(e)}",
         )
 
 

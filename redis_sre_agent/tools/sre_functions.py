@@ -46,6 +46,7 @@ async def analyze_system_metrics(
     metric_query: str,
     time_range: str = "1h",
     threshold: Optional[float] = None,
+    instance_host: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Analyze system metrics and detect anomalies.
@@ -54,21 +55,36 @@ async def analyze_system_metrics(
         metric_query: Prometheus-style metric query
         time_range: Time range for analysis (1h, 6h, 1d, etc.)
         threshold: Alert threshold value
+        instance_host: Specific Redis instance host to filter metrics for
 
     Returns:
         Analysis results with anomaly detection and current values
     """
     try:
         logger.info(f"Analyzing metrics: {metric_query} over {time_range}")
+        if instance_host:
+            logger.info(f"Filtering metrics for instance host: {instance_host}")
 
         # Connect to Prometheus for real metrics
         from ..tools.prometheus_client import get_prometheus_client
 
         prometheus = get_prometheus_client()
 
+        # Modify query to filter by instance host if provided
+        final_query = metric_query
+        if instance_host and "instance=" not in metric_query.lower():
+            # Add instance filter to the query
+            if "{" in metric_query:
+                # Insert into existing label selector
+                final_query = metric_query.replace("{", f'{{instance="{instance_host}",', 1)
+            else:
+                # Add label selector
+                final_query = f'{metric_query}{{instance="{instance_host}"}}'
+            logger.info(f"Modified query for instance filtering: {final_query}")
+
         # Try to query Prometheus, but handle connection failures gracefully
         try:
-            metrics_data = await prometheus.query_range(query=metric_query, time_range=time_range)
+            metrics_data = await prometheus.query_range(query=final_query, time_range=time_range)
         except Exception as prom_error:
             logger.warning(
                 f"Prometheus unavailable ({prom_error}), using simulated metrics for demo"
@@ -307,9 +323,8 @@ CONTENT:
     else:
         logger.info(f"Knowledge search completed: {len(formatted_results)} results found")
 
-    # Return the formatted output for better LLM readability while preserving the full result
-    # LangGraph will convert this to string for the LLM
-    return formatted_output
+    # Return the full result dict for API endpoints, but LangGraph can still access formatted_output
+    return result
 
 
 async def check_service_health(
@@ -467,19 +482,30 @@ async def ingest_sre_document(
 
         # Prepare document data
         doc_id = str(ULID())
+
+        # Generate document hash for proper counting (consistent with bulk ingestion)
+        import hashlib
+        content_for_hash = f"{title}|{content}|{source}"
+        document_hash = hashlib.sha256(content_for_hash.encode()).hexdigest()
+
         document = {
             "title": title,
             "content": content,
             "source": source,
             "category": category,
             "severity": severity,
+            "document_hash": document_hash,  # Add document_hash for proper counting
             "created_at": datetime.now(timezone.utc).timestamp(),
             "vector": content_vector,
         }
 
         # Store in vector index
         doc_key = f"sre_knowledge:{doc_id}"
-        await index.load(data=[document], id_field="id", keys=[doc_key])
+        document["id"] = doc_id  # Add id field for the index
+
+        async with index:
+            # Use the synchronous load method within the async context
+            index.load(data=[document], id_field="id", keys=[doc_key])
 
         result = {
             "task_id": str(ULID()),

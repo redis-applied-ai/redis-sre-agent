@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import {
   Layout,
   Header,
@@ -8,7 +8,7 @@ import {
 } from "@radar/ui-kit";
 import Dashboard from "./pages/Dashboard";
 import Triage from "./pages/Triage";
-import Instances from "./pages/Instances";
+import Knowledge from "./pages/Knowledge";
 import Settings from "./pages/Settings";
 import { useApp } from "./hooks/useApp";
 
@@ -46,8 +46,10 @@ function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/triage" element={<Triage />} />
-        <Route path="/instances" element={<Instances />} />
+        <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/settings" element={<Settings />} />
+        {/* Redirect instances to settings with instances section */}
+        <Route path="/instances" element={<Navigate to="/settings?section=instances" replace />} />
       </Routes>
     </Layout>
   );

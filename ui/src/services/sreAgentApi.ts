@@ -1,6 +1,6 @@
 // SRE Agent API service - Task-based implementation
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   timestamp?: string;
 }
@@ -211,8 +211,13 @@ class SREAgentAPI {
     return response.json();
   }
 
-  async cancelTask(threadId: string): Promise<void> {
-    const response = await fetch(`${this.tasksBaseUrl}/tasks/${threadId}`, {
+  async cancelTask(threadId: string, deleteThread: boolean = false): Promise<void> {
+    const url = new URL(`${this.tasksBaseUrl}/tasks/${threadId}`);
+    if (deleteThread) {
+      url.searchParams.set('delete', 'true');
+    }
+
+    const response = await fetch(url.toString(), {
       method: 'DELETE',
     });
 
@@ -320,7 +325,7 @@ class SREAgentAPI {
 
   async clearConversation(threadId: string): Promise<{ session_id: string; cleared: boolean; message: string }> {
     try {
-      await this.cancelTask(threadId);
+      await this.cancelTask(threadId, true); // Pass true to delete the thread
       return {
         session_id: threadId,
         cleared: true,

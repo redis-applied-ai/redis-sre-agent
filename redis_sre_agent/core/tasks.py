@@ -435,12 +435,17 @@ async def process_agent_turn(
             thread_id, "Running agent conversation turn", "agent_processing"
         )
 
+        # Add initial thinking message
+        await thread_manager.add_thread_update(
+            thread_id, "Agent is thinking...", "agent_status"
+        )
+
         # Create a progress callback for the agent
         async def progress_callback(update_message: str, update_type: str = "progress"):
             await thread_manager.add_thread_update(thread_id, update_message, update_type)
 
         # Run the agent (this will be a modified version that accepts progress callback)
-        agent_response = await run_agent_with_progress(agent, conversation_state, progress_callback)
+        agent_response = await run_agent_with_progress(agent, conversation_state, progress_callback, thread_state)
 
         # Add agent response to conversation
         conversation_state["messages"].append(
@@ -503,11 +508,17 @@ async def process_agent_turn(
         raise
 
 
-async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], progress_callback):
+async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], progress_callback, thread_state=None):
     """
     Run the LangGraph agent with progress updates.
 
     This creates a new agent instance with progress callback support and runs it.
+
+    Args:
+        agent: The agent instance (currently unused, kept for compatibility)
+        conversation_state: Dictionary containing messages and thread_id
+        progress_callback: Async callback function for progress updates
+        thread_state: Optional thread state object containing metadata and context
     """
     try:
         await progress_callback("Starting agent analysis", "agent_start")
@@ -551,19 +562,30 @@ async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], pro
         # Pass thread context to the agent if available
         agent_context = thread_state.context if thread_state else None
 
+        # Get the latest user message for the query
+        latest_user_message = None
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                latest_user_message = msg["content"]
+                break
+
+        if not latest_user_message:
+            raise ValueError("No user message found in conversation")
+
         # Use the process_query method to handle context properly
         response = await progress_agent.process_query(
-            query=message,
+            query=latest_user_message,
             session_id=thread_id,
             user_id=thread_state.metadata.user_id if thread_state else "system",
             max_iterations=10,
-            context=agent_context
+            context=agent_context,
+            progress_callback=progress_callback
         )
 
         # Create a mock final state for compatibility
         final_state = {
             "messages": [
-                {"role": "user", "content": message},
+                {"role": "user", "content": latest_user_message},
                 {"role": "assistant", "content": response}
             ]
         }

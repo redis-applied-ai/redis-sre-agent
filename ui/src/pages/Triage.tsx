@@ -102,9 +102,9 @@ const Triage = () => {
     }
   };
 
-  // Auto-show new conversation if threads exist but none selected
+  // Auto-show new conversation when landing on the page or when threads exist but none selected
   useEffect(() => {
-    if (threads.length > 0 && !activeThreadId && !showNewConversation) {
+    if (!activeThreadId && !showNewConversation) {
       setShowNewConversation(true);
     }
   }, [threads.length, activeThreadId, showNewConversation]);
@@ -163,8 +163,9 @@ const Triage = () => {
           });
         }
 
-        // Convert task updates to messages
-        status.updates.forEach((update, index) => {
+        // Convert task updates to messages (reverse to show oldest first)
+        const sortedUpdates = [...status.updates].reverse();
+        sortedUpdates.forEach((update, index) => {
           if (update.type === 'response' || update.type === 'completion') {
             newMessages.push({
               id: `update-${index}`,
@@ -176,6 +177,30 @@ const Triage = () => {
             newMessages.push({
               id: `update-${index}`,
               role: 'user',
+              content: update.message,
+              timestamp: update.timestamp,
+            });
+          } else if (update.type === 'agent_reflection') {
+            // Show agent's reasoning and analysis
+            newMessages.push({
+              id: `reflection-${index}`,
+              role: 'assistant',
+              content: update.message,
+              timestamp: update.timestamp,
+            });
+          } else if (update.type === 'agent_status') {
+            // Show agent status updates (like "Agent is thinking...")
+            newMessages.push({
+              id: `status-${index}`,
+              role: 'assistant',
+              content: update.message,
+              timestamp: update.timestamp,
+            });
+          } else if (update.type === 'safety_check') {
+            // Show safety and fact-checking steps
+            newMessages.push({
+              id: `safety-${index}`,
+              role: 'system',
               content: update.message,
               timestamp: update.timestamp,
             });
@@ -204,6 +229,16 @@ const Triage = () => {
             role: 'assistant',
             content: status.result.response,
             timestamp: status.result.turn_completed_at || status.metadata.updated_at,
+          });
+        }
+
+        // Add error message if task failed
+        if (status.status === 'failed') {
+          newMessages.push({
+            id: `error-${status.thread_id}`,
+            role: 'assistant',
+            content: `❌ Triage failed. Please try again or contact support if the issue persists.`,
+            timestamp: status.metadata.updated_at,
           });
         }
 
@@ -294,8 +329,9 @@ const Triage = () => {
         });
       }
 
-      // Convert updates to messages
-      status.updates.forEach((update, index) => {
+      // Convert updates to messages (reverse to show oldest first)
+      const sortedUpdates = [...status.updates].reverse();
+      sortedUpdates.forEach((update, index) => {
         if (update.type === 'response' || update.type === 'completion') {
           newMessages.push({
             id: `update-${index}`,
@@ -307,6 +343,30 @@ const Triage = () => {
           newMessages.push({
             id: `update-${index}`,
             role: 'user',
+            content: update.message,
+            timestamp: update.timestamp,
+          });
+        } else if (update.type === 'agent_reflection') {
+          // Show agent's reasoning and analysis
+          newMessages.push({
+            id: `reflection-${index}`,
+            role: 'assistant',
+            content: update.message,
+            timestamp: update.timestamp,
+          });
+        } else if (update.type === 'agent_status') {
+          // Show agent status updates (like "Agent is thinking...")
+          newMessages.push({
+            id: `status-${index}`,
+            role: 'assistant',
+            content: update.message,
+            timestamp: update.timestamp,
+          });
+        } else if (update.type === 'safety_check') {
+          // Show safety and fact-checking steps
+          newMessages.push({
+            id: `safety-${index}`,
+            role: 'system',
             content: update.message,
             timestamp: update.timestamp,
           });
@@ -335,6 +395,16 @@ const Triage = () => {
           role: 'assistant',
           content: status.result.response,
           timestamp: status.result.turn_completed_at || status.metadata.updated_at,
+        });
+      }
+
+      // Add error message if task failed
+      if (status.status === 'failed') {
+        newMessages.push({
+          id: `error-${threadId}`,
+          role: 'assistant',
+          content: `❌ Triage failed. Please try again or contact support if the issue persists.`,
+          timestamp: status.metadata.updated_at,
         });
       }
 
@@ -550,15 +620,7 @@ const Triage = () => {
               {threads.length === 0 && (
                 <div className="p-6 text-center text-redis-dusk-04">
                   <p className="text-redis-sm">No conversations yet.</p>
-                  <p className="text-redis-xs mt-1">Click below to start troubleshooting with the SRE Agent.</p>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="mt-3 w-full"
-                    onClick={createNewThread}
-                  >
-                    Start New Chat
-                  </Button>
+                  <p className="text-redis-xs mt-1">Click "New Chat" above to start troubleshooting with the SRE Agent.</p>
                 </div>
               )}
             </div>
@@ -586,29 +648,19 @@ const Triage = () => {
                 <p className="text-redis-sm text-redis-dusk-04 mt-1">
                   {activeThreadId
                     ? 'Chat with the Redis SRE Agent for troubleshooting and support'
-                    : showNewConversation
-                    ? 'Describe your Redis issue or ask a question to get started'
-                    : 'Select a conversation or start a new one to begin'
+                    : 'Describe your Redis issue or ask a question to get started'
                   }
                 </p>
-                {activeThreadId && (isPolling || isLoading) && (
-                  <div className="flex items-center gap-2 mt-2">
-                    <div className="h-2 w-2 rounded-full bg-redis-blue-03 animate-pulse" />
-                    <span className="text-redis-xs text-redis-dusk-04">
-                      Agent is thinking...
-                    </span>
-                  </div>
-                )}
+
                 </div>
               </div>
 
             </div>
           </CardHeader>
 
-          {activeThreadId || showNewConversation ? (
-            <>
-              {/* Messages Area */}
-              <CardContent className="flex-1 overflow-y-auto p-4">
+          <>
+            {/* Messages Area */}
+            <CardContent className="flex-1 overflow-y-auto p-4">
                 <div className="space-y-4">
                   {messages.map((message) => (
                     <div
@@ -621,6 +673,8 @@ const Triage = () => {
                             ? 'bg-redis-blue-03 text-white'
                             : message.role === 'tool'
                             ? 'bg-orange-100 text-orange-800 border border-orange-200'
+                            : message.role === 'system'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200 text-sm'
                             : 'bg-redis-dusk-09 text-redis-dusk-01'
                         }`}
                       >
@@ -642,32 +696,50 @@ const Triage = () => {
                             </div>
                           </div>
                         ) : message.role === 'assistant' ? (
-                          <div className="prose prose-sm max-w-none text-redis-sm">
-                            <ReactMarkdown>{message.content}</ReactMarkdown>
+                          <div className="prose prose-sm max-w-none text-redis-sm markdown-content">
+                            <ReactMarkdown
+                              components={{
+                                h1: ({children}) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0">{children}</h1>,
+                                h2: ({children}) => <h2 className="text-base font-semibold mb-2 mt-3">{children}</h2>,
+                                h3: ({children}) => <h3 className="text-sm font-medium mb-2 mt-3">{children}</h3>,
+                                p: ({children}) => <p className="mb-3 leading-relaxed">{children}</p>,
+                                ul: ({children}) => <ul className="mb-3 ml-4 space-y-1 list-disc list-outside">{children}</ul>,
+                                ol: ({children}) => <ol className="mb-3 ml-4 space-y-1 list-decimal list-outside">{children}</ol>,
+                                li: ({children}) => <li className="leading-relaxed ml-1">{children}</li>,
+                                code: ({children, ...props}) => {
+                                  const isInline = !props.className?.includes('language-');
+                                  return isInline ?
+                                    <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code> :
+                                    <code className="block bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3">{children}</code>;
+                                },
+                                pre: ({children}) => <pre className="bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3 overflow-x-auto">{children}</pre>,
+                                strong: ({children}) => <strong className="font-semibold text-redis-dusk-01">{children}</strong>,
+                                blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 mb-3 italic">{children}</blockquote>,
+                              }}
+                            >
+                              {message.content}
+                            </ReactMarkdown>
                           </div>
                         ) : (
                           <div className="text-redis-sm whitespace-pre-wrap">{message.content}</div>
                         )}
-                        <div
-                          className={`text-redis-xs mt-1 ${
-                            message.role === 'user' ? 'text-blue-100' : 'text-redis-dusk-04'
-                          }`}
-                        >
-                          {formatTimestamp(message.timestamp)}
-                        </div>
+                        {message.timestamp && (
+                          <div
+                            className={`text-redis-xs mt-1 ${
+                              message.role === 'user'
+                                ? 'text-blue-100'
+                                : message.role === 'system'
+                                ? 'text-blue-500'
+                                : 'text-redis-dusk-04'
+                            }`}
+                          >
+                            {formatTimestamp(message.timestamp)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
-                  {(isLoading || isPolling) && (
-                    <div className="flex justify-start">
-                      <div className="bg-redis-dusk-09 p-3 rounded-redis-md">
-                        <Loader size="sm" />
-                        <span className="text-redis-sm text-redis-dusk-04 ml-2">
-                          Agent is thinking...
-                        </span>
-                      </div>
-                    </div>
-                  )}
+
                   <div ref={messagesEndRef} />
                 </div>
               </CardContent>
@@ -727,9 +799,7 @@ const Triage = () => {
                 </div>
                 <div className="text-redis-xs text-redis-dusk-04 mt-2">
                   {agentStatus === 'available'
-                    ? (isPolling
-                        ? 'Agent is thinking... Updates will appear automatically.'
-                        : 'Press Enter to send, Shift+Enter for new line')
+                    ? 'Press Enter to send, Shift+Enter for new line'
                     : agentStatus === 'unavailable'
                     ? 'SRE Agent is currently offline. Please check the backend service.'
                     : 'Checking agent status...'
@@ -737,26 +807,6 @@ const Triage = () => {
                 </div>
               </div>
             </>
-          ) : (
-            <CardContent className="flex-1 flex items-center justify-center !p-4">
-              <div className="text-center max-w-md">
-                <div className="h-16 w-16 bg-redis-blue-03 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="h-8 w-8 text-white" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
-                  </svg>
-                </div>
-                <h3 className="text-redis-lg font-semibold text-redis-dusk-01 mb-2">
-                  Welcome to SRE Agent Triage
-                </h3>
-                <p className="text-redis-sm text-redis-dusk-04 mb-4">
-                  Get started with Redis troubleshooting, performance analysis, and infrastructure management.
-                </p>
-                <Button variant="primary" onClick={createNewThread}>
-                  Start Your First Chat
-                </Button>
-              </div>
-            </CardContent>
-          )}
         </Card>
       </div>
 

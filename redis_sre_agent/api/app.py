@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from redis_sre_agent.api.agent import router as agent_router
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
+from redis_sre_agent.api.knowledge import router as knowledge_router
 from redis_sre_agent.api.middleware import setup_middleware
 from redis_sre_agent.api.tasks import router as tasks_router
 from redis_sre_agent.core.config import settings
@@ -92,6 +93,7 @@ setup_middleware(app)
 app.include_router(health_router, tags=["Health"])
 app.include_router(agent_router, prefix="/api/v1", tags=["Agent"])
 app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
+app.include_router(knowledge_router, tags=["Knowledge"])
 app.include_router(tasks_router, prefix="/api/v1", tags=["Tasks"])
 
 

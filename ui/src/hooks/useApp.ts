@@ -22,14 +22,14 @@ export const useApp = () => {
       isActive: location.pathname === '/triage'
     },
     {
-      label: 'Instances',
-      href: '/instances',
-      isActive: location.pathname === '/instances'
+      label: 'Knowledge',
+      href: '/knowledge',
+      isActive: location.pathname === '/knowledge'
     },
     {
       label: 'Settings',
       href: '/settings',
-      isActive: location.pathname === '/settings'
+      isActive: location.pathname === '/settings' || location.pathname === '/instances'
     }
   ];
 

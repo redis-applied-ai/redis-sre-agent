@@ -602,6 +602,7 @@ async def capture_redis_diagnostics(
         "redis_url": diagnostics.redis_url,
         "sections_captured": sorted(list(requested_sections)),
         "time_window_seconds": time_window_seconds,
+        "capture_status": "success",  # Default to success, will be changed if errors occur
         "diagnostics": {},
     }
 
@@ -657,6 +658,7 @@ async def capture_redis_diagnostics(
 
     except Exception as e:
         logger.error(f"Failed to capture Redis diagnostics: {e}")
+        result["capture_status"] = "failed"
         result["diagnostics"]["error"] = str(e)
 
     return result

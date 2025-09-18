@@ -30,9 +30,9 @@ describe('SREAgentAPI', () => {
         message: 'Conversation cleared successfully'
       });
 
-      // Verify the correct API endpoint was called
+      // Verify the correct API endpoint was called with delete parameter
       expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:8000/api/v1/tasks/test-thread-123',
+        'http://localhost:8000/api/v1/tasks/test-thread-123?delete=true',
         {
           method: 'DELETE',
         }

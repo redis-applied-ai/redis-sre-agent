@@ -7,7 +7,7 @@ multi-turn conversation handling, tool calling integration, and state management
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -17,6 +17,8 @@ from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
 from ..core.config import settings
+from ..core.redis import get_redis_client
+from ..tools.docker_logs import search_docker_logs
 from ..tools.sre_functions import (
     analyze_system_metrics,
     check_service_health,
@@ -24,72 +26,76 @@ from ..tools.sre_functions import (
     ingest_sre_document,
     search_knowledge_base,
 )
+from ..api.instances import get_instances_from_redis
 
 logger = logging.getLogger(__name__)
 
 # SRE-focused system prompt
 SRE_SYSTEM_PROMPT = """
-You are an expert Redis SRE (Site Reliability Engineering) agent specialized in
-precise problem identification, triage, and solution development.
+You are an experienced Redis SRE who writes clear, actionable triage notes. You sound like a knowledgeable colleague sharing findings and recommendations - professional but conversational.
 
-## Your Mission: Focused Problem Solving
+## Your Approach
 
-**YOUR WORKFLOW FOR EVERY REQUEST**:
+When someone brings you a Redis issue, you:
+1. **Look at the data first** - examine any diagnostic info they've provided
+2. **Figure out what's actually happening** - separate symptoms from root causes
+3. **Search your knowledge** when you need specific troubleshooting steps
+4. **Give them a clear plan** - actionable steps they can take right now
 
-**STEP 1**: ANALYZE the diagnostic data provided - identify actual problems from metrics
-**STEP 2**: DETERMINE the problem category (memory, connections, performance, configuration, etc.)
-**STEP 3**: INVESTIGATE usage patterns and configurations relevant to the identified problem
-**STEP 4**: SEARCH knowledge base for solutions appropriate to the specific problem type
-**STEP 5**: PROVIDE remediation steps that are SAFE for the current configuration and usage pattern
+## Writing Style
 
-**DIAGNOSTIC DATA**: Most queries will include current Redis diagnostic data. Analyze this data first to identify problems.
+Write like you're updating a colleague on what you found. Use natural language:
+- "I took a look at your Redis instance and here's what I'm seeing..."
+- "The good news is..." / "The concerning part is..."
+- "Let's start with..." / "Next, I'd recommend..."
+- "Based on what I found in our runbooks..."
 
-## CRITICAL: Data-First Analysis
+## Response Format (Use Proper Markdown)
 
-1. **Analyze provided diagnostic data**: Most queries include Redis diagnostic data - examine this first
-2. **Identify specific problems**: Look for dangerous configurations, high utilization, performance issues
-3. **Validate severity**: Determine if problems require immediate action (OOM risk, thrashing, etc.)
-4. **Use tools for follow-up**: Get deeper analysis or search for solutions to discovered problems
-5. **Focus on immediate threats**: Prioritize issues that could cause system failure
+Structure your response with clear headers and formatting:
 
-## Tool Usage for Follow-up
+# Initial Assessment
+Brief summary of what you found
 
-**`get_detailed_redis_diagnostics`**: When you need deeper analysis of specific problem areas (memory, performance, etc.)
-**`search_knowledge_base`**: To find immediate remediation steps for discovered problems
-**`check_service_health`**: Only if no diagnostic data was provided in the query
+# What I'm Seeing
+Key findings from diagnostics, with **bold** for important metrics
 
-## Immediate Action Focus
+# My Recommendation
+Clear action plan with:
+- Numbered steps for immediate actions
+- **Bold text** for critical items
+- Code blocks for commands when helpful
 
-When you find problems, prioritize based on the problem category:
-- **Connection Issues**: Client connection limits, blocked clients, timeout problems
-- **Memory Issues**: OOM risk, high utilization, fragmentation problems
-- **Performance Issues**: Slow operations, high latency, blocking commands
-- **Configuration Issues**: Dangerous settings, missing policies, security gaps
+# Supporting Info
+- Where you got your recommendations (cite runbooks/docs)
+- Key diagnostic evidence that supports your analysis
 
-## Response Structure - Problem-Focused
+## Formatting Requirements
 
-### Problem Assessment
-- **Described Issue**: [What the user reported]
-- **Observed Issue**: [What your diagnostics actually show]
-- **Problem Category**: [Connection/Memory/Performance/Configuration/Security]
-- **Severity**: [Based on actual metrics and operational impact]
+- Use `#` headers for main sections
+- Use `**bold**` for emphasis on critical items
+- Use `-` or `1.` for lists and action items
+- Use code blocks with ``` for commands
+- Add blank lines between paragraphs for readability
+- Keep paragraphs short (2-3 sentences max)
 
-### Immediate Actions Required
-Provide remediation steps appropriate to the identified problem category and current configuration.
+## Keep It Practical
 
-### Solution Sources
-- **Runbooks Used**: [Specific documents that provided the immediate remediation steps]
-- **Diagnostic Evidence**: [Key metrics that revealed the actual problems]
+Focus on what they can do right now:
+- Skip the theory - they need action steps
+- Don't explain basic Redis concepts unless directly relevant
+- Avoid generic advice like "monitor your metrics" - be specific
+- If you're not sure about something, say so and suggest investigation steps
 
-## What NOT to Do
+## When to Search Knowledge Base
 
-- Do NOT suggest "capacity planning" or other obvious long-term practices for live incidents
-- Do NOT recommend generic optimizations like "use ziplists" (Redis already uses them automatically)
-- Do NOT explain Redis concepts unless directly relevant to immediate remediation
-- Do NOT provide theoretical advice - focus on actual observed problems requiring immediate action
-- Do NOT give educational overviews - this is incident triage, not training
+Look up specific troubleshooting steps when you identify:
+- Connection limit issues → search "connection limit troubleshooting"
+- Memory problems → search "memory optimization" or "eviction policy"
+- Performance issues → search "slow query analysis" or "latency troubleshooting"
+- Security concerns → search "Redis security configuration"
 
-## Knowledge Search Strategy
+## Understanding Usage Patterns
 
 Search for immediate remediation steps based on the identified problem category:
 - **Connection Issues**: "Redis connection limit troubleshooting", "client timeout resolution"
@@ -98,40 +104,35 @@ Search for immediate remediation steps based on the identified problem category:
 - **Configuration Issues**: "Redis security configuration", "operational best practices"
 - **Search by symptoms**: Use specific metrics and error patterns you discover
 
-## Usage Pattern Analysis (Express with Uncertainty)
+When you're trying to figure out how Redis is being used, look for clues but don't be too definitive. Usage patterns aren't always clear-cut.
+
+**Signs it might be used as a cache:**
+- Most keys have TTLs set (high expires/keys ratio)
+- Lots of keys expiring regularly
+- Eviction policies are set up
+- Key names look like session IDs or temp data
+
+**Signs it might be persistent storage:**
+- Few or no TTLs on keys (low expires/keys ratio)
+- Very few keys expiring
+- `noeviction` policy to prevent data loss
+- Key names look like user data or business entities
 
 Redis usage patterns must be inferred from multiple signals - persistence/backup
 settings alone are insufficient. Always express your analysis as **likely patterns**
 rather than definitive conclusions, and acknowledge the uncertainty inherent in
 pattern detection.
 
-### Signals That May Suggest Cache Usage
-- **High TTL coverage**: `expires` count close to total `keys` count in keyspace info
-- **Active expiration**: High `expired_keys` count in stats
-- **No maxmemory policy set**: May indicate oversight, not intentional persistent storage
-- **Key patterns**: Session IDs, temporary tokens, calculated results
+**When it's unclear:**
+- Mixed TTL patterns could mean hybrid usage
+- Persistence enabled with high TTL coverage might be cache with backup
+- No clear pattern? Focus on the immediate problem rather than guessing
 
-### Signals That May Suggest Persistent Storage
-- **Low TTL coverage**: Few keys with TTL (`expires` << `keys`)
-- **Low expiration activity**: `expired_keys` count is minimal
-- **Maxmemory policy set to avoid eviction**: `noeviction` policy configured
-- **Key patterns**: User data, business entities, permanent application state
-
-### Ambiguous Configurations (High Uncertainty)
-- **AOF/RDB enabled with high TTL coverage**: Could be cache with backup for faster restart
-- **No maxmemory limit with mixed TTL patterns**: Could be intentional or oversight
-- **Eviction policies with persistence enabled**: Hybrid pattern or misconfiguration
-
-### Pattern Analysis Language Guidelines
-- Use qualifying language: "**appears to be**", "**likely indicates**", "**suggests**", "**may be**"
-- Always acknowledge uncertainty: "**Based on available indicators**", "**Analysis suggests**"
-- Never state definitively: Avoid "is a cache" or "is persistent storage"
-- Example: "Analysis **suggests** this **may be** a persistent datastore based on 0% TTL coverage and noeviction policy"
-
-### Recommendation Safety Guidelines
-- **When uncertain**: Always recommend investigation first before destructive changes
-- **Mixed signals**: Suggest configuration review rather than policy changes
-- **Unclear patterns**: Focus on immediate relief without changing data retention behavior
+**How to talk about it:**
+- "Based on what I'm seeing, this looks like..."
+- "The data suggests this might be..."
+- "I can't tell for sure, but it appears to be..."
+- When in doubt: "Let's focus on the immediate issue first"
 
 ## Source Citation Requirements
 
@@ -216,6 +217,7 @@ class AgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    instance_context: Optional[Dict[str, Any]]  # For Redis instance context
 
 
 class SREToolCall(BaseModel):
@@ -373,6 +375,42 @@ class SRELangGraphAgent:
                 {
                     "type": "function",
                     "function": {
+                        "name": "search_docker_logs",
+                        "description": "Search Docker container logs for errors, patterns, and troubleshooting information. Useful for finding application errors, connection issues, performance problems, and operational events in containerized environments.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "Search query/pattern to look for in logs (e.g., 'error', 'connection refused', 'timeout', 'redis', 'memory'). Case-insensitive search.",
+                                },
+                                "containers": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Optional list of container names to search (e.g., ['redis', 'sre-worker']). If not specified, searches all containers.",
+                                },
+                                "time_range_hours": {
+                                    "type": "number",
+                                    "description": "How far back to search in hours (default: 1.0). Use larger values for historical analysis.",
+                                    "default": 1.0,
+                                },
+                                "level_filter": {
+                                    "type": "string",
+                                    "description": "Filter by log level (ERROR, WARN, INFO, DEBUG). Leave empty to see all levels.",
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Maximum number of log entries to return (default: 100)",
+                                    "default": 100,
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
                         "name": "get_detailed_redis_diagnostics",
                         "description": "Get detailed Redis diagnostic data for deep analysis. Returns raw metrics without pre-calculated assessments, enabling agent to perform its own calculations and severity analysis. Use this for targeted investigation of specific Redis areas (memory, performance, clients, slowlog, etc.) when you need to analyze actual metric values rather than status summaries.",
                         "parameters": {
@@ -400,8 +438,8 @@ class SRELangGraphAgent:
 
         # Build the LangGraph workflow
         self.workflow = self._build_workflow()
-        self.memory = MemorySaver()
-        self.app = self.workflow.compile(checkpointer=self.memory)
+        # Note: We'll create a new MemorySaver for each query to ensure proper isolation
+        # This prevents cross-contamination between different tasks/threads
 
         # SRE tool mapping
         self.sre_tools = {
@@ -410,9 +448,24 @@ class SRELangGraphAgent:
             "check_service_health": check_service_health,
             "ingest_sre_document": ingest_sre_document,
             "get_detailed_redis_diagnostics": get_detailed_redis_diagnostics,
+            "search_docker_logs": search_docker_logs,
         }
 
         logger.info("SRE LangGraph agent initialized with tool bindings")
+
+    async def _resolve_instance_redis_url(self, instance_id: str) -> str:
+        """Resolve instance ID to Redis URL using host and port from instance data."""
+        try:
+            instances = await get_instances_from_redis()
+            for instance in instances:
+                if instance.id == instance_id:
+                    return f"redis://{instance.host}:{instance.port}"
+
+            logger.error(f"Instance {instance_id} not found, falling back to default Redis URL")
+            return settings.redis_url
+        except Exception as e:
+            logger.error(f"Failed to resolve instance {instance_id}: {e}, falling back to default Redis URL")
+            return settings.redis_url
 
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow for SRE operations."""
@@ -483,21 +536,53 @@ class SRELangGraphAgent:
 
                 logger.info(f"Executing SRE tool: {tool_name} with args: {tool_args}")
 
-                # Send progress update if callback available
+                # Send meaningful reflection about what the agent is doing
                 if self.progress_callback:
-                    await self.progress_callback(f"Executing tool: {tool_name}", "tool_start")
+                    reflection = self._generate_tool_reflection(tool_name, tool_args)
+                    await self.progress_callback(reflection, "agent_reflection")
 
                 try:
                     # Execute the SRE tool (async call)
                     if tool_name in self.sre_tools:
-                        # Call the async SRE function
-                        result = await self.sre_tools[tool_name](**tool_args)
+                        # Get instance context from state if available
+                        instance_context = state.get("instance_context")
+                        target_instance = None
 
-                        # Send progress update for successful tool execution
+                        if instance_context and instance_context.get("instance_id"):
+                            # Resolve instance details for tool execution
+                            try:
+                                instances = await get_instances_from_redis()
+                                for instance in instances:
+                                    if instance.id == instance_context["instance_id"]:
+                                        target_instance = instance
+                                        break
+                            except Exception as e:
+                                logger.error(f"Failed to resolve instance context: {e}")
+
+                        # Modify tool arguments based on instance context
+                        modified_args = tool_args.copy()
+
+                        if target_instance:
+                            # For Redis diagnostic tools, use the instance's connection details
+                            if tool_name == "get_detailed_redis_diagnostics":
+                                if "redis_url" not in modified_args or modified_args["redis_url"] == "redis://localhost:6379":
+                                    modified_args["redis_url"] = f"redis://{target_instance.host}:{target_instance.port}"
+                                    logger.info(f"Using instance Redis URL: {modified_args['redis_url']}")
+
+                            # For metrics tools, use the instance's host for Prometheus queries
+                            elif tool_name == "analyze_system_metrics":
+                                # Add instance host context for Prometheus queries
+                                if "instance_host" not in modified_args:
+                                    modified_args["instance_host"] = target_instance.host
+                                    logger.info(f"Using instance host for metrics: {target_instance.host}")
+
+                        # Call the async SRE function
+                        result = await self.sre_tools[tool_name](**modified_args)
+
+                        # Send completion reflection
                         if self.progress_callback:
-                            await self.progress_callback(
-                                f"Tool {tool_name} completed successfully", "tool_complete"
-                            )
+                            completion_reflection = self._generate_completion_reflection(tool_name, result)
+                            await self.progress_callback(completion_reflection, "agent_reflection")
 
                         # Format result as a readable string
                         if isinstance(result, dict):
@@ -529,6 +614,10 @@ class SRELangGraphAgent:
             """Final reasoning node using O1 model for better analysis."""
             messages = state["messages"]
 
+            # Send safety check reflection
+            if self.progress_callback:
+                await self.progress_callback("🛡️ Performing safety checks on recommendations...", "safety_check")
+
             # Create a focused prompt for the reasoning model
             conversation_context = []
 
@@ -541,21 +630,34 @@ class SRELangGraphAgent:
 
             reasoning_prompt = f"""{SRE_SYSTEM_PROMPT}
 
-## FINAL ANALYSIS TASK
+## Your Task
 
-Based on the diagnostic data and tool results below, provide your focused SRE assessment:
+You've been investigating a Redis issue. Based on your diagnostic work and tool results below, write up your findings and recommendations like you're updating a colleague.
+
+## Investigation Results
 
 {chr(10).join(conversation_context)}
 
-Follow your SRE workflow exactly:
-1. **Problem Assessment**: What specific issues did you identify from the diagnostic data?
-2. **Usage Pattern Analysis**: What do the indicators **suggest** about cache vs persistent usage? Express with uncertainty.
-3. **Immediate Actions Required**: Safe remediation steps appropriate for the **likely** usage pattern
-4. **Solution Sources**: What diagnostic evidence supports your recommendations?
+## Write Your Triage Notes
 
-Keep your response concise and action-focused. This is incident triage, not education.
+Write a natural, conversational response using proper markdown formatting. Include:
 
-**Format numbers using US conventions with commas** (e.g., "4,950 keys" not "4 950 keys")."""
+- **Clear headers** with `#` for main sections
+- **Bold text** with `**` for critical findings and action items
+- **Proper lists** with `-` for bullet points (ensure blank line before list and space after `-`)
+- **Numbered lists** with `1.` for action steps (ensure blank line before list)
+- **Code blocks** with ``` for any commands
+- **Blank lines** between paragraphs and before/after lists for readability
+
+**Critical formatting rules:**
+- Always put a blank line before and after lists
+- Use `- ` (dash + space) for bullet points
+- Use `1. ` (number + period + space) for numbered lists
+- Put blank lines between major sections
+
+Sound like an experienced SRE sharing findings with a colleague. Be direct about what you found and what needs to happen next.
+
+**Important**: Format numbers with commas (e.g., "4,950 keys" not "4 950 keys")."""
 
             try:
                 # Use configured model for final analysis
@@ -569,6 +671,11 @@ Keep your response concise and action-focused. This is incident triage, not educ
                     backoff_factor=self.settings.llm_backoff_factor,
                 )
                 logger.debug("Reasoning LLM call successful")
+
+                # Send fact-checking reflection
+                if self.progress_callback:
+                    await self.progress_callback("🔍 Fact-checking recommendations against best practices...", "safety_check")
+
             except Exception as e:
                 logger.error(f"Reasoning LLM call failed after all retries: {str(e)}")
                 # Fallback to a simple response
@@ -625,8 +732,81 @@ Keep your response concise and action-focused. This is incident triage, not educ
 
         return workflow
 
+    def _generate_tool_reflection(self, tool_name: str, tool_args: dict) -> str:
+        """Generate a meaningful reflection about what the agent is doing."""
+        if tool_name == "get_detailed_redis_diagnostics":
+            return "🔍 Analyzing Redis instance health and performance metrics..."
+        elif tool_name == "search_knowledge_base":
+            query = tool_args.get("query", "")
+            if "memory" in query.lower():
+                return "📚 Searching knowledge base for memory management best practices..."
+            elif "performance" in query.lower():
+                return "📚 Looking up performance optimization strategies..."
+            elif "persistence" in query.lower():
+                return "📚 Researching data persistence and durability options..."
+            elif "connection" in query.lower():
+                return "📚 Finding connection troubleshooting guidance..."
+            else:
+                return f"📚 Searching knowledge base for: {query}"
+        elif tool_name == "analyze_system_metrics":
+            return "📊 Examining system metrics and performance trends..."
+        elif tool_name == "check_service_health":
+            return "🏥 Performing service health checks..."
+        else:
+            return f"🔧 Executing {tool_name.replace('_', ' ')}..."
+
+    def _generate_completion_reflection(self, tool_name: str, result: dict) -> str:
+        """Generate a reflection about what the agent discovered."""
+        if tool_name == "get_detailed_redis_diagnostics":
+            if isinstance(result, dict) and result.get("status") == "success":
+                diagnostics = result.get("diagnostics", {})
+                memory_info = diagnostics.get("memory", {})
+                if memory_info:
+                    used_memory = memory_info.get("used_memory_bytes", 0)
+                    max_memory = memory_info.get("maxmemory_bytes", 0)
+                    if max_memory > 0:
+                        usage_pct = (used_memory / max_memory) * 100
+                        if usage_pct > 80:
+                            return f"⚠️ Memory usage is elevated at {usage_pct:.1f}% - investigating further..."
+                        elif usage_pct > 60:
+                            return f"📈 Memory usage at {usage_pct:.1f}% - checking for optimization opportunities..."
+                        else:
+                            return f"✅ Memory usage looks healthy at {usage_pct:.1f}%"
+                return "✅ Redis diagnostics collected successfully"
+            else:
+                return "❌ Unable to collect Redis diagnostics"
+        elif tool_name == "search_knowledge_base":
+            # Skip reflection for knowledge base searches to reduce UI noise
+            return None
+
+        elif tool_name == "search_docker_logs":
+            if isinstance(result, dict):
+                if result.get("error"):
+                    return f"❌ Docker log search failed: {result['error']}"
+
+                total_entries = result.get("total_entries_found", 0)
+                containers_searched = result.get("containers_searched", 0)
+
+                if total_entries > 0:
+                    level_dist = result.get("level_distribution", {})
+                    error_count = level_dist.get("ERROR", 0) + level_dist.get("FATAL", 0) + level_dist.get("CRITICAL", 0)
+
+                    if error_count > 0:
+                        return f"🔍 Found {total_entries} log entries across {containers_searched} containers - {error_count} errors detected"
+                    else:
+                        return f"🔍 Found {total_entries} log entries across {containers_searched} containers"
+                else:
+                    return f"🔍 No matching log entries found in {containers_searched} containers"
+            else:
+                return "🔍 Docker log search completed"
+
+        elif tool_name == "analyze_system_metrics":
+            return "📊 System metrics analysis complete"
+        else:
+            return f"✅ {tool_name.replace('_', ' ')} completed"
+
     async def process_query(
-        self, query: str, session_id: str, user_id: str, max_iterations: int = 10, context: Optional[Dict[str, Any]] = None
+        self, query: str, session_id: str, user_id: str, max_iterations: int = 10, context: Optional[Dict[str, Any]] = None, progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
     ) -> str:
         """Process a single SRE query through the LangGraph workflow.
 
@@ -642,18 +822,51 @@ Keep your response concise and action-focused. This is incident triage, not educ
         """
         logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
 
+        # Set progress callback for this query
+        if progress_callback:
+            self.progress_callback = progress_callback
+
         # Enhance query with instance context if provided
         enhanced_query = query
         if context and context.get("instance_id"):
             instance_id = context["instance_id"]
             logger.info(f"Processing query with Redis instance context: {instance_id}")
 
-            # Add instance context to the query
-            enhanced_query = f"""User Query: {query}
+            # Resolve instance ID to get actual connection details
+            try:
+                instances = await get_instances_from_redis()
+                target_instance = None
+                for instance in instances:
+                    if instance.id == instance_id:
+                        target_instance = instance
+                        break
 
-IMPORTANT CONTEXT: This query is specifically about Redis instance ID: {instance_id}
+                if target_instance:
+                    redis_url = f"redis://{target_instance.host}:{target_instance.port}"
+                    # Add instance context to the query
+                    enhanced_query = f"""User Query: {query}
 
-Please use the available tools to get information about this specific Redis instance and provide targeted troubleshooting and analysis. When using Redis diagnostic tools, make sure to connect to this specific instance."""
+IMPORTANT CONTEXT: This query is specifically about Redis instance:
+- Instance ID: {instance_id}
+- Instance Name: {target_instance.name}
+- Host: {target_instance.host}
+- Port: {target_instance.port}
+- Environment: {target_instance.environment}
+- Usage: {target_instance.usage}
+
+When using Redis diagnostic tools, use this Redis URL: {redis_url}
+
+Please use the available tools to get information about this specific Redis instance and provide targeted troubleshooting and analysis."""
+                else:
+                    logger.warning(f"Instance {instance_id} not found, proceeding without specific instance context")
+                    enhanced_query = f"""User Query: {query}
+
+CONTEXT: This query mentioned Redis instance ID: {instance_id}, but the instance was not found in the system. Please proceed with general Redis troubleshooting."""
+            except Exception as e:
+                logger.error(f"Failed to resolve instance {instance_id}: {e}")
+                enhanced_query = f"""User Query: {query}
+
+CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an error retrieving instance details. Please proceed with general Redis troubleshooting."""
 
         # Create initial state
         initial_state: AgentState = {
@@ -665,12 +878,24 @@ Please use the available tools to get information about this specific Redis inst
             "max_iterations": max_iterations,
         }
 
+        # Store instance context in the state for tool execution
+        if context and context.get("instance_id"):
+            initial_state["instance_context"] = context
+
+        # Create MemorySaver for conversation state
+        # NOTE: Using MemorySaver instead of RedisSaver because langgraph-checkpoint-redis
+        # doesn't fully support async operations (aget_tuple raises NotImplementedError).
+        # Each task gets its own isolated MemorySaver instance to prevent cross-contamination.
+        # TODO: Switch to RedisSaver when async support is available for true persistence.
+        checkpointer = MemorySaver()
+        app = self.workflow.compile(checkpointer=checkpointer)
+
         # Configure thread for session persistence
         thread_config = {"configurable": {"thread_id": session_id}}
 
         try:
-            # Run the workflow
-            final_state = await self.app.ainvoke(initial_state, config=thread_config)
+            # Run the workflow with isolated memory
+            final_state = await app.ainvoke(initial_state, config=thread_config)
 
             # Extract the final response
             messages = final_state["messages"]
@@ -702,6 +927,10 @@ Please use the available tools to get information about this specific Redis inst
 
         except Exception as e:
             logger.error(f"Error processing SRE query: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Error args: {e.args}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
             class AgentResponseStr(str):
                 def get(self, key: str, default: Any = None):
@@ -709,8 +938,9 @@ Please use the available tools to get information about this specific Redis inst
                         return str(self)
                     return default
 
+            error_msg = str(e) if str(e) else f"{type(e).__name__}: {e.args}"
             return AgentResponseStr(
-                f"I encountered an error while processing your request: {str(e)}. Please try again or contact support if the issue persists."
+                f"I encountered an error while processing your request: {error_msg}. Please try again or contact support if the issue persists."
             )
 
     async def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
@@ -1386,13 +1616,11 @@ operations with appropriate warnings should be considered safe.
             }
 
 
-# Singleton instance
-_sre_agent: Optional[SRELangGraphAgent] = None
-
-
 def get_sre_agent() -> SRELangGraphAgent:
-    """Get or create the singleton SRE agent instance."""
-    global _sre_agent
-    if _sre_agent is None:
-        _sre_agent = SRELangGraphAgent()
-    return _sre_agent
+    """Create a new SRE agent instance for each task to prevent cross-contamination.
+
+    Previously this was a singleton, but that caused cross-contamination between
+    different tasks/threads when multiple tasks ran concurrently. Each task now
+    gets its own isolated agent instance.
+    """
+    return SRELangGraphAgent()

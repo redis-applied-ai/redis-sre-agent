@@ -14,9 +14,9 @@ const Loader = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => (
 );
 
 const ErrorMessage = ({ message, title }: { message: string; title?: string }) => (
-  <div className="bg-redis-red bg-opacity-10 border border-redis-red border-opacity-20 rounded-redis-sm p-4">
-    {title && <h4 className="font-semibold text-redis-red mb-2">{title}</h4>}
-    <p className="text-redis-red text-redis-sm">{message}</p>
+  <div className="bg-red-50 border border-red-200 rounded-redis-sm p-4">
+    {title && <h4 className="font-semibold text-red-800 mb-2">{title}</h4>}
+    <p className="text-red-700 text-redis-sm">{message}</p>
   </div>
 );
 
