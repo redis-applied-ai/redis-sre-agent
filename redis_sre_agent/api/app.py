@@ -11,6 +11,7 @@ from redis_sre_agent.api.instances import router as instances_router
 from redis_sre_agent.api.knowledge import router as knowledge_router
 from redis_sre_agent.api.middleware import setup_middleware
 from redis_sre_agent.api.tasks import router as tasks_router
+from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import cleanup_redis_connections, initialize_redis_infrastructure
 
@@ -95,6 +96,7 @@ app.include_router(agent_router, prefix="/api/v1", tags=["Agent"])
 app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
 app.include_router(knowledge_router, tags=["Knowledge"])
 app.include_router(tasks_router, prefix="/api/v1", tags=["Tasks"])
+app.include_router(websockets_router, prefix="/api/v1", tags=["WebSockets"])
 
 
 if __name__ == "__main__":

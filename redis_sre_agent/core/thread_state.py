@@ -425,6 +425,12 @@ Subject:"""
                 keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
             )
 
+            # Publish status update to stream
+            await self._publish_stream_update(thread_id, "status_change", {
+                "status": status.value,
+                "message": f"Status changed to {status.value}"
+            })
+
             logger.info(f"Updated thread {thread_id} status to {status.value}")
             return True
 
@@ -458,6 +464,14 @@ Subject:"""
                 keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
             )
 
+            # Publish update to stream
+            await self._publish_stream_update(thread_id, "thread_update", {
+                "message": message,
+                "update_type": update_type,
+                "metadata": metadata or {},
+                "timestamp": update.timestamp
+            })
+
             logger.debug(f"Added update to thread {thread_id}: {message}")
             return True
 
@@ -479,11 +493,35 @@ Subject:"""
                 keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
             )
 
+            # Publish result to stream
+            await self._publish_stream_update(thread_id, "result_set", {
+                "result": result,
+                "message": "Task result available"
+            })
+
             logger.info(f"Set result for thread {thread_id}")
             return True
 
         except Exception as e:
             logger.error(f"Failed to set result for thread {thread_id}: {e}")
+            return False
+
+    async def _publish_stream_update(
+        self,
+        thread_id: str,
+        update_type: str,
+        data: Dict[str, Any]
+    ) -> bool:
+        """Publish an update to the Redis Stream for real-time WebSocket updates."""
+        try:
+            # Import here to avoid circular imports
+            from redis_sre_agent.api.websockets import get_stream_manager
+
+            stream_manager = await get_stream_manager()
+            return await stream_manager.publish_task_update(thread_id, update_type, data)
+
+        except Exception as e:
+            logger.error(f"Failed to publish stream update for {thread_id}: {e}")
             return False
 
     async def add_action_items(self, thread_id: str, action_items: List[ThreadActionItem]) -> bool:
