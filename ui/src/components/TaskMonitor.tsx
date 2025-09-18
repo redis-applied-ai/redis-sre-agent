@@ -1,20 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { 
-  Play, 
-  Pause, 
-  Square, 
-  CheckCircle, 
-  XCircle, 
-  Clock, 
-  Activity,
-  Wifi,
-  WifiOff
-} from 'lucide-react';
+import {
+  Button,
+} from '@radar/ui-kit';
 
 interface TaskUpdate {
   timestamp: string;
@@ -23,6 +10,8 @@ interface TaskUpdate {
   status?: string;
   result?: any;
   metadata?: Record<string, any>;
+  type?: string;
+  updates?: TaskUpdate[];
 }
 
 interface TaskMonitorProps {
@@ -40,7 +29,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
   
   const wsRef = useRef<WebSocket | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
 
   const connectWebSocket = () => {
     try {
@@ -74,7 +63,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
           if (data.update_type === 'initial_state') {
             setCurrentStatus(data.status || 'unknown');
             if (data.updates) {
-              setUpdates(data.updates.reverse()); // Reverse to show chronological order
+              setUpdates([...data.updates].reverse()); // Reverse to show chronological order
             }
             if (data.result) {
               setTaskResult(data.result);
@@ -158,18 +147,18 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
     switch (status.toLowerCase()) {
       case 'running':
       case 'in_progress':
-        return <Activity className="h-4 w-4 text-blue-500 animate-pulse" />;
+        return <span className="inline-block w-3 h-3 bg-blue-500 rounded-full animate-pulse"></span>;
       case 'completed':
       case 'success':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
+        return <span className="inline-block w-3 h-3 bg-green-500 rounded-full"></span>;
       case 'failed':
       case 'error':
-        return <XCircle className="h-4 w-4 text-red-500" />;
+        return <span className="inline-block w-3 h-3 bg-red-500 rounded-full"></span>;
       case 'pending':
       case 'queued':
-        return <Clock className="h-4 w-4 text-yellow-500" />;
+        return <span className="inline-block w-3 h-3 bg-yellow-500 rounded-full"></span>;
       default:
-        return <Square className="h-4 w-4 text-gray-500" />;
+        return <span className="inline-block w-3 h-3 bg-gray-500 rounded-full"></span>;
     }
   };
 
@@ -177,18 +166,18 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
     switch (status.toLowerCase()) {
       case 'running':
       case 'in_progress':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs';
       case 'completed':
       case 'success':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-100 text-green-800 px-2 py-1 rounded text-xs';
       case 'failed':
       case 'error':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-100 text-red-800 px-2 py-1 rounded text-xs';
       case 'pending':
       case 'queued':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs';
     }
   };
 
@@ -201,88 +190,86 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
   };
 
   return (
-    <Card className="w-full max-w-4xl mx-auto">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-semibold">
-            Task Monitor: {threadId.slice(0, 8)}...
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              {isConnected ? (
-                <Wifi className="h-4 w-4 text-green-500" />
-              ) : (
-                <WifiOff className="h-4 w-4 text-red-500" />
-              )}
-              <span className="text-sm text-muted-foreground">
+    <div className="w-full h-full flex flex-col">
+      {/* Header */}
+      <div className="flex-shrink-0 border-b border-gray-200 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold text-gray-900">
+            Real-time Task Monitor
+          </h3>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className="text-sm text-gray-600">
                 {isConnected ? 'Connected' : 'Disconnected'}
               </span>
             </div>
             {onClose && (
               <Button variant="outline" size="sm" onClick={onClose}>
-                Close
+                Back to Chat
               </Button>
             )}
           </div>
         </div>
-        
+
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             {getStatusIcon(currentStatus)}
-            <Badge className={getStatusColor(currentStatus)}>
+            <span className={getStatusColor(currentStatus)}>
               {currentStatus}
-            </Badge>
+            </span>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setIsAutoScroll(!isAutoScroll)}
             >
-              {isAutoScroll ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-              Auto-scroll
+              {isAutoScroll ? '⏸️' : '▶️'} Auto-scroll
             </Button>
           </div>
         </div>
-        
+
         {connectionError && (
-          <div className="text-sm text-red-600 bg-red-50 p-2 rounded">
+          <div className="text-sm text-red-600 bg-red-50 p-2 rounded mt-2">
             {connectionError}
           </div>
         )}
-      </CardHeader>
-      
-      <CardContent>
-        <ScrollArea className="h-96 w-full" ref={scrollAreaRef}>
-          <div className="space-y-2">
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full overflow-y-auto p-4" ref={scrollAreaRef}>
+          <div className="space-y-3">
             {updates.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">
-                No updates yet...
+              <div className="text-center text-gray-500 py-8">
+                <div className="animate-spin w-6 h-6 border-2 border-gray-300 border-t-blue-600 rounded-full mx-auto mb-2"></div>
+                Waiting for updates...
               </div>
             ) : (
               updates.map((update, index) => (
-                <div key={index} className="border rounded-lg p-3 bg-card">
+                <div key={index} className="border rounded-lg p-3 bg-white shadow-sm">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="outline" className="text-xs">
+                        <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
                           {update.update_type}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
+                        </span>
+                        <span className="text-xs text-gray-500">
                           {formatTimestamp(update.timestamp)}
                         </span>
                       </div>
-                      
+
                       {update.message && (
-                        <p className="text-sm mb-2">{update.message}</p>
+                        <p className="text-sm mb-2 text-gray-800">{update.message}</p>
                       )}
-                      
+
                       {update.metadata && Object.keys(update.metadata).length > 0 && (
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-gray-600">
                           <details>
-                            <summary className="cursor-pointer">Metadata</summary>
-                            <pre className="mt-1 p-2 bg-muted rounded text-xs overflow-x-auto">
+                            <summary className="cursor-pointer hover:text-gray-800">Metadata</summary>
+                            <pre className="mt-1 p-2 bg-gray-50 rounded text-xs overflow-x-auto">
                               {JSON.stringify(update.metadata, null, 2)}
                             </pre>
                           </details>
@@ -294,21 +281,20 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
               ))
             )}
           </div>
-        </ScrollArea>
-        
+        </div>
+
         {taskResult && (
-          <>
-            <Separator className="my-4" />
+          <div className="border-t border-gray-200 p-4">
             <div className="space-y-2">
-              <h4 className="font-semibold text-sm">Task Result:</h4>
-              <pre className="text-xs bg-muted p-3 rounded overflow-x-auto">
+              <h4 className="font-semibold text-sm text-gray-900">Task Result:</h4>
+              <pre className="text-xs bg-gray-50 p-3 rounded overflow-x-auto text-gray-800">
                 {JSON.stringify(taskResult, null, 2)}
               </pre>
             </div>
-          </>
+          </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 

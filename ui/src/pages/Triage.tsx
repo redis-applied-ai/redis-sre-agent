@@ -7,6 +7,7 @@ import {
 } from '@radar/ui-kit';
 import { ConfirmDialog } from '../components/Modal';
 import ReactMarkdown from 'react-markdown';
+import TaskMonitor from '../components/TaskMonitor';
 import sreAgentApi, { RedisInstance } from '../services/sreAgentApi';
 
 // Simple fallback components for missing UI kit components
@@ -24,7 +25,7 @@ const ErrorMessage = ({ message }: { message: string }) => (
 
 interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   timestamp: string;
   toolCall?: {
@@ -51,7 +52,7 @@ const Triage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [agentStatus, setAgentStatus] = useState<'unknown' | 'available' | 'unavailable'>('unknown');
-  const [isPolling, setIsPolling] = useState(false);
+  // const [isPolling, setIsPolling] = useState(false); // Commented out since we're using WebSocket now
 
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -59,6 +60,7 @@ const Triage = () => {
   const [threadToDelete, setThreadToDelete] = useState<string | null>(null);
   const [instances, setInstances] = useState<RedisInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
+  const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingIntervalRef = useRef<number | null>(null);
 
@@ -273,6 +275,14 @@ const Triage = () => {
     pollingIntervalRef.current = setInterval(poll, 2000);
   };
 
+  const handleWebSocketMonitorClose = () => {
+    setShowWebSocketMonitor(false);
+    // Reload the thread to show the completed conversation
+    if (activeThreadId) {
+      selectThread(activeThreadId);
+    }
+  };
+
   const createNewThread = async () => {
     // Clear current conversation and prepare for new one
     // Don't create placeholder threads - just clear the UI state
@@ -280,6 +290,7 @@ const Triage = () => {
     setMessages([]);
     setError('');
     setShowNewConversation(true);
+    setShowWebSocketMonitor(false);
 
     // On mobile only, switch to chat view
     if (window.innerWidth < 768) { // md breakpoint
@@ -306,6 +317,7 @@ const Triage = () => {
     setError('');
     setIsPolling(false);
     setShowNewConversation(false);
+    setShowWebSocketMonitor(false); // Reset WebSocket monitor state
 
     // On mobile only, switch to chat view
     if (window.innerWidth < 768) { // md breakpoint
@@ -410,9 +422,12 @@ const Triage = () => {
 
       setMessages(newMessages);
 
-      // Start polling if task is still active
+      // Show WebSocket monitor for active tasks, traditional chat for completed ones
       if (status.status === 'queued' || status.status === 'in_progress') {
-        startPolling(threadId);
+        setShowWebSocketMonitor(true);
+      } else {
+        setShowWebSocketMonitor(false);
+        // For completed tasks, we already have the messages loaded above
       }
 
     } catch (err) {
@@ -454,6 +469,7 @@ const Triage = () => {
         // Update the active thread ID
         setActiveThreadId(threadId);
         setShowNewConversation(false);
+        setShowWebSocketMonitor(true); // Show WebSocket monitor for new tasks
 
         // Add new thread to the list
         const newThread: ChatThread = {
@@ -658,9 +674,18 @@ const Triage = () => {
             </div>
           </CardHeader>
 
-          <>
-            {/* Messages Area */}
-            <CardContent className="flex-1 overflow-y-auto p-4">
+          {showWebSocketMonitor && activeThreadId ? (
+            /* WebSocket Real-time Monitor */
+            <CardContent className="flex-1 overflow-hidden p-4">
+              <TaskMonitor
+                threadId={activeThreadId}
+                onClose={handleWebSocketMonitorClose}
+              />
+            </CardContent>
+          ) : (
+            <>
+              {/* Traditional Messages Area */}
+              <CardContent className="flex-1 overflow-y-auto p-4">
                 <div className="space-y-4">
                   {messages.map((message) => (
                     <div
@@ -751,7 +776,7 @@ const Triage = () => {
                 </div>
               )}
 
-              {/* Input Area */}
+              {/* Input Area - Only show when not using WebSocket monitor */}
               <div className="p-4 border-t border-redis-dusk-08">
                 {/* Instance Selection */}
                 {instances.length > 0 && (
@@ -807,6 +832,7 @@ const Triage = () => {
                 </div>
               </div>
             </>
+          )}
         </Card>
       </div>
 
