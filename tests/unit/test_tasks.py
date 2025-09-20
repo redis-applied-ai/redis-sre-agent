@@ -22,7 +22,7 @@ class TestSRETaskCollection:
 
     def test_sre_task_collection_populated(self):
         """Test that SRE task collection contains expected tasks."""
-        assert len(SRE_TASK_COLLECTION) == 5
+        assert len(SRE_TASK_COLLECTION) == 6
 
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [

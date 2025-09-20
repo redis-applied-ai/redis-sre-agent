@@ -37,7 +37,7 @@ async def detailed_health_check():
 
     # Test worker availability (non-blocking)
     try:
-        async with Docket(url=settings.redis_url) as docket:
+        async with Docket(url=settings.redis_url, name="sre_docket") as docket:
             workers = await docket.workers()
             workers_available = len(workers) > 0
     except Exception as e:

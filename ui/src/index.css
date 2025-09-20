@@ -1,0 +1,110 @@
+@import '../ui-kit/src/styles/index.css';
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+
+/* Fix layout issues by overriding the centered layout behavior */
+main {
+  align-items: flex-start !important; /* Override items-center to align content to top */
+}
+
+/* Fix gap between header and content by reducing top padding */
+main > div {
+  padding-top: 1rem !important; /* Override the default pt-6 (24px) with pt-4 (16px) */
+}
+
+/* Enhanced markdown content spacing for agent responses */
+.markdown-content {
+  line-height: 1.6;
+}
+
+.markdown-content h1 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.markdown-content h1:first-child {
+  margin-top: 0;
+}
+
+.markdown-content h2 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown-content h3 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.markdown-content p {
+  margin-bottom: 0.75rem;
+  line-height: 1.6;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin-bottom: 0.75rem;
+  margin-left: 1rem;
+  padding-left: 0.5rem;
+}
+
+.markdown-content ul {
+  list-style-type: disc;
+  list-style-position: outside;
+}
+
+.markdown-content ol {
+  list-style-type: decimal;
+  list-style-position: outside;
+}
+
+.markdown-content li {
+  margin-bottom: 0.25rem;
+  line-height: 1.5;
+  margin-left: 0.25rem;
+  display: list-item;
+}
+
+.markdown-content pre {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  background-color: #f5f5f5;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.markdown-content code {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.markdown-content p code {
+  background-color: #f5f5f5;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+}
+
+.markdown-content blockquote {
+  margin-bottom: 0.75rem;
+  padding-left: 1rem;
+  border-left: 4px solid #d1d5db;
+  font-style: italic;
+}

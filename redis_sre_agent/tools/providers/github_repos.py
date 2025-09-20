@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 
 try:
     import aiohttp
-
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
@@ -23,21 +22,14 @@ logger = logging.getLogger(__name__)
 
 class GitHubReposProvider:
     """GitHub Repositories provider.
-
+    
     This provider connects to GitHub's REST API to access repository information,
     search code, and analyze repository contents for Redis usage patterns.
     """
 
-    def __init__(
-        self,
-        token: str,
-        organization: Optional[str] = None,
-        base_url: str = "https://api.github.com",
-    ):
+    def __init__(self, token: str, organization: Optional[str] = None, base_url: str = "https://api.github.com"):
         if not AIOHTTP_AVAILABLE:
-            raise ImportError(
-                "aiohttp is required for GitHub provider. Install with: pip install aiohttp"
-            )
+            raise ImportError("aiohttp is required for GitHub provider. Install with: pip install aiohttp")
 
         self.token = token
         self.organization = organization
@@ -55,7 +47,7 @@ class GitHubReposProvider:
             headers = {
                 "Authorization": f"token {self.token}",
                 "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "Redis-SRE-Agent/1.0",
+                "User-Agent": "Redis-SRE-Agent/1.0"
             }
             timeout = aiohttp.ClientTimeout(total=30)
             self.session = aiohttp.ClientSession(headers=headers, timeout=timeout)
@@ -95,7 +87,7 @@ class GitHubReposProvider:
                                 name=repo["full_name"],
                                 url=repo["html_url"],
                                 default_branch=repo.get("default_branch", "main"),
-                                languages=languages,
+                                languages=languages
                             )
                             repositories.append(repository)
 
@@ -116,7 +108,7 @@ class GitHubReposProvider:
         query: str,
         repositories: Optional[List[str]] = None,
         file_extensions: Optional[List[str]] = None,
-        limit: int = 50,
+        limit: int = 50
     ) -> List[Dict[str, Any]]:
         """Search code across GitHub repositories."""
         try:
@@ -141,7 +133,7 @@ class GitHubReposProvider:
                 "q": search_query,
                 "sort": "indexed",
                 "order": "desc",
-                "per_page": min(limit, 100),  # GitHub API limit
+                "per_page": min(limit, 100)  # GitHub API limit
             }
 
             url = f"{self.base_url}/search/code"
@@ -160,8 +152,10 @@ class GitHubReposProvider:
                             "url": item["html_url"],
                             "score": item.get("score", 0),
                             "snippet": await self._get_file_snippet(
-                                item["repository"]["full_name"], item["path"], query
-                            ),
+                                item["repository"]["full_name"],
+                                item["path"],
+                                query
+                            )
                         }
                         results.append(result)
 
@@ -219,7 +213,7 @@ class GitHubReposProvider:
                         "connected": True,
                         "user": user_data.get("login"),
                         "rate_limit_remaining": response.headers.get("X-RateLimit-Remaining"),
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now().isoformat()
                     }
                 else:
                     error_text = await response.text()
@@ -228,7 +222,7 @@ class GitHubReposProvider:
                         "provider": self.provider_name,
                         "error": f"HTTP {response.status}: {error_text}",
                         "connected": False,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now().isoformat()
                     }
 
         except Exception as e:
@@ -237,7 +231,7 @@ class GitHubReposProvider:
                 "provider": self.provider_name,
                 "error": str(e),
                 "connected": False,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat()
             }
 
     async def _get_repository_languages(self, repo_full_name: str) -> List[str]:
@@ -277,9 +271,7 @@ class GitHubReposProvider:
                     end = min(len(lines), i + 3)
                     context_lines = lines[start:end]
 
-                    snippet = "\n".join(
-                        f"{start + j + 1}: {context_lines[j]}" for j in range(len(context_lines))
-                    )
+                    snippet = "\n".join(f"{start + j + 1}: {context_lines[j]}" for j in range(len(context_lines)))
                     matching_lines.append(snippet)
 
                     if len(matching_lines) >= 3:  # Limit snippets
@@ -300,7 +292,9 @@ class GitHubReposProvider:
 
 # Helper function to create instances
 def create_github_repos_provider(
-    token: str, organization: Optional[str] = None, base_url: str = "https://api.github.com"
+    token: str,
+    organization: Optional[str] = None,
+    base_url: str = "https://api.github.com"
 ) -> GitHubReposProvider:
     """Create a GitHub repositories provider instance."""
     return GitHubReposProvider(token, organization, base_url)

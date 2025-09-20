@@ -112,7 +112,6 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
         """Initialize the judge with LLM."""
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.1,  # Low temperature for consistent evaluation
             openai_api_key=settings.openai_api_key,
         )
 

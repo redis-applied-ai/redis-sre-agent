@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def get_protocol_based_tools() -> List[Dict[str, Any]]:
     """Get tool definitions for the Protocol-based SRE tools.
-
+    
     Returns:
         List of tool definitions for LangGraph agent
     """
@@ -199,7 +199,7 @@ def get_protocol_based_tools() -> List[Dict[str, Any]]:
 
 async def get_provider_status() -> Dict[str, Any]:
     """Get status of all registered providers.
-
+    
     Returns:
         Provider status and health information
     """
@@ -218,10 +218,11 @@ async def get_provider_status() -> Dict[str, Any]:
             "summary": {
                 "total_providers": registry_status["total_providers"],
                 "healthy_providers": sum(
-                    1 for result in health_results.values() if result.get("status") == "healthy"
+                    1 for result in health_results.values()
+                    if result.get("status") == "healthy"
                 ),
-                "capabilities_available": registry_status["capabilities_available"],
-            },
+                "capabilities_available": registry_status["capabilities_available"]
+            }
         }
 
     except Exception as e:

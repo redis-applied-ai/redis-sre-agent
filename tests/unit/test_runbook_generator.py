@@ -314,7 +314,7 @@ Contact team lead for persistent memory issues
         mock_openai.chat.completions.create.assert_called_once()
         call_args = mock_openai.chat.completions.create.call_args
         assert call_args[1]["model"] == "gpt-4o"
-        assert call_args[1]["temperature"] == 0.3
+        # Temperature parameter removed for reasoning models
 
     @pytest.mark.asyncio
     @patch("openai.AsyncOpenAI")

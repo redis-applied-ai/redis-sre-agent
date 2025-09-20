@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 try:
     import boto3
     from botocore.exceptions import ClientError, NoCredentialsError
-
     BOTO3_AVAILABLE = True
 except ImportError:
     BOTO3_AVAILABLE = False
@@ -23,21 +22,14 @@ logger = logging.getLogger(__name__)
 
 class XRayTracesProvider:
     """AWS X-Ray traces provider.
-
+    
     This provider connects to AWS X-Ray and can search traces, analyze
     service maps, and identify performance bottlenecks.
     """
 
-    def __init__(
-        self,
-        region_name: str = "us-east-1",
-        aws_access_key_id: Optional[str] = None,
-        aws_secret_access_key: Optional[str] = None,
-    ):
+    def __init__(self, region_name: str = "us-east-1", aws_access_key_id: Optional[str] = None, aws_secret_access_key: Optional[str] = None):
         if not BOTO3_AVAILABLE:
-            raise ImportError(
-                "boto3 is required for X-Ray provider. Install with: pip install boto3"
-            )
+            raise ImportError("boto3 is required for X-Ray provider. Install with: pip install boto3")
 
         self.region_name = region_name
         self.aws_access_key_id = aws_access_key_id
@@ -53,12 +45,10 @@ class XRayTracesProvider:
         if self._client is None:
             session_kwargs = {"region_name": self.region_name}
             if self.aws_access_key_id and self.aws_secret_access_key:
-                session_kwargs.update(
-                    {
-                        "aws_access_key_id": self.aws_access_key_id,
-                        "aws_secret_access_key": self.aws_secret_access_key,
-                    }
-                )
+                session_kwargs.update({
+                    "aws_access_key_id": self.aws_access_key_id,
+                    "aws_secret_access_key": self.aws_secret_access_key
+                })
 
             session = boto3.Session(**session_kwargs)
             self._client = session.client("xray")
@@ -72,7 +62,7 @@ class XRayTracesProvider:
         time_range: Optional[TimeRange] = None,
         min_duration_ms: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
-        limit: int = 100,
+        limit: int = 100
     ) -> List[TraceSpan]:
         """Search X-Ray traces with filters."""
         try:
@@ -107,7 +97,7 @@ class XRayTracesProvider:
             kwargs = {
                 "TimeRangeType": "TimeRangeByStartTime",
                 "StartTime": time_range.start,
-                "EndTime": time_range.end,
+                "EndTime": time_range.end
             }
 
             if filter_expression:
@@ -136,8 +126,8 @@ class XRayTracesProvider:
                             "response_time": str(summary.get("ResponseTime", 0)),
                             "has_error": str(summary.get("HasError", False)),
                             "has_fault": str(summary.get("HasFault", False)),
-                            "has_throttle": str(summary.get("HasThrottle", False)),
-                        },
+                            "has_throttle": str(summary.get("HasThrottle", False))
+                        }
                     )
                     trace_spans.append(root_span)
 
@@ -168,12 +158,11 @@ class XRayTracesProvider:
             trace_details = {
                 "trace_id": trace_id,
                 "duration_ms": trace.get("Duration", 0) * 1000,
-                "segments": [],
+                "segments": []
             }
 
             for segment in segments:
                 import json
-
                 segment_doc = json.loads(segment.get("Document", "{}"))
 
                 segment_info = {
@@ -181,14 +170,13 @@ class XRayTracesProvider:
                     "name": segment_doc.get("name"),
                     "start_time": segment_doc.get("start_time"),
                     "end_time": segment_doc.get("end_time"),
-                    "duration": (segment_doc.get("end_time", 0) - segment_doc.get("start_time", 0))
-                    * 1000,
+                    "duration": (segment_doc.get("end_time", 0) - segment_doc.get("start_time", 0)) * 1000,
                     "service": segment_doc.get("service", {}),
                     "annotations": segment_doc.get("annotations", {}),
                     "metadata": segment_doc.get("metadata", {}),
                     "error": segment_doc.get("error", False),
                     "fault": segment_doc.get("fault", False),
-                    "throttle": segment_doc.get("throttle", False),
+                    "throttle": segment_doc.get("throttle", False)
                 }
 
                 trace_details["segments"].append(segment_info)
@@ -213,12 +201,18 @@ class XRayTracesProvider:
                 start_time = end_time - timedelta(hours=1)
                 time_range = TimeRange(start_time, end_time)
 
-            response = client.get_service_graph(StartTime=time_range.start, EndTime=time_range.end)
+            response = client.get_service_graph(
+                StartTime=time_range.start,
+                EndTime=time_range.end
+            )
 
             services = response.get("Services", [])
 
             # Process service map
-            service_map = {"services": [], "connections": []}
+            service_map = {
+                "services": [],
+                "connections": []
+            }
 
             for service in services:
                 service_info = {
@@ -229,7 +223,7 @@ class XRayTracesProvider:
                     "end_time": service.get("EndTime"),
                     "response_time_histogram": service.get("ResponseTimeHistogram", {}),
                     "duration_histogram": service.get("DurationHistogram", {}),
-                    "summary_statistics": service.get("SummaryStatistics", {}),
+                    "summary_statistics": service.get("SummaryStatistics", {})
                 }
                 service_map["services"].append(service_info)
 
@@ -240,7 +234,7 @@ class XRayTracesProvider:
                         "source": service.get("Name"),
                         "destination": edge.get("Alias", {}).get("Name"),
                         "response_time_histogram": edge.get("ResponseTimeHistogram", {}),
-                        "summary_statistics": edge.get("SummaryStatistics", {}),
+                        "summary_statistics": edge.get("SummaryStatistics", {})
                     }
                     service_map["connections"].append(connection)
 
@@ -266,7 +260,7 @@ class XRayTracesProvider:
                 "provider": self.provider_name,
                 "connected": True,
                 "encryption_type": response.get("EncryptionConfig", {}).get("Type"),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat()
             }
 
         except NoCredentialsError:
@@ -275,7 +269,7 @@ class XRayTracesProvider:
                 "provider": self.provider_name,
                 "error": "AWS credentials not configured",
                 "connected": False,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat()
             }
         except ClientError as e:
             return {
@@ -283,7 +277,7 @@ class XRayTracesProvider:
                 "provider": self.provider_name,
                 "error": f"AWS error: {e}",
                 "connected": False,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
             return {
@@ -291,7 +285,7 @@ class XRayTracesProvider:
                 "provider": self.provider_name,
                 "error": str(e),
                 "connected": False,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat()
             }
 
 
@@ -299,7 +293,7 @@ class XRayTracesProvider:
 def create_xray_traces_provider(
     region_name: str = "us-east-1",
     aws_access_key_id: Optional[str] = None,
-    aws_secret_access_key: Optional[str] = None,
+    aws_secret_access_key: Optional[str] = None
 ) -> XRayTracesProvider:
     """Create an X-Ray traces provider instance."""
     return XRayTracesProvider(region_name, aws_access_key_id, aws_secret_access_key)

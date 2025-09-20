@@ -124,7 +124,7 @@ class RunbookGenerator:
     """LangGraph agent for generating Redis SRE runbooks."""
 
     def __init__(self):
-        self.llm = ChatOpenAI(model="gpt-4o", temperature=0.1, api_key=settings.openai_api_key)
+        self.llm = ChatOpenAI(model="gpt-4o", api_key=settings.openai_api_key)
         self.tavily = TavilySearchTool()
         self.graph = self._build_graph()
 

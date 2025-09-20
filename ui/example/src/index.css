@@ -1,0 +1,89 @@
+/* UI Kit styles */
+@import '../../src/styles/index.css';
+
+/* Custom application styles */
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Additional utility classes for the examples */
+.animate-in {
+  animation: enter 0.2s ease-out;
+}
+
+.slide-in-from-bottom-4 {
+  animation: slide-up 0.2s ease-out;
+}
+
+.slide-in-from-right {
+  animation: slide-left 0.3s ease-out;
+}
+
+.slide-in-from-left {
+  animation: slide-right 0.3s ease-out;
+}
+
+.fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-left {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-right {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Grid utility for responsive demos */
+.grid-cols-25 {
+  grid-template-columns: repeat(25, minmax(0, 1fr));
+}
+
+/* Ensure proper scrolling for modals */
+body.modal-open {
+  overflow: hidden;
+}

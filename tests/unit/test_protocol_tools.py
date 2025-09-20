@@ -74,9 +74,7 @@ class MockLogsProvider:
     def provider_name(self) -> str:
         return "Mock Logs"
 
-    async def search_logs(
-        self, query: str, time_range, log_groups=None, level_filter=None, limit=100
-    ):
+    async def search_logs(self, query: str, time_range, log_groups=None, level_filter=None, limit=100):
         # Return mock log entries
         entries = []
         for i in range(min(3, limit)):
@@ -85,7 +83,7 @@ class MockLogsProvider:
                 level="INFO",
                 message=f"Mock log entry {i} matching '{query}'",
                 source=f"mock-service-{i}",
-                labels={"service": "mock", "environment": "test"},
+                labels={"service": "mock", "environment": "test"}
             )
             entries.append(entry)
         return entries
@@ -104,16 +102,14 @@ class MockTicketsProvider:
     def provider_name(self) -> str:
         return "Mock Tickets"
 
-    async def create_ticket(
-        self, title: str, description: str, labels=None, assignee=None, priority=None
-    ):
+    async def create_ticket(self, title: str, description: str, labels=None, assignee=None, priority=None):
         return Ticket(
             id="MOCK-123",
             title=title,
             description=description,
             status="open",
             assignee=assignee,
-            labels=labels or [],
+            labels=labels or []
         )
 
     async def update_ticket(self, ticket_id: str, **updates):
@@ -123,13 +119,13 @@ class MockTicketsProvider:
             description=updates.get("description", "Updated description"),
             status=updates.get("status", "open"),
             assignee=updates.get("assignee"),
-            labels=updates.get("labels", []),
+            labels=updates.get("labels", [])
         )
 
     async def search_tickets(self, query=None, status=None, assignee=None, labels=None, limit=50):
         return [
             Ticket("MOCK-1", "Test ticket 1", "Description 1", "open", labels=["test"]),
-            Ticket("MOCK-2", "Test ticket 2", "Description 2", "closed", labels=["test"]),
+            Ticket("MOCK-2", "Test ticket 2", "Description 2", "closed", labels=["test"])
         ]
 
     async def health_check(self):
@@ -146,7 +142,7 @@ class MockReposProvider:
     async def list_repositories(self, organization=None):
         return [
             Repository("test/repo1", "https://github.com/test/repo1", "main", ["Python"]),
-            Repository("test/repo2", "https://github.com/test/repo2", "main", ["JavaScript"]),
+            Repository("test/repo2", "https://github.com/test/repo2", "main", ["JavaScript"])
         ]
 
     async def search_code(self, query: str, repositories=None, file_extensions=None, limit=50):
@@ -157,7 +153,7 @@ class MockReposProvider:
                 "file_name": "main.py",
                 "url": "https://github.com/test/repo1/blob/main/src/main.py",
                 "score": 0.95,
-                "snippet": f"Code snippet containing '{query}'",
+                "snippet": f"Code snippet containing '{query}'"
             }
         ]
 
@@ -254,9 +250,7 @@ class TestSREToolRegistry:
         # Register providers with different capabilities
         metrics_provider = MockSREProvider([ToolCapability.METRICS])
         logs_provider = MockSREProvider([ToolCapability.LOGS])
-        full_provider = MockSREProvider(
-            [ToolCapability.METRICS, ToolCapability.LOGS, ToolCapability.TICKETS]
-        )
+        full_provider = MockSREProvider([ToolCapability.METRICS, ToolCapability.LOGS, ToolCapability.TICKETS])
 
         registry.register_provider("metrics", metrics_provider)
         registry.register_provider("logs", logs_provider)
@@ -268,7 +262,7 @@ class TestSREToolRegistry:
         tickets_providers = await registry.get_tickets_providers()
 
         assert len(metrics_providers) == 2  # metrics + full
-        assert len(logs_providers) == 2  # logs + full
+        assert len(logs_providers) == 2     # logs + full
         assert len(tickets_providers) == 1  # full only
 
     @pytest.mark.asyncio
@@ -281,8 +275,9 @@ class TestSREToolRegistry:
 
         health_results = await registry.health_check_all()
 
-        assert "test" in health_results
-        assert health_results["test"]["status"] == "healthy"
+        assert health_results["overall_status"] == "healthy"
+        assert "test" in health_results["providers"]
+        assert health_results["providers"]["test"]["status"] == "healthy"
 
     def test_registry_status(self):
         """Test getting registry status."""
@@ -307,23 +302,14 @@ class TestDynamicTools:
     def mock_registry(self):
         """Create a mock registry with test providers."""
         registry = SREToolRegistry()
-        provider = MockSREProvider(
-            [
-                ToolCapability.METRICS,
-                ToolCapability.LOGS,
-                ToolCapability.TICKETS,
-                ToolCapability.REPOS,
-            ]
-        )
+        provider = MockSREProvider([ToolCapability.METRICS, ToolCapability.LOGS, ToolCapability.TICKETS, ToolCapability.REPOS])
         registry.register_provider("test", provider)
         return registry
 
     @pytest.mark.asyncio
     async def test_query_instance_metrics_current_value(self, mock_registry):
         """Test querying current metric values."""
-        with patch(
-            "redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry
-        ):
+        with patch("redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry):
             result = await query_instance_metrics("test_metric")
 
         assert "error" not in result
@@ -335,9 +321,7 @@ class TestDynamicTools:
     @pytest.mark.asyncio
     async def test_query_instance_metrics_time_range(self, mock_registry):
         """Test querying metric time ranges."""
-        with patch(
-            "redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry
-        ):
+        with patch("redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry):
             result = await query_instance_metrics("test_metric", time_range_hours=1.0)
 
         assert "error" not in result
@@ -347,9 +331,7 @@ class TestDynamicTools:
     @pytest.mark.asyncio
     async def test_list_available_metrics(self, mock_registry):
         """Test listing available metrics."""
-        with patch(
-            "redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry
-        ):
+        with patch("redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry):
             result = await list_available_metrics()
 
         assert "error" not in result
@@ -360,9 +342,7 @@ class TestDynamicTools:
     @pytest.mark.asyncio
     async def test_search_logs(self, mock_registry):
         """Test searching logs."""
-        with patch(
-            "redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry
-        ):
+        with patch("redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry):
             result = await search_logs("error", time_range_hours=1.0)
 
         assert "error" not in result
@@ -374,11 +354,12 @@ class TestDynamicTools:
     @pytest.mark.asyncio
     async def test_create_incident_ticket(self, mock_registry):
         """Test creating incident tickets."""
-        with patch(
-            "redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry
-        ):
+        with patch("redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry):
             result = await create_incident_ticket(
-                "Test Incident", "Test description", labels=["test", "incident"], priority="high"
+                "Test Incident",
+                "Test description",
+                labels=["test", "incident"],
+                priority="high"
             )
 
         assert "error" not in result
@@ -389,9 +370,7 @@ class TestDynamicTools:
     @pytest.mark.asyncio
     async def test_search_related_repositories(self, mock_registry):
         """Test searching related repositories."""
-        with patch(
-            "redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry
-        ):
+        with patch("redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=mock_registry):
             result = await search_related_repositories("redis")
 
         assert "error" not in result
@@ -405,9 +384,7 @@ class TestDynamicTools:
         """Test behavior when no providers are available."""
         empty_registry = SREToolRegistry()
 
-        with patch(
-            "redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=empty_registry
-        ):
+        with patch("redis_sre_agent.tools.dynamic_tools.get_global_registry", return_value=empty_registry):
             result = await query_instance_metrics("test_metric")
 
         assert "error" in result

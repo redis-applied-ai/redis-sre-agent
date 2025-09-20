@@ -198,14 +198,32 @@ class DocumentDeduplicator:
             # Step 4: Prepare documents for indexing
             documents_to_index = []
             for i, chunk in enumerate(prepared_chunks):
+                # Handle product labels specially for Redis schema
+                product_labels = ""
+                product_label_tags = ""
+
                 # Flatten metadata
                 flattened_metadata = {}
                 if isinstance(chunk.get("metadata"), dict):
                     for key, value in chunk["metadata"].items():
-                        if value is None:
-                            flattened_metadata[f"meta_{key}"] = ""
+                        if key == "product_labels":
+                            # Handle product labels as comma-separated string for Redis tags
+                            if isinstance(value, list):
+                                product_labels = ",".join(value)
+                            else:
+                                product_labels = str(value) if value else ""
+                        elif key == "product_label_tags":
+                            # Handle product label tags as comma-separated string for Redis tags
+                            if isinstance(value, list):
+                                product_label_tags = ",".join(value)
+                            else:
+                                product_label_tags = str(value) if value else ""
                         else:
-                            flattened_metadata[f"meta_{key}"] = str(value)
+                            # Regular metadata gets meta_ prefix
+                            if value is None:
+                                flattened_metadata[f"meta_{key}"] = ""
+                            else:
+                                flattened_metadata[f"meta_{key}"] = str(value)
 
                 doc_for_index = {
                     "id": chunk["chunk_key"],  # Use deterministic key
@@ -219,6 +237,8 @@ class DocumentDeduplicator:
                     "chunk_index": chunk["chunk_index"],
                     "vector": embeddings[i],
                     "created_at": datetime.now(timezone.utc).timestamp(),
+                    "product_labels": product_labels,
+                    "product_label_tags": product_label_tags,
                     **flattened_metadata,
                 }
                 documents_to_index.append(doc_for_index)

@@ -19,7 +19,7 @@ def pipeline():
 @click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
 @click.option(
     "--scrapers",
-    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,runbook_generator)",
+    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
 )
 def scrape(artifacts_path: str, scrapers: str):
     """Run the scraping pipeline to collect SRE documents."""
