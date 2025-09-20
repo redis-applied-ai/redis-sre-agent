@@ -27,6 +27,11 @@ export const useApp = () => {
       isActive: location.pathname === '/knowledge'
     },
     {
+      label: 'Schedules',
+      href: '/schedules',
+      isActive: location.pathname === '/schedules'
+    },
+    {
       label: 'Settings',
       href: '/settings',
       isActive: location.pathname === '/settings' || location.pathname === '/instances'

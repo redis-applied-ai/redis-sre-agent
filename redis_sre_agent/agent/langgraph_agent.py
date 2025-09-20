@@ -16,17 +16,16 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
+from ..api.instances import get_instances_from_redis
 from ..core.config import settings
-from ..core.redis import get_redis_client
-from ..tools.docker_logs import search_docker_logs
+from ..tools.protocol_agent_tools import PROTOCOL_TOOL_FUNCTIONS, get_protocol_based_tools
+from ..tools.registry import auto_register_default_providers
 from ..tools.sre_functions import (
-    analyze_system_metrics,
-    check_service_health,
-    get_detailed_redis_diagnostics,
+    get_all_document_fragments,
+    get_related_document_fragments,
     ingest_sre_document,
     search_knowledge_base,
-)
-from ..api.instances import get_instances_from_redis
+)  # Keep knowledge base functions
 
 logger = logging.getLogger(__name__)
 
@@ -246,209 +245,162 @@ class SRELangGraphAgent:
             openai_api_key=self.settings.openai_api_key,
         )
 
-        # Bind SRE tools to the LLM
-        self.llm_with_tools = self.llm.bind_tools(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "analyze_system_metrics",
-                        "description": "Analyze system metrics and performance data for Redis infrastructure using Prometheus queries",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "metric_query": {
-                                    "type": "string",
-                                    "description": "Prometheus metric query (e.g., 'redis_memory_used_bytes', 'redis_connected_clients', 'rate(redis_commands_processed_total[1m])'). Must be a valid Prometheus metric name or query expression.",
-                                },
-                                "time_range": {
-                                    "type": "string",
-                                    "description": "Time range for analysis (e.g., 'last 1h', 'last 24h')",
-                                    "default": "last 1h",
-                                },
+        # Auto-register default providers based on configuration
+        config = {
+            "redis_url": settings.redis_url,
+            "prometheus_url": getattr(settings, 'prometheus_url', None),
+            "grafana_url": getattr(settings, 'grafana_url', None),
+            "grafana_api_key": getattr(settings, 'grafana_api_key', None),
+        }
+        auto_register_default_providers(config)
+
+        # Get protocol-based tool definitions
+        protocol_tools = get_protocol_based_tools()
+
+        # Add knowledge base tools that aren't part of the protocol system yet
+        knowledge_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_knowledge_base",
+                    "description": "Search comprehensive knowledge base including SRE runbooks, Redis documentation, troubleshooting guides, and operational procedures. Use this for finding both Redis-specific documentation (commands, configuration, concepts) and SRE procedures.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query - can include Redis commands (e.g. 'MEMORY USAGE'), configuration options (e.g. 'maxmemory-policy'), concepts (e.g. 'eviction policies'), or SRE procedures (e.g. 'connection limit troubleshooting')",
                             },
-                            "required": ["metric_query"],
+                            "category": {
+                                "type": "string",
+                                "description": "Optional category to focus search on",
+                                "enum": [
+                                    "incident_response",
+                                    "monitoring",
+                                    "performance",
+                                    "troubleshooting",
+                                    "maintenance",
+                                    "redis_commands",
+                                    "redis_config",
+                                    "redis_concepts",
+                                ],
+                            },
                         },
+                        "required": ["query"],
                     },
                 },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_knowledge_base",
-                        "description": "Search comprehensive knowledge base including SRE runbooks, Redis documentation, troubleshooting guides, and operational procedures. Use this for finding both Redis-specific documentation (commands, configuration, concepts) and SRE procedures.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "Search query - can include Redis commands (e.g. 'MEMORY USAGE'), configuration options (e.g. 'maxmemory-policy'), concepts (e.g. 'eviction policies'), or SRE procedures (e.g. 'connection limit troubleshooting')",
-                                },
-                                "category": {
-                                    "type": "string",
-                                    "description": "Optional category to focus search on",
-                                    "enum": [
-                                        "incident_response",
-                                        "monitoring",
-                                        "performance",
-                                        "troubleshooting",
-                                        "maintenance",
-                                        "redis_commands",
-                                        "redis_config",
-                                        "redis_concepts",
-                                    ],
-                                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "ingest_sre_document",
+                    "description": "Add new SRE documentation, runbooks, or procedures to knowledge base",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Title of the document"},
+                            "content": {
+                                "type": "string",
+                                "description": "Content of the SRE document",
                             },
-                            "required": ["query"],
+                            "source": {
+                                "type": "string",
+                                "description": "Source system or file for the document",
+                                "default": "agent_ingestion",
+                            },
+                            "category": {
+                                "type": "string",
+                                "description": "Document category",
+                                "enum": [
+                                    "runbook",
+                                    "procedure",
+                                    "troubleshooting",
+                                    "best_practice",
+                                    "incident_report",
+                                ],
+                                "default": "procedure",
+                            },
+                            "severity": {
+                                "type": "string",
+                                "description": "Severity or priority level",
+                                "enum": ["info", "warning", "critical"],
+                                "default": "info",
+                            },
                         },
+                        "required": ["title", "content"],
                     },
                 },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "check_service_health",
-                        "description": "Check the SRE Agent's own health status and system components. This tool checks the agent service itself (Redis connection, vectorizer, task queue), NOT Redis instances. Use Redis diagnostics tools to check Redis instance health. Only use this when specifically asked about the agent's health or when troubleshooting the agent service itself.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "service_name": {
-                                    "type": "string",
-                                    "description": "Service to check - use 'sre-agent' to check this agent's health status and components",
-                                    "default": "sre-agent",
-                                },
-                                "endpoints": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Health check endpoints for the SRE agent service (not Redis instances)",
-                                    "default": ["http://localhost:8000/health"],
-                                },
-                                "timeout": {
-                                    "type": "integer",
-                                    "description": "Request timeout in seconds",
-                                    "default": 30,
-                                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_all_document_fragments",
+                    "description": "Retrieve ALL fragments/chunks of a specific document when you find a relevant piece and need the complete context. Use the document_hash from search results to get the full document content. This is essential when a search result fragment looks relevant but you need the complete information to provide a comprehensive answer.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "document_hash": {
+                                "type": "string",
+                                "description": "The document hash from search results (e.g., from search_knowledge_base results)",
                             },
-                            "required": [],
+                            "include_metadata": {
+                                "type": "boolean",
+                                "description": "Whether to include document metadata",
+                                "default": True,
+                            },
                         },
+                        "required": ["document_hash"],
                     },
                 },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "ingest_sre_document",
-                        "description": "Add new SRE documentation, runbooks, or procedures to knowledge base",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string", "description": "Title of the document"},
-                                "content": {
-                                    "type": "string",
-                                    "description": "Content of the SRE document",
-                                },
-                                "source": {
-                                    "type": "string",
-                                    "description": "Source system or file for the document",
-                                    "default": "agent_ingestion",
-                                },
-                                "category": {
-                                    "type": "string",
-                                    "description": "Document category",
-                                    "enum": [
-                                        "runbook",
-                                        "procedure",
-                                        "troubleshooting",
-                                        "best_practice",
-                                        "incident_report",
-                                    ],
-                                    "default": "procedure",
-                                },
-                                "severity": {
-                                    "type": "string",
-                                    "description": "Severity or priority level",
-                                    "enum": ["info", "warning", "critical"],
-                                    "default": "info",
-                                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_related_document_fragments",
+                    "description": "Get related fragments around a specific chunk for additional context without retrieving the entire document. Use this when you want surrounding context for a specific fragment you found in search results. Provide the document_hash and chunk_index from search results.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "document_hash": {
+                                "type": "string",
+                                "description": "The document hash from search results",
                             },
-                            "required": ["title", "content"],
+                            "current_chunk_index": {
+                                "type": "integer",
+                                "description": "The chunk index from search results to get context around",
+                            },
+                            "context_window": {
+                                "type": "integer",
+                                "description": "Number of chunks before and after to include (default: 2)",
+                                "default": 2,
+                            },
                         },
+                        "required": ["document_hash", "current_chunk_index"],
                     },
                 },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_docker_logs",
-                        "description": "Search Docker container logs for errors, patterns, and troubleshooting information. Useful for finding application errors, connection issues, performance problems, and operational events in containerized environments.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "Search query/pattern to look for in logs (e.g., 'error', 'connection refused', 'timeout', 'redis', 'memory'). Case-insensitive search.",
-                                },
-                                "containers": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Optional list of container names to search (e.g., ['redis', 'sre-worker']). If not specified, searches all containers.",
-                                },
-                                "time_range_hours": {
-                                    "type": "number",
-                                    "description": "How far back to search in hours (default: 1.0). Use larger values for historical analysis.",
-                                    "default": 1.0,
-                                },
-                                "level_filter": {
-                                    "type": "string",
-                                    "description": "Filter by log level (ERROR, WARN, INFO, DEBUG). Leave empty to see all levels.",
-                                },
-                                "limit": {
-                                    "type": "integer",
-                                    "description": "Maximum number of log entries to return (default: 100)",
-                                    "default": 100,
-                                },
-                            },
-                            "required": ["query"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_detailed_redis_diagnostics",
-                        "description": "Get detailed Redis diagnostic data for deep analysis. Returns raw metrics without pre-calculated assessments, enabling agent to perform its own calculations and severity analysis. Use this for targeted investigation of specific Redis areas (memory, performance, clients, slowlog, etc.) when you need to analyze actual metric values rather than status summaries.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "redis_url": {
-                                    "type": "string",
-                                    "description": "Redis connection URL to diagnose (required, e.g., 'redis://localhost:6379')",
-                                },
-                                "sections": {
-                                    "type": "string",
-                                    "description": "Comma-separated diagnostic sections: 'memory', 'performance', 'clients', 'slowlog', 'configuration', 'keyspace', 'replication', 'persistence', 'cpu'. Use 'all' or leave empty for comprehensive diagnostics.",
-                                },
-                                "time_window_seconds": {
-                                    "type": "integer",
-                                    "description": "Time window for metrics analysis (future enhancement)",
-                                },
-                            },
-                            "required": ["redis_url"],
-                        },
-                    },
-                },
-            ]
-        )
+            },
+        ]
+
+        # Combine protocol tools with knowledge tools
+        all_tools = protocol_tools + knowledge_tools
+
+        # Bind all tools to the LLM
+        self.llm_with_tools = self.llm.bind_tools(all_tools)
+
+
 
         # Build the LangGraph workflow
         self.workflow = self._build_workflow()
         # Note: We'll create a new MemorySaver for each query to ensure proper isolation
         # This prevents cross-contamination between different tasks/threads
 
-        # SRE tool mapping
+        # SRE tool mapping - combine protocol-based tools with knowledge base tools
         self.sre_tools = {
-            "analyze_system_metrics": analyze_system_metrics,
-            "search_knowledge_base": search_knowledge_base,
-            "check_service_health": check_service_health,
+            **PROTOCOL_TOOL_FUNCTIONS,  # Protocol-based tools
+            "search_knowledge_base": search_knowledge_base,  # Knowledge base tools
             "ingest_sre_document": ingest_sre_document,
-            "get_detailed_redis_diagnostics": get_detailed_redis_diagnostics,
-            "search_docker_logs": search_docker_logs,
+            "get_all_document_fragments": get_all_document_fragments,  # Fragment retrieval tools
+            "get_related_document_fragments": get_related_document_fragments,
         }
 
         logger.info("SRE LangGraph agent initialized with tool bindings")
@@ -582,7 +534,8 @@ class SRELangGraphAgent:
                         # Send completion reflection
                         if self.progress_callback:
                             completion_reflection = self._generate_completion_reflection(tool_name, result)
-                            await self.progress_callback(completion_reflection, "agent_reflection")
+                            if completion_reflection:  # Only send if not empty
+                                await self.progress_callback(completion_reflection, "agent_reflection")
 
                         # Format result as a readable string
                         if isinstance(result, dict):
@@ -777,7 +730,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                 return "❌ Unable to collect Redis diagnostics"
         elif tool_name == "search_knowledge_base":
             # Skip reflection for knowledge base searches to reduce UI noise
-            return None
+            return ""
 
         elif tool_name == "search_docker_logs":
             if isinstance(result, dict):

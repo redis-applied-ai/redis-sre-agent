@@ -372,7 +372,7 @@ Format your response as JSON:
                 {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
                 {"role": "user", "content": judge_prompt},
             ],
-            temperature=0.1,  # Low temperature for consistent evaluation
+
             max_tokens=2000,
         )
 

@@ -9,20 +9,20 @@ import logging
 import re
 import subprocess
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class DockerLogEntry:
     """Represents a single log entry from a Docker container."""
-    
+
     def __init__(self, timestamp: datetime, container: str, message: str, level: Optional[str] = None):
         self.timestamp = timestamp
         self.container = container
         self.message = message
         self.level = level or self._extract_log_level(message)
-    
+
     def _extract_log_level(self, message: str) -> str:
         """Extract log level from message content."""
         message_upper = message.upper()
@@ -30,7 +30,7 @@ class DockerLogEntry:
             if level in message_upper:
                 return level
         return 'INFO'  # Default level
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -66,17 +66,17 @@ async def search_docker_logs(
         # Auto-detect compose project if not provided
         if compose_project is None:
             compose_project = await _detect_compose_project()
-        
+
         # Get available containers
         available_containers = await _get_docker_containers(compose_project)
-        
+
         if not available_containers:
             return {
                 "error": "No Docker containers found",
                 "compose_project": compose_project,
                 "available_containers": []
             }
-        
+
         # Filter containers if specified
         if containers:
             target_containers = [c for c in available_containers if any(name in c for name in containers)]
@@ -87,15 +87,15 @@ async def search_docker_logs(
                 }
         else:
             target_containers = available_containers
-        
+
         # Calculate time range
         since_time = datetime.now() - timedelta(hours=time_range_hours)
         since_str = since_time.strftime('%Y-%m-%dT%H:%M:%S')
-        
+
         # Search logs for each container
         all_entries = []
         container_results = {}
-        
+
         for container in target_containers:
             try:
                 entries = await _search_container_logs(
@@ -106,7 +106,7 @@ async def search_docker_logs(
                     "entries_found": len(entries),
                     "entries": [entry.to_dict() for entry in entries]
                 }
-                
+
             except Exception as e:
                 logger.error(f"Error searching logs for container {container}: {e}")
                 container_results[container] = {
@@ -114,23 +114,23 @@ async def search_docker_logs(
                     "entries_found": 0,
                     "entries": []
                 }
-        
+
         # Sort all entries by timestamp (most recent first)
         all_entries.sort(key=lambda x: x.timestamp, reverse=True)
-        
+
         # Apply global limit
         if len(all_entries) > limit:
             all_entries = all_entries[:limit]
-        
+
         # Generate summary
         total_entries = len(all_entries)
         level_counts = {}
         container_counts = {}
-        
+
         for entry in all_entries:
             level_counts[entry.level] = level_counts.get(entry.level, 0) + 1
             container_counts[entry.container] = container_counts.get(entry.container, 0) + 1
-        
+
         return {
             "query": query,
             "time_range_hours": time_range_hours,
@@ -143,7 +143,7 @@ async def search_docker_logs(
             "container_results": container_results,
             "available_containers": available_containers
         }
-        
+
     except Exception as e:
         logger.error(f"Error in search_docker_logs: {e}")
         return {"error": str(e)}
@@ -159,20 +159,20 @@ async def _detect_compose_project() -> Optional[str]:
             text=True,
             timeout=10
         )
-        
+
         if result.returncode == 0:
             config = json.loads(result.stdout)
             return config.get('name', 'sre-2')  # Default to sre-2
-        
+
         # Fallback: try to detect from current directory
         result = subprocess.run(['pwd'], capture_output=True, text=True)
         if result.returncode == 0:
             current_dir = result.stdout.strip().split('/')[-1]
             return current_dir
-            
+
     except Exception as e:
         logger.debug(f"Could not auto-detect compose project: {e}")
-    
+
     return 'sre-2'  # Default fallback
 
 
@@ -290,11 +290,11 @@ def _parse_log_line(line: str, container: str) -> Optional[DockerLogEntry]:
     try:
         # Docker logs format: 2024-01-15T10:30:45.123456789Z message content
         timestamp_match = re.match(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s+(.*)$', line)
-        
+
         if timestamp_match:
             timestamp_str = timestamp_match.group(1)
             message = timestamp_match.group(2)
-            
+
             # Parse timestamp
             try:
                 # Handle different timestamp formats
@@ -305,12 +305,12 @@ def _parse_log_line(line: str, container: str) -> Optional[DockerLogEntry]:
             except ValueError:
                 # Fallback to current time if parsing fails
                 timestamp = datetime.now()
-            
+
             return DockerLogEntry(timestamp, container, message)
         else:
             # If no timestamp, use current time
             return DockerLogEntry(datetime.now(), container, line)
-            
+
     except Exception as e:
         logger.debug(f"Error parsing log line: {e}")
         return None

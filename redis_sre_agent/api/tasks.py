@@ -371,6 +371,7 @@ async def list_tasks(
         # Convert to TaskStatusResponse format
         tasks = []
         for summary in thread_summaries:
+            logger.info(f"Processing task {summary['thread_id']} with user_id: {summary.get('user_id')}")
             # Create minimal updates list for listing
             updates = [
                 {
@@ -392,6 +393,25 @@ async def list_tasks(
                 "subject": summary.get("subject", "Untitled"),
             }
 
+            # For scheduled tasks, try to get the original query from context for better display names
+            context = {}
+            if summary.get("user_id") == "scheduler":
+                logger.info(f"Processing scheduled task {summary['thread_id']} for context retrieval")
+                try:
+                    # Get the full thread state to access context
+                    thread_state = await thread_manager.get_thread_state(summary["thread_id"])
+                    if thread_state:
+                        logger.info(f"Retrieved thread state for {summary['thread_id']}, context keys: {list(thread_state.context.keys())}")
+                        if thread_state.context.get("original_query"):
+                            context["original_query"] = thread_state.context["original_query"]
+                            logger.info(f"Added original_query to context for {summary['thread_id']}: {context['original_query'][:50]}...")
+                        else:
+                            logger.info(f"No original_query found in context for {summary['thread_id']}")
+                    else:
+                        logger.warning(f"No thread state found for {summary['thread_id']}")
+                except Exception as e:
+                    logger.warning(f"Failed to get context for scheduled task {summary['thread_id']}: {e}")
+
             task_response = TaskStatusResponse(
                 thread_id=summary["thread_id"],
                 status=ThreadStatus(summary["status"]),
@@ -400,6 +420,7 @@ async def list_tasks(
                 action_items=[],  # Not included in listing for performance
                 error_message=None,  # Not included in listing for performance
                 metadata=metadata,
+                context=context,
             )
 
             tasks.append(task_response)

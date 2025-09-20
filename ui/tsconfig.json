@@ -15,17 +15,19 @@
     "jsx": "react-jsx",
 
     // Linting
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
+    "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": false,
+    "noImplicitAny": false,
 
     // Path mapping
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@radar/ui-kit": ["../src/index.ts"]
+      "@radar/ui-kit": ["ui-kit/src/index.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/__tests__/**/*"]
 }

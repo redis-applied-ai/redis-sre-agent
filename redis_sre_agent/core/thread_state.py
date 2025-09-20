@@ -126,7 +126,7 @@ Subject:"""
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=20,
-                temperature=0.3,
+
             )
 
             subject = response.choices[0].message.content.strip()

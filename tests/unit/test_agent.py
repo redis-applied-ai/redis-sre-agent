@@ -70,23 +70,31 @@ class TestSRELangGraphAgent:
         assert agent.settings == mock_settings
         assert agent.llm is not None
         assert agent.llm_with_tools is not None
-        assert len(agent.sre_tools) == 5
-        assert "analyze_system_metrics" in agent.sre_tools
+        assert len(agent.sre_tools) == 10  # Protocol tools + knowledge tools
+        assert "query_instance_metrics" in agent.sre_tools
+        assert "list_available_metrics" in agent.sre_tools
+        assert "search_logs" in agent.sre_tools
+        assert "create_incident_ticket" in agent.sre_tools
+        assert "search_related_repositories" in agent.sre_tools
+        assert "get_provider_status" in agent.sre_tools
         assert "search_knowledge_base" in agent.sre_tools
-        assert "check_service_health" in agent.sre_tools
         assert "ingest_sre_document" in agent.sre_tools
-        assert "get_detailed_redis_diagnostics" in agent.sre_tools
 
     def test_tool_mapping(self, mock_settings, mock_llm):
         """Test that SRE tools are properly mapped."""
         agent = SRELangGraphAgent()
 
         expected_tools = [
-            "analyze_system_metrics",
+            "query_instance_metrics",
+            "list_available_metrics",
+            "search_logs",
+            "create_incident_ticket",
+            "search_related_repositories",
+            "get_provider_status",
             "search_knowledge_base",
-            "check_service_health",
             "ingest_sre_document",
-            "get_detailed_redis_diagnostics",
+            "get_all_document_fragments",
+            "get_related_document_fragments",
         ]
 
         assert set(agent.sre_tools.keys()) == set(expected_tools)
@@ -108,11 +116,13 @@ class TestSRELangGraphAgent:
             agent.sre_tools = {}
 
             # Mock the workflow and app
+            mock_workflow = MagicMock()
             mock_app = AsyncMock()
             mock_app.ainvoke = AsyncMock(
                 return_value={"messages": [mock_response], "iteration_count": 1}
             )
-            agent.app = mock_app
+            mock_workflow.compile = MagicMock(return_value=mock_app)
+            agent.workflow = mock_workflow
 
             result = await agent.process_query(
                 query="What is Redis?", session_id="test-session", user_id="test-user"
@@ -127,10 +137,12 @@ class TestSRELangGraphAgent:
             agent = SRELangGraphAgent()
             agent.settings = mock_settings
 
-            # Mock app to raise exception
+            # Mock workflow and app to raise exception
+            mock_workflow = MagicMock()
             mock_app = AsyncMock()
             mock_app.ainvoke = AsyncMock(side_effect=Exception("Test error"))
-            agent.app = mock_app
+            mock_workflow.compile = MagicMock(return_value=mock_app)
+            agent.workflow = mock_workflow
 
             result = await agent.process_query(
                 query="Test query", session_id="test-session", user_id="test-user"
@@ -180,22 +192,20 @@ class TestSRELangGraphAgent:
 class TestAgentSingleton:
     """Test agent singleton behavior."""
 
-    def test_get_sre_agent_singleton(self):
-        """Test that get_sre_agent returns same instance."""
+    def test_get_sre_agent_creates_new_instances(self):
+        """Test that get_sre_agent creates new instances (no longer singleton)."""
         with patch("redis_sre_agent.agent.langgraph_agent.SRELangGraphAgent") as mock_agent_class:
-            mock_instance = MagicMock()
-            mock_agent_class.return_value = mock_instance
-
-            # Clear any existing singleton
-            import redis_sre_agent.agent.langgraph_agent
-
-            redis_sre_agent.agent.langgraph_agent._sre_agent = None
+            mock_instance1 = MagicMock()
+            mock_instance2 = MagicMock()
+            mock_agent_class.side_effect = [mock_instance1, mock_instance2]
 
             agent1 = get_sre_agent()
             agent2 = get_sre_agent()
 
-            assert agent1 is agent2
-            mock_agent_class.assert_called_once()
+            # Should create new instances each time (not singleton)
+            assert agent1 is mock_instance1
+            assert agent2 is mock_instance2
+            assert mock_agent_class.call_count == 2
 
 
 class TestAgentToolBindings:
@@ -214,16 +224,21 @@ class TestAgentToolBindings:
         # Get the tool definitions that were passed
         tool_definitions = mock_llm.bind_tools.call_args[0][0]
 
-        assert len(tool_definitions) == 5
+        assert len(tool_definitions) == 10
 
         # Check that all expected tools are defined
         tool_names = [tool["function"]["name"] for tool in tool_definitions]
         expected_names = [
-            "analyze_system_metrics",
+            "query_instance_metrics",
+            "list_available_metrics",
+            "search_logs",
+            "create_incident_ticket",
+            "search_related_repositories",
+            "get_provider_status",
             "search_knowledge_base",
-            "check_service_health",
             "ingest_sre_document",
-            "get_detailed_redis_diagnostics",
+            "get_all_document_fragments",
+            "get_related_document_fragments",
         ]
 
         assert set(tool_names) == set(expected_names)
@@ -247,8 +262,8 @@ class TestAgentWorkflow:
         agent = SRELangGraphAgent()
 
         assert agent.workflow is not None
-        assert agent.app is not None
-        assert agent.memory is not None
+        assert agent.llm is not None
+        assert agent.llm_with_tools is not None
 
     async def test_agent_state_schema(self, mock_settings, mock_llm):
         """Test that AgentState schema is properly defined."""
@@ -262,6 +277,7 @@ class TestAgentWorkflow:
             "current_tool_calls",
             "iteration_count",
             "max_iterations",
+            "instance_context",  # Added in the new implementation
         ]
 
         # AgentState is a TypedDict, so we can check __annotations__

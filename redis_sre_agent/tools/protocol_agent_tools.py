@@ -205,13 +205,13 @@ async def get_provider_status() -> Dict[str, Any]:
     """
     try:
         registry = get_global_registry()
-        
+
         # Get registry status
         registry_status = registry.get_registry_status()
-        
+
         # Get health checks for all providers
         health_results = await registry.health_check_all()
-        
+
         return {
             "registry_status": registry_status,
             "provider_health": health_results,
@@ -224,7 +224,7 @@ async def get_provider_status() -> Dict[str, Any]:
                 "capabilities_available": registry_status["capabilities_available"]
             }
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting provider status: {e}")
         return {"error": str(e)}

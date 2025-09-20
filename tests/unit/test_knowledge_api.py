@@ -1,8 +1,8 @@
 """Unit tests for Knowledge API endpoints."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
 
 
 class TestKnowledgeStats:
@@ -12,6 +12,7 @@ class TestKnowledgeStats:
     async def test_knowledge_stats_success(self, test_client):
         """Test knowledge stats endpoint returns correct data."""
         mock_index = AsyncMock()
+        mock_index.name = "sre_knowledge"
         mock_index.__aenter__ = AsyncMock(return_value=mock_index)
         mock_index.__aexit__ = AsyncMock(return_value=None)
 
@@ -25,7 +26,8 @@ class TestKnowledgeStats:
             [3]    # FT.AGGREGATE returns 3 unique documents
         ]
 
-        with patch("redis_sre_agent.api.knowledge.get_knowledge_index", return_value=mock_index):
+        with patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index), \
+             patch("redis_sre_agent.core.redis.get_redis_client", new_callable=AsyncMock, return_value=mock_redis_client):
             response = test_client.get("/api/v1/knowledge/stats")
 
             assert response.status_code == 200
@@ -57,6 +59,7 @@ class TestKnowledgeStats:
     async def test_knowledge_stats_empty_index(self, test_client):
         """Test knowledge stats endpoint with empty index."""
         mock_index = AsyncMock()
+        mock_index.name = "sre_knowledge"
         mock_index.__aenter__ = AsyncMock(return_value=mock_index)
         mock_index.__aexit__ = AsyncMock(return_value=None)
 
@@ -70,7 +73,8 @@ class TestKnowledgeStats:
             [0]   # FT.AGGREGATE returns 0 unique documents
         ]
 
-        with patch("redis_sre_agent.api.knowledge.get_knowledge_index", return_value=mock_index):
+        with patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index), \
+             patch("redis_sre_agent.core.redis.get_redis_client", new_callable=AsyncMock, return_value=mock_redis_client):
             response = test_client.get("/api/v1/knowledge/stats")
 
             assert response.status_code == 200
@@ -84,21 +88,25 @@ class TestKnowledgeStats:
     async def test_knowledge_stats_query_failure(self, test_client):
         """Test knowledge stats endpoint handles query failures gracefully."""
         mock_index = AsyncMock()
+        mock_index.name = "sre_knowledge"
         mock_index.__aenter__ = AsyncMock(return_value=mock_index)
         mock_index.__aexit__ = AsyncMock(return_value=None)
-        mock_index.query = AsyncMock(side_effect=Exception("Query failed"))
-        
+
+        # Mock Redis client that fails
+        mock_redis_client = AsyncMock()
+        mock_redis_client.execute_command.side_effect = Exception("Query failed")
+
         with (
-            patch("redis_sre_agent.api.knowledge.get_knowledge_index", return_value=mock_index),
-            patch("redis_sre_agent.api.knowledge.FilterQuery") as mock_filter_query,
+            patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index),
+            patch("redis_sre_agent.core.redis.get_redis_client", new_callable=AsyncMock, return_value=mock_redis_client),
         ):
-            mock_filter_query.return_value = MagicMock()
-            
+
+
             response = test_client.get("/api/v1/knowledge/stats")
-            
+
             assert response.status_code == 200
             data = response.json()
-            
+
             # Should return default values when query fails
             assert data["total_documents"] == 0
             assert data["total_chunks"] == 0
@@ -118,21 +126,21 @@ class TestKnowledgeIngestion:
             "category": "general",
             "severity": "info"
         }
-        
-        mock_doc_id = "test_doc_123"
-        
-        with patch("redis_sre_agent.api.knowledge.ingest_sre_document", new_callable=AsyncMock) as mock_ingest:
-            mock_ingest.return_value = mock_doc_id
-            
+
+        mock_result = {"document_id": "test_doc_123"}
+
+        with patch("redis_sre_agent.tools.sre_functions.ingest_sre_document", new_callable=AsyncMock) as mock_ingest:
+            mock_ingest.return_value = mock_result
+
             response = test_client.post("/api/v1/knowledge/ingest/document", json=document_data)
-            
+
             assert response.status_code == 200
             data = response.json()
-            
-            assert data["status"] == "success"
-            assert data["document_id"] == mock_doc_id
+
+            assert data["success"] is True
+            assert data["document_id"] == "test_doc_123"
             assert "message" in data
-            
+
             # Verify the ingest function was called with correct parameters
             mock_ingest.assert_called_once()
             call_args = mock_ingest.call_args[1]  # Get keyword arguments
@@ -147,9 +155,9 @@ class TestKnowledgeIngestion:
             "title": "Test Document",
             # Missing content, source, category, severity
         }
-        
+
         response = test_client.post("/api/v1/knowledge/ingest/document", json=incomplete_data)
-        
+
         assert response.status_code == 422  # Validation error
 
     @pytest.mark.asyncio
@@ -162,15 +170,15 @@ class TestKnowledgeIngestion:
             "category": "general",
             "severity": "info"
         }
-        
-        with patch("redis_sre_agent.api.knowledge.ingest_sre_document", new_callable=AsyncMock) as mock_ingest:
+
+        with patch("redis_sre_agent.tools.sre_functions.ingest_sre_document", new_callable=AsyncMock) as mock_ingest:
             mock_ingest.side_effect = Exception("Ingestion failed")
-            
+
             response = test_client.post("/api/v1/knowledge/ingest/document", json=document_data)
-            
+
             assert response.status_code == 500
             data = response.json()
-            assert "error" in data
+            assert "detail" in data
 
 
 class TestKnowledgeSearch:
@@ -179,56 +187,63 @@ class TestKnowledgeSearch:
     @pytest.mark.asyncio
     async def test_search_success(self, test_client):
         """Test successful knowledge search."""
-        mock_results = [
-            MagicMock(
-                title="Test Document 1",
-                content="Redis troubleshooting content",
-                source="test",
-                score=0.95
-            ),
-            MagicMock(
-                title="Test Document 2", 
-                content="More Redis content",
-                source="test",
-                score=0.87
-            )
-        ]
-        
+        mock_result = {
+            "query": "redis",
+            "category_filter": None,
+            "results_count": 2,
+            "results": [
+                {
+                    "title": "Test Document 1",
+                    "content": "Redis troubleshooting content",
+                    "source": "test",
+                    "score": 0.95
+                },
+                {
+                    "title": "Test Document 2",
+                    "content": "More Redis content",
+                    "source": "test",
+                    "score": 0.87
+                }
+            ],
+            "formatted_output": "Found 2 results for redis"
+        }
+
         with patch("redis_sre_agent.api.knowledge.search_knowledge_base", new_callable=AsyncMock) as mock_search:
-            mock_search.return_value = mock_results
-            
+            mock_search.return_value = mock_result
+
             response = test_client.get("/api/v1/knowledge/search?query=redis&limit=5")
-            
+
             assert response.status_code == 200
             data = response.json()
-            
+
             assert "results" in data
             assert "results_count" in data
             assert data["results_count"] == 2
             assert len(data["results"]) == 2
-            
+
             # Verify search was called with correct parameters
-            mock_search.assert_called_once_with("redis", limit=5)
+            mock_search.assert_called_once_with("redis", category=None, product_labels=None, limit=5)
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, test_client):
         """Test search with empty query parameter."""
         response = test_client.get("/api/v1/knowledge/search?query=&limit=5")
-        
+
         assert response.status_code == 400
         data = response.json()
-        assert "error" in data
+        assert "detail" in data
+        assert "empty" in data["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_search_no_results(self, test_client):
         """Test search that returns no results."""
         with patch("redis_sre_agent.api.knowledge.search_knowledge_base", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = []
-            
+
             response = test_client.get("/api/v1/knowledge/search?query=nonexistent&limit=5")
-            
+
             assert response.status_code == 200
             data = response.json()
-            
+
             assert data["results_count"] == 0
             assert data["results"] == []

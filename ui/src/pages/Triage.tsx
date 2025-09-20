@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Card,
   CardHeader,
@@ -42,9 +43,11 @@ interface ChatThread {
   messageCount: number;
   status: string;
   subject: string;
+  isScheduled?: boolean;
 }
 
 const Triage = () => {
+  const [searchParams] = useSearchParams();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -52,7 +55,7 @@ const Triage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [agentStatus, setAgentStatus] = useState<'unknown' | 'available' | 'unavailable'>('unknown');
-  // const [isPolling, setIsPolling] = useState(false); // Commented out since we're using WebSocket now
+  const [isPolling, setIsPolling] = useState(false);
 
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -104,12 +107,26 @@ const Triage = () => {
     }
   };
 
+  // Handle URL parameters to auto-select thread
+  useEffect(() => {
+    const threadParam = searchParams.get('thread');
+    if (threadParam && threads.length > 0 && !activeThreadId) {
+      // Check if the thread exists in our loaded threads
+      const threadExists = threads.some(thread => thread.id === threadParam);
+      if (threadExists) {
+        selectThread(threadParam);
+      }
+    }
+  }, [threads, searchParams, activeThreadId]);
+
   // Auto-show new conversation when landing on the page or when threads exist but none selected
   useEffect(() => {
-    if (!activeThreadId && !showNewConversation) {
+    const threadParam = searchParams.get('thread');
+    // Don't auto-show new conversation if we have a thread parameter
+    if (!activeThreadId && !showNewConversation && !threadParam) {
       setShowNewConversation(true);
     }
-  }, [threads.length, activeThreadId, showNewConversation]);
+  }, [threads.length, activeThreadId, showNewConversation, searchParams]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -122,18 +139,61 @@ const Triage = () => {
 
   const loadThreads = async () => {
     try {
-      const taskList = await sreAgentApi.listTasks(userId, undefined, 50);
+      // Load all tasks (including scheduled/automated ones) by passing null for user_id
+      const taskList = await sreAgentApi.listTasks(null, undefined, 50);
       const threadList: ChatThread[] = taskList
         .filter(task => task.status !== 'cancelled') // Filter out cancelled/deleted threads
-        .map(task => ({
-          id: task.thread_id,
-          name: task.metadata.subject || 'Untitled',
-          subject: task.metadata.subject || 'Untitled',
-          lastMessage: task.updates.length > 0 ? task.updates[0].message : 'No updates',
-          timestamp: task.metadata.updated_at,
-          messageCount: task.updates.length,
-          status: task.status,
-        }));
+        .map(task => {
+          // Check if this is a scheduled/automated task
+          const isScheduled = task.metadata.user_id === 'scheduler' ||
+                             (task.metadata.tags && task.metadata.tags.includes('scheduled'));
+
+          // Try to get a meaningful name from various sources
+          let threadName = 'Untitled';
+
+          // For scheduled tasks, prioritize schedule name and context
+          if (isScheduled) {
+            // First try schedule name from context
+            if (task.context?.schedule_name) {
+              threadName = task.context.schedule_name;
+            }
+            // Then try original query from context
+            else if (task.context?.original_query) {
+              threadName = task.context.original_query.substring(0, 50) + (task.context.original_query.length > 50 ? '...' : '');
+            }
+            // Then try subject from metadata
+            else if (task.metadata.subject && task.metadata.subject.trim() && task.metadata.subject !== 'Untitled') {
+              threadName = task.metadata.subject;
+            }
+          } else {
+            // For manual tasks, prioritize subject first
+            if (task.metadata.subject && task.metadata.subject.trim() && task.metadata.subject !== 'Untitled') {
+              threadName = task.metadata.subject;
+            }
+            // If no subject, try to get from original query in context
+            else if (task.context?.original_query) {
+              threadName = task.context.original_query.substring(0, 50) + (task.context.original_query.length > 50 ? '...' : '');
+            }
+            // If no original query, try to get from the first user message in updates
+            else if (task.updates.length > 0) {
+              const firstUserUpdate = task.updates.find(update => update.update_type === 'user_message' || update.update_type === 'query');
+              if (firstUserUpdate && firstUserUpdate.message) {
+                threadName = firstUserUpdate.message.substring(0, 50) + (firstUserUpdate.message.length > 50 ? '...' : '');
+              }
+            }
+          }
+
+          return {
+            id: task.thread_id,
+            name: threadName,
+            subject: threadName,
+            lastMessage: task.updates.length > 0 ? task.updates[0].message : 'No updates',
+            timestamp: task.metadata.updated_at,
+            messageCount: task.updates.length,
+            status: task.status,
+            isScheduled: isScheduled,
+          };
+        });
 
       setThreads(threadList);
     } catch (err) {
@@ -168,7 +228,31 @@ const Triage = () => {
         // Convert task updates to messages (reverse to show oldest first)
         const sortedUpdates = [...status.updates].reverse();
         sortedUpdates.forEach((update, index) => {
-          if (update.type === 'response' || update.type === 'completion') {
+          // Filter out technical/internal messages that users shouldn't see
+          const technicalMessageTypes = [
+            'turn_complete', 'agent_complete', 'completion', 'agent_init',
+            'turn_start', 'queued', 'triage', 'agent_status'
+          ];
+
+          const technicalMessagePatterns = [
+            /agent turn completed successfully/i,
+            /task completed/i,
+            /processing complete/i,
+            /initialization complete/i,
+            /agent initialized/i
+          ];
+
+          // Skip technical messages
+          if (technicalMessageTypes.includes(update.type)) {
+            return;
+          }
+
+          // Skip messages with technical patterns
+          if (update.message && technicalMessagePatterns.some(pattern => pattern.test(update.message))) {
+            return;
+          }
+
+          if (update.type === 'response') {
             newMessages.push({
               id: `update-${index}`,
               role: 'assistant',
@@ -183,21 +267,15 @@ const Triage = () => {
               timestamp: update.timestamp,
             });
           } else if (update.type === 'agent_reflection') {
-            // Show agent's reasoning and analysis
-            newMessages.push({
-              id: `reflection-${index}`,
-              role: 'assistant',
-              content: update.message,
-              timestamp: update.timestamp,
-            });
-          } else if (update.type === 'agent_status') {
-            // Show agent status updates (like "Agent is thinking...")
-            newMessages.push({
-              id: `status-${index}`,
-              role: 'assistant',
-              content: update.message,
-              timestamp: update.timestamp,
-            });
+            // Show agent's reasoning and analysis (only if meaningful)
+            if (update.message && update.message.length > 10 && !update.message.toLowerCase().includes('completed')) {
+              newMessages.push({
+                id: `reflection-${index}`,
+                role: 'assistant',
+                content: update.message,
+                timestamp: update.timestamp,
+              });
+            }
           } else if (update.type === 'safety_check') {
             // Show safety and fact-checking steps
             newMessages.push({
@@ -327,6 +405,7 @@ const Triage = () => {
     // Load conversation history and start polling if task is active
     try {
       const status = await sreAgentApi.getTaskStatus(threadId);
+      console.log('Thread status loaded:', status);
 
       // Convert task updates to messages
       const newMessages: ChatMessage[] = [];
@@ -344,7 +423,32 @@ const Triage = () => {
       // Convert updates to messages (reverse to show oldest first)
       const sortedUpdates = [...status.updates].reverse();
       sortedUpdates.forEach((update, index) => {
-        if (update.type === 'response' || update.type === 'completion') {
+        // Filter out technical/internal messages that users shouldn't see
+        const technicalMessageTypes = [
+          'turn_complete', 'agent_complete', 'completion', 'agent_init',
+          'turn_start', 'queued', 'triage', 'agent_status'
+        ];
+
+        const technicalMessagePatterns = [
+          /agent turn completed successfully/i,
+          /task completed/i,
+          /processing complete/i,
+          /initialization complete/i,
+          /agent initialized/i
+        ];
+
+        // Skip technical messages
+        if (technicalMessageTypes.includes(update.type)) {
+          return;
+        }
+
+        // Skip messages with technical patterns
+        if (update.message && technicalMessagePatterns.some(pattern => pattern.test(update.message))) {
+          return;
+        }
+
+        // Handle different update types based on actual API response
+        if (update.type === 'response') {
           newMessages.push({
             id: `update-${index}`,
             role: 'assistant',
@@ -358,22 +462,16 @@ const Triage = () => {
             content: update.message,
             timestamp: update.timestamp,
           });
-        } else if (update.type === 'agent_reflection') {
-          // Show agent's reasoning and analysis
-          newMessages.push({
-            id: `reflection-${index}`,
-            role: 'assistant',
-            content: update.message,
-            timestamp: update.timestamp,
-          });
-        } else if (update.type === 'agent_status') {
-          // Show agent status updates (like "Agent is thinking...")
-          newMessages.push({
-            id: `status-${index}`,
-            role: 'assistant',
-            content: update.message,
-            timestamp: update.timestamp,
-          });
+        } else if (update.type === 'agent_reflection' || update.type === 'agent_processing' || update.type === 'agent_start') {
+          // Show agent's reasoning and analysis (only if meaningful)
+          if (update.message && update.message.length > 10 && !update.message.toLowerCase().includes('completed')) {
+            newMessages.push({
+              id: `reflection-${index}`,
+              role: 'assistant',
+              content: update.message,
+              timestamp: update.timestamp,
+            });
+          }
         } else if (update.type === 'safety_check') {
           // Show safety and fact-checking steps
           newMessages.push({
@@ -420,6 +518,7 @@ const Triage = () => {
         });
       }
 
+      console.log('Processed messages:', newMessages);
       setMessages(newMessages);
 
       // Show WebSocket monitor for active tasks, traditional chat for completed ones
@@ -555,11 +654,11 @@ const Triage = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-120px)] flex gap-4">
+    <div className="h-[calc(100vh-120px)] flex gap-4 bg-redis-dusk-01">
       {/* Thread Sidebar - Responsive visibility */}
       <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-full`}>
-        <Card className="flex-1 flex flex-col">
-          <CardHeader className="flex-shrink-0">
+        <Card className="flex-1 flex flex-col" padding="none">
+          <CardHeader className="flex-shrink-0 p-4 pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Conversations</h3>
@@ -578,20 +677,37 @@ const Triage = () => {
               </Button>
             </div>
             {/* Agent Status Indicator */}
-            <div className="flex items-center gap-2 mt-2">
-              <div className={`h-2 w-2 rounded-full ${
-                agentStatus === 'available' ? 'bg-redis-green' :
-                agentStatus === 'unavailable' ? 'bg-redis-red' :
-                'bg-redis-yellow-500'
-              }`} />
-              <span className="text-redis-xs text-redis-dusk-04">
-                Agent {agentStatus === 'available' ? 'Online' : agentStatus === 'unavailable' ? 'Offline' : 'Checking...'}
-              </span>
+            <div className="flex items-center justify-between mt-2">
+              <div className="flex items-center gap-2">
+                <div className={`h-2 w-2 rounded-full ${
+                  agentStatus === 'available' ? 'bg-redis-green' :
+                  agentStatus === 'unavailable' ? 'bg-redis-red' :
+                  'bg-redis-yellow-500'
+                }`} />
+                <span className="text-redis-xs text-redis-dusk-04">
+                  Agent {agentStatus === 'available' ? 'Online' : agentStatus === 'unavailable' ? 'Offline' : 'Checking...'}
+                </span>
+              </div>
             </div>
           </CardHeader>
-          <CardContent className="flex-1 overflow-y-auto p-0">
-            <div className="space-y-1">
-              {threads.map((thread) => (
+          <div className="overflow-y-auto" style={{maxHeight: 'calc(100vh - 300px)'}}>
+            <div className="space-y-1 p-0">
+              {threads
+                .filter(thread => {
+                  // Always show non-scheduled tasks
+                  if (!thread.isScheduled) return true;
+
+                  // For scheduled tasks, hide if they're just queued and waiting
+                  // (no user interaction yet)
+                  if (thread.status === 'queued' &&
+                      thread.lastMessage === 'No updates') {
+                    return false;
+                  }
+
+                  // Show all other scheduled tasks
+                  return true;
+                })
+                .map((thread) => (
                 <div
                   key={thread.id}
                   className={`group p-3 cursor-pointer border-l-2 transition-colors ${
@@ -602,10 +718,24 @@ const Triage = () => {
                   onClick={() => selectThread(thread.id)}
                 >
                   <div className="flex items-center justify-between">
-                    <div className={`font-medium text-redis-sm truncate ${
-                      activeThreadId === thread.id ? 'text-white' : 'text-redis-dusk-01'
-                    }`}>
-                      {thread.name}
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <div className={`font-medium text-redis-sm truncate ${
+                        activeThreadId === thread.id ? 'text-white' : 'text-redis-dusk-01'
+                      }`}>
+                        {thread.name}
+                      </div>
+                      {thread.isScheduled && (
+                        <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
+                          activeThreadId === thread.id
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                          </svg>
+                          Scheduled
+                        </div>
+                      )}
                     </div>
                     <button
                       onClick={(e) => showDeleteConfirmation(thread.id, e)}
@@ -640,7 +770,7 @@ const Triage = () => {
                 </div>
               )}
             </div>
-          </CardContent>
+          </div>
         </Card>
       </div>
 
@@ -687,6 +817,21 @@ const Triage = () => {
               {/* Traditional Messages Area */}
               <CardContent className="flex-1 overflow-y-auto p-4">
                 <div className="space-y-4">
+                  {messages.length === 0 && activeThreadId ? (
+                    <div className="flex items-center justify-center h-full text-center">
+                      <div className="text-redis-dusk-04">
+                        <div className="text-lg mb-2">📄</div>
+                        <div className="text-sm">Loading conversation...</div>
+                      </div>
+                    </div>
+                  ) : messages.length === 0 ? (
+                    <div className="flex items-center justify-center h-full text-center">
+                      <div className="text-redis-dusk-04">
+                        <div className="text-lg mb-2">💬</div>
+                        <div className="text-sm">Select a conversation or start a new one</div>
+                      </div>
+                    </div>
+                  ) : null}
                   {messages.map((message) => (
                     <div
                       key={message.id}

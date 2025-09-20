@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Card,
   CardHeader,
@@ -8,56 +9,173 @@ import {
   ErrorMessage,
   Tooltip,
 } from '@radar/ui-kit';
+import { sreAgentApi, type TaskStatusResponse, type RedisInstance } from '../services/sreAgentApi';
 
-// Mock data for Redis SRE Dashboard
-const redisStats = [
-  { label: 'Redis Instances', value: 12, change: '+2', positive: true },
-  { label: 'Active Connections', value: 1847, change: '+5.2%', positive: true },
-  { label: 'Memory Usage', value: '78%', change: '-2.1%', positive: true },
-  { label: 'Avg Response Time', value: '1.2ms', change: '-0.3ms', positive: true }
-];
+interface KnowledgeStats {
+  total_documents: number;
+  total_chunks: number;
+  last_ingestion: string | null;
+  ingestion_status: 'idle' | 'running' | 'error';
+  document_types: Record<string, number>;
+  storage_size_mb: number;
+}
 
-const recentAlerts = [
-  { id: 1, severity: 'warning', message: 'High memory usage on redis-prod-01', time: '5 minutes ago' },
-  { id: 2, severity: 'info', message: 'Backup completed successfully', time: '1 hour ago' },
-  { id: 3, severity: 'error', message: 'Connection timeout on redis-staging-02', time: '2 hours ago' },
-  { id: 4, severity: 'info', message: 'Scheduled maintenance completed', time: '4 hours ago' }
-];
+interface SystemHealth {
+  status: string;
+  components: {
+    redis_connection: string;
+    vectorizer: string;
+    indices_created: string;
+    vector_search: string;
+    task_system: string;
+    workers: string;
+  };
+  timestamp: string;
+  version: string;
+}
+
+interface ConversationThread {
+  id: string;
+  name: string;
+  subject: string;
+  lastMessage: string;
+  timestamp: string;
+  messageCount: number;
+  status: string;
+}
 
 const Dashboard = () => {
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    setError('');
+  // Data states
+  const [conversations, setConversations] = useState<ConversationThread[]>([]);
+  const [instances, setInstances] = useState<RedisInstance[]>([]);
+  const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStats | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
 
-    // Simulate API call
-    setTimeout(() => {
-      if (Math.random() > 0.8) {
-        setError('Failed to refresh dashboard data. Please try again.');
-      }
-      setIsRefreshing(false);
-    }, 2000);
-  };
+  const loadDashboardData = async () => {
+    try {
+      setError('');
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'error': return 'text-redis-red';
-      case 'warning': return 'text-redis-yellow-500';
-      case 'info': return 'text-redis-blue-03';
-      default: return 'text-redis-dusk-04';
+      // Load all data in parallel
+      const [tasksData, instancesData, knowledgeData, healthData] = await Promise.all([
+        sreAgentApi.listTasks(undefined, undefined, 10), // Get recent 10 tasks
+        sreAgentApi.listInstances(),
+        fetch('/api/v1/knowledge/stats').then(res => res.json()),
+        fetch('/health').then(res => res.json()),
+      ]);
+
+      // Convert tasks to conversation threads
+      const conversationThreads: ConversationThread[] = tasksData
+        .filter(task => task.status !== 'cancelled')
+        .map(task => ({
+          id: task.thread_id,
+          name: task.metadata.subject || 'Untitled Conversation',
+          subject: task.metadata.subject || 'Untitled Conversation',
+          lastMessage: task.updates.length > 0 ? task.updates[0].message : 'No updates',
+          timestamp: task.metadata.updated_at,
+          messageCount: task.updates.length,
+          status: task.status,
+        }));
+
+      setConversations(conversationThreads);
+      setInstances(instancesData);
+      setKnowledgeStats(knowledgeData);
+      setSystemHealth(healthData);
+
+    } catch (err) {
+      console.error('Failed to load dashboard data:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const handleRefresh = async () => {
+    setIsLoading(true);
+    await loadDashboardData();
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'done':
+      case 'completed':
+      case 'healthy':
+      case 'available':
+        return 'text-redis-green';
+      case 'failed':
+      case 'error':
+      case 'unhealthy':
+        return 'text-redis-red';
+      case 'in_progress':
+      case 'queued':
+      case 'running':
+        return 'text-redis-yellow-500';
+      default:
+        return 'text-redis-dusk-04';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'done':
+      case 'completed':
+      case 'healthy':
+      case 'available':
+        return '✅';
+      case 'failed':
+      case 'error':
+      case 'unhealthy':
+        return '❌';
+      case 'in_progress':
+      case 'queued':
+      case 'running':
+        return '⏳';
+      default:
+        return '⚪';
+    }
+  };
+
+  const formatTimestamp = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Loader size="lg" />
+          <p className="text-redis-sm text-redis-dusk-04 mt-2">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-redis-xl font-bold text-redis-dusk-01">Redis SRE Dashboard</h1>
+          <h1 className="text-redis-xl font-bold text-redis-dusk-01">SRE Dashboard</h1>
           <p className="text-redis-sm text-redis-dusk-04 mt-1">
-            Monitor your Redis infrastructure and respond to incidents.
+            Monitor triage tasks, knowledge base, and Redis instances.
           </p>
         </div>
         <div className="flex gap-2">
@@ -65,12 +183,12 @@ const Dashboard = () => {
             <Button
               variant="outline"
               onClick={handleRefresh}
-              isLoading={isRefreshing}
+              isLoading={isLoading}
             >
-              {isRefreshing ? <Loader size="sm" /> : 'Refresh'}
+              {isLoading ? <Loader size="sm" /> : 'Refresh'}
             </Button>
           </Tooltip>
-          <Button variant="primary" onClick={() => window.location.href = '/triage'}>
+          <Button variant="primary" onClick={() => navigate('/triage')}>
             Start Triage
           </Button>
         </div>
@@ -84,116 +202,260 @@ const Dashboard = () => {
         />
       )}
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {redisStats.map((stat, index) => (
-          <Card key={index} className="hover:shadow-lg transition-shadow">
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-redis-xs text-redis-dusk-04 font-medium">
-                    {stat.label}
-                  </p>
-                  <p className="text-redis-lg font-bold text-redis-dusk-01 mt-1">
-                    {stat.value}
-                  </p>
-                </div>
-                <div className={`text-redis-xs font-medium ${
-                  stat.positive ? 'text-redis-green' : 'text-redis-red'
+      {/* Overview Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Agent Status */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-redis-sm text-redis-dusk-04">SRE Agent</p>
+                <p className={`text-redis-2xl font-bold ${
+                  systemHealth?.components?.workers === 'available' ? 'text-redis-green' : 'text-redis-red'
                 }`}>
-                  {stat.change}
-                </div>
+                  {systemHealth?.components?.workers === 'available' ? '✅ Online' : '❌ Offline'}
+                </p>
               </div>
-            </CardContent>
-          </Card>
-        ))}
+              <div className="text-redis-xs text-redis-dusk-04">
+                {systemHealth?.timestamp ? formatTimestamp(systemHealth.timestamp) : 'N/A'}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Redis Instances */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-redis-sm text-redis-dusk-04">Redis Instances</p>
+                <p className="text-redis-2xl font-bold text-redis-dusk-01">
+                  {instances.length}
+                </p>
+              </div>
+              <div className="text-redis-xs text-redis-dusk-04">
+                {instances.length > 0 ? 'configured' : 'none'}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Knowledge Base */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-redis-sm text-redis-dusk-04">Knowledge Base</p>
+                <p className="text-redis-2xl font-bold text-redis-dusk-01">
+                  {knowledgeStats?.total_documents || 0}
+                </p>
+              </div>
+              <div className="text-redis-xs text-redis-dusk-04">
+                documents
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Alerts */}
-        <Card>
+      {/* Recent Triage - Full Width */}
+      <Card>
           <CardHeader>
-            <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Recent Alerts</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Recent Triage</h3>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => navigate('/triage')}>
+                  View All
+                </Button>
+                <Button variant="primary" size="sm" onClick={() => navigate('/triage')}>
+                  Triage Now
+                </Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {recentAlerts.map((alert) => (
-                <div key={alert.id} className="flex items-center justify-between p-3 rounded-redis-sm bg-redis-dusk-09">
-                  <div className="flex items-center gap-3">
-                    <div className={`h-2 w-2 rounded-full ${
-                      alert.severity === 'error' ? 'bg-redis-red' :
-                      alert.severity === 'warning' ? 'bg-redis-yellow-500' :
-                      'bg-redis-blue-03'
-                    }`} />
-                    <div>
-                      <p className="text-redis-sm font-medium text-redis-dusk-01">
-                        {alert.message}
-                      </p>
-                      <p className={`text-redis-xs ${getSeverityColor(alert.severity)}`}>
-                        {alert.severity.toUpperCase()}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-redis-xs text-redis-dusk-04">
-                    {alert.time}
-                  </span>
+              {conversations.length === 0 ? (
+                <div className="text-center py-6 text-redis-dusk-04">
+                  <div className="text-lg mb-2">💬</div>
+                  <div className="text-sm mb-3">No recent conversations</div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate('/triage')}
+                  >
+                    Start First Triage
+                  </Button>
                 </div>
-              ))}
+              ) : (
+                conversations.slice(0, 3).map((conversation) => (
+                  <div
+                    key={conversation.id}
+                    className="flex items-center justify-between p-3 rounded-redis-sm bg-redis-dusk-09 hover:bg-redis-dusk-08 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/triage?thread=${conversation.id}`)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`h-2 w-2 rounded-full ${
+                        conversation.status === 'done' ? 'bg-redis-green' :
+                        conversation.status === 'failed' ? 'bg-redis-red' :
+                        'bg-redis-yellow-500'
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-redis-sm font-medium text-redis-dusk-01 truncate">
+                          {conversation.name}
+                        </p>
+                        <p className="text-redis-xs text-redis-dusk-04 truncate">
+                          {conversation.lastMessage}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-redis-xs text-redis-dusk-04">
+                      {formatTimestamp(conversation.timestamp)}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Quick Actions */}
+      {/* Bottom Section - Knowledge and Instances */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Knowledge Highlights */}
         <Card>
           <CardHeader>
-            <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Quick Actions</h3>
+            <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Knowledge Highlights</h3>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                variant="outline"
-                className="h-20 flex flex-col items-center gap-2"
-                onClick={() => window.location.href = '/triage'}
-              >
-                <svg className="h-6 w-6 text-redis-blue-03" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
-                </svg>
-                <span className="text-redis-xs">Start Triage</span>
-              </Button>
-              <Button
-                variant="outline"
-                className="h-20 flex flex-col items-center gap-2"
-                onClick={() => alert('Monitoring functionality would go here')}
-              >
-                <svg className="h-6 w-6 text-redis-green" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
-                </svg>
-                <span className="text-redis-xs">Monitoring</span>
-              </Button>
-              <Button
-                variant="outline"
-                className="h-20 flex flex-col items-center gap-2"
-                onClick={() => alert('Backup functionality would go here')}
-              >
-                <svg className="h-6 w-6 text-redis-yellow-500" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                </svg>
-                <span className="text-redis-xs">Backup</span>
-              </Button>
-              <Button
-                variant="outline"
-                className="h-20 flex flex-col items-center gap-2"
-                onClick={() => alert('Incidents functionality would go here')}
-              >
-                <svg className="h-6 w-6 text-redis-red" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M13,14H11V10H13M13,18H11V16H13M1,21H23L12,2L1,21Z"/>
-                </svg>
-                <span className="text-redis-xs">Incidents</span>
-              </Button>
+            <div className="space-y-4">
+              {knowledgeStats ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="text-center p-2 rounded bg-redis-dusk-09">
+                      <div className="text-redis-md font-bold text-redis-dusk-01">
+                        {knowledgeStats.total_documents}
+                      </div>
+                      <div className="text-redis-xs text-redis-dusk-04">Documents</div>
+                    </div>
+                    <div className="text-center p-2 rounded bg-redis-dusk-09">
+                      <div className="text-redis-md font-bold text-redis-dusk-01">
+                        {knowledgeStats.total_chunks || 0}
+                      </div>
+                      <div className="text-redis-xs text-redis-dusk-04">Chunks</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-redis-sm text-redis-dusk-04">Status</span>
+                    <span className={`text-redis-sm font-medium ${
+                      knowledgeStats.ingestion_status === 'idle' ? 'text-redis-green' :
+                      knowledgeStats.ingestion_status === 'running' ? 'text-redis-yellow-500' :
+                      'text-redis-red'
+                    }`}>
+                      {knowledgeStats.ingestion_status === 'idle' ? '✅ Ready' :
+                       knowledgeStats.ingestion_status === 'running' ? '⏳ Processing' :
+                       '❌ Error'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-redis-sm font-medium text-redis-dusk-01">Quick Search</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Search knowledge base..."
+                        className="flex-1 px-3 py-2 text-redis-sm border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const query = (e.target as HTMLInputElement).value.trim();
+                            if (query) {
+                              navigate(`/knowledge?search=${encodeURIComponent(query)}`);
+                            }
+                          }
+                        }}
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          const input = (e.target as HTMLElement).parentElement?.querySelector('input') as HTMLInputElement;
+                          const query = input?.value.trim();
+                          if (query) {
+                            navigate(`/knowledge?search=${encodeURIComponent(query)}`);
+                          } else {
+                            navigate('/knowledge');
+                          }
+                        }}
+                      >
+                        🔍
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-4 text-redis-dusk-04">
+                  <div className="text-lg mb-2">📚</div>
+                  <div className="text-sm">Loading knowledge base...</div>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
+
+        {/* Instances */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Instances</h3>
+              <Button variant="outline" size="sm" onClick={() => navigate('/settings?section=instances')}>
+                View All
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {instances.length === 0 ? (
+              <div className="text-center py-6 text-redis-dusk-04">
+                <div className="text-lg mb-2">🗄️</div>
+                <div className="text-sm mb-3">No instances configured</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate('/settings?section=instances')}
+                >
+                  Add Instance
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {instances.slice(0, 3).map((instance) => (
+                  <div key={instance.id} className="p-3 rounded-redis-sm bg-redis-dusk-09">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-redis-sm font-medium text-redis-dusk-01 truncate">
+                        {instance.name}
+                      </h4>
+                      <span className={`text-redis-xs px-2 py-1 rounded ${
+                        instance.connection_url ? 'bg-redis-green text-white' : 'bg-redis-dusk-06 text-redis-dusk-04'
+                      }`}>
+                        {instance.connection_url ? 'configured' : 'incomplete'}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-redis-xs text-redis-dusk-04 truncate">
+                        {instance.connection_url}
+                      </p>
+                      <p className="text-redis-xs text-redis-dusk-04">
+                        {instance.environment} • {instance.usage}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
+
+
     </div>
   );
 };

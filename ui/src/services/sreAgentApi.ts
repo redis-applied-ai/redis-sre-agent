@@ -53,13 +53,14 @@ export interface ThreadSummary {
 export interface RedisInstance {
   id: string;
   name: string;
-  host: string;
-  port: number;
+  connection_url: string;
   environment: string;
   usage: string;
   description: string;
   repo_url?: string;
   notes?: string;
+  monitoring_identifier?: string;
+  logging_identifier?: string;
   status?: string;
   version?: string;
   memory?: string;
@@ -71,24 +72,26 @@ export interface RedisInstance {
 
 export interface CreateInstanceRequest {
   name: string;
-  host: string;
-  port: number;
+  connection_url: string;
   environment: string;
   usage: string;
   description: string;
   repo_url?: string;
   notes?: string;
+  monitoring_identifier?: string;
+  logging_identifier?: string;
 }
 
 export interface UpdateInstanceRequest {
   name?: string;
-  host?: string;
-  port?: number;
+  connection_url?: string;
   environment?: string;
   usage?: string;
   description?: string;
   repo_url?: string;
   notes?: string;
+  monitoring_identifier?: string;
+  logging_identifier?: string;
   status?: string;
   version?: string;
   memory?: string;

@@ -30,11 +30,14 @@ const Tooltip = ({ content, children }: { content: string; children: React.React
 );
 
 // Use the API interface but with camelCase for UI consistency
-interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at'> {
+interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier'> {
+  connectionUrl: string;
   repoUrl?: string;
   lastChecked?: string;
   createdAt?: string;
   updatedAt?: string;
+  monitoringIdentifier?: string;
+  loggingIdentifier?: string;
 }
 
 // Add Instance Form Component
@@ -46,19 +49,20 @@ interface AddInstanceFormProps {
 
 const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormProps) => {
   // Check if the initial usage is a custom type (not in predefined list)
-  const predefinedUsageTypes = ['cache', 'analytics', 'session', 'queue'];
+  const predefinedUsageTypes = ['cache', 'analytics', 'session', 'queue', 'application_data'];
   const isCustomUsage = initialData?.usage && !predefinedUsageTypes.includes(initialData.usage);
 
   const [formData, setFormData] = useState({
     name: initialData?.name || '',
-    host: initialData?.host || '',
-    port: initialData?.port?.toString() || '6379',
+    connectionUrl: initialData?.connectionUrl || 'redis://localhost:6379',
     environment: initialData?.environment || 'development',
     usage: isCustomUsage ? 'custom' : (initialData?.usage || 'cache'),
     customUsage: isCustomUsage ? initialData?.usage || '' : '',
     description: initialData?.description || '',
     repoUrl: initialData?.repoUrl || '',
-    notes: initialData?.notes || ''
+    notes: initialData?.notes || '',
+    monitoringIdentifier: initialData?.monitoringIdentifier || '',
+    loggingIdentifier: initialData?.loggingIdentifier || ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -74,13 +78,14 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       const instance: RedisInstance = {
         id: initialData?.id || `redis-${formData.environment}-${Date.now()}`,
         name: formData.name,
-        host: formData.host,
-        port: parseInt(formData.port),
+        connectionUrl: formData.connectionUrl,
         environment: formData.environment,
         usage: finalUsage,
         description: formData.description,
         repoUrl: formData.repoUrl || undefined,
         notes: formData.notes || undefined,
+        monitoringIdentifier: formData.monitoringIdentifier || undefined,
+        loggingIdentifier: formData.loggingIdentifier || undefined,
         status: initialData?.status || 'unknown',
         version: initialData?.version,
         memory: initialData?.memory,
@@ -168,35 +173,21 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2">
-          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
-            Host *
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.host}
-            onChange={(e) => setFormData(prev => ({ ...prev, host: e.target.value }))}
-            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-            placeholder="e.g., localhost or redis.company.com"
-          />
-        </div>
-
-        <div>
-          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
-            Port *
-          </label>
-          <input
-            type="number"
-            required
-            min="1"
-            max="65535"
-            value={formData.port}
-            onChange={(e) => setFormData(prev => ({ ...prev, port: e.target.value }))}
-            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-          />
-        </div>
+      <div>
+        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          Connection URL *
+        </label>
+        <input
+          type="text"
+          required
+          value={formData.connectionUrl}
+          onChange={(e) => setFormData(prev => ({ ...prev, connectionUrl: e.target.value }))}
+          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          placeholder="redis://localhost:6379 or redis://user:pass@host:port/db"
+        />
+        <p className="text-redis-xs text-redis-dusk-04 mt-1">
+          Redis connection URL including protocol, host, port, and optional authentication
+        </p>
       </div>
 
       <div>
@@ -257,6 +248,40 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         />
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+            Monitoring Identifier (optional)
+          </label>
+          <input
+            type="text"
+            value={formData.monitoringIdentifier}
+            onChange={(e) => setFormData(prev => ({ ...prev, monitoringIdentifier: e.target.value }))}
+            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            placeholder="e.g., prod-cache-01"
+          />
+          <p className="text-redis-xs text-redis-dusk-04 mt-1">
+            Name used in monitoring systems. If empty, Instance Name will be used.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+            Logging Identifier (optional)
+          </label>
+          <input
+            type="text"
+            value={formData.loggingIdentifier}
+            onChange={(e) => setFormData(prev => ({ ...prev, loggingIdentifier: e.target.value }))}
+            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            placeholder="e.g., redis-prod-cache"
+          />
+          <p className="text-redis-xs text-redis-dusk-04 mt-1">
+            Name used in logging systems. If empty, Instance Name will be used.
+          </p>
+        </div>
+      </div>
+
       <div>
         <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
           Notes (optional)
@@ -280,7 +305,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
             size="sm"
             onClick={testConnection}
             isLoading={testingConnection}
-            disabled={!formData.host || !formData.port}
+            disabled={!formData.connectionUrl}
           >
             {testingConnection ? 'Testing...' : 'Test Connection'}
           </Button>
@@ -360,10 +385,13 @@ const Instances = () => {
       // Convert API format to UI format
       const uiInstances: RedisInstance[] = apiInstances.map(instance => ({
         ...instance,
+        connectionUrl: instance.connection_url,
         repoUrl: instance.repo_url,
         lastChecked: instance.last_checked,
         createdAt: instance.created_at,
         updatedAt: instance.updated_at,
+        monitoringIdentifier: instance.monitoring_identifier,
+        loggingIdentifier: instance.logging_identifier,
       }));
 
       setInstances(uiInstances);
@@ -492,9 +520,10 @@ const Instances = () => {
                   <option value="analytics">Analytics</option>
                   <option value="session">Session Store</option>
                   <option value="queue">Message Queue</option>
+                  <option value="application_data">Application Data</option>
                   {/* Add dynamic options for custom usage types */}
                   {Array.from(new Set(instances.map(i => i.usage)))
-                    .filter(usage => !['cache', 'analytics', 'session', 'queue'].includes(usage))
+                    .filter(usage => !['cache', 'analytics', 'session', 'queue', 'application_data'].includes(usage))
                     .map(usage => (
                       <option key={usage} value={usage}>
                         {usage.charAt(0).toUpperCase() + usage.slice(1)}
@@ -579,13 +608,15 @@ const Instances = () => {
                         </p>
                         <div className="grid grid-cols-2 gap-4 mb-3">
                           <div className="text-redis-xs text-redis-dusk-05">
-                            <div><strong>Host:</strong> {instance.host}:{instance.port}</div>
+                            <div><strong>Connection:</strong> {instance.connectionUrl}</div>
                             {instance.version && <div><strong>Version:</strong> {instance.version}</div>}
                             {instance.memory && <div><strong>Memory:</strong> {instance.memory}</div>}
                           </div>
                           <div className="text-redis-xs text-redis-dusk-05">
                             {instance.connections && <div><strong>Connections:</strong> {instance.connections}</div>}
                             {instance.lastChecked && <div><strong>Last Checked:</strong> {formatDate(instance.lastChecked)}</div>}
+                            {instance.monitoringIdentifier && <div><strong>Monitoring ID:</strong> {instance.monitoringIdentifier}</div>}
+                            {instance.loggingIdentifier && <div><strong>Logging ID:</strong> {instance.loggingIdentifier}</div>}
                           </div>
                         </div>
                         {instance.repoUrl && (
@@ -655,26 +686,28 @@ const Instances = () => {
                     // Update existing instance via API
                     const updateRequest = {
                       name: instance.name,
-                      host: instance.host,
-                      port: instance.port,
+                      connection_url: instance.connectionUrl,
                       environment: instance.environment,
                       usage: instance.usage,
                       description: instance.description,
                       repo_url: instance.repoUrl,
                       notes: instance.notes,
+                      monitoring_identifier: instance.monitoringIdentifier,
+                      logging_identifier: instance.loggingIdentifier,
                     };
                     await sreAgentApi.updateInstance(instance.id, updateRequest);
                   } else {
                     // Create new instance via API
                     const createRequest: CreateInstanceRequest = {
                       name: instance.name,
-                      host: instance.host,
-                      port: instance.port,
+                      connection_url: instance.connectionUrl,
                       environment: instance.environment,
                       usage: instance.usage,
                       description: instance.description,
                       repo_url: instance.repoUrl,
                       notes: instance.notes,
+                      monitoring_identifier: instance.monitoringIdentifier,
+                      logging_identifier: instance.loggingIdentifier,
                     };
                     await sreAgentApi.createInstance(createRequest);
                   }

@@ -7,14 +7,14 @@ and register any tool that implements these protocols.
 
 from abc import abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Protocol, Union
 from enum import Enum
+from typing import Any, Dict, List, Optional, Protocol, Union
 
 
 class ToolCapability(Enum):
     """Capabilities that tools can provide."""
     METRICS = "metrics"
-    LOGS = "logs" 
+    LOGS = "logs"
     TICKETS = "tickets"
     REPOS = "repos"
     TRACES = "traces"
@@ -22,7 +22,7 @@ class ToolCapability(Enum):
 
 class MetricValue:
     """Represents a metric value with timestamp."""
-    
+
     def __init__(self, value: Union[int, float], timestamp: Optional[datetime] = None, labels: Optional[Dict[str, str]] = None):
         self.value = value
         self.timestamp = timestamp or datetime.now()
@@ -31,7 +31,7 @@ class MetricValue:
 
 class MetricDefinition:
     """Defines a metric with metadata."""
-    
+
     def __init__(self, name: str, description: str, unit: str, metric_type: str = "gauge"):
         self.name = name
         self.description = description
@@ -41,7 +41,7 @@ class MetricDefinition:
 
 class TimeRange:
     """Represents a time range for queries."""
-    
+
     def __init__(self, start: datetime, end: datetime):
         self.start = start
         self.end = end
@@ -56,19 +56,19 @@ class MetricsProvider(Protocol):
     - Prometheus (full time-series support)
     - Custom monitoring systems
     """
-    
+
     @property
     @abstractmethod
     def provider_name(self) -> str:
         """Human-readable name of the metrics provider."""
         ...
-    
+
     @property
     @abstractmethod
     def supports_time_queries(self) -> bool:
         """Whether this provider supports time-bound queries."""
         ...
-    
+
     @abstractmethod
     async def list_metrics(self) -> List[MetricDefinition]:
         """List all available metrics with descriptions.
@@ -77,7 +77,7 @@ class MetricsProvider(Protocol):
             List of metric definitions with names, descriptions, and units
         """
         ...
-    
+
     @abstractmethod
     async def get_current_value(self, metric_name: str, labels: Optional[Dict[str, str]] = None) -> Optional[MetricValue]:
         """Get the current value of a metric.
@@ -90,11 +90,11 @@ class MetricsProvider(Protocol):
             Current metric value or None if not found
         """
         ...
-    
+
     @abstractmethod
     async def query_time_range(
-        self, 
-        metric_name: str, 
+        self,
+        metric_name: str,
         time_range: TimeRange,
         labels: Optional[Dict[str, str]] = None,
         step: Optional[str] = None
@@ -114,7 +114,7 @@ class MetricsProvider(Protocol):
             NotImplementedError: If provider doesn't support time queries
         """
         ...
-    
+
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
         """Check if the metrics provider is healthy and accessible.
@@ -127,7 +127,7 @@ class MetricsProvider(Protocol):
 
 class LogEntry:
     """Represents a log entry."""
-    
+
     def __init__(self, timestamp: datetime, level: str, message: str, source: str, labels: Optional[Dict[str, str]] = None):
         self.timestamp = timestamp
         self.level = level
@@ -146,13 +146,13 @@ class LogsProvider(Protocol):
     - Local file systems
     - Kubernetes logs
     """
-    
+
     @property
     @abstractmethod
     def provider_name(self) -> str:
         """Human-readable name of the logs provider."""
         ...
-    
+
     @abstractmethod
     async def search_logs(
         self,
@@ -175,7 +175,7 @@ class LogsProvider(Protocol):
             List of matching log entries
         """
         ...
-    
+
     @abstractmethod
     async def get_log_groups(self) -> List[str]:
         """Get available log groups/streams.
@@ -184,7 +184,7 @@ class LogsProvider(Protocol):
             List of available log group names
         """
         ...
-    
+
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
         """Check if the logs provider is healthy and accessible."""
@@ -193,7 +193,7 @@ class LogsProvider(Protocol):
 
 class Ticket:
     """Represents a ticket/issue."""
-    
+
     def __init__(self, id: str, title: str, description: str, status: str, assignee: Optional[str] = None, labels: Optional[List[str]] = None):
         self.id = id
         self.title = title
@@ -213,13 +213,13 @@ class TicketsProvider(Protocol):
     - ServiceNow
     - PagerDuty incidents
     """
-    
+
     @property
     @abstractmethod
     def provider_name(self) -> str:
         """Human-readable name of the tickets provider."""
         ...
-    
+
     @abstractmethod
     async def create_ticket(
         self,
@@ -242,7 +242,7 @@ class TicketsProvider(Protocol):
             Created ticket information
         """
         ...
-    
+
     @abstractmethod
     async def update_ticket(self, ticket_id: str, **updates) -> Ticket:
         """Update an existing ticket.
@@ -255,7 +255,7 @@ class TicketsProvider(Protocol):
             Updated ticket information
         """
         ...
-    
+
     @abstractmethod
     async def search_tickets(
         self,
@@ -278,7 +278,7 @@ class TicketsProvider(Protocol):
             List of matching tickets
         """
         ...
-    
+
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
         """Check if the tickets provider is healthy and accessible."""
@@ -287,7 +287,7 @@ class TicketsProvider(Protocol):
 
 class Repository:
     """Represents a code repository."""
-    
+
     def __init__(self, name: str, url: str, default_branch: str = "main", languages: Optional[List[str]] = None):
         self.name = name
         self.url = url
@@ -304,13 +304,13 @@ class ReposProvider(Protocol):
     - Bitbucket
     - Azure DevOps
     """
-    
+
     @property
     @abstractmethod
     def provider_name(self) -> str:
         """Human-readable name of the repository provider."""
         ...
-    
+
     @abstractmethod
     async def list_repositories(self, organization: Optional[str] = None) -> List[Repository]:
         """List available repositories.
@@ -322,7 +322,7 @@ class ReposProvider(Protocol):
             List of repositories
         """
         ...
-    
+
     @abstractmethod
     async def search_code(
         self,
@@ -343,7 +343,7 @@ class ReposProvider(Protocol):
             List of code search results with file paths and snippets
         """
         ...
-    
+
     @abstractmethod
     async def get_file_content(self, repository: str, file_path: str, branch: str = "main") -> str:
         """Get content of a specific file.
@@ -357,7 +357,7 @@ class ReposProvider(Protocol):
             File content as string
         """
         ...
-    
+
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
         """Check if the repository provider is healthy and accessible."""

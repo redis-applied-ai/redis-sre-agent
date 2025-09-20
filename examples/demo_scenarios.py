@@ -22,15 +22,11 @@ import asyncio
 import logging
 import os
 import random
-import subprocess
-import sys
 import time
 import warnings
-import webbrowser
 from typing import Optional
 
 import redis
-import requests
 
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.tools.redis_diagnostics import get_redis_diagnostics
@@ -130,7 +126,7 @@ class RedisSREDemo:
         print("=" * 80)
         print(f"📊 Scenario: {scenario_description}")
         print(f"🔗 Redis Instance: localhost:{self.redis_port}")
-        print(f"🌐 Web UI: http://localhost:8000")
+        print("🌐 Web UI: http://localhost:8000")
         print()
         print("The Redis instance has been configured with the scenario data.")
         print("You can now:")

@@ -78,13 +78,15 @@ GRAFANA_API_KEY=your-grafana-key
 
 ## SRE Tools
 
-The agent has access to these SRE-specific tools:
+The agent uses a **Protocol-based tool system** that provides extensible interfaces for different SRE capabilities:
 
-- **query_metrics**: Get metrics from Prometheus/Grafana
-- **analyze_logs**: Pattern analysis and error detection  
-- **check_health**: System and service health checks
-- **search_runbooks**: Procedure and documentation lookup
-- **basic_remediation**: Safe automated fixes (restart services, clear caches)
+- **query_instance_metrics**: Get metrics from Redis instances or monitoring systems (Redis CLI, Prometheus)
+- **search_logs**: Pattern analysis and error detection across log providers (CloudWatch, etc.)
+- **create_incident_ticket**: Create tickets in incident management systems (GitHub Issues, Jira)
+- **search_related_repositories**: Search code across repositories (GitHub, GitLab)
+- **list_available_metrics**: Discover available metrics across all providers
+
+For detailed information on implementing custom providers and using the protocol system, see [Protocol-Based Tools Documentation](docs/protocol-tools.md).
 
 ## Testing
 
@@ -135,14 +137,34 @@ uv run pytest tests/integration/test_agent_behavior.py -v -m agent_behavior
 ```
 
 ### Development
+
+#### Backend Development
+
 ```bash
 # Code formatting
 uv run ruff format .
 uv run ruff check .
 
-# Type checking  
+# Type checking
 uv run mypy redis_sre_agent/
 ```
+
+#### Frontend Development
+
+The UI is a React application located in the `ui/` directory with an integrated UI kit:
+
+```bash
+# Install dependencies
+cd ui && npm install
+
+# Development server
+npm run dev
+
+# Production build
+npm run build
+```
+
+The UI kit components are included in `ui/ui-kit/` and provide reusable React components with consistent styling.
 
 ## Architecture Details
 

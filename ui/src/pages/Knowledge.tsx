@@ -71,6 +71,17 @@ const Knowledge = () => {
   const [ingestionText, setIngestionText] = useState('');
 
   useEffect(() => {
+    // Check for search query in URL parameters
+    const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const searchParam = urlParams.get('search');
+    if (searchParam) {
+      setSearchQuery(searchParam);
+      // Trigger search after data loads
+      setTimeout(() => {
+        handleSearch(searchParam);
+      }, 500);
+    }
+
     // Add a small delay to ensure the dev server proxy is ready
     const timer = setTimeout(() => {
       loadKnowledgeData();
@@ -161,8 +172,9 @@ const Knowledge = () => {
     }
   };
 
-  const searchKnowledgeBase = async () => {
-    if (!searchQuery.trim()) {
+  const searchKnowledgeBase = async (query?: string) => {
+    const queryToUse = query || searchQuery;
+    if (!queryToUse.trim()) {
       setSearchResults([]);
       return;
     }
@@ -172,7 +184,7 @@ const Knowledge = () => {
       setError(null);
 
       const params = new URLSearchParams({
-        query: searchQuery,
+        query: queryToUse,
         limit: '10'
       });
 
@@ -198,6 +210,11 @@ const Knowledge = () => {
     } finally {
       setIsSearching(false);
     }
+  };
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    searchKnowledgeBase(query);
   };
 
   // Trigger search when query changes

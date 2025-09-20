@@ -9,6 +9,7 @@ import {
 import Dashboard from "./pages/Dashboard";
 import Triage from "./pages/Triage";
 import Knowledge from "./pages/Knowledge";
+import Schedules from "./pages/Schedules";
 import Settings from "./pages/Settings";
 import { useApp } from "./hooks/useApp";
 
@@ -47,6 +48,7 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/triage" element={<Triage />} />
         <Route path="/knowledge" element={<Knowledge />} />
+        <Route path="/schedules" element={<Schedules />} />
         <Route path="/settings" element={<Settings />} />
         {/* Redirect instances to settings with instances section */}
         <Route path="/instances" element={<Navigate to="/settings?section=instances" replace />} />

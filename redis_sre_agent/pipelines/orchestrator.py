@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from .ingestion.processor import IngestionPipeline
 from .scraper.base import ArtifactStorage
 from .scraper.redis_docs import RedisDocsScraper, RedisRunbookScraper
+from .scraper.redis_kb import RedisKBScraper
 from .scraper.runbook_generator import RunbookGenerator
 
 logger = logging.getLogger(__name__)
@@ -17,10 +18,11 @@ class PipelineOrchestrator:
     """Orchestrates the complete data pipeline from scraping to ingestion."""
 
     def __init__(
-        self, artifacts_path: str = "./artifacts", config: Optional[Dict[str, Any]] = None
+        self, artifacts_path: str = "./artifacts", config: Optional[Dict[str, Any]] = None, knowledge_settings=None
     ):
         self.artifacts_path = Path(artifacts_path)
         self.config = config or {}
+        self.knowledge_settings = knowledge_settings
 
         # Initialize storage
         self.storage = ArtifactStorage(self.artifacts_path)
@@ -31,13 +33,14 @@ class PipelineOrchestrator:
             "redis_runbooks": RedisRunbookScraper(
                 self.storage, self.config.get("redis_runbooks", {})
             ),
+            "redis_kb": RedisKBScraper(self.storage, self.config.get("redis_kb", {})),
             "runbook_generator": RunbookGenerator(
                 self.storage, self.config.get("runbook_generator", {})
             ),
         }
 
-        # Initialize ingestion pipeline
-        self.ingestion = IngestionPipeline(self.storage, self.config.get("ingestion", {}))
+        # Initialize ingestion pipeline with knowledge settings
+        self.ingestion = IngestionPipeline(self.storage, self.config.get("ingestion", {}), knowledge_settings)
 
     async def run_scraping_pipeline(self, scrapers: Optional[List[str]] = None) -> Dict[str, Any]:
         """Run the complete scraping pipeline."""

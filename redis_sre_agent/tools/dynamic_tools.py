@@ -33,26 +33,26 @@ async def query_instance_metrics(
     """
     try:
         registry = get_global_registry()
-        
+
         # Get metrics providers
         if provider_name:
             provider_instance = registry.get_provider(provider_name)
             if not provider_instance:
                 return {"error": f"Provider '{provider_name}' not found"}
-            
+
             metrics_provider = await provider_instance.get_metrics_provider()
             if not metrics_provider:
                 return {"error": f"Provider '{provider_name}' doesn't support metrics"}
-            
+
             providers = [metrics_provider]
         else:
             providers = await registry.get_metrics_providers()
-        
+
         if not providers:
             return {"error": "No metrics providers available"}
-        
+
         results = []
-        
+
         for provider in providers:
             try:
                 if time_range_hours and provider.supports_time_queries:
@@ -60,9 +60,9 @@ async def query_instance_metrics(
                     end_time = datetime.now()
                     start_time = end_time - timedelta(hours=time_range_hours)
                     time_range = TimeRange(start_time, end_time)
-                    
+
                     values = await provider.query_time_range(metric_name, time_range, labels)
-                    
+
                     result = {
                         "provider": provider.provider_name,
                         "metric_name": metric_name,
@@ -80,7 +80,7 @@ async def query_instance_metrics(
                 else:
                     # Query current value
                     value = await provider.get_current_value(metric_name, labels)
-                    
+
                     if value:
                         result = {
                             "provider": provider.provider_name,
@@ -95,22 +95,22 @@ async def query_instance_metrics(
                             "metric_name": metric_name,
                             "error": "Metric not found"
                         }
-                
+
                 results.append(result)
-                
+
             except Exception as e:
                 results.append({
                     "provider": provider.provider_name,
                     "metric_name": metric_name,
                     "error": str(e)
                 })
-        
+
         return {
             "metric_name": metric_name,
             "providers_queried": len(results),
             "results": results
         }
-        
+
     except Exception as e:
         logger.error(f"Error querying metrics: {e}")
         return {"error": str(e)}
@@ -127,30 +127,30 @@ async def list_available_metrics(provider_name: Optional[str] = None) -> Dict[st
     """
     try:
         registry = get_global_registry()
-        
+
         # Get metrics providers
         if provider_name:
             provider_instance = registry.get_provider(provider_name)
             if not provider_instance:
                 return {"error": f"Provider '{provider_name}' not found"}
-            
+
             metrics_provider = await provider_instance.get_metrics_provider()
             if not metrics_provider:
                 return {"error": f"Provider '{provider_name}' doesn't support metrics"}
-            
+
             providers = [metrics_provider]
         else:
             providers = await registry.get_metrics_providers()
-        
+
         if not providers:
             return {"error": "No metrics providers available"}
-        
+
         results = []
-        
+
         for provider in providers:
             try:
                 metrics = await provider.list_metrics()
-                
+
                 provider_metrics = {
                     "provider": provider.provider_name,
                     "supports_time_queries": provider.supports_time_queries,
@@ -165,20 +165,20 @@ async def list_available_metrics(provider_name: Optional[str] = None) -> Dict[st
                         for metric in metrics
                     ]
                 }
-                
+
                 results.append(provider_metrics)
-                
+
             except Exception as e:
                 results.append({
                     "provider": provider.provider_name,
                     "error": str(e)
                 })
-        
+
         return {
             "providers_queried": len(results),
             "results": results
         }
-        
+
     except Exception as e:
         logger.error(f"Error listing metrics: {e}")
         return {"error": str(e)}
@@ -207,31 +207,31 @@ async def search_logs(
     """
     try:
         registry = get_global_registry()
-        
+
         # Get logs providers
         if provider_name:
             provider_instance = registry.get_provider(provider_name)
             if not provider_instance:
                 return {"error": f"Provider '{provider_name}' not found"}
-            
+
             logs_provider = await provider_instance.get_logs_provider()
             if not logs_provider:
                 return {"error": f"Provider '{provider_name}' doesn't support logs"}
-            
+
             providers = [logs_provider]
         else:
             providers = await registry.get_logs_providers()
-        
+
         if not providers:
             return {"error": "No logs providers available"}
-        
+
         # Create time range
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=time_range_hours)
         time_range = TimeRange(start_time, end_time)
-        
+
         results = []
-        
+
         for provider in providers:
             try:
                 log_entries = await provider.search_logs(
@@ -241,7 +241,7 @@ async def search_logs(
                     level_filter=level_filter,
                     limit=limit
                 )
-                
+
                 result = {
                     "provider": provider.provider_name,
                     "query": query,
@@ -258,22 +258,22 @@ async def search_logs(
                         for entry in log_entries
                     ]
                 }
-                
+
                 results.append(result)
-                
+
             except Exception as e:
                 results.append({
                     "provider": provider.provider_name,
                     "query": query,
                     "error": str(e)
                 })
-        
+
         return {
             "query": query,
             "providers_queried": len(results),
             "results": results
         }
-        
+
     except Exception as e:
         logger.error(f"Error searching logs: {e}")
         return {"error": str(e)}
@@ -302,27 +302,27 @@ async def create_incident_ticket(
     """
     try:
         registry = get_global_registry()
-        
+
         # Get tickets providers
         if provider_name:
             provider_instance = registry.get_provider(provider_name)
             if not provider_instance:
                 return {"error": f"Provider '{provider_name}' not found"}
-            
+
             tickets_provider = await provider_instance.get_tickets_provider()
             if not tickets_provider:
                 return {"error": f"Provider '{provider_name}' doesn't support tickets"}
-            
+
             providers = [tickets_provider]
         else:
             providers = await registry.get_tickets_providers()
-        
+
         if not providers:
             return {"error": "No tickets providers available"}
-        
+
         # Use the first available provider for ticket creation
         provider = providers[0]
-        
+
         try:
             ticket = await provider.create_ticket(
                 title=title,
@@ -331,7 +331,7 @@ async def create_incident_ticket(
                 assignee=assignee,
                 priority=priority
             )
-            
+
             return {
                 "provider": provider.provider_name,
                 "ticket_created": True,
@@ -344,14 +344,14 @@ async def create_incident_ticket(
                     "labels": ticket.labels
                 }
             }
-            
+
         except Exception as e:
             return {
                 "provider": provider.provider_name,
                 "ticket_created": False,
                 "error": str(e)
             }
-        
+
     except Exception as e:
         logger.error(f"Error creating ticket: {e}")
         return {"error": str(e)}
@@ -376,26 +376,26 @@ async def search_related_repositories(
     """
     try:
         registry = get_global_registry()
-        
+
         # Get repos providers
         if provider_name:
             provider_instance = registry.get_provider(provider_name)
             if not provider_instance:
                 return {"error": f"Provider '{provider_name}' not found"}
-            
+
             repos_provider = await provider_instance.get_repos_provider()
             if not repos_provider:
                 return {"error": f"Provider '{provider_name}' doesn't support repositories"}
-            
+
             providers = [repos_provider]
         else:
             providers = await registry.get_repos_providers()
-        
+
         if not providers:
             return {"error": "No repository providers available"}
-        
+
         results = []
-        
+
         for provider in providers:
             try:
                 # Search code across repositories
@@ -404,29 +404,29 @@ async def search_related_repositories(
                     file_extensions=file_extensions,
                     limit=limit
                 )
-                
+
                 result = {
                     "provider": provider.provider_name,
                     "query": query,
                     "code_results_found": len(code_results),
                     "code_results": code_results
                 }
-                
+
                 results.append(result)
-                
+
             except Exception as e:
                 results.append({
                     "provider": provider.provider_name,
                     "query": query,
                     "error": str(e)
                 })
-        
+
         return {
             "query": query,
             "providers_queried": len(results),
             "results": results
         }
-        
+
     except Exception as e:
         logger.error(f"Error searching repositories: {e}")
         return {"error": str(e)}
