@@ -50,7 +50,7 @@ async def search_docker_logs(
     compose_project: Optional[str] = None
 ) -> Dict[str, Any]:
     """Search Docker container logs for specific patterns.
-    
+
     Args:
         query: Search query/pattern to look for in logs
         containers: List of container names to search (if None, searches all)
@@ -58,7 +58,7 @@ async def search_docker_logs(
         level_filter: Filter by log level (ERROR, WARN, INFO, etc.)
         limit: Maximum number of log entries to return
         compose_project: Docker Compose project name (auto-detected if None)
-        
+
     Returns:
         Dictionary containing search results and metadata
     """

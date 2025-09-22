@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def get_protocol_based_tools() -> List[Dict[str, Any]]:
     """Get tool definitions for the Protocol-based SRE tools.
-    
+
     Returns:
         List of tool definitions for LangGraph agent
     """
@@ -199,7 +199,7 @@ def get_protocol_based_tools() -> List[Dict[str, Any]]:
 
 async def get_provider_status() -> Dict[str, Any]:
     """Get status of all registered providers.
-    
+
     Returns:
         Provider status and health information
     """

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class GitHubReposProvider:
     """GitHub Repositories provider.
-    
+
     This provider connects to GitHub's REST API to access repository information,
     search code, and analyze repository contents for Redis usage patterns.
     """

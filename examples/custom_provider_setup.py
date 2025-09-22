@@ -149,7 +149,7 @@ async def demonstrate_tool_usage():
 
 class CustomMetricsProvider:
     """Example of a custom metrics provider implementation.
-    
+
     This shows how users can create their own providers that implement
     the MetricsProvider protocol.
     """

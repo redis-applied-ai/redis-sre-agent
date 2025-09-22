@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class RedisCLIMetricsProvider:
     """Redis CLI-based metrics provider.
-    
+
     This provider connects directly to Redis instances and extracts metrics
     from INFO commands. It only supports current values, not time-series queries.
     """

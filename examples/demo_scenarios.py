@@ -579,7 +579,7 @@ class RedisSREDemo:
             else:
                 # Get comprehensive diagnostics showing connection problems
                 print("   📊 Getting diagnostic data to show connection issues...")
-                diagnostics = await get_detailed_redis_diagnostics(self.redis_url)
+                await get_detailed_redis_diagnostics(self.redis_url)
 
                 # Run diagnostics and agent consultation with connection-focused query
                 await self._run_diagnostics_and_agent_query(

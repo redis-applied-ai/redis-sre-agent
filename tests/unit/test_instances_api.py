@@ -119,7 +119,7 @@ class TestInstancesAPI:
 
         # Create updated instance with new values
         from redis_sre_agent.api.instances import RedisInstance
-        updated_instance = RedisInstance(
+        RedisInstance(
             id=sample_instance.id,
             name=sample_instance.name,
             connection_url=sample_instance.connection_url,

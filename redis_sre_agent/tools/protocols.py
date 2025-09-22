@@ -49,7 +49,7 @@ class TimeRange:
 
 class MetricsProvider(Protocol):
     """Protocol for instance metrics providers.
-    
+
     Implementations can include:
     - Redis CLI (INFO commands, limited to current values)
     - Redis Cloud Management API (full time-series support)
@@ -72,7 +72,7 @@ class MetricsProvider(Protocol):
     @abstractmethod
     async def list_metrics(self) -> List[MetricDefinition]:
         """List all available metrics with descriptions.
-        
+
         Returns:
             List of metric definitions with names, descriptions, and units
         """
@@ -81,11 +81,11 @@ class MetricsProvider(Protocol):
     @abstractmethod
     async def get_current_value(self, metric_name: str, labels: Optional[Dict[str, str]] = None) -> Optional[MetricValue]:
         """Get the current value of a metric.
-        
+
         Args:
             metric_name: Name of the metric to query
             labels: Optional label filters
-            
+
         Returns:
             Current metric value or None if not found
         """
@@ -100,16 +100,16 @@ class MetricsProvider(Protocol):
         step: Optional[str] = None
     ) -> List[MetricValue]:
         """Query metric values over a time range.
-        
+
         Args:
             metric_name: Name of the metric to query
             time_range: Time range for the query
             labels: Optional label filters
             step: Optional step size (e.g., "1m", "5m")
-            
+
         Returns:
             List of metric values over time
-            
+
         Raises:
             NotImplementedError: If provider doesn't support time queries
         """
@@ -118,7 +118,7 @@ class MetricsProvider(Protocol):
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
         """Check if the metrics provider is healthy and accessible.
-        
+
         Returns:
             Health status information
         """
@@ -138,7 +138,7 @@ class LogEntry:
 
 class LogsProvider(Protocol):
     """Protocol for logs providers.
-    
+
     Implementations can include:
     - AWS CloudWatch Logs
     - Elasticsearch/OpenSearch
@@ -163,14 +163,14 @@ class LogsProvider(Protocol):
         limit: int = 100
     ) -> List[LogEntry]:
         """Search logs with filters.
-        
+
         Args:
             query: Search query (syntax depends on provider)
             time_range: Time range for the search
             log_groups: Optional list of log groups/streams to search
             level_filter: Optional log level filter (ERROR, WARN, INFO, etc.)
             limit: Maximum number of results
-            
+
         Returns:
             List of matching log entries
         """
@@ -179,7 +179,7 @@ class LogsProvider(Protocol):
     @abstractmethod
     async def get_log_groups(self) -> List[str]:
         """Get available log groups/streams.
-        
+
         Returns:
             List of available log group names
         """
@@ -205,7 +205,7 @@ class Ticket:
 
 class TicketsProvider(Protocol):
     """Protocol for tickets/issues providers.
-    
+
     Implementations can include:
     - GitHub Issues
     - Jira
@@ -230,14 +230,14 @@ class TicketsProvider(Protocol):
         priority: Optional[str] = None
     ) -> Ticket:
         """Create a new ticket.
-        
+
         Args:
             title: Ticket title
             description: Ticket description
             labels: Optional labels/tags
             assignee: Optional assignee
             priority: Optional priority level
-            
+
         Returns:
             Created ticket information
         """
@@ -246,11 +246,11 @@ class TicketsProvider(Protocol):
     @abstractmethod
     async def update_ticket(self, ticket_id: str, **updates) -> Ticket:
         """Update an existing ticket.
-        
+
         Args:
             ticket_id: ID of the ticket to update
             **updates: Fields to update (status, assignee, etc.)
-            
+
         Returns:
             Updated ticket information
         """
@@ -266,14 +266,14 @@ class TicketsProvider(Protocol):
         limit: int = 50
     ) -> List[Ticket]:
         """Search for tickets with filters.
-        
+
         Args:
             query: Text search query
             status: Status filter
             assignee: Assignee filter
             labels: Labels filter
             limit: Maximum number of results
-            
+
         Returns:
             List of matching tickets
         """
@@ -297,7 +297,7 @@ class Repository:
 
 class ReposProvider(Protocol):
     """Protocol for repository providers.
-    
+
     Implementations can include:
     - GitHub
     - GitLab
@@ -314,10 +314,10 @@ class ReposProvider(Protocol):
     @abstractmethod
     async def list_repositories(self, organization: Optional[str] = None) -> List[Repository]:
         """List available repositories.
-        
+
         Args:
             organization: Optional organization filter
-            
+
         Returns:
             List of repositories
         """
@@ -332,13 +332,13 @@ class ReposProvider(Protocol):
         limit: int = 50
     ) -> List[Dict[str, Any]]:
         """Search code across repositories.
-        
+
         Args:
             query: Code search query
             repositories: Optional list of repository names to search
             file_extensions: Optional file extension filters
             limit: Maximum number of results
-            
+
         Returns:
             List of code search results with file paths and snippets
         """
@@ -347,12 +347,12 @@ class ReposProvider(Protocol):
     @abstractmethod
     async def get_file_content(self, repository: str, file_path: str, branch: str = "main") -> str:
         """Get content of a specific file.
-        
+
         Args:
             repository: Repository name
             file_path: Path to the file
             branch: Branch name
-            
+
         Returns:
             File content as string
         """

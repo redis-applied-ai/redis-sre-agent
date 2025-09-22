@@ -119,7 +119,6 @@ class TestPipelineOrchestrator:
         orchestrator.scrapers["redis_docs"].scraped_documents = []
 
         # Mock other scrapers to succeed
-        success_result = {"documents_scraped": 2, "success": True}
         sample_docs = [
             ScrapedDocument(
                 title="Test Doc",

@@ -793,7 +793,7 @@ async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], pro
         await progress_callback("Running agent workflow", "agent_processing")
 
         # Run the agent workflow using the compiled app
-        thread_config = {"configurable": {"thread_id": agent_state["session_id"]}}
+        {"configurable": {"thread_id": agent_state["session_id"]}}
 
         # Pass thread context to the agent if available
         agent_context = thread_state.context if thread_state else None
@@ -819,12 +819,6 @@ async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], pro
         )
 
         # Create a mock final state for compatibility
-        final_state = {
-            "messages": [
-                {"role": "user", "content": latest_user_message},
-                {"role": "assistant", "content": response}
-            ]
-        }
 
         await progress_callback("Agent workflow completed", "agent_complete")
 

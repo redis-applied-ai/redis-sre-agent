@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class CloudWatchLogsProvider:
     """AWS CloudWatch Logs provider.
-    
+
     This provider connects to AWS CloudWatch Logs and can search across
     log groups with various filters and time ranges.
     """
@@ -194,7 +194,7 @@ class CloudWatchLogsProvider:
             client = self._get_client()
 
             # Try to list log groups as a health check
-            response = client.describe_log_groups(limit=1)
+            client.describe_log_groups(limit=1)
 
             return {
                 "status": "healthy",

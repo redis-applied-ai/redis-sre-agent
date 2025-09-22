@@ -267,15 +267,15 @@ class TestRedisKBScraper:
     def test_clean_content(self, scraper):
         """Test content cleaning functionality."""
         dirty_content = """
-        
+
         This is some content.
-        
-        
+
+
         With extra whitespace.
-        
-        
+
+
         And empty lines.
-        
+
         """
 
         cleaned = scraper._clean_content(dirty_content)

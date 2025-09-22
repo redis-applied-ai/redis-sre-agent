@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class XRayTracesProvider:
     """AWS X-Ray traces provider.
-    
+
     This provider connects to AWS X-Ray and can search traces, analyze
     service maps, and identify performance bottlenecks.
     """

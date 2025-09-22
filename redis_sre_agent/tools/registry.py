@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class SREToolRegistry:
     """Registry for SRE tool providers.
-    
+
     This registry allows dynamic registration and discovery of tool providers
     that implement the SRE protocols. The agent can query the registry to
     find available tools for specific capabilities.
@@ -61,10 +61,10 @@ class SREToolRegistry:
 
     def unregister_provider(self, name: str) -> bool:
         """Unregister an SRE tool provider.
-        
+
         Args:
             name: Name of the provider to unregister
-            
+
         Returns:
             True if provider was found and removed, False otherwise
         """
@@ -84,10 +84,10 @@ class SREToolRegistry:
 
     def get_provider(self, name: str) -> Optional[SREToolProvider]:
         """Get a specific provider by name.
-        
+
         Args:
             name: Name of the provider
-            
+
         Returns:
             Provider instance or None if not found
         """
@@ -95,7 +95,7 @@ class SREToolRegistry:
 
     def list_providers(self) -> List[str]:
         """List all registered provider names.
-        
+
         Returns:
             List of provider names
         """
@@ -125,7 +125,7 @@ class SREToolRegistry:
 
     async def get_metrics_providers(self) -> List[MetricsProvider]:
         """Get all available metrics providers.
-        
+
         Returns:
             List of metrics provider instances
         """
@@ -139,7 +139,7 @@ class SREToolRegistry:
 
     async def get_logs_providers(self) -> List[LogsProvider]:
         """Get all available logs providers.
-        
+
         Returns:
             List of logs provider instances
         """
@@ -153,7 +153,7 @@ class SREToolRegistry:
 
     async def get_tickets_providers(self) -> List[TicketsProvider]:
         """Get all available tickets providers.
-        
+
         Returns:
             List of tickets provider instances
         """
@@ -167,7 +167,7 @@ class SREToolRegistry:
 
     async def get_repos_providers(self) -> List[ReposProvider]:
         """Get all available repository providers.
-        
+
         Returns:
             List of repository provider instances
         """
@@ -181,7 +181,7 @@ class SREToolRegistry:
 
     async def get_traces_providers(self) -> List[TracesProvider]:
         """Get all available traces providers.
-        
+
         Returns:
             List of traces provider instances
         """
@@ -226,7 +226,7 @@ class SREToolRegistry:
 
     def get_registry_status(self) -> Dict[str, Any]:
         """Get overall registry status and statistics.
-        
+
         Returns:
             Registry status information
         """
@@ -252,7 +252,7 @@ _global_registry: Optional[SREToolRegistry] = None
 
 def get_global_registry() -> SREToolRegistry:
     """Get the global SRE tool registry instance.
-    
+
     Returns:
         Global registry instance
     """
@@ -264,7 +264,7 @@ def get_global_registry() -> SREToolRegistry:
 
 def register_provider(name: str, provider: SREToolProvider) -> None:
     """Register a provider with the global registry.
-    
+
     Args:
         name: Unique name for the provider
         provider: Provider instance
@@ -275,10 +275,10 @@ def register_provider(name: str, provider: SREToolProvider) -> None:
 
 def unregister_provider(name: str) -> bool:
     """Unregister a provider from the global registry.
-    
+
     Args:
         name: Name of the provider to unregister
-        
+
     Returns:
         True if provider was found and removed
     """
@@ -289,7 +289,7 @@ def unregister_provider(name: str) -> bool:
 # Auto-registration helper functions
 def auto_register_default_providers(config: Dict[str, Any]) -> None:
     """Auto-register default providers based on configuration.
-    
+
     Args:
         config: Configuration dictionary with provider settings
     """

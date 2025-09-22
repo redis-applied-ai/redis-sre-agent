@@ -74,12 +74,12 @@ class AgentRouter:
     ) -> AgentType:
         """
         Route a query to the appropriate agent.
-        
+
         Args:
             query: The user's query text
             context: Additional context including instance_id, priority, etc.
             user_preferences: User preferences for agent selection
-            
+
         Returns:
             AgentType indicating which agent should handle the query
         """
@@ -145,7 +145,7 @@ class AgentRouter:
     ) -> Dict[str, Any]:
         """
         Get detailed explanation of routing decision.
-        
+
         Returns:
             Dictionary with routing decision and explanation
         """
@@ -193,7 +193,7 @@ class AgentRouter:
     def suggest_alternative_agent(self, current_agent: AgentType, query: str) -> Optional[Dict[str, str]]:
         """
         Suggest alternative agent if the current one might not be optimal.
-        
+
         Returns:
             Dictionary with suggestion or None if current agent is appropriate
         """
@@ -240,12 +240,12 @@ def route_to_appropriate_agent(
 ) -> AgentType:
     """
     Convenience function to route a query to the appropriate agent.
-    
+
     Args:
         query: The user's query text
         context: Additional context including instance_id, priority, etc.
         user_preferences: User preferences for agent selection
-        
+
     Returns:
         AgentType indicating which agent should handle the query
     """

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 class AWSProvider:
     """AWS-based SRE tool provider.
-    
+
     Combines AWS services for comprehensive SRE capabilities:
     - CloudWatch Logs for log analysis
     - X-Ray for distributed tracing
@@ -123,7 +123,7 @@ class AWSProvider:
 
 class GitHubProvider:
     """GitHub-based SRE tool provider.
-    
+
     Combines GitHub services for development-focused SRE capabilities:
     - GitHub Issues for ticket management
     - GitHub Repositories for code analysis
@@ -214,7 +214,7 @@ class GitHubProvider:
 
 class RedisProvider:
     """Redis-focused SRE tool provider.
-    
+
     Combines Redis-specific monitoring capabilities:
     - Redis CLI for direct instance metrics
     - Prometheus for time-series metrics (if available)

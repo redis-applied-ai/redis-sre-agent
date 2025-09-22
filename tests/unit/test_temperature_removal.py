@@ -22,7 +22,7 @@ class TestTemperatureRemoval:
         mock_llm = MagicMock()
         mock_chat_openai.return_value = mock_llm
 
-        agent = KnowledgeOnlyAgent()
+        KnowledgeOnlyAgent()
 
         # Verify ChatOpenAI was called without temperature
         mock_chat_openai.assert_called_once()
@@ -41,7 +41,7 @@ class TestTemperatureRemoval:
         mock_llm = MagicMock()
         mock_chat_openai.return_value = mock_llm
 
-        agent = SRELangGraphAgent()
+        SRELangGraphAgent()
 
         # Verify ChatOpenAI was called without temperature
         mock_chat_openai.assert_called_once()
@@ -60,7 +60,7 @@ class TestTemperatureRemoval:
         mock_llm = MagicMock()
         mock_chat_openai.return_value = mock_llm
 
-        judge = SREAgentJudge()
+        SREAgentJudge()
 
         # Verify ChatOpenAI was called without temperature
         mock_chat_openai.assert_called_once()
@@ -79,7 +79,7 @@ class TestTemperatureRemoval:
         mock_llm = MagicMock()
         mock_chat_openai.return_value = mock_llm
 
-        generator = RunbookGenerator()
+        RunbookGenerator()
 
         # Verify ChatOpenAI was called without temperature
         mock_chat_openai.assert_called_once()

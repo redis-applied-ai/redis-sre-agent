@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class PrometheusMetricsProvider:
     """Prometheus-based metrics provider.
-    
+
     This provider connects to Prometheus and can query both current values
     and historical time-series data for Redis and system metrics.
     """

@@ -13,7 +13,7 @@ async def store_schedule(schedule_data: Dict) -> bool:
     """Store a schedule in Redis with search index."""
     try:
         client = get_redis_client()
-        index = get_schedules_index()
+        get_schedules_index()
 
         schedule_id = schedule_data["id"]
 

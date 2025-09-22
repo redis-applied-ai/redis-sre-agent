@@ -137,7 +137,7 @@ class RedisDiagnostics:
                 memory_usage_pct = (used_memory / maxmemory) * 100
 
             # Get fragmentation ratio
-            fragmentation_ratio = info.get("mem_fragmentation_ratio", 1.0)
+            info.get("mem_fragmentation_ratio", 1.0)
 
             # Get memory breakdown
             memory_breakdown = {}

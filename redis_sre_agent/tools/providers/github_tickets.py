@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class GitHubTicketsProvider:
     """GitHub Issues provider.
-    
+
     This provider connects to GitHub's REST API to manage issues as tickets.
     It supports creating, updating, and searching issues across repositories.
     """

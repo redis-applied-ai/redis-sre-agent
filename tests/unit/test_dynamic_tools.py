@@ -241,7 +241,7 @@ class TestSearchLogs:
         mock_logs_provider.search_logs.return_value = []
 
         # Execute
-        result = await search_logs(
+        await search_logs(
             "error",
             time_range_hours=2.0,
             log_groups=["app-logs"],
@@ -342,7 +342,7 @@ class TestSearchRelatedRepositories:
         mock_repos_provider.search_code.return_value = []
 
         # Execute
-        result = await search_related_repositories(
+        await search_related_repositories(
             "redis",
             file_extensions=["py", "js"],
             limit=10

@@ -221,7 +221,7 @@ class DiagnosticContextEvaluator:
         logger.info(f"Capturing baseline diagnostics: {sections}")
 
         # Use the same function that external tools would use
-        diagnostics = await capture_redis_diagnostics(sections=sections, include_raw_data=True)
+        diagnostics = await capture_redis_diagnostics("redis://localhost:6379", sections=sections, include_raw_data=True)
 
         return diagnostics
 
@@ -523,6 +523,11 @@ async def run_diagnostic_context_evaluation() -> List[Dict[str, Any]]:
     logger.info("=" * 70)
 
     successful_results = [r for r in results if "error" not in r]
+
+    # Initialize default values
+    avg_composite = 0
+    avg_analytical = 0
+    avg_tool_compliance = 0
 
     if successful_results:
         # Calculate aggregate metrics

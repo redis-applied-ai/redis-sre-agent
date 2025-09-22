@@ -61,7 +61,7 @@ class TaskStreamManager:
                              for k, v in stream_data.items()}
 
             # Add to stream with automatic ID generation
-            message_id = await client.xadd(stream_key, stream_data_str)
+            await client.xadd(stream_key, stream_data_str)
 
             # Set TTL on the stream (24 hours)
             await client.expire(stream_key, 86400)
@@ -182,7 +182,7 @@ async def get_stream_manager() -> TaskStreamManager:
 async def websocket_task_status(websocket: WebSocket, thread_id: str):
     """
     WebSocket endpoint for real-time task status updates.
-    
+
     Clients can connect to this endpoint to receive real-time updates
     about a specific task's progress without polling.
     """

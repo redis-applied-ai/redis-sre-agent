@@ -51,9 +51,9 @@ async def test_llm_fragment_awareness():
 
     # Test 1: Ask a question that should trigger fragment retrieval
     test_query = """
-    I need comprehensive information about Redis Enterprise migration. 
-    Please search for relevant information and if you find fragments of documents, 
-    make sure to get the complete context or full documents to provide me with 
+    I need comprehensive information about Redis Enterprise migration.
+    Please search for relevant information and if you find fragments of documents,
+    make sure to get the complete context or full documents to provide me with
     thorough guidance.
     """
 

@@ -194,14 +194,14 @@ class KnowledgeOnlyAgent:
     ) -> str:
         """
         Process a knowledge-only query.
-        
+
         Args:
             query: User's question or request
             user_id: User identifier
             session_id: Session identifier
             max_iterations: Maximum number of agent iterations
             progress_callback: Optional callback for progress updates
-            
+
         Returns:
             Agent's response as a string
         """

@@ -21,13 +21,13 @@ async def query_instance_metrics(
     time_range_hours: Optional[float] = None
 ) -> Dict[str, Any]:
     """Query instance metrics from available providers.
-    
+
     Args:
         metric_name: Name of the metric to query
         provider_name: Optional specific provider to use
         labels: Optional label filters
         time_range_hours: Optional time range in hours for historical data
-        
+
     Returns:
         Metric query results
     """
@@ -118,10 +118,10 @@ async def query_instance_metrics(
 
 async def list_available_metrics(provider_name: Optional[str] = None) -> Dict[str, Any]:
     """List all available metrics from providers.
-    
+
     Args:
         provider_name: Optional specific provider to query
-        
+
     Returns:
         List of available metrics with descriptions
     """
@@ -193,7 +193,7 @@ async def search_logs(
     limit: int = 100
 ) -> Dict[str, Any]:
     """Search logs across available providers.
-    
+
     Args:
         query: Search query
         time_range_hours: Time range in hours to search
@@ -201,7 +201,7 @@ async def search_logs(
         log_groups: Optional log groups to search
         level_filter: Optional log level filter
         limit: Maximum number of results
-        
+
     Returns:
         Log search results
     """
@@ -288,7 +288,7 @@ async def create_incident_ticket(
     priority: Optional[str] = None
 ) -> Dict[str, Any]:
     """Create an incident ticket using available providers.
-    
+
     Args:
         title: Ticket title
         description: Ticket description
@@ -296,7 +296,7 @@ async def create_incident_ticket(
         labels: Optional labels/tags
         assignee: Optional assignee
         priority: Optional priority level
-        
+
     Returns:
         Ticket creation results
     """
@@ -364,13 +364,13 @@ async def search_related_repositories(
     limit: int = 20
 ) -> Dict[str, Any]:
     """Search for repositories and code related to the query.
-    
+
     Args:
         query: Search query (e.g., "redis", "cache", specific error messages)
         provider_name: Optional specific provider to use
         file_extensions: Optional file extension filters
         limit: Maximum number of results
-        
+
     Returns:
         Repository and code search results
     """
