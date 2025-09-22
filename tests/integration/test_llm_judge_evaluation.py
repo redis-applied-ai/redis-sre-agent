@@ -554,7 +554,10 @@ async def run_comprehensive_llm_judge_evaluation():
 async def test_llm_judge_evaluation():
     """Test comprehensive LLM judge evaluation of Redis SRE search quality."""
     # Skip if OpenAI API key is not available
-    if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "test-openai-key":
+    if (
+        not os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
+    ):
         pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
     evaluations = await run_comprehensive_llm_judge_evaluation()
@@ -588,7 +591,10 @@ async def test_llm_judge_evaluation():
 async def test_single_scenario_evaluation():
     """Test evaluation of a single scenario for faster feedback."""
     # Skip if OpenAI API key is not available
-    if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "test-openai-key":
+    if (
+        not os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
+    ):
         pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
     # Test just the connection scenario that we know performs well

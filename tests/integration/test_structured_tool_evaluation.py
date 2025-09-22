@@ -742,7 +742,10 @@ async def run_structured_tool_evaluation() -> List[Dict[str, Any]]:
 async def test_structured_tool_evaluation():
     """Test structured tool usage evaluation."""
     # Skip if OpenAI API key is not available
-    if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "test-openai-key":
+    if (
+        not os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
+    ):
         pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
     results = await run_structured_tool_evaluation()
