@@ -628,6 +628,10 @@ async def run_diagnostic_context_evaluation() -> List[Dict[str, Any]]:
 @pytest.mark.integration
 async def test_diagnostic_context_evaluation():
     """Test diagnostic context evaluation with real data."""
+    # Skip if OpenAI API key is not available
+    if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "test-openai-key":
+        pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
+
     results = await run_diagnostic_context_evaluation()
 
     # Test assertions

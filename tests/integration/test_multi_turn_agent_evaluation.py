@@ -576,6 +576,10 @@ async def run_multi_turn_evaluation() -> List[Dict[str, Any]]:
 @pytest.mark.integration
 async def test_multi_turn_agent_evaluation():
     """Test comprehensive multi-turn agent evaluation."""
+    # Skip if OpenAI API key is not available
+    if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "test-openai-key":
+        pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
+
     results = await run_multi_turn_evaluation()
 
     # Test assertions
