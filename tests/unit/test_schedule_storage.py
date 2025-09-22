@@ -158,7 +158,9 @@ class TestScheduleQueries:
             "id": "due-schedule",
             "name": "Due Schedule",
             "enabled": "true",  # RedisVL stores as string
-            "next_run_at": str((current_time - timedelta(minutes=30)).timestamp()),  # RedisVL stores as timestamp string
+            "next_run_at": str(
+                (current_time - timedelta(minutes=30)).timestamp()
+            ),  # RedisVL stores as timestamp string
         }
 
         # Mock the RedisVL index and query
