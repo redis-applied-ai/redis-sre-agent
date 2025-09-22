@@ -27,12 +27,10 @@ __all__ = [
     "GitHubTicketsProvider",
     "GitHubReposProvider",
     "XRayTracesProvider",
-
     # Comprehensive providers
     "AWSProvider",
     "GitHubProvider",
     "RedisProvider",
-
     # Factory functions
     "create_redis_cli_provider",
     "create_prometheus_provider",

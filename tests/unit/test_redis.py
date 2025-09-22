@@ -158,10 +158,9 @@ class TestRedisInfrastructure:
         mock_search_index.exists.return_value = False
         mock_search_index.create.return_value = None
 
-        with patch(
-            "redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index
-        ), patch(
-            "redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index
+        with (
+            patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
         ):
             result = await create_indices()
 
@@ -175,10 +174,9 @@ class TestRedisInfrastructure:
         """Test handling existing indices."""
         mock_search_index.exists.return_value = True
 
-        with patch(
-            "redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index
-        ), patch(
-            "redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index
+        with (
+            patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
         ):
             result = await create_indices()
 

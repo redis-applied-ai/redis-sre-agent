@@ -57,7 +57,9 @@ class TestSREToolRegistry:
         assert "test" in registry._capability_map[ToolCapability.METRICS]
         assert "test" in registry._capability_map[ToolCapability.LOGS]
 
-    def test_register_provider_replacement(self, registry, mock_provider, mock_metrics_only_provider):
+    def test_register_provider_replacement(
+        self, registry, mock_provider, mock_metrics_only_provider
+    ):
         """Test provider replacement."""
         # Register first provider
         registry.register_provider("test", mock_provider)
@@ -147,7 +149,9 @@ class TestSREToolRegistry:
         assert health["providers"]["test"]["status"] == "healthy"
 
     @pytest.mark.asyncio
-    async def test_health_check_some_unhealthy(self, registry, mock_provider, mock_metrics_only_provider):
+    async def test_health_check_some_unhealthy(
+        self, registry, mock_provider, mock_metrics_only_provider
+    ):
         """Test health check when some providers are unhealthy."""
         mock_provider.health_check = AsyncMock(return_value={"status": "healthy"})
         mock_metrics_only_provider.health_check = AsyncMock(return_value={"status": "unhealthy"})
@@ -209,10 +213,7 @@ class TestAutoRegisterDefaultProviders:
 
     def test_auto_register_with_prometheus(self):
         """Test auto-registration with Redis and Prometheus."""
-        config = {
-            "redis_url": "redis://localhost:6379",
-            "prometheus_url": "http://localhost:9090"
-        }
+        config = {"redis_url": "redis://localhost:6379", "prometheus_url": "http://localhost:9090"}
 
         auto_register_default_providers(config)
 
@@ -225,7 +226,7 @@ class TestAutoRegisterDefaultProviders:
         config = {
             "redis_url": "redis://localhost:6379",
             "github_token": "ghp_test_token",
-            "github_organization": "test-org"
+            "github_organization": "test-org",
         }
 
         auto_register_default_providers(config)
@@ -241,7 +242,7 @@ class TestAutoRegisterDefaultProviders:
             "redis_url": "redis://localhost:6379",
             "aws_region": "us-east-1",
             "aws_access_key_id": "AKIA...",
-            "aws_secret_access_key": "secret"
+            "aws_secret_access_key": "secret",
         }
 
         auto_register_default_providers(config)

@@ -32,8 +32,8 @@ async def test_redis_direct():
     hash_data = await client.hgetall(key)
     print(f"   Direct Redis data: {hash_data}")
 
-    if b'next_run_at' in hash_data:
-        next_run_timestamp = float(hash_data[b'next_run_at'])
+    if b"next_run_at" in hash_data:
+        next_run_timestamp = float(hash_data[b"next_run_at"])
         next_run_dt = datetime.fromtimestamp(next_run_timestamp, tz=timezone.utc)
         print(f"   Direct next_run_at: {next_run_dt.isoformat()}")
 
@@ -49,8 +49,8 @@ async def test_redis_direct():
     hash_data_after = await client.hgetall(key)
     print(f"   Direct Redis data after: {hash_data_after}")
 
-    if b'next_run_at' in hash_data_after:
-        next_run_timestamp_after = float(hash_data_after[b'next_run_at'])
+    if b"next_run_at" in hash_data_after:
+        next_run_timestamp_after = float(hash_data_after[b"next_run_at"])
         next_run_dt_after = datetime.fromtimestamp(next_run_timestamp_after, tz=timezone.utc)
         print(f"   Direct next_run_at after: {next_run_dt_after.isoformat()}")
 
@@ -72,10 +72,12 @@ async def test_redis_direct():
     if updated_schedule:
         print(f"   Index next_run_at: {updated_schedule.get('next_run_at', 'None')}")
 
-        index_next_run_str = updated_schedule.get('next_run_at')
+        index_next_run_str = updated_schedule.get("next_run_at")
         if index_next_run_str:
             try:
-                index_next_run_dt = datetime.fromisoformat(index_next_run_str.replace('Z', '+00:00'))
+                index_next_run_dt = datetime.fromisoformat(
+                    index_next_run_str.replace("Z", "+00:00")
+                )
                 index_time_diff = abs((index_next_run_dt - current_time).total_seconds())
                 print(f"   Index time difference: {index_time_diff:.1f} seconds")
 
@@ -87,6 +89,7 @@ async def test_redis_direct():
                 print(f"❌ Error parsing index next_run_at: {e}")
     else:
         print("❌ Could not find schedule in index")
+
 
 if __name__ == "__main__":
     asyncio.run(test_redis_direct())

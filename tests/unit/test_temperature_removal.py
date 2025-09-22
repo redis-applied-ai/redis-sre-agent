@@ -16,7 +16,7 @@ from redis_sre_agent.evaluation.judge import SREAgentJudge
 class TestTemperatureRemoval:
     """Test that temperature parameter is not used anywhere."""
 
-    @patch('redis_sre_agent.agent.knowledge_agent.ChatOpenAI')
+    @patch("redis_sre_agent.agent.knowledge_agent.ChatOpenAI")
     def test_knowledge_agent_no_temperature(self, mock_chat_openai):
         """Test KnowledgeOnlyAgent doesn't use temperature parameter."""
         mock_llm = MagicMock()
@@ -29,13 +29,13 @@ class TestTemperatureRemoval:
         call_args = mock_chat_openai.call_args
 
         # Check that temperature is not in the arguments
-        assert 'temperature' not in call_args.kwargs
+        assert "temperature" not in call_args.kwargs
 
         # Verify required arguments are present
-        assert 'model' in call_args.kwargs
-        assert 'openai_api_key' in call_args.kwargs
+        assert "model" in call_args.kwargs
+        assert "openai_api_key" in call_args.kwargs
 
-    @patch('redis_sre_agent.agent.langgraph_agent.ChatOpenAI')
+    @patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
     def test_langgraph_agent_no_temperature(self, mock_chat_openai):
         """Test SRELangGraphAgent doesn't use temperature parameter."""
         mock_llm = MagicMock()
@@ -48,13 +48,13 @@ class TestTemperatureRemoval:
         call_args = mock_chat_openai.call_args
 
         # Check that temperature is not in the arguments
-        assert 'temperature' not in call_args.kwargs
+        assert "temperature" not in call_args.kwargs
 
         # Verify required arguments are present
-        assert 'model' in call_args.kwargs
-        assert 'openai_api_key' in call_args.kwargs
+        assert "model" in call_args.kwargs
+        assert "openai_api_key" in call_args.kwargs
 
-    @patch('redis_sre_agent.evaluation.judge.ChatOpenAI')
+    @patch("redis_sre_agent.evaluation.judge.ChatOpenAI")
     def test_judge_no_temperature(self, mock_chat_openai):
         """Test SREAgentJudge doesn't use temperature parameter."""
         mock_llm = MagicMock()
@@ -67,13 +67,13 @@ class TestTemperatureRemoval:
         call_args = mock_chat_openai.call_args
 
         # Check that temperature is not in the arguments
-        assert 'temperature' not in call_args.kwargs
+        assert "temperature" not in call_args.kwargs
 
         # Verify required arguments are present
-        assert 'model' in call_args.kwargs
-        assert 'openai_api_key' in call_args.kwargs
+        assert "model" in call_args.kwargs
+        assert "openai_api_key" in call_args.kwargs
 
-    @patch('redis_sre_agent.agent.runbook_generator.ChatOpenAI')
+    @patch("redis_sre_agent.agent.runbook_generator.ChatOpenAI")
     def test_runbook_generator_no_temperature(self, mock_chat_openai):
         """Test RunbookGenerator doesn't use temperature parameter."""
         mock_llm = MagicMock()
@@ -86,11 +86,11 @@ class TestTemperatureRemoval:
         call_args = mock_chat_openai.call_args
 
         # Check that temperature is not in the arguments
-        assert 'temperature' not in call_args.kwargs
+        assert "temperature" not in call_args.kwargs
 
         # Verify required arguments are present
-        assert 'model' in call_args.kwargs
-        assert 'api_key' in call_args.kwargs  # Note: uses api_key instead of openai_api_key
+        assert "model" in call_args.kwargs
+        assert "api_key" in call_args.kwargs  # Note: uses api_key instead of openai_api_key
 
     def test_reasoning_model_configuration(self):
         """Test that we're using reasoning models in configuration."""

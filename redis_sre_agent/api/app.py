@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
         # Register SRE tasks with Docket
         try:
             from redis_sre_agent.core.tasks import register_sre_tasks, start_scheduler_task
+
             await register_sre_tasks()
             logger.info("✅ SRE tasks registered with Docket")
         except Exception as e:

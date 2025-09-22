@@ -96,9 +96,9 @@ async def handle_update(data: dict):
         print("📊 Initial State:")
         print(f"   Status: {data.get('status', 'unknown')}")
         print(f"   Recent Updates: {len(data.get('updates', []))}")
-        if data.get('result'):
+        if data.get("result"):
             print("   Has Result: Yes")
-        if data.get('error_message'):
+        if data.get("error_message"):
             print(f"   Error: {data.get('error_message')}")
         print()
 
@@ -143,12 +143,15 @@ async def handle_update(data: dict):
 async def create_test_task(base_url: str = "http://localhost:8000") -> Optional[str]:
     """Create a test task for demonstration."""
     try:
-        response = requests.post(f"{base_url}/api/v1/triage", json={
-            "query": "Test WebSocket monitoring - check Redis memory usage",
-            "user_id": "websocket_test_user",
-            "priority": 0,
-            "tags": ["test", "websocket", "demo"]
-        })
+        response = requests.post(
+            f"{base_url}/api/v1/triage",
+            json={
+                "query": "Test WebSocket monitoring - check Redis memory usage",
+                "user_id": "websocket_test_user",
+                "priority": 0,
+                "tags": ["test", "websocket", "demo"],
+            },
+        )
 
         if response.status_code == 202:
             data = response.json()

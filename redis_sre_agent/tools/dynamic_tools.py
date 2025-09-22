@@ -18,7 +18,7 @@ async def query_instance_metrics(
     metric_name: str,
     provider_name: Optional[str] = None,
     labels: Optional[Dict[str, str]] = None,
-    time_range_hours: Optional[float] = None
+    time_range_hours: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Query instance metrics from available providers.
 
@@ -72,10 +72,10 @@ async def query_instance_metrics(
                             {
                                 "timestamp": value.timestamp.isoformat(),
                                 "value": value.value,
-                                "labels": value.labels
+                                "labels": value.labels,
                             }
                             for value in values
-                        ]
+                        ],
                     }
                 else:
                     # Query current value
@@ -87,29 +87,27 @@ async def query_instance_metrics(
                             "metric_name": metric_name,
                             "current_value": value.value,
                             "timestamp": value.timestamp.isoformat(),
-                            "labels": value.labels
+                            "labels": value.labels,
                         }
                     else:
                         result = {
                             "provider": provider.provider_name,
                             "metric_name": metric_name,
-                            "error": "Metric not found"
+                            "error": "Metric not found",
                         }
 
                 results.append(result)
 
             except Exception as e:
-                results.append({
-                    "provider": provider.provider_name,
-                    "metric_name": metric_name,
-                    "error": str(e)
-                })
+                results.append(
+                    {
+                        "provider": provider.provider_name,
+                        "metric_name": metric_name,
+                        "error": str(e),
+                    }
+                )
 
-        return {
-            "metric_name": metric_name,
-            "providers_queried": len(results),
-            "results": results
-        }
+        return {"metric_name": metric_name, "providers_queried": len(results), "results": results}
 
     except Exception as e:
         logger.error(f"Error querying metrics: {e}")
@@ -160,24 +158,18 @@ async def list_available_metrics(provider_name: Optional[str] = None) -> Dict[st
                             "name": metric.name,
                             "description": metric.description,
                             "unit": metric.unit,
-                            "type": metric.metric_type
+                            "type": metric.metric_type,
                         }
                         for metric in metrics
-                    ]
+                    ],
                 }
 
                 results.append(provider_metrics)
 
             except Exception as e:
-                results.append({
-                    "provider": provider.provider_name,
-                    "error": str(e)
-                })
+                results.append({"provider": provider.provider_name, "error": str(e)})
 
-        return {
-            "providers_queried": len(results),
-            "results": results
-        }
+        return {"providers_queried": len(results), "results": results}
 
     except Exception as e:
         logger.error(f"Error listing metrics: {e}")
@@ -190,7 +182,7 @@ async def search_logs(
     provider_name: Optional[str] = None,
     log_groups: Optional[List[str]] = None,
     level_filter: Optional[str] = None,
-    limit: int = 100
+    limit: int = 100,
 ) -> Dict[str, Any]:
     """Search logs across available providers.
 
@@ -239,7 +231,7 @@ async def search_logs(
                     time_range=time_range,
                     log_groups=log_groups,
                     level_filter=level_filter,
-                    limit=limit
+                    limit=limit,
                 )
 
                 result = {
@@ -253,26 +245,20 @@ async def search_logs(
                             "level": entry.level,
                             "message": entry.message,
                             "source": entry.source,
-                            "labels": entry.labels
+                            "labels": entry.labels,
                         }
                         for entry in log_entries
-                    ]
+                    ],
                 }
 
                 results.append(result)
 
             except Exception as e:
-                results.append({
-                    "provider": provider.provider_name,
-                    "query": query,
-                    "error": str(e)
-                })
+                results.append(
+                    {"provider": provider.provider_name, "query": query, "error": str(e)}
+                )
 
-        return {
-            "query": query,
-            "providers_queried": len(results),
-            "results": results
-        }
+        return {"query": query, "providers_queried": len(results), "results": results}
 
     except Exception as e:
         logger.error(f"Error searching logs: {e}")
@@ -285,7 +271,7 @@ async def create_incident_ticket(
     provider_name: Optional[str] = None,
     labels: Optional[List[str]] = None,
     assignee: Optional[str] = None,
-    priority: Optional[str] = None
+    priority: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create an incident ticket using available providers.
 
@@ -329,7 +315,7 @@ async def create_incident_ticket(
                 description=description,
                 labels=labels,
                 assignee=assignee,
-                priority=priority
+                priority=priority,
             )
 
             return {
@@ -341,16 +327,12 @@ async def create_incident_ticket(
                     "description": ticket.description,
                     "status": ticket.status,
                     "assignee": ticket.assignee,
-                    "labels": ticket.labels
-                }
+                    "labels": ticket.labels,
+                },
             }
 
         except Exception as e:
-            return {
-                "provider": provider.provider_name,
-                "ticket_created": False,
-                "error": str(e)
-            }
+            return {"provider": provider.provider_name, "ticket_created": False, "error": str(e)}
 
     except Exception as e:
         logger.error(f"Error creating ticket: {e}")
@@ -361,7 +343,7 @@ async def search_related_repositories(
     query: str,
     provider_name: Optional[str] = None,
     file_extensions: Optional[List[str]] = None,
-    limit: int = 20
+    limit: int = 20,
 ) -> Dict[str, Any]:
     """Search for repositories and code related to the query.
 
@@ -400,32 +382,24 @@ async def search_related_repositories(
             try:
                 # Search code across repositories
                 code_results = await provider.search_code(
-                    query=query,
-                    file_extensions=file_extensions,
-                    limit=limit
+                    query=query, file_extensions=file_extensions, limit=limit
                 )
 
                 result = {
                     "provider": provider.provider_name,
                     "query": query,
                     "code_results_found": len(code_results),
-                    "code_results": code_results
+                    "code_results": code_results,
                 }
 
                 results.append(result)
 
             except Exception as e:
-                results.append({
-                    "provider": provider.provider_name,
-                    "query": query,
-                    "error": str(e)
-                })
+                results.append(
+                    {"provider": provider.provider_name, "query": query, "error": str(e)}
+                )
 
-        return {
-            "query": query,
-            "providers_queried": len(results),
-            "results": results
-        }
+        return {"query": query, "providers_queried": len(results), "results": results}
 
     except Exception as e:
         logger.error(f"Error searching repositories: {e}")

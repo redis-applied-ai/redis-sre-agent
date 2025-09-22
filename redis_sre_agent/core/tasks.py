@@ -393,7 +393,6 @@ async def scheduler_task(
 
         # Get Docket instance
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-
             for schedule in schedules_needing_runs:
                 try:
                     schedule_id = schedule["id"]
@@ -401,13 +400,16 @@ async def scheduler_task(
                     # Calculate when this task should actually run
                     # Use the next_run_at time from the schedule
                     if schedule.get("next_run_at"):
-                        scheduled_time = datetime.fromisoformat(schedule["next_run_at"].replace('Z', '+00:00'))
+                        scheduled_time = datetime.fromisoformat(
+                            schedule["next_run_at"].replace("Z", "+00:00")
+                        )
                     else:
                         # Fallback to current time if no next_run_at
                         scheduled_time = current_time
 
                     # Create a thread for this scheduled task
                     from ..core.thread_state import get_thread_manager
+
                     thread_manager = get_thread_manager()
 
                     # Prepare context for the scheduled run
@@ -427,7 +429,7 @@ async def scheduler_task(
                         user_id="scheduler",
                         session_id=f"schedule_{schedule_id}_{scheduled_time.strftime('%Y%m%d_%H%M')}",
                         initial_context=run_context,
-                        tags=["automated", "scheduled"]
+                        tags=["automated", "scheduled"],
                     )
 
                     # Generate and update thread subject for scheduled tasks
@@ -448,17 +450,23 @@ async def scheduler_task(
 
                     if task_submitted:
                         # We successfully claimed this task slot, submit to Docket
-                        task_func = docket.add(process_agent_turn, when=scheduled_time, key=task_key)
+                        task_func = docket.add(
+                            process_agent_turn, when=scheduled_time, key=task_key
+                        )
                         agent_task_id = await task_func(
                             thread_id=thread_id,
                             message=schedule["instructions"],
-                            context=run_context
+                            context=run_context,
                         )
-                        logger.info(f"Submitted agent task {agent_task_id} for schedule {schedule_id} at {scheduled_time} with key {task_key}")
+                        logger.info(
+                            f"Submitted agent task {agent_task_id} for schedule {schedule_id} at {scheduled_time} with key {task_key}"
+                        )
                         submitted_tasks += 1
                     else:
                         # Another scheduler task already submitted this task
-                        logger.debug(f"Agent task for schedule {schedule_id} at {scheduled_time} already submitted by another scheduler (key: {task_key})")
+                        logger.debug(
+                            f"Agent task for schedule {schedule_id} at {scheduled_time} already submitted by another scheduler (key: {task_key})"
+                        )
 
                     # Update last run time for both successful and skipped tasks
                     await update_schedule_last_run(schedule_id, scheduled_time)
@@ -469,6 +477,7 @@ async def scheduler_task(
                 # Calculate and update next run time regardless of success/failure
                 try:
                     from ..api.schedules import Schedule
+
                     schedule_obj = Schedule(**schedule)
                     next_run = schedule_obj.calculate_next_run()
                     await update_schedule_next_run(schedule_id, next_run)
@@ -484,7 +493,9 @@ async def scheduler_task(
             "status": "completed",
         }
 
-        logger.info(f"Scheduler task completed: processed {len(schedules_needing_runs)} schedules, submitted {submitted_tasks} tasks")
+        logger.info(
+            f"Scheduler task completed: processed {len(schedules_needing_runs)} schedules, submitted {submitted_tasks} tasks"
+        )
 
         # Schedule the next run of this task (Perpetual behavior)
         try:
@@ -494,11 +505,15 @@ async def scheduler_task(
                 scheduler_key = f"scheduler_task_{next_run_time.strftime('%Y%m%d_%H%M%S')}"
                 task_func = next_docket.add(scheduler_task, when=next_run_time, key=scheduler_key)
                 await task_func()
-                logger.debug(f"Scheduled next scheduler task run at {next_run_time} with key {scheduler_key}")
+                logger.debug(
+                    f"Scheduled next scheduler task run at {next_run_time} with key {scheduler_key}"
+                )
         except Exception as e:
             # If the task was already scheduled (duplicate key), this is expected and not an error
             if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                logger.debug(f"Scheduler task already scheduled for {next_run_time} - this is expected")
+                logger.debug(
+                    f"Scheduler task already scheduled for {next_run_time} - this is expected"
+                )
             else:
                 logger.error(f"Failed to schedule next scheduler task run: {e}")
 
@@ -547,7 +562,9 @@ async def start_scheduler_task() -> None:
             except Exception as e:
                 # If the task was already submitted (duplicate key), this is expected and not an error
                 if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                    logger.info(f"Scheduler task already running with key {scheduler_key} - this is expected")
+                    logger.info(
+                        f"Scheduler task already running with key {scheduler_key} - this is expected"
+                    )
                 else:
                     logger.error(f"Failed to start scheduler task: {e}")
                     raise
@@ -556,6 +573,7 @@ async def start_scheduler_task() -> None:
         logger.error(f"Failed to start scheduler task: {e}")
         # Don't raise - let the app continue
         import traceback
+
         logger.error(f"Scheduler task error traceback: {traceback.format_exc()}")
 
 
@@ -607,17 +625,20 @@ async def process_agent_turn(
         agent_type = route_to_appropriate_agent(
             query=message,
             context=routing_context,
-            user_preferences=None  # Could be extended to include user preferences
+            user_preferences=None,  # Could be extended to include user preferences
         )
 
         logger.info(f"Routing query to {agent_type.value} agent")
         await thread_manager.add_thread_update(
-            thread_id, f"Using {agent_type.value.replace('_', ' ')} agent for optimal results", "agent_routing"
+            thread_id,
+            f"Using {agent_type.value.replace('_', ' ')} agent for optimal results",
+            "agent_routing",
         )
 
         # Import and initialize the appropriate agent
         if agent_type == AgentType.REDIS_FOCUSED:
             from redis_sre_agent.agent import get_sre_agent
+
             await thread_manager.add_thread_update(
                 thread_id, "Initializing Redis-focused SRE agent and tools", "agent_init"
             )
@@ -625,6 +646,7 @@ async def process_agent_turn(
             use_knowledge_only = False
         else:  # AgentType.KNOWLEDGE_ONLY
             from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
+
             await thread_manager.add_thread_update(
                 thread_id, "Initializing knowledge-only SRE agent", "agent_init"
             )
@@ -652,9 +674,7 @@ async def process_agent_turn(
         )
 
         # Add initial thinking message
-        await thread_manager.add_thread_update(
-            thread_id, "Agent is thinking...", "agent_status"
-        )
+        await thread_manager.add_thread_update(thread_id, "Agent is thinking...", "agent_status")
 
         # Create a progress callback for the agent
         async def progress_callback(update_message: str, update_type: str = "progress"):
@@ -677,11 +697,13 @@ async def process_agent_turn(
             agent_response = {
                 "response": response_text,
                 "metadata": {"agent_type": "knowledge_only"},
-                "action_items": []
+                "action_items": [],
             }
         else:
             # Use Redis-focused agent with full conversation state
-            agent_response = await run_agent_with_progress(agent, conversation_state, progress_callback, thread_state)
+            agent_response = await run_agent_with_progress(
+                agent, conversation_state, progress_callback, thread_state
+            )
 
         # Add agent response to conversation
         conversation_state["messages"].append(
@@ -744,7 +766,9 @@ async def process_agent_turn(
         raise
 
 
-async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], progress_callback, thread_state=None):
+async def run_agent_with_progress(
+    agent, conversation_state: Dict[str, Any], progress_callback, thread_state=None
+):
     """
     Run the LangGraph agent with progress updates.
 
@@ -815,7 +839,7 @@ async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], pro
             user_id=thread_state.metadata.user_id if thread_state else "system",
             max_iterations=10,
             context=agent_context,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
 
         # Create a mock final state for compatibility
@@ -832,7 +856,7 @@ async def run_agent_with_progress(agent, conversation_state: Dict[str, Any], pro
             "response": agent_response,
             "metadata": {
                 "iterations": 1,  # Since we're using process_query directly
-                "tool_calls": 0,   # Placeholder - could be enhanced to track tool calls
+                "tool_calls": 0,  # Placeholder - could be enhanced to track tool calls
                 "session_id": thread_id,
             },
             "action_items": action_items,

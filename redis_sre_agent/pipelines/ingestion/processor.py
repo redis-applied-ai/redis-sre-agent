@@ -134,7 +134,12 @@ class DocumentProcessor:
 class IngestionPipeline:
     """Main ingestion pipeline for processing artifact batches."""
 
-    def __init__(self, storage: ArtifactStorage, config: Optional[Dict[str, Any]] = None, knowledge_settings=None):
+    def __init__(
+        self,
+        storage: ArtifactStorage,
+        config: Optional[Dict[str, Any]] = None,
+        knowledge_settings=None,
+    ):
         self.storage = storage
         self.processor = DocumentProcessor(config, knowledge_settings)
         self.config = config or {}

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 try:
     import boto3
     from botocore.exceptions import ClientError, NoCredentialsError
+
     BOTO3_AVAILABLE = True
 except ImportError:
     BOTO3_AVAILABLE = False
@@ -27,9 +28,16 @@ class CloudWatchLogsProvider:
     log groups with various filters and time ranges.
     """
 
-    def __init__(self, region_name: str = "us-east-1", aws_access_key_id: Optional[str] = None, aws_secret_access_key: Optional[str] = None):
+    def __init__(
+        self,
+        region_name: str = "us-east-1",
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+    ):
         if not BOTO3_AVAILABLE:
-            raise ImportError("boto3 is required for CloudWatch Logs provider. Install with: pip install boto3")
+            raise ImportError(
+                "boto3 is required for CloudWatch Logs provider. Install with: pip install boto3"
+            )
 
         self.region_name = region_name
         self.aws_access_key_id = aws_access_key_id
@@ -45,10 +53,12 @@ class CloudWatchLogsProvider:
         if self._client is None:
             session_kwargs = {"region_name": self.region_name}
             if self.aws_access_key_id and self.aws_secret_access_key:
-                session_kwargs.update({
-                    "aws_access_key_id": self.aws_access_key_id,
-                    "aws_secret_access_key": self.aws_secret_access_key
-                })
+                session_kwargs.update(
+                    {
+                        "aws_access_key_id": self.aws_access_key_id,
+                        "aws_secret_access_key": self.aws_secret_access_key,
+                    }
+                )
 
             session = boto3.Session(**session_kwargs)
             self._client = session.client("logs")
@@ -61,7 +71,7 @@ class CloudWatchLogsProvider:
         time_range: TimeRange,
         log_groups: Optional[List[str]] = None,
         level_filter: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
     ) -> List[LogEntry]:
         """Search CloudWatch logs with filters."""
         try:
@@ -97,13 +107,14 @@ class CloudWatchLogsProvider:
                 logGroupNames=log_groups,
                 startTime=start_time,
                 endTime=end_time,
-                queryString=insights_query
+                queryString=insights_query,
             )
 
             query_id = response["queryId"]
 
             # Poll for query completion
             import asyncio
+
             max_attempts = 30  # 30 seconds timeout
             attempt = 0
 
@@ -117,7 +128,9 @@ class CloudWatchLogsProvider:
                 if status == "Complete":
                     break
                 elif status == "Failed":
-                    logger.error(f"CloudWatch Insights query failed: {result.get('statistics', {})}")
+                    logger.error(
+                        f"CloudWatch Insights query failed: {result.get('statistics', {})}"
+                    )
                     return []
 
             if attempt >= max_attempts:
@@ -153,8 +166,8 @@ class CloudWatchLogsProvider:
                     source=entry_data.get("@logStream", "unknown"),
                     labels={
                         "log_group": entry_data.get("@logGroup", ""),
-                        "log_stream": entry_data.get("@logStream", "")
-                    }
+                        "log_stream": entry_data.get("@logStream", ""),
+                    },
                 )
                 log_entries.append(log_entry)
 
@@ -201,7 +214,7 @@ class CloudWatchLogsProvider:
                 "provider": self.provider_name,
                 "connected": True,
                 "log_groups_accessible": True,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
 
         except NoCredentialsError:
@@ -210,7 +223,7 @@ class CloudWatchLogsProvider:
                 "provider": self.provider_name,
                 "error": "AWS credentials not configured",
                 "connected": False,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
         except ClientError as e:
             return {
@@ -218,7 +231,7 @@ class CloudWatchLogsProvider:
                 "provider": self.provider_name,
                 "error": f"AWS error: {e}",
                 "connected": False,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
             return {
@@ -226,7 +239,7 @@ class CloudWatchLogsProvider:
                 "provider": self.provider_name,
                 "error": str(e),
                 "connected": False,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
 
     async def _get_default_log_groups(self) -> List[str]:
@@ -236,7 +249,9 @@ class CloudWatchLogsProvider:
         # Filter for common application log groups
         default_groups = []
         for group in all_groups:
-            if any(keyword in group.lower() for keyword in ["redis", "app", "service", "api", "web"]):
+            if any(
+                keyword in group.lower() for keyword in ["redis", "app", "service", "api", "web"]
+            ):
                 default_groups.append(group)
 
         # If no specific groups found, return first 5 groups
@@ -269,7 +284,7 @@ class CloudWatchLogsProvider:
 def create_cloudwatch_logs_provider(
     region_name: str = "us-east-1",
     aws_access_key_id: Optional[str] = None,
-    aws_secret_access_key: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None,
 ) -> CloudWatchLogsProvider:
     """Create a CloudWatch Logs provider instance."""
     return CloudWatchLogsProvider(region_name, aws_access_key_id, aws_secret_access_key)

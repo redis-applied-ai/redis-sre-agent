@@ -43,8 +43,7 @@ async def setup_custom_providers():
     # Redis provider with Prometheus support
     if config["redis_url"]:
         redis_provider = create_redis_provider(
-            redis_url=config["redis_url"],
-            prometheus_url=config["prometheus_url"]
+            redis_url=config["redis_url"], prometheus_url=config["prometheus_url"]
         )
         registry.register_provider("production-redis", redis_provider)
 
@@ -53,7 +52,7 @@ async def setup_custom_providers():
         aws_provider = create_aws_provider(
             region_name=config["aws_region"],
             aws_access_key_id=config["aws_access_key_id"],
-            aws_secret_access_key=config["aws_secret_access_key"]
+            aws_secret_access_key=config["aws_secret_access_key"],
         )
         registry.register_provider("aws-production", aws_provider)
 
@@ -62,14 +61,14 @@ async def setup_custom_providers():
         github_provider = create_github_provider(
             token=config["github_token"],
             organization=config["github_organization"],
-            default_repo=config["github_default_repo"]
+            default_repo=config["github_default_repo"],
         )
         registry.register_provider("github-main", github_provider)
 
     # Show registry status
     status = registry.get_registry_status()
     print(f"\nRegistered {status['total_providers']} providers:")
-    for provider_name in status['providers']:
+    for provider_name in status["providers"]:
         print(f"  - {provider_name}")
 
     print(f"\nAvailable capabilities: {status['capabilities_available']}")
@@ -94,9 +93,9 @@ async def demonstrate_tool_usage():
         search_logs,
     )
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("DEMONSTRATING PROTOCOL-BASED TOOLS")
-    print("="*50)
+    print("=" * 50)
 
     # List available metrics
     print("\n1. Listing available metrics...")
@@ -104,11 +103,13 @@ async def demonstrate_tool_usage():
 
     if "error" not in metrics_result:
         print(f"Found metrics from {metrics_result['providers_queried']} providers:")
-        for provider_result in metrics_result['results']:
+        for provider_result in metrics_result["results"]:
             if "error" not in provider_result:
-                print(f"  - {provider_result['provider']}: {provider_result['metrics_count']} metrics")
+                print(
+                    f"  - {provider_result['provider']}: {provider_result['metrics_count']} metrics"
+                )
                 # Show first few metrics as examples
-                for metric in provider_result['metrics'][:3]:
+                for metric in provider_result["metrics"][:3]:
                     print(f"    • {metric['name']}: {metric['description']}")
     else:
         print(f"Error: {metrics_result['error']}")
@@ -119,12 +120,14 @@ async def demonstrate_tool_usage():
 
     if "error" not in memory_result:
         print(f"Memory usage results from {memory_result['providers_queried']} providers:")
-        for result in memory_result['results']:
+        for result in memory_result["results"]:
             if "error" not in result:
                 if "current_value" in result:
                     print(f"  - {result['provider']}: {result['current_value']} bytes")
                 else:
-                    print(f"  - {result['provider']}: {result.get('values_count', 0)} historical values")
+                    print(
+                        f"  - {result['provider']}: {result.get('values_count', 0)} historical values"
+                    )
             else:
                 print(f"  - {result['provider']}: Error - {result['error']}")
     else:
@@ -136,11 +139,13 @@ async def demonstrate_tool_usage():
 
     if "error" not in logs_result:
         print(f"Log search results from {logs_result['providers_queried']} providers:")
-        for result in logs_result['results']:
+        for result in logs_result["results"]:
             if "error" not in result:
                 print(f"  - {result['provider']}: {result['entries_found']} entries found")
-                for entry in result['entries'][:2]:  # Show first 2 entries
-                    print(f"    [{entry['timestamp']}] {entry['level']}: {entry['message'][:100]}...")
+                for entry in result["entries"][:2]:  # Show first 2 entries
+                    print(
+                        f"    [{entry['timestamp']}] {entry['level']}: {entry['message'][:100]}..."
+                    )
             else:
                 print(f"  - {result['provider']}: Error - {result['error']}")
     else:
@@ -188,19 +193,15 @@ class CustomMetricsProvider:
         raise NotImplementedError("Custom provider doesn't support time queries")
 
     async def health_check(self) -> Dict[str, Any]:
-        return {
-            "status": "healthy",
-            "provider": self.provider_name,
-            "connected": True
-        }
+        return {"status": "healthy", "provider": self.provider_name, "connected": True}
 
 
 async def demonstrate_custom_provider():
     """Demonstrate registering and using a custom provider."""
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("DEMONSTRATING CUSTOM PROVIDER")
-    print("="*50)
+    print("=" * 50)
 
     from redis_sre_agent.tools.protocols import ToolCapability
 

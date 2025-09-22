@@ -102,7 +102,9 @@ class TestPipelineOrchestrator:
 
         assert result["success"] is True
         assert result["total_documents"] == 12  # Actual count from scrapers
-        assert len(result["scraper_results"]) == 4  # 4 scrapers: redis_docs, redis_kb, redis_runbooks, runbook_generator
+        assert (
+            len(result["scraper_results"]) == 4
+        )  # 4 scrapers: redis_docs, redis_kb, redis_runbooks, runbook_generator
         assert "manifest_path" in result
 
         # Verify all scrapers were called
@@ -278,7 +280,9 @@ class TestPipelineOrchestrator:
         assert "artifacts_path" in status
         assert "current_batch_date" in status
         assert status["available_batches"] == ["2025-01-20", "2025-01-19"]
-        assert len(status["scrapers"]) == 4  # redis_docs, redis_kb, redis_runbooks, runbook_generator
+        assert (
+            len(status["scrapers"]) == 4
+        )  # redis_docs, redis_kb, redis_runbooks, runbook_generator
         assert status["ingestion"]["batches_ingested"] == 1  # Only successful ones
         assert len(status["ingestion"]["recent_batches"]) == 2
 

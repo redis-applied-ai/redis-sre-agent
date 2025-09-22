@@ -106,11 +106,7 @@ async def triage_issue(request: TriageRequest) -> TriageResponse:
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Submit the task to process this turn
             task_func = docket.add(process_agent_turn)
-            await task_func(
-                thread_id=thread_id,
-                message=request.query,
-                context=initial_context
-            )
+            await task_func(thread_id=thread_id, message=request.query, context=initial_context)
 
             logger.info(f"Queued agent task for thread {thread_id}")
 
@@ -253,11 +249,7 @@ async def continue_conversation(thread_id: str, request: TriageRequest) -> Triag
         # Queue another agent processing task
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             task_func = docket.add(process_agent_turn)
-            await task_func(
-                thread_id=thread_id,
-                message=request.query,
-                context=request.context
-            )
+            await task_func(thread_id=thread_id, message=request.query, context=request.context)
 
             logger.info(f"Queued continuation task for thread {thread_id}")
 
@@ -318,7 +310,11 @@ async def cancel_task(thread_id: str, delete: bool = False):
             logger.info(f"Deleted thread {thread_id}")
         else:
             # Check if thread can be cancelled (only for cancellation, not deletion)
-            if thread_state.status in [ThreadStatus.DONE, ThreadStatus.FAILED, ThreadStatus.CANCELLED]:
+            if thread_state.status in [
+                ThreadStatus.DONE,
+                ThreadStatus.FAILED,
+                ThreadStatus.CANCELLED,
+            ]:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"Thread {thread_id} is already {thread_state.status.value} and cannot be cancelled",
@@ -371,7 +367,9 @@ async def list_tasks(
         # Convert to TaskStatusResponse format
         tasks = []
         for summary in thread_summaries:
-            logger.info(f"Processing task {summary['thread_id']} with user_id: {summary.get('user_id')}")
+            logger.info(
+                f"Processing task {summary['thread_id']} with user_id: {summary.get('user_id')}"
+            )
             # Create minimal updates list for listing
             updates = [
                 {
@@ -396,21 +394,31 @@ async def list_tasks(
             # For scheduled tasks, try to get the original query from context for better display names
             context = {}
             if summary.get("user_id") == "scheduler":
-                logger.info(f"Processing scheduled task {summary['thread_id']} for context retrieval")
+                logger.info(
+                    f"Processing scheduled task {summary['thread_id']} for context retrieval"
+                )
                 try:
                     # Get the full thread state to access context
                     thread_state = await thread_manager.get_thread_state(summary["thread_id"])
                     if thread_state:
-                        logger.info(f"Retrieved thread state for {summary['thread_id']}, context keys: {list(thread_state.context.keys())}")
+                        logger.info(
+                            f"Retrieved thread state for {summary['thread_id']}, context keys: {list(thread_state.context.keys())}"
+                        )
                         if thread_state.context.get("original_query"):
                             context["original_query"] = thread_state.context["original_query"]
-                            logger.info(f"Added original_query to context for {summary['thread_id']}: {context['original_query'][:50]}...")
+                            logger.info(
+                                f"Added original_query to context for {summary['thread_id']}: {context['original_query'][:50]}..."
+                            )
                         else:
-                            logger.info(f"No original_query found in context for {summary['thread_id']}")
+                            logger.info(
+                                f"No original_query found in context for {summary['thread_id']}"
+                            )
                     else:
                         logger.warning(f"No thread state found for {summary['thread_id']}")
                 except Exception as e:
-                    logger.warning(f"Failed to get context for scheduled task {summary['thread_id']}: {e}")
+                    logger.warning(
+                        f"Failed to get context for scheduled task {summary['thread_id']}: {e}"
+                    )
 
             task_response = TaskStatusResponse(
                 thread_id=summary["thread_id"],

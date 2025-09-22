@@ -248,9 +248,9 @@ class SRELangGraphAgent:
         # Auto-register default providers based on configuration
         config = {
             "redis_url": settings.redis_url,
-            "prometheus_url": getattr(settings, 'prometheus_url', None),
-            "grafana_url": getattr(settings, 'grafana_url', None),
-            "grafana_api_key": getattr(settings, 'grafana_api_key', None),
+            "prometheus_url": getattr(settings, "prometheus_url", None),
+            "grafana_url": getattr(settings, "grafana_url", None),
+            "grafana_api_key": getattr(settings, "grafana_api_key", None),
         }
         auto_register_default_providers(config)
 
@@ -387,8 +387,6 @@ class SRELangGraphAgent:
         # Bind all tools to the LLM
         self.llm_with_tools = self.llm.bind_tools(all_tools)
 
-
-
         # Build the LangGraph workflow
         self.workflow = self._build_workflow()
         # Note: We'll create a new MemorySaver for each query to ensure proper isolation
@@ -416,7 +414,9 @@ class SRELangGraphAgent:
             logger.error(f"Instance {instance_id} not found, falling back to default Redis URL")
             return settings.redis_url
         except Exception as e:
-            logger.error(f"Failed to resolve instance {instance_id}: {e}, falling back to default Redis URL")
+            logger.error(
+                f"Failed to resolve instance {instance_id}: {e}, falling back to default Redis URL"
+            )
             return settings.redis_url
 
     def _build_workflow(self) -> StateGraph:
@@ -517,25 +517,38 @@ class SRELangGraphAgent:
                         if target_instance:
                             # For Redis diagnostic tools, use the instance's connection details
                             if tool_name == "get_detailed_redis_diagnostics":
-                                if "redis_url" not in modified_args or modified_args["redis_url"] == "redis://localhost:6379":
-                                    modified_args["redis_url"] = f"redis://{target_instance.host}:{target_instance.port}"
-                                    logger.info(f"Using instance Redis URL: {modified_args['redis_url']}")
+                                if (
+                                    "redis_url" not in modified_args
+                                    or modified_args["redis_url"] == "redis://localhost:6379"
+                                ):
+                                    modified_args["redis_url"] = (
+                                        f"redis://{target_instance.host}:{target_instance.port}"
+                                    )
+                                    logger.info(
+                                        f"Using instance Redis URL: {modified_args['redis_url']}"
+                                    )
 
                             # For metrics tools, use the instance's host for Prometheus queries
                             elif tool_name == "analyze_system_metrics":
                                 # Add instance host context for Prometheus queries
                                 if "instance_host" not in modified_args:
                                     modified_args["instance_host"] = target_instance.host
-                                    logger.info(f"Using instance host for metrics: {target_instance.host}")
+                                    logger.info(
+                                        f"Using instance host for metrics: {target_instance.host}"
+                                    )
 
                         # Call the async SRE function
                         result = await self.sre_tools[tool_name](**modified_args)
 
                         # Send completion reflection
                         if self.progress_callback:
-                            completion_reflection = self._generate_completion_reflection(tool_name, result)
+                            completion_reflection = self._generate_completion_reflection(
+                                tool_name, result
+                            )
                             if completion_reflection:  # Only send if not empty
-                                await self.progress_callback(completion_reflection, "agent_reflection")
+                                await self.progress_callback(
+                                    completion_reflection, "agent_reflection"
+                                )
 
                         # Format result as a readable string
                         if isinstance(result, dict):
@@ -569,7 +582,9 @@ class SRELangGraphAgent:
 
             # Send safety check reflection
             if self.progress_callback:
-                await self.progress_callback("🛡️ Performing safety checks on recommendations...", "safety_check")
+                await self.progress_callback(
+                    "🛡️ Performing safety checks on recommendations...", "safety_check"
+                )
 
             # Create a focused prompt for the reasoning model
             conversation_context = []
@@ -627,7 +642,9 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
 
                 # Send fact-checking reflection
                 if self.progress_callback:
-                    await self.progress_callback("🔍 Fact-checking recommendations against best practices...", "safety_check")
+                    await self.progress_callback(
+                        "🔍 Fact-checking recommendations against best practices...", "safety_check"
+                    )
 
             except Exception as e:
                 logger.error(f"Reasoning LLM call failed after all retries: {str(e)}")
@@ -742,7 +759,11 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
 
                 if total_entries > 0:
                     level_dist = result.get("level_distribution", {})
-                    error_count = level_dist.get("ERROR", 0) + level_dist.get("FATAL", 0) + level_dist.get("CRITICAL", 0)
+                    error_count = (
+                        level_dist.get("ERROR", 0)
+                        + level_dist.get("FATAL", 0)
+                        + level_dist.get("CRITICAL", 0)
+                    )
 
                     if error_count > 0:
                         return f"🔍 Found {total_entries} log entries across {containers_searched} containers - {error_count} errors detected"
@@ -759,7 +780,13 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
             return f"✅ {tool_name.replace('_', ' ')} completed"
 
     async def process_query(
-        self, query: str, session_id: str, user_id: str, max_iterations: int = 10, context: Optional[Dict[str, Any]] = None, progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+        self,
+        query: str,
+        session_id: str,
+        user_id: str,
+        max_iterations: int = 10,
+        context: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ) -> str:
         """Process a single SRE query through the LangGraph workflow.
 
@@ -811,7 +838,9 @@ When using Redis diagnostic tools, use this Redis URL: {redis_url}
 
 Please use the available tools to get information about this specific Redis instance and provide targeted troubleshooting and analysis."""
                 else:
-                    logger.warning(f"Instance {instance_id} not found, proceeding without specific instance context")
+                    logger.warning(
+                        f"Instance {instance_id} not found, proceeding without specific instance context"
+                    )
                     enhanced_query = f"""User Query: {query}
 
 CONTEXT: This query mentioned Redis instance ID: {instance_id}, but the instance was not found in the system. Please proceed with general Redis troubleshooting."""
@@ -883,6 +912,7 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
             logger.error(f"Error type: {type(e)}")
             logger.error(f"Error args: {e.args}")
             import traceback
+
             logger.error(f"Traceback: {traceback.format_exc()}")
 
             class AgentResponseStr(str):

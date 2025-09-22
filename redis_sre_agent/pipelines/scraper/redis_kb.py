@@ -49,7 +49,7 @@ class RedisKBScraper(BaseScraper):
             "Redis Insight": "redis_insight",
             "Redis Enterprise for K8s": "redis_enterprise_k8s",
             "Redis Data Integration": "redis_data_integration",
-            "Client Libraries": "client_libraries"
+            "Client Libraries": "client_libraries",
         }
 
     def get_source_name(self) -> str:
@@ -76,7 +76,7 @@ class RedisKBScraper(BaseScraper):
             semaphore = asyncio.Semaphore(self.config["max_concurrent_requests"])
             tasks = []
 
-            for url in list(self.discovered_urls)[:self.config["max_articles"]]:
+            for url in list(self.discovered_urls)[: self.config["max_articles"]]:
                 task = self._scrape_article_with_semaphore(semaphore, url)
                 tasks.append(task)
 
@@ -102,7 +102,9 @@ class RedisKBScraper(BaseScraper):
             # Method 1: Scrape all product category pages with pagination
             self.logger.info("Starting comprehensive category-based URL discovery...")
             await self._discover_by_product_categories()
-            self.logger.info(f"After category-based discovery: {len(self.discovered_urls)} URLs found")
+            self.logger.info(
+                f"After category-based discovery: {len(self.discovered_urls)} URLs found"
+            )
 
         except Exception as e:
             self.logger.error(f"Failed to discover KB URLs: {e}")
@@ -135,28 +137,20 @@ class RedisKBScraper(BaseScraper):
         except Exception as e:
             self.logger.error(f"Failed to scrape main KB page: {e}")
 
-
-
-
-
     async def _add_fallback_urls(self) -> None:
         """Add some known KB article URLs as fallback."""
         fallback_urls = [
             # Vector database and AI
             "https://redis.io/kb/doc/28x16buszr/can-i-use-redis-as-a-vector-database",
-
             # Migration and setup
             "https://redis.io/kb/doc/1iqt9z27dz/how-to-migrate-redis-oss-to-redis-enterprise",
             "https://redis.io/kb/doc/1yfuezjxdv/migrating-from-elasticache-to-redis-cloud-via-s3-bucket",
-
             # Performance and troubleshooting
             "https://redis.io/kb/doc/1mebipyp1e/performance-tuning-best-practices",
             "https://redis.io/kb/doc/2no7qfbtpf/how-to-troubleshoot-latency-issues",
-
             # High availability and disaster recovery
             "https://redis.io/kb/doc/21rbquorvb/considerations-about-consistency-and-data-loss-in-a-crdb-regional-failure",
             "https://redis.io/kb/doc/12ffgrmwbe/how-long-does-it-take-to-a-recover-a-large-database-from-persistence-rdb-aof",
-
             # Redis Enterprise specific
             "https://redis.io/kb/doc/164wz116f6/what-happens-if-a-redis-enterprise-license-expires",
             "https://redis.io/kb/doc/19yzdivas3/applying-license-to-a-redis-enterprise-cluster-in-kubernetes-deployment",
@@ -166,7 +160,6 @@ class RedisKBScraper(BaseScraper):
             "https://redis.io/kb/doc/1g3kwd7hca/error-from-web-console-when-creating-a-redis-enterprise-database-memory-limit-is-larger-than-amount-of-memory",
             "https://redis.io/kb/doc/1mjomfbkom/how-do-i-configure-the-dns-in-redis-enterprise",
             "https://redis.io/kb/doc/1sneb4qq3t/how-can-i-take-a-redis-enterprise-node-offline-safely-for-patching-upgrade",
-
             # Redis Cloud specific
             "https://redis.io/kb/doc/1hcgha9u9q/how-many-connections-can-be-established-to-a-redis-cloud-database",
             "https://redis.io/kb/doc/1jdtj3ryok/how-to-create-redis-cloud-vpc-peering-in-aws",
@@ -188,7 +181,7 @@ class RedisKBScraper(BaseScraper):
             "Redis Enterprise for Kubernetes": "2kkfitpubo",
             "Redis Data Integration": "2ogjveqk6t",
             "Redis Insight": "116wz2xd3k",
-            "Redis Client Libraries": "1z79fmce74"
+            "Redis Client Libraries": "1z79fmce74",
         }
 
         for category_name, category_id in categories.items():
@@ -219,7 +212,7 @@ class RedisKBScraper(BaseScraper):
                         break
 
                     html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
+                    soup = BeautifulSoup(html, "html.parser")
 
                     # Find article links in the table
                     article_links = self._extract_article_links_from_page(soup)
@@ -250,7 +243,9 @@ class RedisKBScraper(BaseScraper):
                 self.logger.error(f"Failed to scrape page {page} of {category_name}: {e}")
                 break
 
-        self.logger.info(f"Found {articles_found} articles in {category_name} across {page-1} pages")
+        self.logger.info(
+            f"Found {articles_found} articles in {category_name} across {page - 1} pages"
+        )
 
     def _extract_article_links_from_page(self, soup: BeautifulSoup) -> List[str]:
         """Extract article links from a category page."""
@@ -258,15 +253,15 @@ class RedisKBScraper(BaseScraper):
 
         # Look for article links in the table structure
         # Based on the HTML structure, articles are in table rows with links
-        for row in soup.find_all('tr'):
+        for row in soup.find_all("tr"):
             # Find the first cell which should contain the article title link
-            first_cell = row.find('td')
+            first_cell = row.find("td")
             if first_cell:
-                link = first_cell.find('a')
-                if link and link.get('href'):
-                    href = link.get('href')
+                link = first_cell.find("a")
+                if link and link.get("href"):
+                    href = link.get("href")
                     # Only include KB article links
-                    if '/kb/doc/' in href:
+                    if "/kb/doc/" in href:
                         article_links.append(href)
 
         return article_links
@@ -277,14 +272,14 @@ class RedisKBScraper(BaseScraper):
         # The pagination shows: "Previous 1 2 (current) 3 4 5 Next Next"
 
         # Look for "Next" links that aren't disabled
-        next_links = soup.find_all('a', string=lambda text: text and 'Next' in text)
+        next_links = soup.find_all("a", string=lambda text: text and "Next" in text)
 
         # If we find any "Next" links, there's likely a next page
         if next_links:
             return True
 
         # Alternative: look for page numbers higher than current page
-        page_links = soup.find_all('a', string=lambda text: text and text.isdigit())
+        page_links = soup.find_all("a", string=lambda text: text and text.isdigit())
         for link in page_links:
             try:
                 page_num = int(link.get_text().strip())
@@ -295,7 +290,9 @@ class RedisKBScraper(BaseScraper):
 
         return False
 
-    async def _scrape_article_with_semaphore(self, semaphore: asyncio.Semaphore, url: str) -> Optional[ScrapedDocument]:
+    async def _scrape_article_with_semaphore(
+        self, semaphore: asyncio.Semaphore, url: str
+    ) -> Optional[ScrapedDocument]:
         """Scrape a single article with semaphore control."""
         async with semaphore:
             try:
@@ -331,11 +328,13 @@ class RedisKBScraper(BaseScraper):
                     "url": url,
                     "scraped_from": "redis_kb_scraper",
                     "product_labels": product_labels,
-                    "product_label_tags": [self.product_labels.get(label, label.lower().replace(" ", "_"))
-                                         for label in product_labels],
+                    "product_label_tags": [
+                        self.product_labels.get(label, label.lower().replace(" ", "_"))
+                        for label in product_labels
+                    ],
                     "content_length": len(article_data["content"]),
                     "last_updated": article_data.get("last_updated"),
-                    **article_data.get("metadata", {})
+                    **article_data.get("metadata", {}),
                 }
 
                 # Determine category based on product labels
@@ -351,7 +350,9 @@ class RedisKBScraper(BaseScraper):
                     metadata=metadata,
                 )
 
-                self.logger.debug(f"Scraped KB article: {article_data['title']} with labels: {product_labels}")
+                self.logger.debug(
+                    f"Scraped KB article: {article_data['title']} with labels: {product_labels}"
+                )
                 return document
 
         except Exception as e:
@@ -375,7 +376,7 @@ class RedisKBScraper(BaseScraper):
                 "main",
                 "article",
                 ".content",
-                ".kb-content"
+                ".kb-content",
             ]
 
             content = ""
@@ -383,7 +384,9 @@ class RedisKBScraper(BaseScraper):
                 content_elem = soup.select_one(selector)
                 if content_elem:
                     # Remove navigation and other non-content elements
-                    for unwanted in content_elem.find_all(["nav", "header", "footer", "script", "style"]):
+                    for unwanted in content_elem.find_all(
+                        ["nav", "header", "footer", "script", "style"]
+                    ):
                         unwanted.decompose()
 
                     content = content_elem.get_text(separator="\n", strip=True)
@@ -410,7 +413,7 @@ class RedisKBScraper(BaseScraper):
                 "metadata": {
                     "has_code_examples": bool(soup.find("code") or soup.find("pre")),
                     "word_count": len(content.split()),
-                }
+                },
             }
 
         except Exception as e:
@@ -442,7 +445,8 @@ class RedisKBScraper(BaseScraper):
             for product_name in self.product_labels.keys():
                 # Use word boundaries to avoid partial matches
                 import re
-                pattern = r'\b' + re.escape(product_name) + r'\b'
+
+                pattern = r"\b" + re.escape(product_name) + r"\b"
                 if re.search(pattern, page_text, re.IGNORECASE):
                     labels.append(product_name)
 
@@ -455,7 +459,7 @@ class RedisKBScraper(BaseScraper):
                 ".product-tag",
                 "[data-product]",
                 ".kb-product-tag",
-                ".product-badge"
+                ".product-badge",
             ]
 
             for selector in label_selectors:
@@ -499,9 +503,14 @@ class RedisKBScraper(BaseScraper):
             return DocumentCategory.OSS
 
         # If it mentions Enterprise and nothing else, categorize as enterprise
-        enterprise_keywords = ["Redis Enterprise Software", "Redis Enterprise", "Redis Enterprise for K8s"]
-        if (len(product_labels) == 1 and
-            any(label in enterprise_keywords for label in product_labels)):
+        enterprise_keywords = [
+            "Redis Enterprise Software",
+            "Redis Enterprise",
+            "Redis Enterprise for K8s",
+        ]
+        if len(product_labels) == 1 and any(
+            label in enterprise_keywords for label in product_labels
+        ):
             return DocumentCategory.ENTERPRISE
 
         # If it applies to multiple products, it's shared

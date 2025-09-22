@@ -187,7 +187,17 @@ async def search_knowledge_base(
     vector_query = VectorQuery(
         vector=query_vector,
         vector_field_name="vector",
-        return_fields=["title", "content", "source", "category", "severity", "product_labels", "product_label_tags", "document_hash", "chunk_index"],
+        return_fields=[
+            "title",
+            "content",
+            "source",
+            "category",
+            "severity",
+            "product_labels",
+            "product_label_tags",
+            "document_hash",
+            "chunk_index",
+        ],
         num_results=limit,
     )
 
@@ -206,7 +216,7 @@ async def search_knowledge_base(
             "Redis Insight": "redis_insight",
             "Redis Enterprise for K8s": "redis_enterprise_k8s",
             "Redis Data Integration": "redis_data_integration",
-            "Client Libraries": "client_libraries"
+            "Client Libraries": "client_libraries",
         }
 
         tag_filters = []
@@ -369,8 +379,7 @@ CONTENT:
 
 
 async def get_all_document_fragments(
-    document_hash: str,
-    include_metadata: bool = True
+    document_hash: str, include_metadata: bool = True
 ) -> Dict[str, Any]:
     """
     Retrieve all fragments/chunks of a specific document.
@@ -408,11 +417,11 @@ async def get_all_document_fragments(
             return {
                 "document_hash": document_hash,
                 "error": "No fragments found for this document",
-                "fragments": []
+                "fragments": [],
             }
 
         # Sort chunk keys by chunk index to maintain order
-        chunk_keys.sort(key=lambda k: int(k.split(':')[-1]) if k.split(':')[-1].isdigit() else 0)
+        chunk_keys.sort(key=lambda k: int(k.split(":")[-1]) if k.split(":")[-1].isdigit() else 0)
 
         # Retrieve all chunks
         fragments = []
@@ -447,6 +456,7 @@ async def get_all_document_fragments(
         metadata = {}
         if include_metadata:
             from redis_sre_agent.pipelines.ingestion.deduplication import DocumentDeduplicator
+
             deduplicator = DocumentDeduplicator(index)
             metadata = await deduplicator.get_document_metadata(document_hash) or {}
 
@@ -465,7 +475,7 @@ async def get_all_document_fragments(
             "full_content": full_content,
             "title": fragments[0].get("title", "").split(" (Part ")[0] if fragments else "",
             "source": fragments[0].get("source", "") if fragments else "",
-            "category": fragments[0].get("category", "") if fragments else ""
+            "category": fragments[0].get("category", "") if fragments else "",
         }
 
         logger.info(f"Retrieved {len(fragments)} fragments for document {document_hash}")
@@ -473,17 +483,11 @@ async def get_all_document_fragments(
 
     except Exception as e:
         logger.error(f"Failed to retrieve document fragments: {e}")
-        return {
-            "document_hash": document_hash,
-            "error": str(e),
-            "fragments": []
-        }
+        return {"document_hash": document_hash, "error": str(e), "fragments": []}
 
 
 async def get_related_document_fragments(
-    document_hash: str,
-    current_chunk_index: Optional[int] = None,
-    context_window: int = 2
+    document_hash: str, current_chunk_index: Optional[int] = None, context_window: int = 2
 ) -> Dict[str, Any]:
     """
     Get related fragments around a specific chunk for additional context.
@@ -499,11 +503,15 @@ async def get_related_document_fragments(
     Returns:
         Dictionary containing related fragments with context
     """
-    logger.info(f"Getting related fragments for document {document_hash}, chunk {current_chunk_index}")
+    logger.info(
+        f"Getting related fragments for document {document_hash}, chunk {current_chunk_index}"
+    )
 
     try:
         # Get all fragments first
-        all_fragments_result = await get_all_document_fragments(document_hash, include_metadata=True)
+        all_fragments_result = await get_all_document_fragments(
+            document_hash, include_metadata=True
+        )
 
         if "error" in all_fragments_result:
             return all_fragments_result
@@ -516,14 +524,20 @@ async def get_related_document_fragments(
 
         # Filter to get context window around the specified chunk
         related_fragments = []
-        current_chunk_int = int(current_chunk_index) if isinstance(current_chunk_index, str) else current_chunk_index
+        current_chunk_int = (
+            int(current_chunk_index)
+            if isinstance(current_chunk_index, str)
+            else current_chunk_index
+        )
         start_index = max(0, current_chunk_int - context_window)
         end_index = min(len(fragments), current_chunk_int + context_window + 1)
 
         for i in range(start_index, end_index):
             if i < len(fragments):
                 fragment = fragments[i]
-                fragment["is_target_chunk"] = (int(fragment.get("chunk_index", 0)) == current_chunk_int)
+                fragment["is_target_chunk"] = (
+                    int(fragment.get("chunk_index", 0)) == current_chunk_int
+                )
                 related_fragments.append(fragment)
 
         # Reconstruct content from related fragments
@@ -539,19 +553,17 @@ async def get_related_document_fragments(
             "title": all_fragments_result.get("title", ""),
             "source": all_fragments_result.get("source", ""),
             "category": all_fragments_result.get("category", ""),
-            "metadata": all_fragments_result.get("metadata", {})
+            "metadata": all_fragments_result.get("metadata", {}),
         }
 
-        logger.info(f"Retrieved {len(related_fragments)} related fragments for document {document_hash}")
+        logger.info(
+            f"Retrieved {len(related_fragments)} related fragments for document {document_hash}"
+        )
         return result
 
     except Exception as e:
         logger.error(f"Failed to retrieve related document fragments: {e}")
-        return {
-            "document_hash": document_hash,
-            "error": str(e),
-            "related_fragments": []
-        }
+        return {"document_hash": document_hash, "error": str(e), "related_fragments": []}
 
 
 async def check_service_health(
@@ -712,6 +724,7 @@ async def ingest_sre_document(
 
         # Generate document hash for proper counting (consistent with bulk ingestion)
         import hashlib
+
         content_for_hash = f"{title}|{content}|{source}"
         document_hash = hashlib.sha256(content_for_hash.encode()).hexdigest()
 

@@ -26,11 +26,11 @@ class TestTaskStreamManager:
         mock_redis.xadd = AsyncMock(return_value=b"1234567890-0")
         mock_redis.expire = AsyncMock(return_value=True)
 
-        with patch.object(stream_manager, '_get_client', new_callable=AsyncMock, return_value=mock_redis):
+        with patch.object(
+            stream_manager, "_get_client", new_callable=AsyncMock, return_value=mock_redis
+        ):
             result = await stream_manager.publish_task_update(
-                "test_thread",
-                "status_change",
-                {"status": "running", "message": "Task started"}
+                "test_thread", "status_change", {"status": "running", "message": "Task started"}
             )
 
             assert result is True
@@ -57,11 +57,9 @@ class TestTaskStreamManager:
         mock_redis = AsyncMock(spec=Redis)
         mock_redis.xadd.side_effect = Exception("Redis connection failed")
 
-        with patch.object(stream_manager, '_get_client', return_value=mock_redis):
+        with patch.object(stream_manager, "_get_client", return_value=mock_redis):
             result = await stream_manager.publish_task_update(
-                "test_thread",
-                "status_change",
-                {"status": "running"}
+                "test_thread", "status_change", {"status": "running"}
             )
 
             assert result is False
@@ -72,14 +70,16 @@ class TestTaskStreamManager:
         thread_id = "test_thread"
 
         # Mock the consume method to avoid actual Redis operations
-        with patch.object(stream_manager, '_consume_stream', new_callable=AsyncMock):
+        with patch.object(stream_manager, "_consume_stream", new_callable=AsyncMock):
             # Start consumer
             await stream_manager.start_consumer(thread_id)
             assert thread_id in stream_manager._consumer_tasks
 
             # Starting again should not create duplicate
             await stream_manager.start_consumer(thread_id)
-            assert len([t for t in stream_manager._consumer_tasks.values() if not t.cancelled()]) == 1
+            assert (
+                len([t for t in stream_manager._consumer_tasks.values() if not t.cancelled()]) == 1
+            )
 
             # Stop consumer
             await stream_manager.stop_consumer(thread_id)
@@ -104,7 +104,7 @@ class TestTaskStreamManager:
         fields = {
             b"update_type": b"status_change",
             b"status": b'"running"',
-            b"message": b"Task started"
+            b"message": b"Task started",
         }
 
         await stream_manager._broadcast_update(thread_id, fields)
@@ -147,6 +147,7 @@ class TestWebSocketEndpoint:
         """Test successful WebSocket connection."""
         # Clear global state
         from redis_sre_agent.api.websockets import _active_connections
+
         _active_connections.clear()
 
         thread_id = "test_thread"
@@ -157,13 +158,13 @@ class TestWebSocketEndpoint:
             status=ThreadStatus.IN_PROGRESS,
             updates=[
                 ThreadUpdate(message="Processing...", update_type="progress"),
-                ThreadUpdate(message="Task started", update_type="info")
-            ]
+                ThreadUpdate(message="Task started", update_type="info"),
+            ],
         )
 
         with (
             patch("redis_sre_agent.api.websockets.get_thread_manager") as mock_get_manager,
-            patch("redis_sre_agent.api.websockets._stream_manager") as mock_stream_manager
+            patch("redis_sre_agent.api.websockets._stream_manager") as mock_stream_manager,
         ):
             mock_manager = AsyncMock()
             mock_manager.get_thread_state.return_value = mock_thread_state
@@ -195,7 +196,7 @@ class TestWebSocketEndpoint:
         thread_id = "test_thread"
 
         mock_redis = AsyncMock()
-        mock_redis.xinfo_stream.return_value = {b'length': b'5'}
+        mock_redis.xinfo_stream.return_value = {b"length": b"5"}
 
         with patch("redis_sre_agent.api.websockets.get_redis_client", return_value=mock_redis):
             response = test_client.get(f"/api/v1/tasks/{thread_id}/stream-info")
@@ -240,19 +241,17 @@ class TestThreadManagerIntegration:
         mock_stream_manager = AsyncMock()
 
         with (
-            patch.object(thread_manager, '_get_client', return_value=mock_redis),
-            patch("redis_sre_agent.api.websockets.get_stream_manager", return_value=mock_stream_manager)
+            patch.object(thread_manager, "_get_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.api.websockets.get_stream_manager",
+                return_value=mock_stream_manager,
+            ),
         ):
             await thread_manager.update_thread_status(thread_id, ThreadStatus.DONE)
 
             # Verify stream update was published
             mock_stream_manager.publish_task_update.assert_called_once_with(
-                thread_id,
-                "status_change",
-                {
-                    "status": "done",
-                    "message": "Status changed to done"
-                }
+                thread_id, "status_change", {"status": "done", "message": "Status changed to done"}
             )
 
     @pytest.mark.asyncio
@@ -267,14 +266,14 @@ class TestThreadManagerIntegration:
         mock_stream_manager = AsyncMock()
 
         with (
-            patch.object(thread_manager, '_get_client', return_value=mock_redis),
-            patch("redis_sre_agent.api.websockets.get_stream_manager", return_value=mock_stream_manager)
+            patch.object(thread_manager, "_get_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.api.websockets.get_stream_manager",
+                return_value=mock_stream_manager,
+            ),
         ):
             await thread_manager.add_thread_update(
-                thread_id,
-                "Processing data...",
-                "progress",
-                {"step": 1, "total": 5}
+                thread_id, "Processing data...", "progress", {"step": 1, "total": 5}
             )
 
             # Verify stream update was published

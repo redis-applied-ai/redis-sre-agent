@@ -51,7 +51,7 @@ async def test_manual_trigger_direct():
             user_id="scheduler",
             session_id=f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}",
             initial_context=run_context,
-            tags=["automated", "scheduled", "manual_trigger"]
+            tags=["automated", "scheduled", "manual_trigger"],
         )
 
         print(f"✅ Created thread: {thread_id}")
@@ -61,14 +61,14 @@ async def test_manual_trigger_direct():
 
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Use a deduplication key for the manual trigger
-            task_key = f"manual_schedule_test_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
+            task_key = (
+                f"manual_schedule_test_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
+            )
 
             try:
                 task_func = docket.add(process_agent_turn, key=task_key)
                 agent_task_id = await task_func(
-                    thread_id=thread_id,
-                    message=schedule_data["instructions"],
-                    context=run_context
+                    thread_id=thread_id, message=schedule_data["instructions"], context=run_context
                 )
                 print(f"✅ Submitted agent task: {agent_task_id}")
                 print(f"   Task key: {task_key}")
@@ -83,7 +83,9 @@ async def test_manual_trigger_direct():
 
         thread_state = await thread_manager.get_thread_state(thread_id)
         if thread_state:
-            print(f"📊 Thread status: {thread_state.status if hasattr(thread_state, 'status') else 'unknown'}")
+            print(
+                f"📊 Thread status: {thread_state.status if hasattr(thread_state, 'status') else 'unknown'}"
+            )
             print(f"   Context: {thread_state.context}")
             print(f"   Tags: {thread_state.metadata.tags}")
         else:
@@ -92,7 +94,9 @@ async def test_manual_trigger_direct():
     except Exception as e:
         print(f"❌ Error in manual trigger test: {e}")
         import traceback
+
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     asyncio.run(test_manual_trigger_direct())

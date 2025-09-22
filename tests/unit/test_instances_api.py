@@ -18,6 +18,7 @@ def client():
 def sample_instance():
     """Sample Redis instance data."""
     from redis_sre_agent.api.instances import RedisInstance
+
     return RedisInstance(
         id="test-instance-123",
         name="Test Redis Instance",
@@ -88,8 +89,10 @@ class TestInstancesAPI:
             "description": "New test instance",
         }
 
-        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get, \
-             patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save:
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save,
+        ):
             mock_get.return_value = []  # No existing instances
             mock_save.return_value = True
 
@@ -119,6 +122,7 @@ class TestInstancesAPI:
 
         # Create updated instance with new values
         from redis_sre_agent.api.instances import RedisInstance
+
         RedisInstance(
             id=sample_instance.id,
             name=sample_instance.name,
@@ -131,8 +135,10 @@ class TestInstancesAPI:
             updated_at="2025-09-19T11:00:00Z",
         )
 
-        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get, \
-             patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save:
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save,
+        ):
             mock_get.return_value = [sample_instance]
             mock_save.return_value = True
 
@@ -156,8 +162,10 @@ class TestInstancesAPI:
 
     def test_delete_instance_success(self, client, sample_instance):
         """Test successful instance deletion."""
-        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get, \
-             patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save:
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save,
+        ):
             mock_get.return_value = [sample_instance]
             mock_save.return_value = True
 
@@ -179,8 +187,10 @@ class TestInstancesAPI:
     @pytest.mark.asyncio
     async def test_test_connection_success(self, client, sample_instance):
         """Test successful connection test."""
-        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get, \
-             patch("redis.asyncio.from_url") as mock_redis:
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis.asyncio.from_url") as mock_redis,
+        ):
             mock_get.return_value = [sample_instance]
 
             # Mock Redis client
@@ -198,8 +208,10 @@ class TestInstancesAPI:
     @pytest.mark.asyncio
     async def test_test_connection_failure(self, client, sample_instance):
         """Test connection test failure."""
-        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get, \
-             patch("redis.asyncio.from_url") as mock_redis:
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis.asyncio.from_url") as mock_redis,
+        ):
             mock_get.return_value = [sample_instance]
 
             # Mock Redis client that fails to connect
@@ -228,8 +240,10 @@ class TestInstanceValidation:
             "description": "Invalid URL test",
         }
 
-        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get, \
-             patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save:
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save,
+        ):
             mock_get.return_value = []
             mock_save.return_value = True
 
@@ -248,8 +262,10 @@ class TestInstanceValidation:
             "description": "Invalid environment test",
         }
 
-        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get, \
-             patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save:
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save,
+        ):
             mock_get.return_value = []
             mock_save.return_value = True
 

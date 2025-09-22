@@ -35,7 +35,7 @@ async def test_llm_fragment_awareness():
     required_tools = [
         "search_knowledge_base",
         "get_all_document_fragments",
-        "get_related_document_fragments"
+        "get_related_document_fragments",
     ]
 
     print(f"Available tools: {available_tools}")
@@ -70,16 +70,13 @@ async def test_llm_fragment_awareness():
 
         # Get the thread state to see what tool calls were made
         thread_state = await agent.get_thread_state(session_id)
-        messages = thread_state.get('messages', [])
+        messages = thread_state.get("messages", [])
         tool_calls_made = []
 
         for message in messages:
-            if hasattr(message, 'tool_calls') and message.tool_calls:
+            if hasattr(message, "tool_calls") and message.tool_calls:
                 for tool_call in message.tool_calls:
-                    tool_calls_made.append({
-                        'name': tool_call['name'],
-                        'args': tool_call['args']
-                    })
+                    tool_calls_made.append({"name": tool_call["name"], "args": tool_call["args"]})
 
         print("\n🔧 Tool Calls Made:")
         for i, call in enumerate(tool_calls_made, 1):
@@ -87,8 +84,12 @@ async def test_llm_fragment_awareness():
             print(f"     Args: {call['args']}")
 
         # Analyze the tool usage
-        search_calls = [c for c in tool_calls_made if c['name'] == 'search_knowledge_base']
-        fragment_calls = [c for c in tool_calls_made if c['name'] in ['get_all_document_fragments', 'get_related_document_fragments']]
+        search_calls = [c for c in tool_calls_made if c["name"] == "search_knowledge_base"]
+        fragment_calls = [
+            c
+            for c in tool_calls_made
+            if c["name"] in ["get_all_document_fragments", "get_related_document_fragments"]
+        ]
 
         print("\n📈 Analysis:")
         print(f"  Search calls: {len(search_calls)}")
@@ -99,12 +100,12 @@ async def test_llm_fragment_awareness():
             "Made search call": len(search_calls) > 0,
             "Made fragment retrieval call": len(fragment_calls) > 0,
             "Used document_hash correctly": False,
-            "Provided comprehensive response": len(str(result)) > 500
+            "Provided comprehensive response": len(str(result)) > 500,
         }
 
         # Check if document_hash was used correctly
         for call in fragment_calls:
-            if 'document_hash' in call['args'] and call['args']['document_hash']:
+            if "document_hash" in call["args"] and call["args"]["document_hash"]:
                 success_criteria["Used document_hash correctly"] = True
                 break
 
@@ -137,8 +138,10 @@ async def test_llm_tool_descriptions():
     tools = agent.llm_with_tools.kwargs["tools"]
 
     fragment_tools = [
-        tool for tool in tools
-        if tool["function"]["name"] in ["get_all_document_fragments", "get_related_document_fragments"]
+        tool
+        for tool in tools
+        if tool["function"]["name"]
+        in ["get_all_document_fragments", "get_related_document_fragments"]
     ]
 
     print(f"\nFound {len(fragment_tools)} fragment retrieval tools:")
@@ -150,12 +153,14 @@ async def test_llm_tool_descriptions():
         print(f"   Parameters: {list(func['parameters']['properties'].keys())}")
 
         # Check description quality
-        description = func['description']
+        description = func["description"]
         quality_checks = {
             "Mentions document_hash": "document_hash" in description,
-            "Explains when to use": any(word in description.lower() for word in ["when", "use this", "essential"]),
+            "Explains when to use": any(
+                word in description.lower() for word in ["when", "use this", "essential"]
+            ),
             "References search results": "search results" in description,
-            "Clear purpose": len(description) > 50
+            "Clear purpose": len(description) > 50,
         }
 
         print("   Quality checks:")
@@ -172,23 +177,23 @@ async def main():
     print("=" * 60)
 
     # Test 1: Tool descriptions
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 1: Tool Descriptions")
-    print("="*60)
+    print("=" * 60)
 
     descriptions_ok = await test_llm_tool_descriptions()
 
     # Test 2: Functional behavior
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 2: Functional Behavior")
-    print("="*60)
+    print("=" * 60)
 
     behavior_ok, criteria, tool_calls = await test_llm_fragment_awareness()
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("FINAL SUMMARY")
-    print("="*60)
+    print("=" * 60)
 
     print(f"✅ Tool Descriptions: {'PASS' if descriptions_ok else 'FAIL'}")
     print(f"✅ Functional Behavior: {'PASS' if behavior_ok else 'PARTIAL'}")

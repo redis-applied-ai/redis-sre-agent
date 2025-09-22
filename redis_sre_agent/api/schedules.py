@@ -33,12 +33,15 @@ _scheduled_runs: Dict[str, Dict] = {}  # Keep for API compatibility
 
 class Schedule(BaseModel):
     """Schedule model for automated agent runs."""
+
     id: str = Field(default_factory=lambda: str(uuid4()), description="Unique schedule ID")
     name: str = Field(..., description="Human-readable schedule name")
     description: Optional[str] = Field(None, description="Schedule description")
     interval_type: str = Field(..., description="Interval type: minutes, hours, days, weeks")
     interval_value: int = Field(..., ge=1, description="Interval value (e.g., 30 for '30 minutes')")
-    redis_instance_id: Optional[str] = Field(None, description="Redis instance ID to use (optional)")
+    redis_instance_id: Optional[str] = Field(
+        None, description="Redis instance ID to use (optional)"
+    )
     instructions: str = Field(..., description="Instructions for the agent to execute")
     enabled: bool = Field(True, description="Whether the schedule is active")
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -64,28 +67,37 @@ class Schedule(BaseModel):
 
 class CreateScheduleRequest(BaseModel):
     """Request model for creating a schedule."""
+
     name: str = Field(..., description="Human-readable schedule name")
     description: Optional[str] = Field(None, description="Schedule description")
     interval_type: str = Field(..., description="Interval type: minutes, hours, days, weeks")
     interval_value: int = Field(..., ge=1, description="Interval value (e.g., 30 for '30 minutes')")
-    redis_instance_id: Optional[str] = Field(None, description="Redis instance ID to use (optional)")
+    redis_instance_id: Optional[str] = Field(
+        None, description="Redis instance ID to use (optional)"
+    )
     instructions: str = Field(..., description="Instructions for the agent to execute")
     enabled: bool = Field(True, description="Whether the schedule is active")
 
 
 class UpdateScheduleRequest(BaseModel):
     """Request model for updating a schedule."""
+
     name: Optional[str] = Field(None, description="Human-readable schedule name")
     description: Optional[str] = Field(None, description="Schedule description")
-    interval_type: Optional[str] = Field(None, description="Interval type: minutes, hours, days, weeks")
+    interval_type: Optional[str] = Field(
+        None, description="Interval type: minutes, hours, days, weeks"
+    )
     interval_value: Optional[int] = Field(None, ge=1, description="Interval value")
-    redis_instance_id: Optional[str] = Field(None, description="Redis instance ID to use (optional)")
+    redis_instance_id: Optional[str] = Field(
+        None, description="Redis instance ID to use (optional)"
+    )
     instructions: Optional[str] = Field(None, description="Instructions for the agent to execute")
     enabled: Optional[bool] = Field(None, description="Whether the schedule is active")
 
 
 class ScheduledTask(BaseModel):
     """Model for a scheduled task instance."""
+
     id: str = Field(default_factory=lambda: str(uuid4()), description="Unique task ID")
     schedule_id: str = Field(..., description="ID of the parent schedule")
     scheduled_at: str = Field(..., description="When this task is scheduled to run")
@@ -98,6 +110,7 @@ class ScheduledTask(BaseModel):
 
 class ScheduledRun(BaseModel):
     """Model for a scheduled run instance (legacy - keeping for API compatibility)."""
+
     id: str = Field(default_factory=lambda: str(uuid4()), description="Unique run ID")
     schedule_id: str = Field(..., description="ID of the parent schedule")
     status: str = Field("pending", description="Run status: pending, running, completed, failed")
@@ -122,7 +135,7 @@ async def list_schedules():
         logger.error(f"Failed to list schedules: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list schedules: {str(e)}"
+            detail=f"Failed to list schedules: {str(e)}",
         )
 
 
@@ -134,7 +147,7 @@ async def create_schedule(request: CreateScheduleRequest):
         if request.interval_type not in ["minutes", "hours", "days", "weeks"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid interval_type. Must be one of: minutes, hours, days, weeks"
+                detail="Invalid interval_type. Must be one of: minutes, hours, days, weeks",
             )
 
         # Create schedule
@@ -145,7 +158,7 @@ async def create_schedule(request: CreateScheduleRequest):
             interval_value=request.interval_value,
             redis_instance_id=request.redis_instance_id,
             instructions=request.instructions,
-            enabled=request.enabled
+            enabled=request.enabled,
         )
 
         # Calculate next run time
@@ -158,7 +171,7 @@ async def create_schedule(request: CreateScheduleRequest):
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to store schedule in Redis"
+                detail="Failed to store schedule in Redis",
             )
 
         logger.info(f"Created schedule: {schedule.name} ({schedule.id})")
@@ -168,7 +181,7 @@ async def create_schedule(request: CreateScheduleRequest):
         logger.error(f"Failed to create schedule: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create schedule: {str(e)}"
+            detail=f"Failed to create schedule: {str(e)}",
         )
 
 
@@ -179,8 +192,7 @@ async def get_schedule(schedule_id: str):
         schedule_data = await get_schedule_from_redis(schedule_id)
         if not schedule_data:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Schedule {schedule_id} not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
 
         return Schedule(**schedule_data)
@@ -190,7 +202,7 @@ async def get_schedule(schedule_id: str):
         logger.error(f"Failed to get schedule {schedule_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get schedule: {str(e)}"
+            detail=f"Failed to get schedule: {str(e)}",
         )
 
 
@@ -202,8 +214,7 @@ async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
         schedule_data = await get_schedule_from_redis(schedule_id)
         if not schedule_data:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Schedule {schedule_id} not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
 
         # Update provided fields
@@ -223,7 +234,7 @@ async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update schedule in Redis"
+                detail="Failed to update schedule in Redis",
             )
 
         logger.info(f"Updated schedule: {schedule_id}")
@@ -233,7 +244,7 @@ async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
         logger.error(f"Failed to update schedule {schedule_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update schedule: {str(e)}"
+            detail=f"Failed to update schedule: {str(e)}",
         )
 
 
@@ -245,8 +256,7 @@ async def delete_schedule(schedule_id: str):
         schedule_data = await get_schedule_from_redis(schedule_id)
         if not schedule_data:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Schedule {schedule_id} not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
 
         schedule_name = schedule_data["name"]
@@ -256,7 +266,7 @@ async def delete_schedule(schedule_id: str):
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to delete schedule from Redis"
+                detail="Failed to delete schedule from Redis",
             )
 
         logger.info(f"Deleted schedule: {schedule_name} ({schedule_id})")
@@ -268,7 +278,7 @@ async def delete_schedule(schedule_id: str):
         logger.error(f"Failed to delete schedule {schedule_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete schedule: {str(e)}"
+            detail=f"Failed to delete schedule: {str(e)}",
         )
 
 
@@ -280,18 +290,18 @@ async def list_schedule_runs(schedule_id: str):
         schedule_data = await get_schedule_from_redis(schedule_id)
         if not schedule_data:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Schedule {schedule_id} not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
 
         # Get all threads created by the scheduler
         from ..core.thread_state import get_thread_manager
+
         thread_manager = get_thread_manager()
 
         # Get all scheduler threads (user_id="scheduler")
         all_scheduler_threads = await thread_manager.list_threads(
             user_id="scheduler",
-            limit=200  # Get more threads to find all runs for this schedule
+            limit=200,  # Get more threads to find all runs for this schedule
         )
 
         # Filter threads that belong to this specific schedule
@@ -300,14 +310,16 @@ async def list_schedule_runs(schedule_id: str):
             # Get the full thread state to access context
             thread_state = await thread_manager.get_thread_state(thread_summary["thread_id"])
             if thread_state and thread_state.context.get("schedule_id") == schedule_id:
-                schedule_threads.append({
-                    "thread_id": thread_summary["thread_id"],
-                    "status": thread_summary["status"],
-                    "created_at": thread_summary["created_at"],
-                    "updated_at": thread_summary["updated_at"],
-                    "context": thread_state.context,
-                    "subject": thread_summary.get("subject", "Scheduled Run")
-                })
+                schedule_threads.append(
+                    {
+                        "thread_id": thread_summary["thread_id"],
+                        "status": thread_summary["status"],
+                        "created_at": thread_summary["created_at"],
+                        "updated_at": thread_summary["updated_at"],
+                        "context": thread_state.context,
+                        "subject": thread_summary.get("subject", "Scheduled Run"),
+                    }
+                )
 
         # Convert to ScheduledRun format
         runs = []
@@ -327,7 +339,7 @@ async def list_schedule_runs(schedule_id: str):
                 started_at=thread["created_at"],
                 completed_at=thread["updated_at"] if run_status == "completed" else None,
                 triage_task_id=thread["thread_id"],  # Link to the thread for viewing
-                created_at=thread["created_at"]
+                created_at=thread["created_at"],
             )
             runs.append(run)
 
@@ -341,7 +353,7 @@ async def list_schedule_runs(schedule_id: str):
         logger.error(f"Failed to list runs for schedule {schedule_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list schedule runs: {str(e)}"
+            detail=f"Failed to list schedule runs: {str(e)}",
         )
 
 
@@ -353,8 +365,7 @@ async def trigger_schedule_now(schedule_id: str):
         schedule_data = await get_schedule_from_redis(schedule_id)
         if not schedule_data:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Schedule {schedule_id} not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
 
         # For manual triggers, directly create and submit the agent task
@@ -365,6 +376,7 @@ async def trigger_schedule_now(schedule_id: str):
 
         # Create thread for the manual run
         from ..core.thread_state import get_thread_manager
+
         thread_manager = get_thread_manager()
 
         # Prepare context for the manual run
@@ -385,7 +397,7 @@ async def trigger_schedule_now(schedule_id: str):
             user_id="scheduler",
             session_id=f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}",
             initial_context=run_context,
-            tags=["automated", "scheduled", "manual_trigger"]
+            tags=["automated", "scheduled", "manual_trigger"],
         )
 
         # Submit the agent task directly
@@ -401,15 +413,17 @@ async def trigger_schedule_now(schedule_id: str):
                 # Submit task to run immediately (no 'when' parameter)
                 task_func = docket.add(process_agent_turn, key=task_key)
                 agent_task_id = await task_func(
-                    thread_id=thread_id,
-                    message=schedule_data["instructions"],
-                    context=run_context
+                    thread_id=thread_id, message=schedule_data["instructions"], context=run_context
                 )
-                logger.info(f"Submitted manual agent task {agent_task_id} for schedule {schedule_id} with key {task_key}")
+                logger.info(
+                    f"Submitted manual agent task {agent_task_id} for schedule {schedule_id} with key {task_key}"
+                )
             except Exception as e:
                 # If the task was already triggered (duplicate key), this is expected
                 if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                    logger.info(f"Manual agent task for schedule {schedule_id} already submitted with key {task_key}")
+                    logger.info(
+                        f"Manual agent task for schedule {schedule_id} already submitted with key {task_key}"
+                    )
                     agent_task_id = "already_running"
                 else:
                     logger.error(f"Failed to submit manual agent task: {e}")
@@ -417,9 +431,7 @@ async def trigger_schedule_now(schedule_id: str):
 
         # Create a synthetic run record for the response
         run = ScheduledRun(
-            schedule_id=schedule_id,
-            scheduled_at=current_time.isoformat(),
-            status="pending"
+            schedule_id=schedule_id, scheduled_at=current_time.isoformat(), status="pending"
         )
 
         logger.info(f"Manually triggered schedule {schedule_id}")
@@ -429,11 +441,12 @@ async def trigger_schedule_now(schedule_id: str):
         logger.error(f"Failed to trigger schedule {schedule_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to trigger schedule: {str(e)}"
+            detail=f"Failed to trigger schedule: {str(e)}",
         )
 
 
 # Internal functions for the scheduler task
+
 
 def create_scheduled_tasks_for_next_hour() -> List[ScheduledTask]:
     """Create scheduled tasks for all enabled schedules for the next hour."""
@@ -469,7 +482,9 @@ def create_scheduled_tasks_for_next_hour() -> List[ScheduledTask]:
             task_exists = False
             for existing_task_data in _scheduled_tasks.values():
                 if existing_task_data["schedule_id"] == schedule.id:
-                    existing_time = datetime.fromisoformat(existing_task_data["scheduled_at"].replace('Z', '+00:00'))
+                    existing_time = datetime.fromisoformat(
+                        existing_task_data["scheduled_at"].replace("Z", "+00:00")
+                    )
                     if abs((existing_time - next_run).total_seconds()) < 60:
                         task_exists = True
                         break
@@ -477,9 +492,7 @@ def create_scheduled_tasks_for_next_hour() -> List[ScheduledTask]:
             if not task_exists:
                 # Create new scheduled task
                 task = ScheduledTask(
-                    schedule_id=schedule.id,
-                    scheduled_at=next_run.isoformat(),
-                    status="pending"
+                    schedule_id=schedule.id, scheduled_at=next_run.isoformat(), status="pending"
                 )
                 _scheduled_tasks[task.id] = task.dict()
                 created_tasks.append(task)
@@ -535,8 +548,10 @@ def get_due_scheduled_runs() -> List[ScheduledRun]:
                 status="running" if task_data["status"] == "submitted" else task_data["status"],
                 triage_task_id=task_data.get("triage_task_id"),
                 started_at=task_data.get("submitted_at"),
-                completed_at=task_data.get("submitted_at") if task_data["status"] == "completed" else None,
-                error=task_data.get("error")
+                completed_at=task_data.get("submitted_at")
+                if task_data["status"] == "completed"
+                else None,
+                error=task_data.get("error"),
             )
             runs.append(run)
 
@@ -574,14 +589,16 @@ async def trigger_scheduler():
             try:
                 task_func = docket.add(scheduler_task, key=scheduler_key)
                 task_id = await task_func()
-                logger.info(f"Manually triggered scheduler task with ID: {task_id} and key: {scheduler_key}")
+                logger.info(
+                    f"Manually triggered scheduler task with ID: {task_id} and key: {scheduler_key}"
+                )
 
                 return {
                     "status": "success",
                     "message": "Scheduler task triggered successfully",
                     "task_id": str(task_id),
                     "scheduler_key": scheduler_key,
-                    "timestamp": current_time.isoformat()
+                    "timestamp": current_time.isoformat(),
                 }
             except Exception as e:
                 # If the task was already triggered (duplicate key), return success but note it
@@ -590,7 +607,7 @@ async def trigger_scheduler():
                         "status": "success",
                         "message": "Scheduler task already running - no duplicate created",
                         "scheduler_key": scheduler_key,
-                        "timestamp": current_time.isoformat()
+                        "timestamp": current_time.isoformat(),
                     }
                 else:
                     raise e

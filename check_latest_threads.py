@@ -30,7 +30,7 @@ async def check_latest_threads():
 
             if created_at_str:
                 try:
-                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
                     if created_at >= cutoff_time:
                         latest_threads.append((thread_id, created_at, thread))
                 except Exception as e:
@@ -66,7 +66,9 @@ async def check_latest_threads():
                         # Check if this looks like our manual trigger
                         session_id = thread_state.metadata.session_id
                         if session_id and "manual_schedule" in session_id:
-                            print(f"     🚀 This looks like a manual trigger! Session: {session_id}")
+                            print(
+                                f"     🚀 This looks like a manual trigger! Session: {session_id}"
+                            )
 
                 except Exception as e:
                     print(f"     ❌ Error getting thread state: {e}")
@@ -76,6 +78,7 @@ async def check_latest_threads():
 
     except Exception as e:
         print(f"❌ Error checking threads: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(check_latest_threads())

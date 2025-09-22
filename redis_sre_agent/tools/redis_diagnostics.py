@@ -67,8 +67,6 @@ class RedisDiagnostics:
 
         return results
 
-
-
     async def _test_connection(self, client: redis.Redis) -> Dict[str, Any]:
         """Test Redis connection and basic operations."""
         try:

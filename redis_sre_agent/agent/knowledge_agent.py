@@ -59,6 +59,7 @@ Remember: You are the knowledge specialist - make the most of the available docu
 
 class KnowledgeAgentState(TypedDict):
     """State for the knowledge-only agent."""
+
     messages: List[BaseMessage]
     session_id: str
     user_id: str
@@ -121,7 +122,7 @@ class KnowledgeOnlyAgent:
                 state["messages"] = messages + [response]
 
                 # Store tool calls for potential execution
-                if hasattr(response, 'tool_calls') and response.tool_calls:
+                if hasattr(response, "tool_calls") and response.tool_calls:
                     state["current_tool_calls"] = [
                         {
                             "id": tc.get("id", ""),
@@ -137,7 +138,7 @@ class KnowledgeOnlyAgent:
                 if self.progress_callback:
                     await self.progress_callback(
                         f"Knowledge agent processing query (iteration {iteration_count + 1})",
-                        "agent_processing"
+                        "agent_processing",
                     )
 
                 return state
@@ -161,9 +162,11 @@ class KnowledgeOnlyAgent:
                 return END
 
             # If the last message has tool calls, execute them
-            if (hasattr(last_message, 'tool_calls') and
-                last_message.tool_calls and
-                len(last_message.tool_calls) > 0):
+            if (
+                hasattr(last_message, "tool_calls")
+                and last_message.tool_calls
+                and len(last_message.tool_calls) > 0
+            ):
                 return "tools"
 
             return END
@@ -232,8 +235,7 @@ class KnowledgeOnlyAgent:
             # Progress callback for start
             if self.progress_callback:
                 await self.progress_callback(
-                    "Knowledge agent starting to process your query...",
-                    "agent_start"
+                    "Knowledge agent starting to process your query...", "agent_start"
                 )
 
             # Run the workflow
@@ -253,8 +255,7 @@ class KnowledgeOnlyAgent:
             # Progress callback for completion
             if self.progress_callback:
                 await self.progress_callback(
-                    "Knowledge agent has completed processing your query.",
-                    "agent_complete"
+                    "Knowledge agent has completed processing your query.", "agent_complete"
                 )
 
             logger.info(f"Knowledge query completed for user {user_id}")
@@ -266,8 +267,7 @@ class KnowledgeOnlyAgent:
 
             if self.progress_callback:
                 await self.progress_callback(
-                    f"Knowledge agent encountered an error: {str(e)}",
-                    "agent_error"
+                    f"Knowledge agent encountered an error: {str(e)}", "agent_error"
                 )
 
             return error_response

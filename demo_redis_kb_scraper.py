@@ -11,9 +11,9 @@ from pathlib import Path
 
 def run_command(cmd, description):
     """Run a command and display results."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"🔧 {description}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Command: {cmd}")
     print()
 
@@ -37,6 +37,7 @@ def run_command(cmd, description):
         print(f"❌ Exception: {e}")
         return False
 
+
 def main():
     """Run the complete Redis KB scraper demo."""
     print("🚀 Redis Knowledge Base Scraper Demo")
@@ -44,8 +45,7 @@ def main():
 
     # Step 1: Scrape Redis KB articles
     success = run_command(
-        "redis-sre-agent knowledge scrape --scrapers redis_kb",
-        "Step 1: Scraping Redis KB Articles"
+        "redis-sre-agent knowledge scrape --scrapers redis_kb", "Step 1: Scraping Redis KB Articles"
     )
 
     if not success:
@@ -54,8 +54,7 @@ def main():
 
     # Step 2: Ingest scraped articles into knowledge base
     success = run_command(
-        "redis-sre-agent knowledge ingest",
-        "Step 2: Ingesting Articles into Knowledge Base"
+        "redis-sre-agent knowledge ingest", "Step 2: Ingesting Articles into Knowledge Base"
     )
 
     if not success:
@@ -65,13 +64,13 @@ def main():
     # Step 3: Search without product label filtering
     run_command(
         'redis-sre-agent search "vector database" --limit 3',
-        "Step 3: Search for 'vector database' (no filtering)"
+        "Step 3: Search for 'vector database' (no filtering)",
     )
 
     # Step 4: Show scraped artifacts
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("📁 Step 4: Scraped Artifacts")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     artifacts_path = Path("artifacts")
     if artifacts_path.exists():
@@ -79,18 +78,23 @@ def main():
             if batch_dir.is_dir():
                 print(f"Batch: {batch_dir.name}")
                 for category_dir in batch_dir.iterdir():
-                    if category_dir.is_dir() and category_dir.name in ["oss", "enterprise", "shared"]:
+                    if category_dir.is_dir() and category_dir.name in [
+                        "oss",
+                        "enterprise",
+                        "shared",
+                    ]:
                         files = list(category_dir.glob("*.json"))
                         print(f"  {category_dir.name}: {len(files)} documents")
                         for file in files[:2]:  # Show first 2 files
                             print(f"    - {file.name}")
 
     # Step 5: Show product labels in scraped documents
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("🏷️  Step 5: Product Labels in Scraped Documents")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     import json
+
     shared_dir = Path("artifacts/2025-09-19/shared")
     if shared_dir.exists():
         for json_file in shared_dir.glob("*.json"):
@@ -103,9 +107,9 @@ def main():
             break  # Show just one example
 
     # Step 6: API Examples (if server is running)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("🌐 Step 6: API Usage Examples")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     print("To test the API endpoints, start the server with:")
     print("  python -m redis_sre_agent.api.app")
@@ -113,20 +117,22 @@ def main():
     print("Then you can use these API calls:")
     print()
     print("1. Search with product label filtering:")
-    print("   GET /api/v1/knowledge/search?query=vector%20database&product_labels=Redis%20Enterprise%20Software")
+    print(
+        "   GET /api/v1/knowledge/search?query=vector%20database&product_labels=Redis%20Enterprise%20Software"
+    )
     print()
     print("2. Start scraping job:")
     print("   POST /api/v1/knowledge/ingest/pipeline")
-    print("   Body: {\"scrapers\": [\"redis_kb\"], \"operation\": \"scrape\"}")
+    print('   Body: {"scrapers": ["redis_kb"], "operation": "scrape"}')
     print()
     print("3. Start full pipeline (scrape + ingest):")
     print("   POST /api/v1/knowledge/ingest/pipeline")
-    print("   Body: {\"scrapers\": [\"redis_kb\"], \"operation\": \"full\"}")
+    print('   Body: {"scrapers": ["redis_kb"], "operation": "full"}')
 
     # Step 7: CLI Usage Summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("💻 Step 7: CLI Usage Summary")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     print("Available CLI commands:")
     print()
@@ -145,9 +151,9 @@ def main():
     print("5. Search with category filter:")
     print("   redis-sre-agent search 'your query' --category shared")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("🎉 Demo Complete!")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("The Redis KB scraper is now fully functional and integrated!")
     print()
     print("Key Features Implemented:")
@@ -167,6 +173,7 @@ def main():
     print("- Redis Enterprise for K8s")
     print("- Redis Data Integration")
     print("- Client Libraries")
+
 
 if __name__ == "__main__":
     main()

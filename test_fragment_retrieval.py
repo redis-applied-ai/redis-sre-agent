@@ -51,7 +51,9 @@ class TestFragmentRetrieval:
 
             # Validate data types
             assert isinstance(result["document_hash"], str), "document_hash should be string"
-            assert isinstance(result["chunk_index"], (int, str)), "chunk_index should be int or string"
+            assert isinstance(result["chunk_index"], (int, str)), (
+                "chunk_index should be int or string"
+            )
 
     async def test_get_all_document_fragments_success(self, sample_document_hash):
         """Test successful retrieval of all document fragments."""
@@ -105,9 +107,7 @@ class TestFragmentRetrieval:
         context_window = 1
 
         result = await get_related_document_fragments(
-            sample_document_hash,
-            current_chunk_index=target_chunk,
-            context_window=context_window
+            sample_document_hash, current_chunk_index=target_chunk, context_window=context_window
         )
 
         # Check basic structure
@@ -136,25 +136,19 @@ class TestFragmentRetrieval:
         """Test edge cases for related fragment retrieval."""
         # Test with chunk_index 0 (beginning)
         result = await get_related_document_fragments(
-            sample_document_hash,
-            current_chunk_index=0,
-            context_window=2
+            sample_document_hash, current_chunk_index=0, context_window=2
         )
         assert "error" not in result
 
         # Test with large context window
         result = await get_related_document_fragments(
-            sample_document_hash,
-            current_chunk_index=0,
-            context_window=100
+            sample_document_hash, current_chunk_index=0, context_window=100
         )
         assert "error" not in result
 
         # Test with string chunk_index (type conversion)
         result = await get_related_document_fragments(
-            sample_document_hash,
-            current_chunk_index="0",
-            context_window=1
+            sample_document_hash, current_chunk_index="0", context_window=1
         )
         assert "error" not in result
 
@@ -173,7 +167,7 @@ class TestFragmentRetrieval:
             related_result = await get_related_document_fragments(
                 sample_document_hash,
                 current_chunk_index=chunk_index,
-                context_window=0  # Just the target chunk
+                context_window=0,  # Just the target chunk
             )
 
             # Find the target chunk in related results
@@ -186,10 +180,12 @@ class TestFragmentRetrieval:
             assert target_fragment is not None, f"Target chunk {chunk_index} not found"
 
             # Compare content
-            assert fragment["content"] == target_fragment["content"], \
+            assert fragment["content"] == target_fragment["content"], (
                 f"Content mismatch for chunk {chunk_index}"
-            assert fragment["title"] == target_fragment["title"], \
+            )
+            assert fragment["title"] == target_fragment["title"], (
                 f"Title mismatch for chunk {chunk_index}"
+            )
 
 
 async def run_comprehensive_tests():
@@ -226,7 +222,9 @@ async def run_comprehensive_tests():
             assert "document_hash" in result, "Search results should include document_hash"
             assert "chunk_index" in result, "Search results should include chunk_index"
             assert isinstance(result["document_hash"], str), "document_hash should be string"
-            assert isinstance(result["chunk_index"], (int, str)), "chunk_index should be int or string"
+            assert isinstance(result["chunk_index"], (int, str)), (
+                "chunk_index should be int or string"
+            )
 
     async def test_all_fragments():
         """Test successful retrieval of all document fragments."""
@@ -264,9 +262,7 @@ async def run_comprehensive_tests():
 
         target_chunk = 0
         result = await get_related_document_fragments(
-            sample_hash,
-            current_chunk_index=target_chunk,
-            context_window=1
+            sample_hash, current_chunk_index=target_chunk, context_window=1
         )
 
         assert "error" not in result, f"Should not have error: {result.get('error')}"
@@ -312,7 +308,7 @@ async def run_comprehensive_tests():
     print("-" * 30)
     print(f"✅ Passed: {passed}")
     print(f"❌ Failed: {failed}")
-    print(f"📈 Success Rate: {passed/(passed+failed)*100:.1f}%")
+    print(f"📈 Success Rate: {passed / (passed + failed) * 100:.1f}%")
 
 
 if __name__ == "__main__":

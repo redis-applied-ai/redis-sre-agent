@@ -49,10 +49,10 @@ class TestRedisCLIMetricsProvider:
             "used_memory": 1024,
             "connected_clients": 5,
             "keyspace_hits": 100,
-            "keyspace_misses": 10
+            "keyspace_misses": 10,
         }
 
-        with patch.object(provider, '_get_client', return_value=mock_client):
+        with patch.object(provider, "_get_client", return_value=mock_client):
             value = await provider.get_current_value("used_memory")
 
         assert value is not None
@@ -64,12 +64,9 @@ class TestRedisCLIMetricsProvider:
         provider = RedisCLIMetricsProvider("redis://localhost:6379")
 
         mock_client = AsyncMock()
-        mock_client.info.return_value = {
-            "keyspace_hits": 90,
-            "keyspace_misses": 10
-        }
+        mock_client.info.return_value = {"keyspace_hits": 90, "keyspace_misses": 10}
 
-        with patch.object(provider, '_get_client', return_value=mock_client):
+        with patch.object(provider, "_get_client", return_value=mock_client):
             value = await provider.get_current_value("keyspace_hit_rate")
 
         assert value is not None
@@ -81,11 +78,9 @@ class TestRedisCLIMetricsProvider:
         provider = RedisCLIMetricsProvider("redis://localhost:6379")
 
         mock_client = AsyncMock()
-        mock_client.info.return_value = {
-            "db0": {"keys": 100, "expires": 50, "avg_ttl": 3600}
-        }
+        mock_client.info.return_value = {"db0": {"keys": 100, "expires": 50, "avg_ttl": 3600}}
 
-        with patch.object(provider, '_get_client', return_value=mock_client):
+        with patch.object(provider, "_get_client", return_value=mock_client):
             value = await provider.get_current_value("db_keys", labels={"database": "0"})
 
         assert value is not None
@@ -107,12 +102,9 @@ class TestRedisCLIMetricsProvider:
 
         mock_client = AsyncMock()
         mock_client.ping.return_value = True
-        mock_client.info.return_value = {
-            "redis_version": "7.0.0",
-            "uptime_in_seconds": 3600
-        }
+        mock_client.info.return_value = {"redis_version": "7.0.0", "uptime_in_seconds": 3600}
 
-        with patch.object(provider, '_get_client', return_value=mock_client):
+        with patch.object(provider, "_get_client", return_value=mock_client):
             health = await provider.health_check()
 
         assert health["status"] == "healthy"
@@ -127,7 +119,7 @@ class TestRedisCLIMetricsProvider:
         mock_client = AsyncMock()
         mock_client.ping.side_effect = Exception("Connection failed")
 
-        with patch.object(provider, '_get_client', return_value=mock_client):
+        with patch.object(provider, "_get_client", return_value=mock_client):
             health = await provider.health_check()
 
         assert health["status"] == "unhealthy"
@@ -171,11 +163,13 @@ class TestPrometheusMetricsProvider:
                 return {
                     "status": "success",
                     "data": {
-                        "result": [{
-                            "metric": {"instance": "localhost:6379"},
-                            "value": [1640995200, "1024"]
-                        }]
-                    }
+                        "result": [
+                            {
+                                "metric": {"instance": "localhost:6379"},
+                                "value": [1640995200, "1024"],
+                            }
+                        ]
+                    },
                 }
 
         class MockContextManager:
@@ -188,7 +182,7 @@ class TestPrometheusMetricsProvider:
         mock_session = MagicMock()
         mock_session.get.return_value = MockContextManager()
 
-        with patch.object(provider, '_get_session', return_value=mock_session):
+        with patch.object(provider, "_get_session", return_value=mock_session):
             value = await provider.get_current_value("redis_memory_used_bytes")
 
         assert value is not None
@@ -209,15 +203,17 @@ class TestPrometheusMetricsProvider:
                 return {
                     "status": "success",
                     "data": {
-                        "result": [{
-                            "metric": {"instance": "localhost:6379"},
-                            "values": [
-                                [1640995200, "1024"],
-                                [1640995260, "1100"],
-                                [1640995320, "1200"]
-                            ]
-                        }]
-                    }
+                        "result": [
+                            {
+                                "metric": {"instance": "localhost:6379"},
+                                "values": [
+                                    [1640995200, "1024"],
+                                    [1640995260, "1100"],
+                                    [1640995320, "1200"],
+                                ],
+                            }
+                        ]
+                    },
                 }
 
         class MockContextManager:
@@ -232,7 +228,7 @@ class TestPrometheusMetricsProvider:
 
         time_range = TimeRange(datetime.now() - timedelta(hours=1), datetime.now())
 
-        with patch.object(provider, '_get_session', return_value=mock_session):
+        with patch.object(provider, "_get_session", return_value=mock_session):
             values = await provider.query_time_range("redis_memory_used_bytes", time_range)
 
         assert len(values) == 3
@@ -251,10 +247,7 @@ class TestPrometheusMetricsProvider:
                 self.status = 200
 
             async def json(self):
-                return {
-                    "status": "success",
-                    "data": {"result": []}
-                }
+                return {"status": "success", "data": {"result": []}}
 
         class MockContextManager:
             async def __aenter__(self):
@@ -266,7 +259,7 @@ class TestPrometheusMetricsProvider:
         mock_session = MagicMock()
         mock_session.get.return_value = MockContextManager()
 
-        with patch.object(provider, '_get_session', return_value=mock_session):
+        with patch.object(provider, "_get_session", return_value=mock_session):
             health = await provider.health_check()
 
         assert health["status"] == "healthy"
@@ -365,9 +358,10 @@ class TestComprehensiveProviders:
         provider = AWSProvider()
 
         # Mock the sub-providers' health checks
-        with patch.object(provider, 'get_logs_provider') as mock_logs, \
-             patch.object(provider, 'get_traces_provider') as mock_traces:
-
+        with (
+            patch.object(provider, "get_logs_provider") as mock_logs,
+            patch.object(provider, "get_traces_provider") as mock_traces,
+        ):
             mock_logs_provider = AsyncMock()
             mock_logs_provider.health_check.return_value = {"status": "healthy"}
             mock_logs.return_value = mock_logs_provider
@@ -391,7 +385,7 @@ class TestComprehensiveProviders:
         config = {
             "region_name": "us-west-2",
             "aws_access_key_id": "test_key",
-            "aws_secret_access_key": "test_secret"
+            "aws_secret_access_key": "test_secret",
         }
 
         await provider.initialize(config)

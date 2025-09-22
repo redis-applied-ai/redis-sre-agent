@@ -21,6 +21,7 @@ _active_jobs: Dict[str, Dict] = {}
 
 class SearchRequest(BaseModel):
     """Request model for knowledge base search."""
+
     query: str = Field(..., description="Search query")
     category: Optional[str] = Field(None, description="Filter by category")
     limit: int = Field(5, ge=1, le=50, description="Number of results to return")
@@ -28,6 +29,7 @@ class SearchRequest(BaseModel):
 
 class SearchResponse(BaseModel):
     """Response model for knowledge base search."""
+
     query: str
     category_filter: Optional[str]
     results_count: int
@@ -37,7 +39,10 @@ class SearchResponse(BaseModel):
 
 class IngestionRequest(BaseModel):
     """Request model for ingestion operations."""
-    batch_date: Optional[str] = Field(None, description="Batch date (YYYY-MM-DD), defaults to today")
+
+    batch_date: Optional[str] = Field(
+        None, description="Batch date (YYYY-MM-DD), defaults to today"
+    )
     artifacts_path: str = Field("./artifacts", description="Path to artifacts directory")
     scrapers: Optional[List[str]] = Field(None, description="List of scrapers to run")
     operation: str = Field("ingest", description="Operation type: 'scrape', 'ingest', or 'full'")
@@ -45,6 +50,7 @@ class IngestionRequest(BaseModel):
 
 class JobStatus(BaseModel):
     """Job status model."""
+
     job_id: str
     operation: str
     status: str  # queued, running, completed, failed
@@ -58,6 +64,7 @@ class JobStatus(BaseModel):
 
 class DocumentIngestionRequest(BaseModel):
     """Request model for single document ingestion."""
+
     title: str = Field(..., description="Document title")
     content: str = Field(..., description="Document content")
     source: str = Field(..., description="Source system or file")
@@ -67,14 +74,25 @@ class DocumentIngestionRequest(BaseModel):
 
 class KnowledgeSettings(BaseModel):
     """Knowledge base ingestion settings."""
+
     chunk_size: int = Field(1000, ge=100, le=4000, description="Size of text chunks for processing")
     chunk_overlap: int = Field(200, ge=0, le=1000, description="Overlap between consecutive chunks")
-    splitting_strategy: str = Field("recursive", description="Text splitting strategy: recursive, semantic, or fixed")
-    embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", description="Embedding model to use")
-    max_documents_per_batch: int = Field(100, ge=1, le=1000, description="Maximum documents to process in one batch")
+    splitting_strategy: str = Field(
+        "recursive", description="Text splitting strategy: recursive, semantic, or fixed"
+    )
+    embedding_model: str = Field(
+        "sentence-transformers/all-MiniLM-L6-v2", description="Embedding model to use"
+    )
+    max_documents_per_batch: int = Field(
+        100, ge=1, le=1000, description="Maximum documents to process in one batch"
+    )
     enable_metadata_extraction: bool = Field(True, description="Extract metadata from documents")
-    enable_semantic_chunking: bool = Field(False, description="Use semantic chunking instead of fixed-size")
-    similarity_threshold: float = Field(0.7, ge=0.0, le=1.0, description="Similarity threshold for semantic chunking")
+    enable_semantic_chunking: bool = Field(
+        False, description="Use semantic chunking instead of fixed-size"
+    )
+    similarity_threshold: float = Field(
+        0.7, ge=0.0, le=1.0, description="Similarity threshold for semantic chunking"
+    )
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -86,14 +104,29 @@ class KnowledgeSettings(BaseModel):
 
 class UpdateKnowledgeSettingsRequest(BaseModel):
     """Request model for updating knowledge settings."""
-    chunk_size: Optional[int] = Field(None, ge=100, le=4000, description="Size of text chunks for processing")
-    chunk_overlap: Optional[int] = Field(None, ge=0, le=1000, description="Overlap between consecutive chunks")
-    splitting_strategy: Optional[str] = Field(None, description="Text splitting strategy: recursive, semantic, or fixed")
+
+    chunk_size: Optional[int] = Field(
+        None, ge=100, le=4000, description="Size of text chunks for processing"
+    )
+    chunk_overlap: Optional[int] = Field(
+        None, ge=0, le=1000, description="Overlap between consecutive chunks"
+    )
+    splitting_strategy: Optional[str] = Field(
+        None, description="Text splitting strategy: recursive, semantic, or fixed"
+    )
     embedding_model: Optional[str] = Field(None, description="Embedding model to use")
-    max_documents_per_batch: Optional[int] = Field(None, ge=1, le=1000, description="Maximum documents to process in one batch")
-    enable_metadata_extraction: Optional[bool] = Field(None, description="Extract metadata from documents")
-    enable_semantic_chunking: Optional[bool] = Field(None, description="Use semantic chunking instead of fixed-size")
-    similarity_threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="Similarity threshold for semantic chunking")
+    max_documents_per_batch: Optional[int] = Field(
+        None, ge=1, le=1000, description="Maximum documents to process in one batch"
+    )
+    enable_metadata_extraction: Optional[bool] = Field(
+        None, description="Extract metadata from documents"
+    )
+    enable_semantic_chunking: Optional[bool] = Field(
+        None, description="Use semantic chunking instead of fixed-size"
+    )
+    similarity_threshold: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Similarity threshold for semantic chunking"
+    )
 
 
 # Using existing DocumentIngestionRequest model for real ingestion
@@ -103,8 +136,10 @@ class UpdateKnowledgeSettingsRequest(BaseModel):
 async def search_knowledge(
     query: str = Query(..., description="Search query"),
     category: Optional[str] = Query(None, description="Filter by category"),
-    product_labels: Optional[str] = Query(None, description="Comma-separated list of product labels to filter by"),
-    limit: int = Query(5, ge=1, le=50, description="Number of results to return")
+    product_labels: Optional[str] = Query(
+        None, description="Comma-separated list of product labels to filter by"
+    ),
+    limit: int = Query(5, ge=1, le=50, description="Number of results to return"),
 ):
     """Search the knowledge base for relevant documents."""
     try:
@@ -117,13 +152,12 @@ async def search_knowledge(
         # Parse product labels if provided
         parsed_product_labels = None
         if product_labels:
-            parsed_product_labels = [label.strip() for label in product_labels.split(",") if label.strip()]
+            parsed_product_labels = [
+                label.strip() for label in product_labels.split(",") if label.strip()
+            ]
 
         result = await search_knowledge_base(
-            query,
-            category=category,
-            product_labels=parsed_product_labels,
-            limit=limit
+            query, category=category, product_labels=parsed_product_labels, limit=limit
         )
 
         # Handle string, list, and dict responses
@@ -134,7 +168,7 @@ async def search_knowledge(
                 category_filter=category,
                 results_count=0,  # Would need to parse from string
                 results=[],
-                formatted_output=result
+                formatted_output=result,
             )
         elif isinstance(result, list):
             # List format (direct results)
@@ -143,7 +177,7 @@ async def search_knowledge(
                 category_filter=category,
                 results_count=len(result),
                 results=result,
-                formatted_output=""
+                formatted_output="",
             )
         else:
             # Dict format
@@ -152,7 +186,7 @@ async def search_knowledge(
                 category_filter=result.get("category_filter"),
                 results_count=result.get("results_count", 0),
                 results=result.get("results", []),
-                formatted_output=result.get("formatted_output", "")
+                formatted_output=result.get("formatted_output", ""),
             )
 
     except HTTPException:
@@ -161,8 +195,7 @@ async def search_knowledge(
     except Exception as e:
         logger.error(f"Knowledge search failed: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search failed: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Search failed: {str(e)}"
         )
 
 
@@ -170,9 +203,7 @@ async def search_knowledge(
 async def search_knowledge_post(request: SearchRequest):
     """Search the knowledge base using POST request."""
     return await search_knowledge(
-        query=request.query,
-        category=request.category,
-        limit=request.limit
+        query=request.query, category=request.category, limit=request.limit
     )
 
 
@@ -189,20 +220,20 @@ async def ingest_single_document(request: DocumentIngestionRequest):
             content=request.content,
             source=request.source,
             category=request.category,
-            severity=request.severity
+            severity=request.severity,
         )
 
         return {
             "success": True,
             "document_id": result.get("document_id"),
-            "message": f"Document '{request.title}' ingested successfully"
+            "message": f"Document '{request.title}' ingested successfully",
         }
 
     except Exception as e:
         logger.error(f"Single document ingestion failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Document ingestion failed: {str(e)}"
+            detail=f"Document ingestion failed: {str(e)}",
         )
 
 
@@ -223,7 +254,7 @@ async def start_ingestion_pipeline(request: IngestionRequest, background_tasks: 
             "progress": {},
             "results": None,
             "error": None,
-            "request": request.dict()
+            "request": request.dict(),
         }
 
         _active_jobs[job_id] = job
@@ -235,7 +266,7 @@ async def start_ingestion_pipeline(request: IngestionRequest, background_tasks: 
             request.operation,
             request.batch_date,
             request.artifacts_path,
-            request.scrapers
+            request.scrapers,
         )
 
         logger.info(f"Started ingestion job {job_id}")
@@ -243,14 +274,14 @@ async def start_ingestion_pipeline(request: IngestionRequest, background_tasks: 
         return {
             "job_id": job_id,
             "status": "queued",
-            "message": f"Ingestion job started. Use GET /knowledge/jobs/{job_id} to check status."
+            "message": f"Ingestion job started. Use GET /knowledge/jobs/{job_id} to check status.",
         }
 
     except Exception as e:
         logger.error(f"Failed to start ingestion job: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start ingestion job: {str(e)}"
+            detail=f"Failed to start ingestion job: {str(e)}",
         )
 
 
@@ -270,10 +301,7 @@ async def list_jobs():
 async def get_job_status(job_id: str):
     """Get status of a specific ingestion job."""
     if job_id not in _active_jobs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_id} not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
 
     job_data = _active_jobs[job_id]
     return JobStatus(**job_data)
@@ -283,10 +311,7 @@ async def get_job_status(job_id: str):
 async def cancel_job(job_id: str):
     """Cancel a running job (if possible) or remove from job list."""
     if job_id not in _active_jobs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_id} not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
 
     job = _active_jobs[job_id]
 
@@ -307,7 +332,7 @@ async def _run_pipeline_job(
     operation: str,
     batch_date: Optional[str],
     artifacts_path: str,
-    scrapers: Optional[List[str]]
+    scrapers: Optional[List[str]],
 ):
     """Run a pipeline job in the background."""
     job = _active_jobs[job_id]
@@ -366,7 +391,7 @@ async def ingest_source_documents(background_tasks: BackgroundTasks):
             "progress": {},
             "results": None,
             "error": None,
-            "request": {"source": "source_documents"}
+            "request": {"source": "source_documents"},
         }
 
         _active_jobs[job_id] = job
@@ -379,14 +404,14 @@ async def ingest_source_documents(background_tasks: BackgroundTasks):
         return {
             "job_id": job_id,
             "status": "queued",
-            "message": f"Source documents ingestion started. Use GET /knowledge/jobs/{job_id} to check status."
+            "message": f"Source documents ingestion started. Use GET /knowledge/jobs/{job_id} to check status.",
         }
 
     except Exception as e:
         logger.error(f"Failed to start source documents ingestion: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start source documents ingestion: {str(e)}"
+            detail=f"Failed to start source documents ingestion: {str(e)}",
         )
 
 
@@ -412,7 +437,7 @@ async def _run_source_documents_ingestion(job_id: str):
         job["results"] = {
             "successful": [r for r in results if r["status"] == "success"],
             "failed": [r for r in results if r["status"] == "error"],
-            "total_processed": len(results)
+            "total_processed": len(results),
         }
 
         logger.info(f"Source documents ingestion job {job_id} completed successfully")
@@ -449,7 +474,9 @@ async def get_knowledge_base_stats():
                 "FT.SEARCH",
                 index.name,
                 "*",  # Match all entries
-                "LIMIT", "0", "0"  # Return 0 results, just get the total count
+                "LIMIT",
+                "0",
+                "0",  # Return 0 results, just get the total count
             )
             total_chunks = int(chunks_result[0]) if chunks_result else 0
 
@@ -460,8 +487,14 @@ async def get_knowledge_base_stats():
                     "FT.AGGREGATE",
                     index.name,
                     "*",  # Match all entries
-                    "GROUPBY", "1", "@document_hash",  # Group by document_hash field
-                    "REDUCE", "COUNT", "0", "AS", "count"  # Count entries per group
+                    "GROUPBY",
+                    "1",
+                    "@document_hash",  # Group by document_hash field
+                    "REDUCE",
+                    "COUNT",
+                    "0",
+                    "AS",
+                    "count",  # Count entries per group
                 )
 
                 # FT.AGGREGATE returns [total_groups, group1_data, group2_data, ...]
@@ -501,7 +534,7 @@ async def get_knowledge_base_stats():
             "document_types": {
                 "general": total_documents  # Simplified - could be enhanced to track actual types
             },
-            "storage_size_mb": storage_size_mb
+            "storage_size_mb": storage_size_mb,
         }
 
     except Exception as e:
@@ -512,7 +545,7 @@ async def get_knowledge_base_stats():
             "last_ingestion": None,
             "ingestion_status": "error",
             "document_types": {},
-            "storage_size_mb": 0.0
+            "storage_size_mb": 0.0,
         }
 
 
@@ -534,8 +567,7 @@ async def get_knowledge_settings():
 
 @router.put("/settings", response_model=KnowledgeSettings)
 async def update_knowledge_settings(
-    settings: UpdateKnowledgeSettingsRequest,
-    background_tasks: BackgroundTasks
+    settings: UpdateKnowledgeSettingsRequest, background_tasks: BackgroundTasks
 ):
     """Update knowledge base settings and optionally trigger re-ingestion."""
     global _knowledge_settings
@@ -570,4 +602,3 @@ async def reset_knowledge_settings():
     _knowledge_settings = KnowledgeSettings.get_defaults()
     logger.info("Knowledge settings reset to defaults")
     return _knowledge_settings
-

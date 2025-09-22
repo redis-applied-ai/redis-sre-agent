@@ -314,7 +314,7 @@ class RedisSREDemo:
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Memory Pressure Analysis",
-                f"Redis loaded with {keys_loaded:,} keys using {utilization:.1f}% of {maxmemory / (1024 * 1024):.1f} MB limit"
+                f"Redis loaded with {keys_loaded:,} keys using {utilization:.1f}% of {maxmemory / (1024 * 1024):.1f} MB limit",
             )
             return
 
@@ -574,7 +574,7 @@ class RedisSREDemo:
             if self.ui_mode:
                 self._wait_for_ui_interaction(
                     "Connection Issues Analysis",
-                    f"Redis with {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, {rejected_attempts} recent rejections"
+                    f"Redis with {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, {rejected_attempts} recent rejections",
                 )
             else:
                 # Get comprehensive diagnostics showing connection problems
@@ -759,7 +759,7 @@ class RedisSREDemo:
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Performance Analysis",
-                f"Redis with slow operations: Lua scripts avg {avg_slow_time:.1f}ms, KEYS avg {avg_keys_time:.1f}ms, {slowlog_count} slowlog entries"
+                f"Redis with slow operations: Lua scripts avg {avg_slow_time:.1f}ms, KEYS avg {avg_keys_time:.1f}ms, {slowlog_count} slowlog entries",
             )
         else:
             await self._run_diagnostics_and_agent_query(
@@ -846,7 +846,7 @@ class RedisSREDemo:
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Full Health Check",
-                f"Complete Redis diagnostics: {total_keys} keys, {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB memory, role: {role}"
+                f"Complete Redis diagnostics: {total_keys} keys, {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB memory, role: {role}",
             )
         else:
             # Run comprehensive agent consultation

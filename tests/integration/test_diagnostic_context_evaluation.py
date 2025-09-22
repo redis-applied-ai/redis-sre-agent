@@ -221,7 +221,9 @@ class DiagnosticContextEvaluator:
         logger.info(f"Capturing baseline diagnostics: {sections}")
 
         # Use the same function that external tools would use
-        diagnostics = await capture_redis_diagnostics("redis://localhost:6379", sections=sections, include_raw_data=True)
+        diagnostics = await capture_redis_diagnostics(
+            "redis://localhost:6379", sections=sections, include_raw_data=True
+        )
 
         return diagnostics
 

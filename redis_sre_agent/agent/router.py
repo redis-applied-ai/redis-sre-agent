@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class AgentType(Enum):
     """Types of available agents."""
+
     REDIS_FOCUSED = "redis_focused"
     KNOWLEDGE_ONLY = "knowledge_only"
 
@@ -26,51 +27,106 @@ class AgentRouter:
         """Initialize the agent router."""
         # Keywords that suggest Redis-specific queries
         self.redis_keywords = {
-            'instance', 'redis', 'connection', 'memory', 'keys', 'database', 'db',
-            'cluster', 'sentinel', 'replication', 'persistence', 'rdb', 'aof',
-            'eviction', 'maxmemory', 'timeout', 'slowlog', 'latency', 'throughput',
-            'cpu', 'network', 'port', 'host', 'auth', 'password', 'ssl', 'tls'
+            "instance",
+            "redis",
+            "connection",
+            "memory",
+            "keys",
+            "database",
+            "db",
+            "cluster",
+            "sentinel",
+            "replication",
+            "persistence",
+            "rdb",
+            "aof",
+            "eviction",
+            "maxmemory",
+            "timeout",
+            "slowlog",
+            "latency",
+            "throughput",
+            "cpu",
+            "network",
+            "port",
+            "host",
+            "auth",
+            "password",
+            "ssl",
+            "tls",
         }
 
         # Keywords that suggest diagnostic/monitoring queries
         self.diagnostic_keywords = {
-            'monitor', 'metrics', 'performance', 'slow', 'error', 'crash', 'down',
-            'unavailable', 'timeout', 'latency', 'memory usage', 'cpu usage',
-            'disk space', 'logs', 'debug', 'troubleshoot', 'diagnose', 'health check'
+            "monitor",
+            "metrics",
+            "performance",
+            "slow",
+            "error",
+            "crash",
+            "down",
+            "unavailable",
+            "timeout",
+            "latency",
+            "memory usage",
+            "cpu usage",
+            "disk space",
+            "logs",
+            "debug",
+            "troubleshoot",
+            "diagnose",
+            "health check",
         }
 
         # Keywords that suggest general knowledge queries
         self.knowledge_keywords = {
-            'best practice', 'how to', 'what is', 'explain', 'guide', 'tutorial',
-            'documentation', 'learn', 'understand', 'concept', 'principle',
-            'methodology', 'approach', 'strategy', 'recommendation', 'advice',
-            'sre', 'reliability', 'availability', 'scalability', 'observability'
+            "best practice",
+            "how to",
+            "what is",
+            "explain",
+            "guide",
+            "tutorial",
+            "documentation",
+            "learn",
+            "understand",
+            "concept",
+            "principle",
+            "methodology",
+            "approach",
+            "strategy",
+            "recommendation",
+            "advice",
+            "sre",
+            "reliability",
+            "availability",
+            "scalability",
+            "observability",
         }
 
         # Patterns that strongly indicate Redis-specific queries
         self.redis_patterns = [
-            r'\b(?:redis|instance)\s+(?:is|was|has|shows|reports)\b',
-            r'\b(?:connect|connecting)\s+to\s+redis\b',
-            r'\b(?:redis|instance)\s+(?:error|problem|issue|failure)\b',
-            r'\b(?:memory|cpu|disk)\s+(?:usage|utilization|consumption)\b',
-            r'\b(?:slow|high|low)\s+(?:performance|latency|throughput)\b',
-            r'\b(?:redis|instance)\s+(?:configuration|config|settings)\b',
+            r"\b(?:redis|instance)\s+(?:is|was|has|shows|reports)\b",
+            r"\b(?:connect|connecting)\s+to\s+redis\b",
+            r"\b(?:redis|instance)\s+(?:error|problem|issue|failure)\b",
+            r"\b(?:memory|cpu|disk)\s+(?:usage|utilization|consumption)\b",
+            r"\b(?:slow|high|low)\s+(?:performance|latency|throughput)\b",
+            r"\b(?:redis|instance)\s+(?:configuration|config|settings)\b",
         ]
 
         # Patterns that suggest knowledge-only queries
         self.knowledge_patterns = [
-            r'\b(?:what|how|why|when|where)\s+(?:is|are|do|does|should|would|can|could)\b',
-            r'\b(?:best\s+practice|recommended\s+approach|how\s+to)\b',
-            r'\b(?:explain|describe|define|clarify)\b',
-            r'\b(?:guide|tutorial|documentation|example)\b',
-            r'\b(?:sre|reliability|observability)\s+(?:principle|concept|methodology)\b',
+            r"\b(?:what|how|why|when|where)\s+(?:is|are|do|does|should|would|can|could)\b",
+            r"\b(?:best\s+practice|recommended\s+approach|how\s+to)\b",
+            r"\b(?:explain|describe|define|clarify)\b",
+            r"\b(?:guide|tutorial|documentation|example)\b",
+            r"\b(?:sre|reliability|observability)\s+(?:principle|concept|methodology)\b",
         ]
 
     def route_query(
         self,
         query: str,
         context: Optional[Dict[str, Any]] = None,
-        user_preferences: Optional[Dict[str, Any]] = None
+        user_preferences: Optional[Dict[str, Any]] = None,
     ) -> AgentType:
         """
         Route a query to the appropriate agent.
@@ -87,7 +143,9 @@ class AgentRouter:
 
         # 1. Check for explicit Redis instance context
         if context and context.get("instance_id"):
-            logger.info("Query has explicit Redis instance context - routing to Redis-focused agent")
+            logger.info(
+                "Query has explicit Redis instance context - routing to Redis-focused agent"
+            )
             return AgentType.REDIS_FOCUSED
 
         # 2. Check user preferences
@@ -107,13 +165,17 @@ class AgentRouter:
 
         # Calculate pattern scores
         redis_pattern_score = self._calculate_pattern_score(query_lower, self.redis_patterns)
-        knowledge_pattern_score = self._calculate_pattern_score(query_lower, self.knowledge_patterns)
+        knowledge_pattern_score = self._calculate_pattern_score(
+            query_lower, self.knowledge_patterns
+        )
 
         # Combine scores
         total_redis_score = redis_score + diagnostic_score + redis_pattern_score
         total_knowledge_score = knowledge_score + knowledge_pattern_score
 
-        logger.info(f"Routing scores - Redis: {total_redis_score}, Knowledge: {total_knowledge_score}")
+        logger.info(
+            f"Routing scores - Redis: {total_redis_score}, Knowledge: {total_knowledge_score}"
+        )
 
         # 4. Make routing decision
         if total_redis_score > total_knowledge_score and total_redis_score > 0:
@@ -141,7 +203,7 @@ class AgentRouter:
         self,
         query: str,
         context: Optional[Dict[str, Any]] = None,
-        user_preferences: Optional[Dict[str, Any]] = None
+        user_preferences: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Get detailed explanation of routing decision.
@@ -151,11 +213,7 @@ class AgentRouter:
         """
         agent_type = self.route_query(query, context, user_preferences)
 
-        explanation = {
-            "selected_agent": agent_type.value,
-            "reasoning": [],
-            "scores": {}
-        }
+        explanation = {"selected_agent": agent_type.value, "reasoning": [], "scores": {}}
 
         # Check explicit context
         if context and context.get("instance_id"):
@@ -168,7 +226,9 @@ class AgentRouter:
         diagnostic_score = self._calculate_keyword_score(query_lower, self.diagnostic_keywords)
         knowledge_score = self._calculate_keyword_score(query_lower, self.knowledge_keywords)
         redis_pattern_score = self._calculate_pattern_score(query_lower, self.redis_patterns)
-        knowledge_pattern_score = self._calculate_pattern_score(query_lower, self.knowledge_patterns)
+        knowledge_pattern_score = self._calculate_pattern_score(
+            query_lower, self.knowledge_patterns
+        )
 
         explanation["scores"] = {
             "redis_keywords": redis_score,
@@ -177,20 +237,28 @@ class AgentRouter:
             "redis_patterns": redis_pattern_score,
             "knowledge_patterns": knowledge_pattern_score,
             "total_redis": redis_score + diagnostic_score + redis_pattern_score,
-            "total_knowledge": knowledge_score + knowledge_pattern_score
+            "total_knowledge": knowledge_score + knowledge_pattern_score,
         }
 
         # Add reasoning based on scores
         if explanation["scores"]["total_redis"] > explanation["scores"]["total_knowledge"]:
-            explanation["reasoning"].append("Query contains Redis-specific terminology and patterns")
+            explanation["reasoning"].append(
+                "Query contains Redis-specific terminology and patterns"
+            )
         elif explanation["scores"]["total_knowledge"] > 0:
-            explanation["reasoning"].append("Query appears to be seeking general knowledge or guidance")
+            explanation["reasoning"].append(
+                "Query appears to be seeking general knowledge or guidance"
+            )
         else:
-            explanation["reasoning"].append("No strong indicators found, defaulting to knowledge-only agent")
+            explanation["reasoning"].append(
+                "No strong indicators found, defaulting to knowledge-only agent"
+            )
 
         return explanation
 
-    def suggest_alternative_agent(self, current_agent: AgentType, query: str) -> Optional[Dict[str, str]]:
+    def suggest_alternative_agent(
+        self, current_agent: AgentType, query: str
+    ) -> Optional[Dict[str, str]]:
         """
         Suggest alternative agent if the current one might not be optimal.
 
@@ -203,19 +271,19 @@ class AgentRouter:
             suggestions = {
                 AgentType.REDIS_FOCUSED: {
                     "agent": "Redis-focused agent",
-                    "reason": "This query appears to be about specific Redis instance troubleshooting or diagnostics"
+                    "reason": "This query appears to be about specific Redis instance troubleshooting or diagnostics",
                 },
                 AgentType.KNOWLEDGE_ONLY: {
                     "agent": "Knowledge-only agent",
-                    "reason": "This query appears to be seeking general SRE guidance or best practices"
-                }
+                    "reason": "This query appears to be seeking general SRE guidance or best practices",
+                },
             }
 
             return {
                 "suggested_agent": alternative_agent.value,
                 "current_agent": current_agent.value,
                 "reason": suggestions[alternative_agent]["reason"],
-                "suggestion": f"Consider using the {suggestions[alternative_agent]['agent']} for better results"
+                "suggestion": f"Consider using the {suggestions[alternative_agent]['agent']} for better results",
             }
 
         return None
@@ -236,7 +304,7 @@ def get_agent_router() -> AgentRouter:
 def route_to_appropriate_agent(
     query: str,
     context: Optional[Dict[str, Any]] = None,
-    user_preferences: Optional[Dict[str, Any]] = None
+    user_preferences: Optional[Dict[str, Any]] = None,
 ) -> AgentType:
     """
     Convenience function to route a query to the appropriate agent.

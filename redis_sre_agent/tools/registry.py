@@ -57,7 +57,9 @@ class SREToolRegistry:
             if name not in self._capability_map[capability]:
                 self._capability_map[capability].append(name)
 
-        logger.info(f"Registered SRE provider '{name}' with capabilities: {[c.value for c in provider.capabilities]}")
+        logger.info(
+            f"Registered SRE provider '{name}' with capabilities: {[c.value for c in provider.capabilities]}"
+        )
 
     def unregister_provider(self, name: str) -> bool:
         """Unregister an SRE tool provider.
@@ -118,10 +120,7 @@ class SREToolRegistry:
         Returns:
             List of capabilities that have at least one provider
         """
-        return [
-            capability for capability, providers in self._capability_map.items()
-            if providers
-        ]
+        return [capability for capability, providers in self._capability_map.items() if providers]
 
     async def get_metrics_providers(self) -> List[MetricsProvider]:
         """Get all available metrics providers.
@@ -209,20 +208,14 @@ class SREToolRegistry:
                 provider_results[name] = {
                     "status": "error",
                     "provider": provider.provider_name,
-                    "error": str(e)
+                    "error": str(e),
                 }
 
         # Determine overall status
-        all_healthy = all(
-            result.get("status") == "healthy"
-            for result in provider_results.values()
-        )
+        all_healthy = all(result.get("status") == "healthy" for result in provider_results.values())
         overall_status = "healthy" if all_healthy else "unhealthy"
 
-        return {
-            "overall_status": overall_status,
-            "providers": provider_results
-        }
+        return {"overall_status": overall_status, "providers": provider_results}
 
     def get_registry_status(self) -> Dict[str, Any]:
         """Get overall registry status and statistics.
@@ -240,9 +233,10 @@ class SREToolRegistry:
             "providers": list(self._providers.keys()),
             "capability_counts": capability_counts,
             "capabilities_available": [
-                capability.value for capability, providers in self._capability_map.items()
+                capability.value
+                for capability, providers in self._capability_map.items()
                 if providers
-            ]
+            ],
         }
 
 
@@ -300,8 +294,7 @@ def auto_register_default_providers(config: Dict[str, Any]) -> None:
         from .providers import create_redis_provider
 
         redis_provider = create_redis_provider(
-            redis_url=config["redis_url"],
-            prometheus_url=config.get("prometheus_url")
+            redis_url=config["redis_url"], prometheus_url=config.get("prometheus_url")
         )
         registry.register_provider("redis", redis_provider)
 
@@ -312,7 +305,7 @@ def auto_register_default_providers(config: Dict[str, Any]) -> None:
         aws_provider = create_aws_provider(
             region_name=config.get("aws_region", "us-east-1"),
             aws_access_key_id=config.get("aws_access_key_id"),
-            aws_secret_access_key=config.get("aws_secret_access_key")
+            aws_secret_access_key=config.get("aws_secret_access_key"),
         )
         registry.register_provider("aws", aws_provider)
 
@@ -323,7 +316,7 @@ def auto_register_default_providers(config: Dict[str, Any]) -> None:
         github_provider = create_github_provider(
             token=config["github_token"],
             organization=config.get("github_organization"),
-            default_repo=config.get("github_default_repo")
+            default_repo=config.get("github_default_repo"),
         )
         registry.register_provider("github", github_provider)
 

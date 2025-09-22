@@ -34,7 +34,12 @@ class AWSProvider:
     - Can be extended with CloudWatch Metrics
     """
 
-    def __init__(self, region_name: str = "us-east-1", aws_access_key_id: Optional[str] = None, aws_secret_access_key: Optional[str] = None):
+    def __init__(
+        self,
+        region_name: str = "us-east-1",
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+    ):
         self.region_name = region_name
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
@@ -58,9 +63,7 @@ class AWSProvider:
         """Get CloudWatch Logs provider."""
         if self._logs_provider is None:
             self._logs_provider = CloudWatchLogsProvider(
-                self.region_name,
-                self.aws_access_key_id,
-                self.aws_secret_access_key
+                self.region_name, self.aws_access_key_id, self.aws_secret_access_key
             )
         return self._logs_provider
 
@@ -76,9 +79,7 @@ class AWSProvider:
         """Get X-Ray traces provider."""
         if self._traces_provider is None:
             self._traces_provider = XRayTracesProvider(
-                self.region_name,
-                self.aws_access_key_id,
-                self.aws_secret_access_key
+                self.region_name, self.aws_access_key_id, self.aws_secret_access_key
             )
         return self._traces_provider
 
@@ -98,7 +99,7 @@ class AWSProvider:
         health_results = {
             "provider": self.provider_name,
             "capabilities": [cap.value for cap in self.capabilities],
-            "services": {}
+            "services": {},
         }
 
         # Check logs provider
@@ -113,8 +114,7 @@ class AWSProvider:
 
         # Determine overall status
         all_healthy = all(
-            service.get("status") == "healthy"
-            for service in health_results["services"].values()
+            service.get("status") == "healthy" for service in health_results["services"].values()
         )
 
         health_results["status"] = "healthy" if all_healthy else "unhealthy"
@@ -129,7 +129,9 @@ class GitHubProvider:
     - GitHub Repositories for code analysis
     """
 
-    def __init__(self, token: str, organization: Optional[str] = None, default_repo: Optional[str] = None):
+    def __init__(
+        self, token: str, organization: Optional[str] = None, default_repo: Optional[str] = None
+    ):
         self.token = token
         self.organization = organization
         self.default_repo = default_repo
@@ -189,7 +191,7 @@ class GitHubProvider:
         health_results = {
             "provider": self.provider_name,
             "capabilities": [cap.value for cap in self.capabilities],
-            "services": {}
+            "services": {},
         }
 
         # Check tickets provider
@@ -204,8 +206,7 @@ class GitHubProvider:
 
         # Determine overall status
         all_healthy = all(
-            service.get("status") == "healthy"
-            for service in health_results["services"].values()
+            service.get("status") == "healthy" for service in health_results["services"].values()
         )
 
         health_results["status"] = "healthy" if all_healthy else "unhealthy"
@@ -275,7 +276,7 @@ class RedisProvider:
         health_results = {
             "provider": self.provider_name,
             "capabilities": [cap.value for cap in self.capabilities],
-            "services": {}
+            "services": {},
         }
 
         # Check metrics provider
@@ -285,8 +286,7 @@ class RedisProvider:
 
         # Determine overall status
         all_healthy = all(
-            service.get("status") == "healthy"
-            for service in health_results["services"].values()
+            service.get("status") == "healthy" for service in health_results["services"].values()
         )
 
         health_results["status"] = "healthy" if all_healthy else "unhealthy"
@@ -297,24 +297,19 @@ class RedisProvider:
 def create_aws_provider(
     region_name: str = "us-east-1",
     aws_access_key_id: Optional[str] = None,
-    aws_secret_access_key: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None,
 ) -> AWSProvider:
     """Create an AWS SRE provider instance."""
     return AWSProvider(region_name, aws_access_key_id, aws_secret_access_key)
 
 
 def create_github_provider(
-    token: str,
-    organization: Optional[str] = None,
-    default_repo: Optional[str] = None
+    token: str, organization: Optional[str] = None, default_repo: Optional[str] = None
 ) -> GitHubProvider:
     """Create a GitHub SRE provider instance."""
     return GitHubProvider(token, organization, default_repo)
 
 
-def create_redis_provider(
-    redis_url: str,
-    prometheus_url: Optional[str] = None
-) -> RedisProvider:
+def create_redis_provider(redis_url: str, prometheus_url: Optional[str] = None) -> RedisProvider:
     """Create a Redis SRE provider instance."""
     return RedisProvider(redis_url, prometheus_url)

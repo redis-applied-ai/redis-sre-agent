@@ -52,41 +52,64 @@ class PrometheusMetricsProvider:
         metrics = [
             # Memory metrics
             MetricDefinition("redis_memory_used_bytes", "Memory used by Redis", "bytes", "gauge"),
-            MetricDefinition("redis_memory_max_bytes", "Maximum memory configured", "bytes", "gauge"),
-            MetricDefinition("redis_memory_fragmentation_ratio", "Memory fragmentation ratio", "ratio", "gauge"),
-
+            MetricDefinition(
+                "redis_memory_max_bytes", "Maximum memory configured", "bytes", "gauge"
+            ),
+            MetricDefinition(
+                "redis_memory_fragmentation_ratio", "Memory fragmentation ratio", "ratio", "gauge"
+            ),
             # Connection metrics
-            MetricDefinition("redis_connected_clients", "Number of connected clients", "count", "gauge"),
-            MetricDefinition("redis_blocked_clients", "Number of blocked clients", "count", "gauge"),
-            MetricDefinition("redis_rejected_connections_total", "Total rejected connections", "count", "counter"),
-
+            MetricDefinition(
+                "redis_connected_clients", "Number of connected clients", "count", "gauge"
+            ),
+            MetricDefinition(
+                "redis_blocked_clients", "Number of blocked clients", "count", "gauge"
+            ),
+            MetricDefinition(
+                "redis_rejected_connections_total", "Total rejected connections", "count", "counter"
+            ),
             # Performance metrics
-            MetricDefinition("redis_commands_processed_total", "Total commands processed", "count", "counter"),
-            MetricDefinition("redis_instantaneous_ops_per_sec", "Operations per second", "ops/sec", "gauge"),
-            MetricDefinition("redis_keyspace_hits_total", "Total keyspace hits", "count", "counter"),
-            MetricDefinition("redis_keyspace_misses_total", "Total keyspace misses", "count", "counter"),
+            MetricDefinition(
+                "redis_commands_processed_total", "Total commands processed", "count", "counter"
+            ),
+            MetricDefinition(
+                "redis_instantaneous_ops_per_sec", "Operations per second", "ops/sec", "gauge"
+            ),
+            MetricDefinition(
+                "redis_keyspace_hits_total", "Total keyspace hits", "count", "counter"
+            ),
+            MetricDefinition(
+                "redis_keyspace_misses_total", "Total keyspace misses", "count", "counter"
+            ),
             MetricDefinition("redis_expired_keys_total", "Total expired keys", "count", "counter"),
             MetricDefinition("redis_evicted_keys_total", "Total evicted keys", "count", "counter"),
-
             # Database metrics
             MetricDefinition("redis_db_keys", "Number of keys per database", "count", "gauge"),
-            MetricDefinition("redis_db_keys_expiring", "Number of expiring keys per database", "count", "gauge"),
-
+            MetricDefinition(
+                "redis_db_keys_expiring", "Number of expiring keys per database", "count", "gauge"
+            ),
             # System metrics (if node_exporter is available)
-            MetricDefinition("node_memory_MemAvailable_bytes", "Available system memory", "bytes", "gauge"),
+            MetricDefinition(
+                "node_memory_MemAvailable_bytes", "Available system memory", "bytes", "gauge"
+            ),
             MetricDefinition("node_memory_MemTotal_bytes", "Total system memory", "bytes", "gauge"),
             MetricDefinition("node_cpu_seconds_total", "CPU time spent", "seconds", "counter"),
             MetricDefinition("node_load1", "1-minute load average", "load", "gauge"),
-
             # Network metrics
-            MetricDefinition("redis_net_input_bytes_total", "Total network input bytes", "bytes", "counter"),
-            MetricDefinition("redis_net_output_bytes_total", "Total network output bytes", "bytes", "counter"),
+            MetricDefinition(
+                "redis_net_input_bytes_total", "Total network input bytes", "bytes", "counter"
+            ),
+            MetricDefinition(
+                "redis_net_output_bytes_total", "Total network output bytes", "bytes", "counter"
+            ),
         ]
 
         self._metric_definitions = metrics
         return metrics
 
-    async def get_current_value(self, metric_name: str, labels: Optional[Dict[str, str]] = None) -> Optional[MetricValue]:
+    async def get_current_value(
+        self, metric_name: str, labels: Optional[Dict[str, str]] = None
+    ) -> Optional[MetricValue]:
         """Get current value of a Prometheus metric."""
         try:
             session = await self._get_session()
@@ -129,7 +152,7 @@ class PrometheusMetricsProvider:
         metric_name: str,
         time_range: TimeRange,
         labels: Optional[Dict[str, str]] = None,
-        step: Optional[str] = None
+        step: Optional[str] = None,
     ) -> List[MetricValue]:
         """Query Prometheus metric values over a time range."""
         try:
@@ -145,7 +168,7 @@ class PrometheusMetricsProvider:
                 "query": query,
                 "start": time_range.start.timestamp(),
                 "end": time_range.end.timestamp(),
-                "step": step or "15s"
+                "step": step or "15s",
             }
 
             url = urljoin(self.prometheus_url, "/api/v1/query_range")
@@ -166,7 +189,9 @@ class PrometheusMetricsProvider:
                                 if len(value_data) >= 2:
                                     timestamp = datetime.fromtimestamp(float(value_data[0]))
                                     value = float(value_data[1])
-                                    metric_values.append(MetricValue(value, timestamp, result_labels))
+                                    metric_values.append(
+                                        MetricValue(value, timestamp, result_labels)
+                                    )
 
                         return sorted(metric_values, key=lambda x: x.timestamp)
 
@@ -192,7 +217,7 @@ class PrometheusMetricsProvider:
                             "provider": self.provider_name,
                             "connected": True,
                             "prometheus_status": "up",
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.now().isoformat(),
                         }
 
                 return {
@@ -200,7 +225,7 @@ class PrometheusMetricsProvider:
                     "provider": self.provider_name,
                     "error": f"HTTP {response.status}",
                     "connected": False,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 }
 
         except Exception as e:
@@ -209,7 +234,7 @@ class PrometheusMetricsProvider:
                 "provider": self.provider_name,
                 "error": str(e),
                 "connected": False,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
 
     async def close(self):

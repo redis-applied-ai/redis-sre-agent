@@ -122,11 +122,8 @@ Subject:"""
 
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",  # Fast, cost-effective model
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 max_tokens=20,
-
             )
 
             subject = response.choices[0].message.content.strip()
@@ -212,7 +209,9 @@ Subject:"""
             logger.error(f"Failed to add thread {thread_id} to index: {e}")
             return False
 
-    async def _remove_from_thread_index(self, thread_id: str, user_id: Optional[str] = None) -> bool:
+    async def _remove_from_thread_index(
+        self, thread_id: str, user_id: Optional[str] = None
+    ) -> bool:
         """Remove thread from index."""
         try:
             client = await self._get_client()
@@ -426,10 +425,11 @@ Subject:"""
             )
 
             # Publish status update to stream
-            await self._publish_stream_update(thread_id, "status_change", {
-                "status": status.value,
-                "message": f"Status changed to {status.value}"
-            })
+            await self._publish_stream_update(
+                thread_id,
+                "status_change",
+                {"status": status.value, "message": f"Status changed to {status.value}"},
+            )
 
             logger.info(f"Updated thread {thread_id} status to {status.value}")
             return True
@@ -465,12 +465,16 @@ Subject:"""
             )
 
             # Publish update to stream
-            await self._publish_stream_update(thread_id, "thread_update", {
-                "message": message,
-                "update_type": update_type,
-                "metadata": metadata or {},
-                "timestamp": update.timestamp
-            })
+            await self._publish_stream_update(
+                thread_id,
+                "thread_update",
+                {
+                    "message": message,
+                    "update_type": update_type,
+                    "metadata": metadata or {},
+                    "timestamp": update.timestamp,
+                },
+            )
 
             logger.debug(f"Added update to thread {thread_id}: {message}")
             return True
@@ -494,10 +498,9 @@ Subject:"""
             )
 
             # Publish result to stream
-            await self._publish_stream_update(thread_id, "result_set", {
-                "result": result,
-                "message": "Task result available"
-            })
+            await self._publish_stream_update(
+                thread_id, "result_set", {"result": result, "message": "Task result available"}
+            )
 
             logger.info(f"Set result for thread {thread_id}")
             return True
@@ -507,10 +510,7 @@ Subject:"""
             return False
 
     async def _publish_stream_update(
-        self,
-        thread_id: str,
-        update_type: str,
-        data: Dict[str, Any]
+        self, thread_id: str, update_type: str, data: Dict[str, Any]
     ) -> bool:
         """Publish an update to the Redis Stream for real-time WebSocket updates."""
         try:

@@ -80,9 +80,6 @@ def mock_repos_provider():
     return provider
 
 
-
-
-
 class TestQueryInstanceMetrics:
     """Test query_instance_metrics function."""
 
@@ -218,7 +215,7 @@ class TestSearchLogs:
                 level="ERROR",
                 message="Connection failed",
                 source="redis-server",
-                labels={"service": "redis"}
+                labels={"service": "redis"},
             )
         ]
 
@@ -242,11 +239,7 @@ class TestSearchLogs:
 
         # Execute
         await search_logs(
-            "error",
-            time_range_hours=2.0,
-            log_groups=["app-logs"],
-            level_filter="ERROR",
-            limit=50
+            "error", time_range_hours=2.0, log_groups=["app-logs"], level_filter="ERROR", limit=50
         )
 
         # Verify
@@ -275,7 +268,7 @@ class TestCreateIncidentTicket:
             title="Redis Memory Issue",
             description="Memory usage critical",
             status="open",
-            labels=["redis", "memory"]
+            labels=["redis", "memory"],
         )
 
         # Execute
@@ -283,7 +276,7 @@ class TestCreateIncidentTicket:
             title="Redis Memory Issue",
             description="Memory usage critical",
             labels=["redis", "memory"],
-            priority="high"
+            priority="high",
         )
 
         # Verify
@@ -320,7 +313,7 @@ class TestSearchRelatedRepositories:
                 "file_path": "src/cache.py",
                 "repository": "myapp",
                 "content_snippet": "redis.Redis(host='localhost')",
-                "line_number": 42
+                "line_number": 42,
             }
         ]
 
@@ -342,11 +335,7 @@ class TestSearchRelatedRepositories:
         mock_repos_provider.search_code.return_value = []
 
         # Execute
-        await search_related_repositories(
-            "redis",
-            file_extensions=["py", "js"],
-            limit=10
-        )
+        await search_related_repositories("redis", file_extensions=["py", "js"], limit=10)
 
         # Verify
         mock_repos_provider.search_code.assert_called_once()

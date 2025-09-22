@@ -415,7 +415,6 @@ SOURCE CONTENT TO STANDARDIZE:
                     },
                     {"role": "user", "content": prompt},
                 ],
-
                 max_tokens=4000,
             )
 

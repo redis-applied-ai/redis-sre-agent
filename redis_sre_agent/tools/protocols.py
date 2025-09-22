@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Protocol, Union
 
 class ToolCapability(Enum):
     """Capabilities that tools can provide."""
+
     METRICS = "metrics"
     LOGS = "logs"
     TICKETS = "tickets"
@@ -23,7 +24,12 @@ class ToolCapability(Enum):
 class MetricValue:
     """Represents a metric value with timestamp."""
 
-    def __init__(self, value: Union[int, float], timestamp: Optional[datetime] = None, labels: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        value: Union[int, float],
+        timestamp: Optional[datetime] = None,
+        labels: Optional[Dict[str, str]] = None,
+    ):
         self.value = value
         self.timestamp = timestamp or datetime.now()
         self.labels = labels or {}
@@ -79,7 +85,9 @@ class MetricsProvider(Protocol):
         ...
 
     @abstractmethod
-    async def get_current_value(self, metric_name: str, labels: Optional[Dict[str, str]] = None) -> Optional[MetricValue]:
+    async def get_current_value(
+        self, metric_name: str, labels: Optional[Dict[str, str]] = None
+    ) -> Optional[MetricValue]:
         """Get the current value of a metric.
 
         Args:
@@ -97,7 +105,7 @@ class MetricsProvider(Protocol):
         metric_name: str,
         time_range: TimeRange,
         labels: Optional[Dict[str, str]] = None,
-        step: Optional[str] = None
+        step: Optional[str] = None,
     ) -> List[MetricValue]:
         """Query metric values over a time range.
 
@@ -128,7 +136,14 @@ class MetricsProvider(Protocol):
 class LogEntry:
     """Represents a log entry."""
 
-    def __init__(self, timestamp: datetime, level: str, message: str, source: str, labels: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        timestamp: datetime,
+        level: str,
+        message: str,
+        source: str,
+        labels: Optional[Dict[str, str]] = None,
+    ):
         self.timestamp = timestamp
         self.level = level
         self.message = message
@@ -160,7 +175,7 @@ class LogsProvider(Protocol):
         time_range: TimeRange,
         log_groups: Optional[List[str]] = None,
         level_filter: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
     ) -> List[LogEntry]:
         """Search logs with filters.
 
@@ -194,7 +209,15 @@ class LogsProvider(Protocol):
 class Ticket:
     """Represents a ticket/issue."""
 
-    def __init__(self, id: str, title: str, description: str, status: str, assignee: Optional[str] = None, labels: Optional[List[str]] = None):
+    def __init__(
+        self,
+        id: str,
+        title: str,
+        description: str,
+        status: str,
+        assignee: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+    ):
         self.id = id
         self.title = title
         self.description = description
@@ -227,7 +250,7 @@ class TicketsProvider(Protocol):
         description: str,
         labels: Optional[List[str]] = None,
         assignee: Optional[str] = None,
-        priority: Optional[str] = None
+        priority: Optional[str] = None,
     ) -> Ticket:
         """Create a new ticket.
 
@@ -263,7 +286,7 @@ class TicketsProvider(Protocol):
         status: Optional[str] = None,
         assignee: Optional[str] = None,
         labels: Optional[List[str]] = None,
-        limit: int = 50
+        limit: int = 50,
     ) -> List[Ticket]:
         """Search for tickets with filters.
 
@@ -288,7 +311,13 @@ class TicketsProvider(Protocol):
 class Repository:
     """Represents a code repository."""
 
-    def __init__(self, name: str, url: str, default_branch: str = "main", languages: Optional[List[str]] = None):
+    def __init__(
+        self,
+        name: str,
+        url: str,
+        default_branch: str = "main",
+        languages: Optional[List[str]] = None,
+    ):
         self.name = name
         self.url = url
         self.default_branch = default_branch
@@ -329,7 +358,7 @@ class ReposProvider(Protocol):
         query: str,
         repositories: Optional[List[str]] = None,
         file_extensions: Optional[List[str]] = None,
-        limit: int = 50
+        limit: int = 50,
     ) -> List[Dict[str, Any]]:
         """Search code across repositories.
 
@@ -367,7 +396,15 @@ class ReposProvider(Protocol):
 class TraceSpan:
     """Represents a trace span."""
 
-    def __init__(self, trace_id: str, span_id: str, operation_name: str, start_time: datetime, duration_ms: float, tags: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        trace_id: str,
+        span_id: str,
+        operation_name: str,
+        start_time: datetime,
+        duration_ms: float,
+        tags: Optional[Dict[str, str]] = None,
+    ):
         self.trace_id = trace_id
         self.span_id = span_id
         self.operation_name = operation_name
@@ -401,7 +438,7 @@ class TracesProvider(Protocol):
         time_range: Optional[TimeRange] = None,
         min_duration_ms: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
-        limit: int = 100
+        limit: int = 100,
     ) -> List[TraceSpan]:
         """Search for traces with filters.
 

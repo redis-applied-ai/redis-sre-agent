@@ -23,11 +23,17 @@ class TestKnowledgeStats:
         # Mock FT.SEARCH response for total chunks (returns [count, ...])
         mock_redis_client.execute_command.side_effect = [
             [12],  # FT.SEARCH returns 12 total chunks
-            [3]    # FT.AGGREGATE returns 3 unique documents
+            [3],  # FT.AGGREGATE returns 3 unique documents
         ]
 
-        with patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index), \
-             patch("redis_sre_agent.core.redis.get_redis_client", new_callable=AsyncMock, return_value=mock_redis_client):
+        with (
+            patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index),
+            patch(
+                "redis_sre_agent.core.redis.get_redis_client",
+                new_callable=AsyncMock,
+                return_value=mock_redis_client,
+            ),
+        ):
             response = test_client.get("/api/v1/knowledge/stats")
 
             assert response.status_code == 200
@@ -41,8 +47,8 @@ class TestKnowledgeStats:
             assert "ingestion_status" in data
 
             # Verify the calculated values
-            assert data["total_documents"] == 3   # From FT.AGGREGATE unique document_hash count
-            assert data["total_chunks"] == 12     # From FT.SEARCH total entries count
+            assert data["total_documents"] == 3  # From FT.AGGREGATE unique document_hash count
+            assert data["total_chunks"] == 12  # From FT.SEARCH total entries count
             assert data["storage_size_mb"] == 0.024  # 12 chunks * 0.002 MB per chunk
 
             # Verify Redis commands were called correctly
@@ -53,7 +59,19 @@ class TestKnowledgeStats:
             assert calls[0][0] == ("FT.SEARCH", "sre_knowledge", "*", "LIMIT", "0", "0")
 
             # Second call: FT.AGGREGATE for unique documents
-            assert calls[1][0] == ("FT.AGGREGATE", "sre_knowledge", "*", "GROUPBY", "1", "@document_hash", "REDUCE", "COUNT", "0", "AS", "count")
+            assert calls[1][0] == (
+                "FT.AGGREGATE",
+                "sre_knowledge",
+                "*",
+                "GROUPBY",
+                "1",
+                "@document_hash",
+                "REDUCE",
+                "COUNT",
+                "0",
+                "AS",
+                "count",
+            )
 
     @pytest.mark.asyncio
     async def test_knowledge_stats_empty_index(self, test_client):
@@ -70,11 +88,17 @@ class TestKnowledgeStats:
         # Mock FT.SEARCH and FT.AGGREGATE responses for empty index
         mock_redis_client.execute_command.side_effect = [
             [0],  # FT.SEARCH returns 0 total chunks
-            [0]   # FT.AGGREGATE returns 0 unique documents
+            [0],  # FT.AGGREGATE returns 0 unique documents
         ]
 
-        with patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index), \
-             patch("redis_sre_agent.core.redis.get_redis_client", new_callable=AsyncMock, return_value=mock_redis_client):
+        with (
+            patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index),
+            patch(
+                "redis_sre_agent.core.redis.get_redis_client",
+                new_callable=AsyncMock,
+                return_value=mock_redis_client,
+            ),
+        ):
             response = test_client.get("/api/v1/knowledge/stats")
 
             assert response.status_code == 200
@@ -98,10 +122,12 @@ class TestKnowledgeStats:
 
         with (
             patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index),
-            patch("redis_sre_agent.core.redis.get_redis_client", new_callable=AsyncMock, return_value=mock_redis_client),
+            patch(
+                "redis_sre_agent.core.redis.get_redis_client",
+                new_callable=AsyncMock,
+                return_value=mock_redis_client,
+            ),
         ):
-
-
             response = test_client.get("/api/v1/knowledge/stats")
 
             assert response.status_code == 200
@@ -124,12 +150,14 @@ class TestKnowledgeIngestion:
             "content": "This is test content for Redis troubleshooting.",
             "source": "test",
             "category": "general",
-            "severity": "info"
+            "severity": "info",
         }
 
         mock_result = {"document_id": "test_doc_123"}
 
-        with patch("redis_sre_agent.tools.sre_functions.ingest_sre_document", new_callable=AsyncMock) as mock_ingest:
+        with patch(
+            "redis_sre_agent.tools.sre_functions.ingest_sre_document", new_callable=AsyncMock
+        ) as mock_ingest:
             mock_ingest.return_value = mock_result
 
             response = test_client.post("/api/v1/knowledge/ingest/document", json=document_data)
@@ -168,10 +196,12 @@ class TestKnowledgeIngestion:
             "content": "This is test content.",
             "source": "test",
             "category": "general",
-            "severity": "info"
+            "severity": "info",
         }
 
-        with patch("redis_sre_agent.tools.sre_functions.ingest_sre_document", new_callable=AsyncMock) as mock_ingest:
+        with patch(
+            "redis_sre_agent.tools.sre_functions.ingest_sre_document", new_callable=AsyncMock
+        ) as mock_ingest:
             mock_ingest.side_effect = Exception("Ingestion failed")
 
             response = test_client.post("/api/v1/knowledge/ingest/document", json=document_data)
@@ -196,19 +226,21 @@ class TestKnowledgeSearch:
                     "title": "Test Document 1",
                     "content": "Redis troubleshooting content",
                     "source": "test",
-                    "score": 0.95
+                    "score": 0.95,
                 },
                 {
                     "title": "Test Document 2",
                     "content": "More Redis content",
                     "source": "test",
-                    "score": 0.87
-                }
+                    "score": 0.87,
+                },
             ],
-            "formatted_output": "Found 2 results for redis"
+            "formatted_output": "Found 2 results for redis",
         }
 
-        with patch("redis_sre_agent.api.knowledge.search_knowledge_base", new_callable=AsyncMock) as mock_search:
+        with patch(
+            "redis_sre_agent.api.knowledge.search_knowledge_base", new_callable=AsyncMock
+        ) as mock_search:
             mock_search.return_value = mock_result
 
             response = test_client.get("/api/v1/knowledge/search?query=redis&limit=5")
@@ -222,7 +254,9 @@ class TestKnowledgeSearch:
             assert len(data["results"]) == 2
 
             # Verify search was called with correct parameters
-            mock_search.assert_called_once_with("redis", category=None, product_labels=None, limit=5)
+            mock_search.assert_called_once_with(
+                "redis", category=None, product_labels=None, limit=5
+            )
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, test_client):
@@ -237,7 +271,9 @@ class TestKnowledgeSearch:
     @pytest.mark.asyncio
     async def test_search_no_results(self, test_client):
         """Test search that returns no results."""
-        with patch("redis_sre_agent.api.knowledge.search_knowledge_base", new_callable=AsyncMock) as mock_search:
+        with patch(
+            "redis_sre_agent.api.knowledge.search_knowledge_base", new_callable=AsyncMock
+        ) as mock_search:
             mock_search.return_value = []
 
             response = test_client.get("/api/v1/knowledge/search?query=nonexistent&limit=5")

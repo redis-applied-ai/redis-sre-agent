@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     import aiohttp
+
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
@@ -28,7 +29,9 @@ class GitHubTicketsProvider:
 
     def __init__(self, token: str, owner: str, repo: str, base_url: str = "https://api.github.com"):
         if not AIOHTTP_AVAILABLE:
-            raise ImportError("aiohttp is required for GitHub provider. Install with: pip install aiohttp")
+            raise ImportError(
+                "aiohttp is required for GitHub provider. Install with: pip install aiohttp"
+            )
 
         self.token = token
         self.owner = owner
@@ -46,7 +49,7 @@ class GitHubTicketsProvider:
             headers = {
                 "Authorization": f"token {self.token}",
                 "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "Redis-SRE-Agent/1.0"
+                "User-Agent": "Redis-SRE-Agent/1.0",
             }
             timeout = aiohttp.ClientTimeout(total=30)
             self.session = aiohttp.ClientSession(headers=headers, timeout=timeout)
@@ -58,17 +61,14 @@ class GitHubTicketsProvider:
         description: str,
         labels: Optional[List[str]] = None,
         assignee: Optional[str] = None,
-        priority: Optional[str] = None
+        priority: Optional[str] = None,
     ) -> Ticket:
         """Create a new GitHub issue."""
         try:
             session = await self._get_session()
 
             # Prepare issue data
-            issue_data = {
-                "title": title,
-                "body": description
-            }
+            issue_data = {"title": title, "body": description}
 
             if labels:
                 issue_data["labels"] = labels
@@ -147,7 +147,7 @@ class GitHubTicketsProvider:
         status: Optional[str] = None,
         assignee: Optional[str] = None,
         labels: Optional[List[str]] = None,
-        limit: int = 50
+        limit: int = 50,
     ) -> List[Ticket]:
         """Search GitHub issues with filters."""
         try:
@@ -178,7 +178,7 @@ class GitHubTicketsProvider:
                 "q": search_query,
                 "sort": "updated",
                 "order": "desc",
-                "per_page": min(limit, 100)  # GitHub API limit
+                "per_page": min(limit, 100),  # GitHub API limit
             }
 
             url = f"{self.base_url}/search/issues"
@@ -214,7 +214,7 @@ class GitHubTicketsProvider:
                         "connected": True,
                         "repository": repo_data.get("full_name"),
                         "private": repo_data.get("private", False),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
                     }
                 else:
                     error_text = await response.text()
@@ -223,7 +223,7 @@ class GitHubTicketsProvider:
                         "provider": self.provider_name,
                         "error": f"HTTP {response.status}: {error_text}",
                         "connected": False,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
                     }
 
         except Exception as e:
@@ -232,7 +232,7 @@ class GitHubTicketsProvider:
                 "provider": self.provider_name,
                 "error": str(e),
                 "connected": False,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
 
     def _convert_to_ticket(self, issue: Dict[str, Any]) -> Ticket:
@@ -253,7 +253,7 @@ class GitHubTicketsProvider:
             description=issue.get("body", ""),
             status=status,
             assignee=assignee,
-            labels=labels
+            labels=labels,
         )
 
     async def close(self):
@@ -265,10 +265,7 @@ class GitHubTicketsProvider:
 
 # Helper function to create instances
 def create_github_tickets_provider(
-    token: str,
-    owner: str,
-    repo: str,
-    base_url: str = "https://api.github.com"
+    token: str, owner: str, repo: str, base_url: str = "https://api.github.com"
 ) -> GitHubTicketsProvider:
     """Create a GitHub tickets provider instance."""
     return GitHubTicketsProvider(token, owner, repo, base_url)

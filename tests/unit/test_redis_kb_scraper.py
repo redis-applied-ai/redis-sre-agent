@@ -155,10 +155,7 @@ class TestRedisKBScraper:
             "title": "Vector Database Guide",
             "content": "This comprehensive guide explains how to use Redis as a vector database for modern AI applications. It covers indexing strategies, querying techniques, and performance optimization best practices.",
             "last_updated": "15, Aug 2025",
-            "metadata": {
-                "has_code_examples": True,
-                "word_count": 25
-            }
+            "metadata": {"has_code_examples": True, "word_count": 25},
         }
 
         product_labels = ["Redis Enterprise Software", "Redis Cloud"]
@@ -168,11 +165,13 @@ class TestRedisKBScraper:
             "url": url,
             "scraped_from": "redis_kb_scraper",
             "product_labels": product_labels,
-            "product_label_tags": [scraper.product_labels.get(label, label.lower().replace(" ", "_"))
-                                 for label in product_labels],
+            "product_label_tags": [
+                scraper.product_labels.get(label, label.lower().replace(" ", "_"))
+                for label in product_labels
+            ],
             "content_length": len(article_data["content"]),
             "last_updated": article_data.get("last_updated"),
-            **article_data.get("metadata", {})
+            **article_data.get("metadata", {}),
         }
 
         # Determine category based on product labels
@@ -224,6 +223,7 @@ class TestRedisKBScraper:
         for result in test_results:
             if "url" in result and "/kb/doc/" in result["url"]:
                 from urllib.parse import urljoin
+
                 full_url = urljoin("https://redis.io", result["url"])
                 discovered_urls.add(full_url)
 
@@ -253,7 +253,7 @@ class TestRedisKBScraper:
         scraper.discovered_urls.clear()
 
         # Mock the fallback method to add URLs
-        with patch.object(scraper, '_add_fallback_urls') as mock_fallback:
+        with patch.object(scraper, "_add_fallback_urls") as mock_fallback:
             mock_fallback.return_value = None
             # Manually add some URLs to simulate fallback
             scraper.discovered_urls.add("https://redis.io/kb/doc/fallback1")
@@ -290,13 +290,14 @@ class TestRedisKBScraper:
     async def test_full_scraping_workflow(self, scraper):
         """Test the complete scraping workflow."""
         # Mock the entire workflow
-        with patch.object(scraper, '_discover_kb_urls') as mock_discover, \
-             patch.object(scraper, '_scrape_single_article') as mock_scrape_article:
-
+        with (
+            patch.object(scraper, "_discover_kb_urls") as mock_discover,
+            patch.object(scraper, "_scrape_single_article") as mock_scrape_article,
+        ):
             # Setup mocks
             scraper.discovered_urls = {
                 "https://redis.io/kb/doc/article1",
-                "https://redis.io/kb/doc/article2"
+                "https://redis.io/kb/doc/article2",
             }
 
             # Mock successful article scraping

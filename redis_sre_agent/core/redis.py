@@ -211,9 +211,7 @@ def get_knowledge_index() -> AsyncSearchIndex:
 
 def get_schedules_index() -> AsyncSearchIndex:
     """Get SRE schedules index singleton."""
-    return AsyncSearchIndex.from_dict(
-        SRE_SCHEDULES_SCHEMA, redis_url=settings.redis_url
-    )
+    return AsyncSearchIndex.from_dict(SRE_SCHEDULES_SCHEMA, redis_url=settings.redis_url)
 
 
 async def test_redis_connection() -> bool:

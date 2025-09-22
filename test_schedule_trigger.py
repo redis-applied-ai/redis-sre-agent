@@ -57,21 +57,26 @@ async def test_schedule_trigger():
         print(f"   last_run_at: {updated_schedule.get('last_run_at', 'None')}")
 
         # Check if next_run_at was updated to current time (indicating our fix worked)
-        next_run_str = updated_schedule.get('next_run_at')
+        next_run_str = updated_schedule.get("next_run_at")
         if next_run_str:
             try:
-                next_run_time = datetime.fromisoformat(next_run_str.replace('Z', '+00:00'))
+                next_run_time = datetime.fromisoformat(next_run_str.replace("Z", "+00:00"))
                 current_time = datetime.now(timezone.utc)
                 time_diff = abs((next_run_time - current_time).total_seconds())
 
                 if time_diff < 60:  # Within 1 minute of current time
-                    print(f"✅ Schedule next_run_at was updated to current time (diff: {time_diff:.1f}s)")
+                    print(
+                        f"✅ Schedule next_run_at was updated to current time (diff: {time_diff:.1f}s)"
+                    )
                 else:
-                    print(f"⚠️  Schedule next_run_at not updated to current time (diff: {time_diff:.1f}s)")
+                    print(
+                        f"⚠️  Schedule next_run_at not updated to current time (diff: {time_diff:.1f}s)"
+                    )
             except Exception as e:
                 print(f"❌ Error parsing next_run_at: {e}")
     else:
         print("❌ Could not find updated schedule")
+
 
 if __name__ == "__main__":
     asyncio.run(test_schedule_trigger())

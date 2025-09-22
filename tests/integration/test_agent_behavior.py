@@ -310,7 +310,6 @@ Rate the response 1-10 for SRE effectiveness:
                     },
                     {"role": "user", "content": evaluation_prompt},
                 ],
-
             )
 
             evaluation_text = evaluation_response.choices[0].message.content

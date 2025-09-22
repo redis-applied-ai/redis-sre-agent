@@ -28,7 +28,7 @@ async def check_recent_threads():
 
             if created_at_str:
                 try:
-                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
                     if created_at >= cutoff_time:
                         print(f"  ✅ Recent thread: {thread_id}")
                         print(f"     Created: {created_at}")
@@ -78,6 +78,7 @@ async def check_recent_threads():
 
     except Exception as e:
         print(f"❌ Error checking threads: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(check_recent_threads())

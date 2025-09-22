@@ -20,16 +20,23 @@ INSTANCES_KEY = "sre:instances"
 
 class RedisInstance(BaseModel):
     """Redis instance configuration model."""
+
     id: str
     name: str
-    connection_url: str = Field(..., description="Redis connection URL (e.g., redis://localhost:6379)")
+    connection_url: str = Field(
+        ..., description="Redis connection URL (e.g., redis://localhost:6379)"
+    )
     environment: str = Field(..., description="Environment: development, staging, production")
     usage: str = Field(..., description="Usage type: cache, analytics, session, queue, or custom")
     description: str
     repo_url: Optional[str] = None
     notes: Optional[str] = None
-    monitoring_identifier: Optional[str] = Field(None, description="Name used in monitoring systems (defaults to instance name)")
-    logging_identifier: Optional[str] = Field(None, description="Name used in logging systems (defaults to instance name)")
+    monitoring_identifier: Optional[str] = Field(
+        None, description="Name used in monitoring systems (defaults to instance name)"
+    )
+    logging_identifier: Optional[str] = Field(
+        None, description="Name used in logging systems (defaults to instance name)"
+    )
     status: Optional[str] = "unknown"
     version: Optional[str] = None
     memory: Optional[str] = None
@@ -41,17 +48,24 @@ class RedisInstance(BaseModel):
 
 class CreateInstanceRequest(BaseModel):
     """Request model for creating a Redis instance."""
+
     name: str
-    connection_url: str = Field(..., description="Redis connection URL (e.g., redis://localhost:6379)")
+    connection_url: str = Field(
+        ..., description="Redis connection URL (e.g., redis://localhost:6379)"
+    )
     environment: str
     usage: str
     description: str
     repo_url: Optional[str] = None
     notes: Optional[str] = None
-    monitoring_identifier: Optional[str] = Field(None, description="Name used in monitoring systems (defaults to instance name)")
-    logging_identifier: Optional[str] = Field(None, description="Name used in logging systems (defaults to instance name)")
+    monitoring_identifier: Optional[str] = Field(
+        None, description="Name used in monitoring systems (defaults to instance name)"
+    )
+    logging_identifier: Optional[str] = Field(
+        None, description="Name used in logging systems (defaults to instance name)"
+    )
 
-    @field_validator('connection_url')
+    @field_validator("connection_url")
     @classmethod
     def validate_connection_url(cls, v: str) -> str:
         """Validate that connection_url is a valid Redis URL."""
@@ -64,7 +78,7 @@ class CreateInstanceRequest(BaseModel):
             parsed = urlparse(v)
             if not parsed.scheme:
                 raise ValueError("Connection URL must include a scheme (e.g., redis://)")
-            if parsed.scheme not in ['redis', 'rediss']:
+            if parsed.scheme not in ["redis", "rediss"]:
                 raise ValueError("Connection URL scheme must be 'redis' or 'rediss'")
             if not parsed.hostname:
                 raise ValueError("Connection URL must include a hostname")
@@ -73,11 +87,11 @@ class CreateInstanceRequest(BaseModel):
 
         return v
 
-    @field_validator('environment')
+    @field_validator("environment")
     @classmethod
     def validate_environment(cls, v: str) -> str:
         """Validate that environment is one of the allowed values."""
-        allowed_environments = ['development', 'staging', 'production', 'test']
+        allowed_environments = ["development", "staging", "production", "test"]
         if v not in allowed_environments:
             raise ValueError(f"Environment must be one of: {', '.join(allowed_environments)}")
         return v
@@ -85,15 +99,22 @@ class CreateInstanceRequest(BaseModel):
 
 class UpdateInstanceRequest(BaseModel):
     """Request model for updating a Redis instance."""
+
     name: Optional[str] = None
-    connection_url: Optional[str] = Field(None, description="Redis connection URL (e.g., redis://localhost:6379)")
+    connection_url: Optional[str] = Field(
+        None, description="Redis connection URL (e.g., redis://localhost:6379)"
+    )
     environment: Optional[str] = None
     usage: Optional[str] = None
     description: Optional[str] = None
     repo_url: Optional[str] = None
     notes: Optional[str] = None
-    monitoring_identifier: Optional[str] = Field(None, description="Name used in monitoring systems (defaults to instance name)")
-    logging_identifier: Optional[str] = Field(None, description="Name used in logging systems (defaults to instance name)")
+    monitoring_identifier: Optional[str] = Field(
+        None, description="Name used in monitoring systems (defaults to instance name)"
+    )
+    logging_identifier: Optional[str] = Field(
+        None, description="Name used in logging systems (defaults to instance name)"
+    )
     status: Optional[str] = None
     version: Optional[str] = None
     memory: Optional[str] = None
@@ -148,7 +169,9 @@ async def create_instance(request: CreateInstanceRequest):
 
         # Check if instance with same name already exists
         if any(inst.name == request.name for inst in instances):
-            raise HTTPException(status_code=400, detail=f"Instance with name '{request.name}' already exists")
+            raise HTTPException(
+                status_code=400, detail=f"Instance with name '{request.name}' already exists"
+            )
 
         # Create new instance
         instance_id = f"redis-{request.environment}-{int(datetime.now().timestamp())}"
@@ -215,12 +238,14 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
                 break
 
         if instance_index is None:
-            raise HTTPException(status_code=404, detail=f"Instance with ID '{instance_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Instance with ID '{instance_id}' not found"
+            )
 
         # Update the instance
         current_instance = instances[instance_index]
         update_data = request.model_dump(exclude_unset=True)
-        update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         # Create updated instance
         updated_instance = current_instance.model_copy(update=update_data)
@@ -251,7 +276,9 @@ async def delete_instance(instance_id: str):
         instances = [inst for inst in instances if inst.id != instance_id]
 
         if len(instances) == original_count:
-            raise HTTPException(status_code=404, detail=f"Instance with ID '{instance_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Instance with ID '{instance_id}' not found"
+            )
 
         # Save updated list to Redis
         if not await save_instances_to_redis(instances):
@@ -281,14 +308,16 @@ async def test_instance_connection(instance_id: str):
                 break
 
         if not target_instance:
-            raise HTTPException(status_code=404, detail=f"Instance with ID '{instance_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Instance with ID '{instance_id}' not found"
+            )
 
         # Parse connection URL to extract host and port
         from urllib.parse import urlparse
 
         try:
             parsed_url = urlparse(target_instance.connection_url)
-            host = parsed_url.hostname or 'unknown'
+            host = parsed_url.hostname or "unknown"
             port = parsed_url.port or 6379
 
             # Implement actual Redis connection test
@@ -315,7 +344,9 @@ async def test_instance_connection(instance_id: str):
                 message = f"Failed to connect to Redis at {host}:{port}: {str(conn_error)}"
             except redis.AuthenticationError:
                 success = False
-                message = f"Authentication failed for Redis at {host}:{port}. Please check credentials."
+                message = (
+                    f"Authentication failed for Redis at {host}:{port}. Please check credentials."
+                )
             except Exception as test_error:
                 success = False
                 message = f"Connection test failed for Redis at {host}:{port}: {str(test_error)}"
@@ -324,16 +355,18 @@ async def test_instance_connection(instance_id: str):
                 "success": success,
                 "message": message,
                 "instance_id": instance_id,
-                "tested_at": datetime.now(timezone.utc).isoformat()
+                "tested_at": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as parse_error:
-            logger.error(f"Failed to parse connection URL {target_instance.connection_url}: {parse_error}")
+            logger.error(
+                f"Failed to parse connection URL {target_instance.connection_url}: {parse_error}"
+            )
             result = {
                 "success": False,
                 "message": f"Invalid connection URL format: {target_instance.connection_url}",
                 "instance_id": instance_id,
-                "tested_at": datetime.now(timezone.utc).isoformat()
+                "tested_at": datetime.now(timezone.utc).isoformat(),
             }
 
         logger.info(f"Connection test for {instance_id}: {'SUCCESS' if success else 'FAILED'}")

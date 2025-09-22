@@ -37,12 +37,7 @@ class TaskStreamManager:
         """Get Redis stream key for a thread."""
         return f"sre:stream:task:{thread_id}"
 
-    async def publish_task_update(
-        self,
-        thread_id: str,
-        update_type: str,
-        data: Dict
-    ) -> bool:
+    async def publish_task_update(self, thread_id: str, update_type: str, data: Dict) -> bool:
         """Publish a task update to Redis Stream."""
         try:
             client = await self._get_client()
@@ -53,12 +48,13 @@ class TaskStreamManager:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "update_type": update_type,
                 "thread_id": thread_id,
-                **data
+                **data,
             }
 
             # Convert all values to strings for Redis Stream
-            stream_data_str = {k: json.dumps(v) if not isinstance(v, str) else v
-                             for k, v in stream_data.items()}
+            stream_data_str = {
+                k: json.dumps(v) if not isinstance(v, str) else v for k, v in stream_data.items()
+            }
 
             # Add to stream with automatic ID generation
             await client.xadd(stream_key, stream_data_str)
@@ -114,7 +110,9 @@ class TaskStreamManager:
                     for stream, stream_messages in messages:
                         for message_id, fields in stream_messages:
                             await self._broadcast_update(thread_id, fields)
-                            last_id = message_id.decode() if isinstance(message_id, bytes) else message_id
+                            last_id = (
+                                message_id.decode() if isinstance(message_id, bytes) else message_id
+                            )
 
                 except asyncio.CancelledError:
                     break
@@ -194,10 +192,9 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
         thread_manager = get_thread_manager()
         thread_state = await thread_manager.get_thread_state(thread_id)
         if not thread_state:
-            await websocket.send_text(json.dumps({
-                "error": "Thread not found",
-                "thread_id": thread_id
-            }))
+            await websocket.send_text(
+                json.dumps({"error": "Thread not found", "thread_id": thread_id})
+            )
             await websocket.close(code=4004)
             return
 
@@ -215,10 +212,12 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
             "update_type": "initial_state",
             "thread_id": thread_id,
             "status": thread_state.status.value,
-            "updates": [update.model_dump() for update in thread_state.updates[-10:]],  # Last 10 updates
+            "updates": [
+                update.model_dump() for update in thread_state.updates[-10:]
+            ],  # Last 10 updates
             "result": thread_state.result,
             "error_message": thread_state.error_message,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await websocket.send_text(json.dumps(current_state))
 
@@ -269,7 +268,7 @@ async def get_task_stream_info(thread_id: str):
         # Get stream info
         try:
             stream_info = await client.xinfo_stream(stream_key)
-            stream_length = stream_info.get(b'length', 0)
+            stream_length = stream_info.get(b"length", 0)
             if isinstance(stream_length, bytes):
                 stream_length = int(stream_length.decode())
         except Exception:
@@ -283,7 +282,7 @@ async def get_task_stream_info(thread_id: str):
             "stream_key": stream_key,
             "stream_length": stream_length,
             "active_connections": active_connections,
-            "consumer_active": thread_id in _stream_manager._consumer_tasks
+            "consumer_active": thread_id in _stream_manager._consumer_tasks,
         }
 
     except Exception as e:

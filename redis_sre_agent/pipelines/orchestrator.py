@@ -18,7 +18,10 @@ class PipelineOrchestrator:
     """Orchestrates the complete data pipeline from scraping to ingestion."""
 
     def __init__(
-        self, artifacts_path: str = "./artifacts", config: Optional[Dict[str, Any]] = None, knowledge_settings=None
+        self,
+        artifacts_path: str = "./artifacts",
+        config: Optional[Dict[str, Any]] = None,
+        knowledge_settings=None,
     ):
         self.artifacts_path = Path(artifacts_path)
         self.config = config or {}
@@ -40,7 +43,9 @@ class PipelineOrchestrator:
         }
 
         # Initialize ingestion pipeline with knowledge settings
-        self.ingestion = IngestionPipeline(self.storage, self.config.get("ingestion", {}), knowledge_settings)
+        self.ingestion = IngestionPipeline(
+            self.storage, self.config.get("ingestion", {}), knowledge_settings
+        )
 
     async def run_scraping_pipeline(self, scrapers: Optional[List[str]] = None) -> Dict[str, Any]:
         """Run the complete scraping pipeline."""

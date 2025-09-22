@@ -24,7 +24,7 @@ async def store_schedule(schedule_data: Dict) -> bool:
         for field in ["created_at", "updated_at", "last_run_at", "next_run_at"]:
             if redis_data.get(field):
                 if isinstance(redis_data[field], str):
-                    dt = datetime.fromisoformat(redis_data[field].replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(redis_data[field].replace("Z", "+00:00"))
                     redis_data[field] = dt.timestamp()
                 elif isinstance(redis_data[field], datetime):
                     redis_data[field] = redis_data[field].timestamp()
@@ -100,10 +100,21 @@ async def list_schedules() -> List[Dict]:
 
         # Create a filter query to get all schedules
         filter_query = FilterQuery(
-            return_fields=["id", "name", "description", "interval_type", "interval_value",
-                          "redis_instance_id", "instructions", "enabled", "created_at",
-                          "updated_at", "last_run_at", "next_run_at"],
-            filter_expression="*"  # Get all schedules
+            return_fields=[
+                "id",
+                "name",
+                "description",
+                "interval_type",
+                "interval_value",
+                "redis_instance_id",
+                "instructions",
+                "enabled",
+                "created_at",
+                "updated_at",
+                "last_run_at",
+                "next_run_at",
+            ],
+            filter_expression="*",  # Get all schedules
         )
 
         # Execute the search
@@ -117,14 +128,25 @@ async def list_schedules() -> List[Dict]:
                 # Convert result to dictionary format
                 if isinstance(result, dict):
                     schedule_data = result.copy()
-                elif hasattr(result, '__dict__'):
+                elif hasattr(result, "__dict__"):
                     schedule_data = result.__dict__.copy()
                 else:
                     # Try to access as attributes
                     schedule_data = {}
-                    for field in ["id", "name", "description", "interval_type", "interval_value",
-                                 "redis_instance_id", "instructions", "enabled", "created_at",
-                                 "updated_at", "last_run_at", "next_run_at"]:
+                    for field in [
+                        "id",
+                        "name",
+                        "description",
+                        "interval_type",
+                        "interval_value",
+                        "redis_instance_id",
+                        "instructions",
+                        "enabled",
+                        "created_at",
+                        "updated_at",
+                        "last_run_at",
+                        "next_run_at",
+                    ]:
                         try:
                             schedule_data[field] = getattr(result, field, None)
                         except AttributeError:
@@ -133,7 +155,7 @@ async def list_schedules() -> List[Dict]:
                 # Extract actual schedule ID from Redis key (remove "sre_schedules:" prefix)
                 redis_key = schedule_data.get("id", "")
                 if redis_key.startswith("sre_schedules:"):
-                    schedule_data["id"] = redis_key[len("sre_schedules:"):]
+                    schedule_data["id"] = redis_key[len("sre_schedules:") :]
 
                 # Convert numeric fields back to datetime strings
                 for field in ["created_at", "updated_at", "last_run_at", "next_run_at"]:
@@ -264,10 +286,21 @@ async def find_schedules_needing_runs(current_time: datetime) -> List[Dict]:
         # Create a filter query for enabled schedules where next_run_at <= current_time
         # Using RedisVL FilterQuery for non-vector searches
         filter_query = FilterQuery(
-            return_fields=["id", "name", "description", "interval_type", "interval_value",
-                          "redis_instance_id", "instructions", "enabled", "created_at",
-                          "updated_at", "last_run_at", "next_run_at"],
-            filter_expression=f"@enabled:{{true}} @next_run_at:[0 {current_timestamp}]"
+            return_fields=[
+                "id",
+                "name",
+                "description",
+                "interval_type",
+                "interval_value",
+                "redis_instance_id",
+                "instructions",
+                "enabled",
+                "created_at",
+                "updated_at",
+                "last_run_at",
+                "next_run_at",
+            ],
+            filter_expression=f"@enabled:{{true}} @next_run_at:[0 {current_timestamp}]",
         )
 
         # Execute the search
@@ -281,14 +314,25 @@ async def find_schedules_needing_runs(current_time: datetime) -> List[Dict]:
                 # Convert result to dictionary format
                 if isinstance(result, dict):
                     schedule_data = result.copy()
-                elif hasattr(result, '__dict__'):
+                elif hasattr(result, "__dict__"):
                     schedule_data = result.__dict__.copy()
                 else:
                     # Try to access as attributes
                     schedule_data = {}
-                    for field in ["id", "name", "description", "interval_type", "interval_value",
-                                 "redis_instance_id", "instructions", "enabled", "created_at",
-                                 "updated_at", "last_run_at", "next_run_at"]:
+                    for field in [
+                        "id",
+                        "name",
+                        "description",
+                        "interval_type",
+                        "interval_value",
+                        "redis_instance_id",
+                        "instructions",
+                        "enabled",
+                        "created_at",
+                        "updated_at",
+                        "last_run_at",
+                        "next_run_at",
+                    ]:
                         try:
                             schedule_data[field] = getattr(result, field, None)
                         except AttributeError:
@@ -297,7 +341,7 @@ async def find_schedules_needing_runs(current_time: datetime) -> List[Dict]:
                 # Extract actual schedule ID from Redis key (remove "sre_schedules:" prefix)
                 redis_key = schedule_data.get("id", "")
                 if redis_key.startswith("sre_schedules:"):
-                    schedule_data["id"] = redis_key[len("sre_schedules:"):]
+                    schedule_data["id"] = redis_key[len("sre_schedules:") :]
 
                 # Convert numeric fields back to datetime strings
                 for field in ["created_at", "updated_at", "last_run_at", "next_run_at"]:
@@ -355,11 +399,13 @@ async def _find_schedules_needing_runs_fallback(current_time: datetime) -> List[
             next_run_str = schedule.get("next_run_at")
             if next_run_str:
                 try:
-                    next_run_time = datetime.fromisoformat(next_run_str.replace('Z', '+00:00'))
+                    next_run_time = datetime.fromisoformat(next_run_str.replace("Z", "+00:00"))
                     if next_run_time.timestamp() <= current_timestamp:
                         schedules_needing_runs.append(schedule)
                 except (ValueError, TypeError):
-                    logger.warning(f"Invalid next_run_at format for schedule {schedule.get('id')}: {next_run_str}")
+                    logger.warning(
+                        f"Invalid next_run_at format for schedule {schedule.get('id')}: {next_run_str}"
+                    )
                     continue
 
         logger.info(f"Found {len(schedules_needing_runs)} schedules needing runs (fallback)")
@@ -376,7 +422,9 @@ async def update_schedule_next_run(schedule_id: str, next_run_time: datetime) ->
         client = get_redis_client()
         key = f"sre_schedules:{schedule_id}"
 
-        logger.info(f"Updating schedule {schedule_id} next_run_at to {next_run_time} (timestamp: {next_run_time.timestamp()})")
+        logger.info(
+            f"Updating schedule {schedule_id} next_run_at to {next_run_time} (timestamp: {next_run_time.timestamp()})"
+        )
 
         # Update the next_run_at field
         result1 = await client.hset(key, "next_run_at", next_run_time.timestamp())
@@ -388,7 +436,9 @@ async def update_schedule_next_run(schedule_id: str, next_run_time: datetime) ->
         updated_value = await client.hget(key, "next_run_at")
         logger.info(f"Verified next_run_at value in Redis: {updated_value}")
 
-        logger.info(f"Successfully updated next run time for schedule {schedule_id} to {next_run_time}")
+        logger.info(
+            f"Successfully updated next run time for schedule {schedule_id} to {next_run_time}"
+        )
         return True
 
     except Exception as e:
