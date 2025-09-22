@@ -157,12 +157,19 @@ class TestScheduleQueries:
         due_schedule = {
             "id": "due-schedule",
             "name": "Due Schedule",
-            "enabled": True,
-            "next_run_at": (current_time - timedelta(minutes=30)).isoformat(),
+            "enabled": "true",  # RedisVL stores as string
+            "next_run_at": str((current_time - timedelta(minutes=30)).timestamp()),  # RedisVL stores as timestamp string
         }
 
-        with patch("redis_sre_agent.core.schedule_storage.list_schedules") as mock_list:
-            mock_list.return_value = [due_schedule]
+        # Mock the RedisVL index and query
+        mock_index = AsyncMock()
+        mock_query_result = [due_schedule]
+        mock_index.query.return_value = mock_query_result
+        mock_index.__aenter__.return_value = mock_index
+        mock_index.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.schedule_storage.get_schedules_index") as mock_get_index:
+            mock_get_index.return_value = mock_index
 
             result = await find_schedules_needing_runs(current_time)
 
