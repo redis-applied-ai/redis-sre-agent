@@ -798,7 +798,9 @@ async def test_structured_tool_evaluation():
 
     # Require reasonable overall quality even if tool compliance is low
     avg_composite = sum(composite_scores) / len(composite_scores) if composite_scores else 0
-    assert avg_composite >= 2.0, f"Average composite score should be at least 2.0, got {avg_composite:.2f}"
+    assert avg_composite >= 2.0, (
+        f"Average composite score should be at least 2.0, got {avg_composite:.2f}"
+    )
 
 
 if __name__ == "__main__":
