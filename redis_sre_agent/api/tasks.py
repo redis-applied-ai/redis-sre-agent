@@ -27,6 +27,7 @@ class TriageRequest(BaseModel):
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
     priority: int = Field(0, description="Priority level (0=normal, 1=high, 2=critical)")
     tags: Optional[List[str]] = Field(None, description="Tags for categorization")
+    instance_id: Optional[str] = Field(None, description="Redis instance ID for context")
 
 
 class TriageResponse(BaseModel):
@@ -48,6 +49,7 @@ class TaskStatusResponse(BaseModel):
     action_items: List[Dict[str, Any]] = Field(default_factory=list, description="Action items")
     error_message: Optional[str] = Field(None, description="Error message if failed")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Thread metadata")
+    context: Dict[str, Any] = Field(default_factory=dict, description="Thread context")
 
 
 @router.post(
@@ -77,6 +79,8 @@ async def triage_issue(request: TriageRequest) -> TriageResponse:
             "priority": request.priority,
             "messages": [],
         }
+        if request.instance_id:
+            initial_context["instance_id"] = request.instance_id
         if request.context:
             initial_context.update(request.context)
 
@@ -95,12 +99,14 @@ async def triage_issue(request: TriageRequest) -> TriageResponse:
             "triage",
         )
 
+        # Generate and update thread subject
+        await thread_manager.update_thread_subject(thread_id, request.query)
+
         # Queue the agent processing task
-        async with Docket(url=await get_redis_url()) as docket:
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Submit the task to process this turn
-            await docket.task(process_agent_turn)(
-                thread_id=thread_id, message=request.query, context=initial_context
-            )
+            task_func = docket.add(process_agent_turn)
+            await task_func(thread_id=thread_id, message=request.query, context=initial_context)
 
             logger.info(f"Queued agent task for thread {thread_id}")
 
@@ -179,6 +185,7 @@ async def get_task_status(thread_id: str) -> TaskStatusResponse:
             "session_id": thread_state.metadata.session_id,
             "priority": thread_state.metadata.priority,
             "tags": thread_state.metadata.tags,
+            "subject": thread_state.metadata.subject,
         }
 
         return TaskStatusResponse(
@@ -189,6 +196,7 @@ async def get_task_status(thread_id: str) -> TaskStatusResponse:
             action_items=action_items,
             error_message=thread_state.error_message,
             metadata=metadata,
+            context=thread_state.context,
         )
 
     except HTTPException:
@@ -239,10 +247,9 @@ async def continue_conversation(thread_id: str, request: TriageRequest) -> Triag
         )
 
         # Queue another agent processing task
-        async with Docket(url=await get_redis_url()) as docket:
-            await docket.task(process_agent_turn)(
-                thread_id=thread_id, message=request.query, context=request.context
-            )
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            task_func = docket.add(process_agent_turn)
+            await task_func(thread_id=thread_id, message=request.query, context=request.context)
 
             logger.info(f"Queued continuation task for thread {thread_id}")
 
@@ -272,14 +279,15 @@ async def continue_conversation(thread_id: str, request: TriageRequest) -> Triag
 @router.delete(
     "/tasks/{thread_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Cancel task",
-    description="Cancel a queued or in-progress task.",
+    summary="Cancel or delete task",
+    description="Cancel a queued or in-progress task, or delete a completed task.",
 )
-async def cancel_task(thread_id: str):
+async def cancel_task(thread_id: str, delete: bool = False):
     """
-    Cancel a task.
+    Cancel or delete a task.
 
-    Marks the thread as cancelled and attempts to stop processing.
+    If delete=True, permanently deletes the thread data.
+    Otherwise, marks the thread as cancelled and attempts to stop processing.
     """
     try:
         thread_manager = get_thread_manager()
@@ -291,28 +299,41 @@ async def cancel_task(thread_id: str):
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Thread {thread_id} not found"
             )
 
-        # Check if thread can be cancelled
-        if thread_state.status in [ThreadStatus.DONE, ThreadStatus.FAILED, ThreadStatus.CANCELLED]:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Thread {thread_id} is already {thread_state.status.value} and cannot be cancelled",
+        if delete:
+            # Delete the thread permanently - allowed for any status
+            success = await thread_manager.delete_thread(thread_id)
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to delete thread {thread_id}",
+                )
+            logger.info(f"Deleted thread {thread_id}")
+        else:
+            # Check if thread can be cancelled (only for cancellation, not deletion)
+            if thread_state.status in [
+                ThreadStatus.DONE,
+                ThreadStatus.FAILED,
+                ThreadStatus.CANCELLED,
+            ]:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Thread {thread_id} is already {thread_state.status.value} and cannot be cancelled",
+                )
+
+            # Mark as cancelled
+            await thread_manager.update_thread_status(thread_id, ThreadStatus.CANCELLED)
+            await thread_manager.add_thread_update(
+                thread_id, "Task cancelled by user request", "cancellation"
             )
-
-        # Mark as cancelled
-        await thread_manager.update_thread_status(thread_id, ThreadStatus.CANCELLED)
-        await thread_manager.add_thread_update(
-            thread_id, "Task cancelled by user request", "cancellation"
-        )
-
-        logger.info(f"Cancelled thread {thread_id}")
+            logger.info(f"Cancelled thread {thread_id}")
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to cancel task {thread_id}: {e}")
+        logger.error(f"Failed to {'delete' if delete else 'cancel'} task {thread_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to cancel task: {str(e)}",
+            detail=f"Failed to {'delete' if delete else 'cancel'} task: {str(e)}",
         )
 
 
@@ -326,24 +347,94 @@ async def list_tasks(
     user_id: Optional[str] = None, status_filter: Optional[ThreadStatus] = None, limit: int = 50
 ) -> List[TaskStatusResponse]:
     """
-    List recent tasks.
-
-    Note: This is a simplified implementation. In production, you'd want
-    proper pagination and indexing of threads.
+    List recent tasks with proper indexing and filtering.
     """
     try:
-        # This is a placeholder implementation
-        # In production, you'd want to maintain an index of threads
-        # For now, we'll return an empty list with a note
-
         logger.info(
             f"List tasks requested (user_id={user_id}, status={status_filter}, limit={limit})"
         )
 
-        # TODO: Implement proper thread listing with Redis scanning
-        # This would require maintaining thread indices
+        thread_manager = get_thread_manager()
 
-        return []
+        # Get thread summaries
+        thread_summaries = await thread_manager.list_threads(
+            user_id=user_id,
+            status_filter=status_filter,
+            limit=limit,
+            offset=0,
+        )
+
+        # Convert to TaskStatusResponse format
+        tasks = []
+        for summary in thread_summaries:
+            logger.info(
+                f"Processing task {summary['thread_id']} with user_id: {summary.get('user_id')}"
+            )
+            # Create minimal updates list for listing
+            updates = [
+                {
+                    "timestamp": summary.get("updated_at", summary.get("created_at")),
+                    "message": summary.get("latest_message", "No updates"),
+                    "type": "summary",
+                    "metadata": {},
+                }
+            ]
+
+            # Create metadata
+            metadata = {
+                "created_at": summary.get("created_at"),
+                "updated_at": summary.get("updated_at"),
+                "user_id": summary.get("user_id"),
+                "session_id": None,  # Not stored in summary
+                "priority": summary.get("priority", 0),
+                "tags": summary.get("tags", []),
+                "subject": summary.get("subject", "Untitled"),
+            }
+
+            # For scheduled tasks, try to get the original query from context for better display names
+            context = {}
+            if summary.get("user_id") == "scheduler":
+                logger.info(
+                    f"Processing scheduled task {summary['thread_id']} for context retrieval"
+                )
+                try:
+                    # Get the full thread state to access context
+                    thread_state = await thread_manager.get_thread_state(summary["thread_id"])
+                    if thread_state:
+                        logger.info(
+                            f"Retrieved thread state for {summary['thread_id']}, context keys: {list(thread_state.context.keys())}"
+                        )
+                        if thread_state.context.get("original_query"):
+                            context["original_query"] = thread_state.context["original_query"]
+                            logger.info(
+                                f"Added original_query to context for {summary['thread_id']}: {context['original_query'][:50]}..."
+                            )
+                        else:
+                            logger.info(
+                                f"No original_query found in context for {summary['thread_id']}"
+                            )
+                    else:
+                        logger.warning(f"No thread state found for {summary['thread_id']}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get context for scheduled task {summary['thread_id']}: {e}"
+                    )
+
+            task_response = TaskStatusResponse(
+                thread_id=summary["thread_id"],
+                status=ThreadStatus(summary["status"]),
+                updates=updates,
+                result=None,  # Not included in listing for performance
+                action_items=[],  # Not included in listing for performance
+                error_message=None,  # Not included in listing for performance
+                metadata=metadata,
+                context=context,
+            )
+
+            tasks.append(task_response)
+
+        logger.info(f"Returning {len(tasks)} tasks")
+        return tasks
 
     except Exception as e:
         logger.error(f"Failed to list tasks: {e}")

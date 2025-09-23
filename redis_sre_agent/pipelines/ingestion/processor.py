@@ -23,14 +23,33 @@ logger = logging.getLogger(__name__)
 class DocumentProcessor:
     """Processes scraped documents for vector store ingestion."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = {
-            "chunk_size": 1000,
-            "chunk_overlap": 200,
-            "min_chunk_size": 100,
-            "max_chunks_per_doc": 10,
-            **(config or {}),
-        }
+    def __init__(self, config: Optional[Dict[str, Any]] = None, knowledge_settings=None):
+        # Use knowledge settings if provided, otherwise fall back to config or defaults
+        if knowledge_settings:
+            self.config = {
+                "chunk_size": knowledge_settings.chunk_size,
+                "chunk_overlap": knowledge_settings.chunk_overlap,
+                "min_chunk_size": 100,  # Keep this as a reasonable minimum
+                "max_chunks_per_doc": knowledge_settings.max_documents_per_batch,
+                "splitting_strategy": knowledge_settings.splitting_strategy,
+                "enable_metadata_extraction": knowledge_settings.enable_metadata_extraction,
+                "enable_semantic_chunking": knowledge_settings.enable_semantic_chunking,
+                "similarity_threshold": knowledge_settings.similarity_threshold,
+                "embedding_model": knowledge_settings.embedding_model,
+            }
+        else:
+            self.config = {
+                "chunk_size": 1000,
+                "chunk_overlap": 200,
+                "min_chunk_size": 100,
+                "max_chunks_per_doc": 10,
+                "splitting_strategy": "recursive",
+                "enable_metadata_extraction": True,
+                "enable_semantic_chunking": False,
+                "similarity_threshold": 0.7,
+                "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+                **(config or {}),
+            }
 
     def chunk_document(self, document: ScrapedDocument) -> List[Dict[str, Any]]:
         """Split document into chunks for vector storage."""
@@ -115,10 +134,16 @@ class DocumentProcessor:
 class IngestionPipeline:
     """Main ingestion pipeline for processing artifact batches."""
 
-    def __init__(self, storage: ArtifactStorage, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        storage: ArtifactStorage,
+        config: Optional[Dict[str, Any]] = None,
+        knowledge_settings=None,
+    ):
         self.storage = storage
-        self.processor = DocumentProcessor(config)
+        self.processor = DocumentProcessor(config, knowledge_settings)
         self.config = config or {}
+        self.knowledge_settings = knowledge_settings
 
     async def ingest_batch(self, batch_date: str) -> Dict[str, Any]:
         """Ingest a complete batch of scraped documents."""

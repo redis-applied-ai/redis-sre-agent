@@ -14,6 +14,7 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
     # LangGraph and AI
     "langgraph>=0.2.0",
+    "langgraph-checkpoint-redis>=0.1.0",
     "langchain>=0.3.25",
     "langchain-openai>=0.2.0",
     "openai>=1.0.0",
@@ -31,6 +32,7 @@ dependencies = [
     "aiohttp>=3.8.0",
     "httpx>=0.25.0",
     "aiofiles>=24.1.0",
+    "websockets>=12.0",
     # Data processing
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",

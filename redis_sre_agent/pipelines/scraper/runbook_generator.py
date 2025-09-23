@@ -415,7 +415,6 @@ SOURCE CONTENT TO STANDARDIZE:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.3,  # Low temperature for consistent, professional output
                 max_tokens=4000,
             )
 

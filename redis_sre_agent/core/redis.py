@@ -21,6 +21,7 @@ _document_index: Optional[AsyncSearchIndex] = None
 # Index names
 SRE_KNOWLEDGE_INDEX = "sre_knowledge"
 METRICS_INDEX = "sre_metrics"
+SRE_SCHEDULES_INDEX = "sre_schedules"
 
 # Schema definitions
 SRE_KNOWLEDGE_SCHEMA = {
@@ -51,6 +52,14 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "tag",
         },
         {
+            "name": "product_labels",
+            "type": "tag",
+        },
+        {
+            "name": "product_label_tags",
+            "type": "tag",
+        },
+        {
             "name": "created_at",
             "type": "numeric",
         },
@@ -63,6 +72,64 @@ SRE_KNOWLEDGE_SCHEMA = {
                 "algorithm": "flat",
                 "datatype": "float32",
             },
+        },
+    ],
+}
+
+SRE_SCHEDULES_SCHEMA = {
+    "index": {
+        "name": SRE_SCHEDULES_INDEX,
+        "prefix": f"{SRE_SCHEDULES_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {
+            "name": "id",
+            "type": "tag",
+        },
+        {
+            "name": "name",
+            "type": "text",
+        },
+        {
+            "name": "description",
+            "type": "text",
+        },
+        {
+            "name": "interval_type",
+            "type": "tag",
+        },
+        {
+            "name": "interval_value",
+            "type": "numeric",
+        },
+        {
+            "name": "redis_instance_id",
+            "type": "tag",
+        },
+        {
+            "name": "instructions",
+            "type": "text",
+        },
+        {
+            "name": "enabled",
+            "type": "tag",
+        },
+        {
+            "name": "created_at",
+            "type": "numeric",
+        },
+        {
+            "name": "updated_at",
+            "type": "numeric",
+        },
+        {
+            "name": "last_run_at",
+            "type": "numeric",
+        },
+        {
+            "name": "next_run_at",
+            "type": "numeric",
         },
     ],
 }
@@ -105,6 +172,7 @@ class _AsyncVectorizerProxy:
         return other is self._inner or other == self._inner
 
 
+# TODO: This should be using a RedisVL vectorizer
 def get_vectorizer() -> OpenAITextVectorizer:
     """Get OpenAI vectorizer singleton with Redis caching.
 
@@ -141,6 +209,11 @@ def get_knowledge_index() -> AsyncSearchIndex:
     return _document_index
 
 
+def get_schedules_index() -> AsyncSearchIndex:
+    """Get SRE schedules index singleton."""
+    return AsyncSearchIndex.from_dict(SRE_SCHEDULES_SCHEMA, redis_url=settings.redis_url)
+
+
 async def test_redis_connection() -> bool:
     """Test Redis connection health."""
     try:
@@ -166,14 +239,25 @@ async def test_vector_search() -> bool:
 async def create_indices() -> bool:
     """Create vector search indices if they don't exist."""
     try:
-        index = get_knowledge_index()
-        exists = await index.exists()
+        # Create knowledge index
+        knowledge_index = get_knowledge_index()
+        knowledge_exists = await knowledge_index.exists()
 
-        if not exists:
-            await index.create()
+        if not knowledge_exists:
+            await knowledge_index.create()
             logger.info(f"Created vector index: {SRE_KNOWLEDGE_INDEX}")
         else:
             logger.info(f"Vector index already exists: {SRE_KNOWLEDGE_INDEX}")
+
+        # Create schedules index
+        schedules_index = get_schedules_index()
+        schedules_exists = await schedules_index.exists()
+
+        if not schedules_exists:
+            await schedules_index.create()
+            logger.info(f"Created schedules index: {SRE_SCHEDULES_INDEX}")
+        else:
+            logger.info(f"Schedules index already exists: {SRE_SCHEDULES_INDEX}")
 
         return True
     except Exception as e:

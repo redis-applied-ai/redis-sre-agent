@@ -281,8 +281,9 @@ class TestSREToolRegistry:
 
         health_results = await registry.health_check_all()
 
-        assert "test" in health_results
-        assert health_results["test"]["status"] == "healthy"
+        assert health_results["overall_status"] == "healthy"
+        assert "test" in health_results["providers"]
+        assert health_results["providers"]["test"]["status"] == "healthy"
 
     def test_registry_status(self):
         """Test getting registry status."""

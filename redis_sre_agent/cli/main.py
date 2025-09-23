@@ -174,5 +174,116 @@ def worker():
     click.echo("🚧 Worker startup functionality coming soon...")
 
 
+@main.group()
+def knowledge():
+    """Knowledge base management commands."""
+    pass
+
+
+@knowledge.command()
+@click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
+@click.option(
+    "--scrapers",
+    default="redis_kb",
+    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
+)
+def scrape(artifacts_path: str, scrapers: str):
+    """Scrape knowledge sources and store artifacts."""
+    click.echo("🔍 Starting knowledge scraping...")
+
+    scraper_list = [s.strip() for s in scrapers.split(",")]
+
+    async def run_scraping():
+        from ..pipelines.orchestrator import PipelineOrchestrator
+
+        orchestrator = PipelineOrchestrator(artifacts_path)
+        try:
+            results = await orchestrator.run_scraping_pipeline(scraper_list)
+
+            click.echo("✅ Scraping completed!")
+            click.echo(f"   Batch date: {results['batch_date']}")
+            click.echo(f"   Total documents: {results['total_documents']}")
+            click.echo(f"   Scrapers run: {', '.join(results['scrapers_run'])}")
+
+            # Show scraper results
+            for scraper_name, scraper_result in results["scraper_results"].items():
+                if "error" in scraper_result:
+                    click.echo(f"   ❌ {scraper_name}: {scraper_result['error']}")
+                else:
+                    click.echo(
+                        f"   ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
+                    )
+
+        except Exception as e:
+            click.echo(f"❌ Scraping failed: {e}")
+
+    asyncio.run(run_scraping())
+
+
+@knowledge.command()
+@click.option("--artifacts-path", default="./artifacts", help="Path to artifacts directory")
+@click.option("--batch-date", help="Batch date (YYYY-MM-DD), defaults to today")
+def ingest(artifacts_path: str, batch_date: str):
+    """Ingest scraped artifacts into the knowledge base."""
+    click.echo("📥 Starting knowledge ingestion...")
+
+    async def run_ingestion():
+        from ..pipelines.orchestrator import PipelineOrchestrator
+
+        orchestrator = PipelineOrchestrator(artifacts_path)
+        try:
+            results = await orchestrator.run_ingestion_pipeline(batch_date)
+
+            click.echo("✅ Ingestion completed!")
+            click.echo(f"   Batch date: {results['batch_date']}")
+            click.echo(f"   Documents processed: {results['documents_processed']}")
+            click.echo(f"   Documents indexed: {results['documents_indexed']}")
+
+        except Exception as e:
+            click.echo(f"❌ Ingestion failed: {e}")
+
+    asyncio.run(run_ingestion())
+
+
+@knowledge.command()
+@click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
+@click.option(
+    "--scrapers",
+    default="redis_kb",
+    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
+)
+def update(artifacts_path: str, scrapers: str):
+    """Run full knowledge update pipeline (scrape + ingest)."""
+    click.echo("🔄 Starting full knowledge update...")
+
+    scraper_list = [s.strip() for s in scrapers.split(",")]
+
+    async def run_full_pipeline():
+        from ..pipelines.orchestrator import PipelineOrchestrator
+
+        orchestrator = PipelineOrchestrator(artifacts_path)
+        try:
+            results = await orchestrator.run_full_pipeline(scraper_list)
+
+            click.echo("✅ Full pipeline completed!")
+            click.echo(f"   Batch date: {results['batch_date']}")
+            click.echo(f"   Total documents scraped: {results['scraping']['total_documents']}")
+            click.echo(f"   Documents indexed: {results['ingestion']['chunks_indexed']}")
+
+            # Show scraper results
+            for scraper_name, scraper_result in results["scraping"]["scraper_results"].items():
+                if "error" in scraper_result:
+                    click.echo(f"   ❌ {scraper_name}: {scraper_result['error']}")
+                else:
+                    click.echo(
+                        f"   ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
+                    )
+
+        except Exception as e:
+            click.echo(f"❌ Pipeline failed: {e}")
+
+    asyncio.run(run_full_pipeline())
+
+
 if __name__ == "__main__":
     main()

@@ -190,7 +190,10 @@ class MultiTurnAgentEvaluator:
         # Run agent conversation
         try:
             agent_response = await self.agent.process_query(
-                query=scenario["user_query"], session_id=thread_id, user_id="evaluator"
+                query=scenario["user_query"],
+                session_id=thread_id,
+                user_id="evaluator",
+                max_iterations=20,
             )
 
             # Extract conversation history with tool usage
@@ -576,6 +579,13 @@ async def run_multi_turn_evaluation() -> List[Dict[str, Any]]:
 @pytest.mark.integration
 async def test_multi_turn_agent_evaluation():
     """Test comprehensive multi-turn agent evaluation."""
+    # Skip if OpenAI API key is not available
+    if (
+        not os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
+    ):
+        pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
+
     results = await run_multi_turn_evaluation()
 
     # Test assertions

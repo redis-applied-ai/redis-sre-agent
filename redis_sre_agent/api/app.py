@@ -7,8 +7,12 @@ from fastapi import FastAPI
 
 from redis_sre_agent.api.agent import router as agent_router
 from redis_sre_agent.api.health import router as health_router
+from redis_sre_agent.api.instances import router as instances_router
+from redis_sre_agent.api.knowledge import router as knowledge_router
 from redis_sre_agent.api.middleware import setup_middleware
+from redis_sre_agent.api.schedules import router as schedules_router
 from redis_sre_agent.api.tasks import router as tasks_router
+from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import cleanup_redis_connections, initialize_redis_infrastructure
 
@@ -39,6 +43,22 @@ async def lifespan(app: FastAPI):
         # Initialize Redis infrastructure
         redis_status = await initialize_redis_infrastructure()
         logger.info(f"Redis infrastructure status: {redis_status}")
+
+        # Register SRE tasks with Docket
+        try:
+            from redis_sre_agent.core.tasks import register_sre_tasks, start_scheduler_task
+
+            await register_sre_tasks()
+            logger.info("✅ SRE tasks registered with Docket")
+        except Exception as e:
+            logger.warning(f"Failed to register SRE tasks: {e}")
+
+        # Start the scheduler task
+        try:
+            await start_scheduler_task()
+            logger.info("✅ Scheduler task started")
+        except Exception as e:
+            logger.warning(f"Failed to start scheduler task: {e}")
 
         # Store startup state for agent status checks
         _app_startup_state = redis_status
@@ -82,7 +102,11 @@ setup_middleware(app)
 # Include routers
 app.include_router(health_router, tags=["Health"])
 app.include_router(agent_router, prefix="/api/v1", tags=["Agent"])
+app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
+app.include_router(knowledge_router, tags=["Knowledge"])
+app.include_router(schedules_router, tags=["Schedules"])
 app.include_router(tasks_router, prefix="/api/v1", tags=["Tasks"])
+app.include_router(websockets_router, prefix="/api/v1", tags=["WebSockets"])
 
 
 if __name__ == "__main__":

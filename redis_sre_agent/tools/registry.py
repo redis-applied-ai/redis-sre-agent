@@ -44,6 +44,11 @@ class SREToolRegistry:
         """
         if name in self._providers:
             logger.warning(f"Provider '{name}' already registered, replacing")
+            # Remove old provider's capabilities first
+            old_provider = self._providers[name]
+            for capability in old_provider.capabilities:
+                if name in self._capability_map[capability]:
+                    self._capability_map[capability].remove(name)
 
         self._providers[name] = provider
 
@@ -108,6 +113,14 @@ class SREToolRegistry:
             List of provider names that support the capability
         """
         return self._capability_map.get(capability, []).copy()
+
+    def get_capabilities(self) -> List[ToolCapability]:
+        """Get all available capabilities.
+
+        Returns:
+            List of capabilities that have at least one provider
+        """
+        return [capability for capability, providers in self._capability_map.items() if providers]
 
     async def get_metrics_providers(self) -> List[MetricsProvider]:
         """Get all available metrics providers.
@@ -185,20 +198,24 @@ class SREToolRegistry:
         Returns:
             Dictionary with health check results for each provider
         """
-        results = {}
+        provider_results = {}
 
         for name, provider in self._providers.items():
             try:
                 health_result = await provider.health_check()
-                results[name] = health_result
+                provider_results[name] = health_result
             except Exception as e:
-                results[name] = {
+                provider_results[name] = {
                     "status": "error",
                     "provider": provider.provider_name,
                     "error": str(e),
                 }
 
-        return results
+        # Determine overall status
+        all_healthy = all(result.get("status") == "healthy" for result in provider_results.values())
+        overall_status = "healthy" if all_healthy else "unhealthy"
+
+        return {"overall_status": overall_status, "providers": provider_results}
 
     def get_registry_status(self) -> Dict[str, Any]:
         """Get overall registry status and statistics.

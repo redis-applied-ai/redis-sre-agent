@@ -9,11 +9,12 @@ This comprehensive demo showcases the Redis SRE Agent's capabilities across mult
 4. Full Health Check - Complete diagnostic suite with agent consultation
 
 Usage:
-    python demo_redis_memory_scenario.py [--scenario <name>] [--auto-run]
+    python demo_scenarios.py [--scenario <name>] [--auto-run] [--ui]
 
 Options:
     --scenario: Run specific scenario (memory, connections, performance, health)
     --auto-run: Run all scenarios automatically without user input
+    --ui: Use web UI instead of CLI for agent interaction
 """
 
 import argparse
@@ -44,10 +45,11 @@ warnings.filterwarnings(
 class RedisSREDemo:
     """Interactive Redis SRE Agent demonstration."""
 
-    def __init__(self):
+    def __init__(self, ui_mode: bool = False):
         self.redis_client: Optional[redis.Redis] = None
         self.redis_port: Optional[int] = None
         self.redis_url: Optional[str] = None
+        self.ui_mode = ui_mode
         self.scenarios = {
             "memory": self.memory_pressure_scenario,
             "connections": self.connection_issues_scenario,
@@ -117,9 +119,57 @@ class RedisSREDemo:
 
         return True
 
+    def _wait_for_ui_interaction(self, scenario_name: str, scenario_description: str):
+        """Wait for user to interact with the UI while scenario data is active."""
+        print("\n" + "=" * 80)
+        print(f"🌐 UI MODE: {scenario_name} scenario is now active!")
+        print("=" * 80)
+        print(f"📊 Scenario: {scenario_description}")
+        print(f"🔗 Redis Instance: localhost:{self.redis_port}")
+        print("🌐 Web UI: http://localhost:8000")
+        print()
+        print("The Redis instance has been configured with the scenario data.")
+        print("You can now:")
+        print("  1. Open the web UI at http://localhost:8000")
+        print("  2. Select the Redis instance (redis-demo)")
+        print("  3. Ask the agent about the current Redis state")
+        print()
+        print("💡 Suggested queries for this scenario:")
+
+        # Provide scenario-specific query suggestions
+        if "memory" in scenario_name.lower():
+            print("  • 'Redis is using too much memory, what should I do?'")
+            print("  • 'I'm getting memory pressure warnings, help me diagnose'")
+            print("  • 'Check Redis memory usage and fragmentation'")
+        elif "connection" in scenario_name.lower():
+            print("  • 'Redis clients are getting connection errors'")
+            print("  • 'I'm hitting connection limits, what's wrong?'")
+            print("  • 'Check Redis connection status and limits'")
+        elif "performance" in scenario_name.lower():
+            print("  • 'Redis is running slowly, help me find the bottleneck'")
+            print("  • 'Check for slow Redis operations'")
+            print("  • 'Analyze Redis performance issues'")
+        else:
+            print("  • 'Run a complete health check on this Redis instance'")
+            print("  • 'What issues do you see with this Redis setup?'")
+            print("  • 'Analyze the current Redis configuration and performance'")
+
+        print()
+        print("⏸️  Press ENTER when you're done testing in the UI to continue...")
+        input()
+        print("✅ Continuing with demo...")
+
     def show_main_menu(self) -> str:
         """Display main menu and get user selection."""
-        self.print_header("Redis SRE Agent - Interactive Demo")
+        mode_indicator = " (UI Mode)" if self.ui_mode else " (CLI Mode)"
+        self.print_header(f"Redis SRE Agent - Interactive Demo{mode_indicator}")
+
+        if self.ui_mode:
+            print("\n🌐 UI MODE: Scenarios will set up data and pause for web UI interaction")
+            print("   Web UI available at: http://localhost:8000")
+        else:
+            print("\n💻 CLI MODE: Scenarios will run agent queries directly in terminal")
+
         print("\nAvailable scenarios:")
         print("1. 🧠 Memory Pressure Analysis - Simulate and diagnose memory issues")
         print("2. 🔗 Connection Issues - Analyze connection limits and timeouts")
@@ -259,6 +309,14 @@ class RedisSREDemo:
         evicted_keys = final_info.get("evicted_keys", 0)
         if evicted_keys > 0:
             print(f"   🚨 EVICTIONS DETECTED: {evicted_keys} keys evicted")
+
+        # Handle UI mode vs CLI mode
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Memory Pressure Analysis",
+                f"Redis loaded with {keys_loaded:,} keys using {utilization:.1f}% of {maxmemory / (1024 * 1024):.1f} MB limit",
+            )
+            return
 
         # Get fresh diagnostic data using the agent's diagnostic tool
         print("   Getting current Redis diagnostic data to send to agent...")
@@ -512,14 +570,21 @@ class RedisSREDemo:
                 print(f"   🚨 {rejected_attempts}/{extra_attempts} connection attempts rejected!")
                 print("   📊 This creates visible connection_rejected_* metrics in Redis")
 
-            # Get comprehensive diagnostics showing connection problems
-            print("   📊 Getting diagnostic data to show connection issues...")
-            _ = await get_detailed_redis_diagnostics(self.redis_url)
+            # Handle UI mode vs CLI mode
+            if self.ui_mode:
+                self._wait_for_ui_interaction(
+                    "Connection Issues Analysis",
+                    f"Redis with {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, {rejected_attempts} recent rejections",
+                )
+            else:
+                # Get comprehensive diagnostics showing connection problems
+                print("   📊 Getting diagnostic data to show connection issues...")
+                await get_detailed_redis_diagnostics(self.redis_url)
 
-            # Run diagnostics and agent consultation with connection-focused query
-            await self._run_diagnostics_and_agent_query(
-                f"Application users are reporting connection timeouts and service unavailability. Current metrics show {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, and {rejected_attempts} recent connection rejections. Please analyze the connection issues and provide immediate remediation steps."
-            )
+                # Run diagnostics and agent consultation with connection-focused query
+                await self._run_diagnostics_and_agent_query(
+                    f"Application users are reporting connection timeouts and service unavailability. Current metrics show {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, and {rejected_attempts} recent connection rejections. Please analyze the connection issues and provide immediate remediation steps."
+                )
 
         finally:
             # Cleanup test connections
@@ -690,9 +755,16 @@ class RedisSREDemo:
         except Exception:
             pass
 
-        await self._run_diagnostics_and_agent_query(
-            f"Application performance issues reported. Performance analysis shows: slow Lua operations averaging {avg_slow_time:.1f}ms, KEYS operations averaging {avg_keys_time:.1f}ms, normal GET operations {string_time / 100 * 1000:.2f}ms, HGETALL operations {hash_time / 50 * 1000:.2f}ms. Slowlog contains {slowlog_count} entries. Please analyze the performance issues and provide optimization recommendations."
-        )
+        # Handle UI mode vs CLI mode
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Performance Analysis",
+                f"Redis with slow operations: Lua scripts avg {avg_slow_time:.1f}ms, KEYS avg {avg_keys_time:.1f}ms, {slowlog_count} slowlog entries",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                f"Application performance issues reported. Performance analysis shows: slow Lua operations averaging {avg_slow_time:.1f}ms, KEYS operations averaging {avg_keys_time:.1f}ms, normal GET operations {string_time / 100 * 1000:.2f}ms, HGETALL operations {hash_time / 50 * 1000:.2f}ms. Slowlog contains {slowlog_count} entries. Please analyze the performance issues and provide optimization recommendations."
+            )
 
         # Cleanup
         self.print_step(4, "Cleaning up performance test data")
@@ -770,10 +842,17 @@ class RedisSREDemo:
         else:
             print("   ⚠️  Authentication: Not configured")
 
-        # Run comprehensive agent consultation
-        await self._run_diagnostics_and_agent_query(
-            f"Complete Redis health check completed. Total keys: {total_keys}, memory usage: {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB, role: {role}. Please provide a comprehensive health assessment and recommendations for optimization, security, and best practices."
-        )
+        # Handle UI mode vs CLI mode
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Full Health Check",
+                f"Complete Redis diagnostics: {total_keys} keys, {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB memory, role: {role}",
+            )
+        else:
+            # Run comprehensive agent consultation
+            await self._run_diagnostics_and_agent_query(
+                f"Complete Redis health check completed. Total keys: {total_keys}, memory usage: {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB, role: {role}. Please provide a comprehensive health assessment and recommendations for optimization, security, and best practices."
+            )
 
     async def _run_diagnostics_and_agent_query(self, query: str):
         """Run diagnostics and query the SRE agent."""
@@ -1040,17 +1119,20 @@ async def main():
     parser.add_argument(
         "--auto-run", action="store_true", help="Run all scenarios automatically without user input"
     )
+    parser.add_argument(
+        "--ui", action="store_true", help="Use web UI instead of CLI for agent interaction"
+    )
 
     args = parser.parse_args()
 
-    # Check for OpenAI API key
-    if not os.getenv("OPENAI_API_KEY"):
+    # Check for OpenAI API key (only needed for CLI mode)
+    if not args.ui and not os.getenv("OPENAI_API_KEY"):
         print("⚠️  Warning: OPENAI_API_KEY not set. Agent queries may fail.")
         print("   Set this environment variable to enable full agent functionality.")
         print()
 
     # Run the demo
-    demo = RedisSREDemo()
+    demo = RedisSREDemo(ui_mode=args.ui)
     await demo.run_interactive_demo(auto_run=args.auto_run, specific_scenario=args.scenario)
 
 

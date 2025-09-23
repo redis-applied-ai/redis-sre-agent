@@ -46,6 +46,7 @@ jobs:
       run: uv run pytest tests/ -m integration -v
       env:
         REDIS_URL: redis://localhost:6379/0
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4

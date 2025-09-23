@@ -199,6 +199,10 @@ class TestProcessAgentTurn:
             patch("redis_sre_agent.core.tasks.get_thread_manager") as mock_get_manager,
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
             patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
+            ) as mock_get_knowledge_agent,
+            patch("redis_sre_agent.agent.router.route_to_appropriate_agent") as mock_route,
         ):
             # Mock thread manager
             mock_manager = AsyncMock()
@@ -214,9 +218,19 @@ class TestProcessAgentTurn:
             mock_manager.add_action_items.return_value = True
             mock_get_manager.return_value = mock_manager
 
+            # Mock routing to use Redis-focused agent (not knowledge-only)
+            from redis_sre_agent.agent.router import AgentType
+
+            mock_route.return_value = AgentType.REDIS_FOCUSED
+
             # Mock agent
             mock_agent = AsyncMock()
             mock_get_agent.return_value = mock_agent
+
+            # Mock knowledge agent (in case routing changes)
+            mock_knowledge_agent = AsyncMock()
+            mock_knowledge_agent.process_query.return_value = "Test response from agent"
+            mock_get_knowledge_agent.return_value = mock_knowledge_agent
 
             # Mock agent response
             mock_run_agent.return_value = {
@@ -261,6 +275,10 @@ class TestProcessAgentTurn:
             patch("redis_sre_agent.core.tasks.get_thread_manager") as mock_get_manager,
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
             patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
+            ) as mock_get_knowledge_agent,
+            patch("redis_sre_agent.agent.router.route_to_appropriate_agent") as mock_route,
         ):
             # Mock thread manager
             mock_manager = AsyncMock()
@@ -275,9 +293,18 @@ class TestProcessAgentTurn:
             mock_manager.set_thread_error.return_value = True
             mock_get_manager.return_value = mock_manager
 
+            # Mock routing to use Redis-focused agent (not knowledge-only)
+            from redis_sre_agent.agent.router import AgentType
+
+            mock_route.return_value = AgentType.REDIS_FOCUSED
+
             # Mock agent
             mock_agent = AsyncMock()
             mock_get_agent.return_value = mock_agent
+
+            # Mock knowledge agent (in case routing changes)
+            mock_knowledge_agent = AsyncMock()
+            mock_get_knowledge_agent.return_value = mock_knowledge_agent
 
             # Mock agent error
             mock_run_agent.side_effect = Exception("Agent processing failed")

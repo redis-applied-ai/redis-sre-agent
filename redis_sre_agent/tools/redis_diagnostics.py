@@ -59,47 +59,13 @@ class RedisDiagnostics:
             results["diagnostics"]["persistence"] = await self._analyze_persistence(client)
             results["diagnostics"]["cpu"] = await self._analyze_cpu_usage(client)
 
-            # Calculate overall status
-            results["overall_status"] = self._calculate_overall_status(results["diagnostics"])
-
             logger.info("Redis diagnostics completed successfully")
 
         except Exception as e:
             logger.error(f"Redis diagnostics failed: {e}")
             results["diagnostics"]["error"] = str(e)
-            results["overall_status"] = "error"
 
         return results
-
-    def _calculate_overall_status(self, diagnostics: Dict[str, Any]) -> str:
-        """Calculate overall Redis health status based on all diagnostics."""
-        critical_issues = []
-        warnings = []
-
-        # Check memory status
-        memory_status = diagnostics.get("memory", {}).get("status", "healthy")
-        if memory_status == "critical":
-            critical_issues.append("Memory usage critical")
-        elif memory_status == "warning":
-            warnings.append("Memory usage warning")
-
-        # Check for connection issues
-        connection = diagnostics.get("connection", {})
-        if not connection.get("ping_response", True):
-            critical_issues.append("Connection failed")
-
-        # Check for errors in any diagnostic
-        for key, value in diagnostics.items():
-            if isinstance(value, dict) and "error" in value:
-                warnings.append(f"{key} diagnostic failed")
-
-        # Determine overall status
-        if critical_issues:
-            return "critical"
-        elif warnings:
-            return "warning"
-        else:
-            return "healthy"
 
     async def _test_connection(self, client: redis.Redis) -> Dict[str, Any]:
         """Test Redis connection and basic operations."""
@@ -168,35 +134,8 @@ class RedisDiagnostics:
             if maxmemory > 0:
                 memory_usage_pct = (used_memory / maxmemory) * 100
 
-            # Determine memory status
-            status = "healthy"
-            issues = []
-
-            if maxmemory > 0:
-                if memory_usage_pct >= 95:
-                    status = "critical"
-                    issues.append("Memory usage above 95% - immediate action required")
-                elif memory_usage_pct >= 85:
-                    status = "warning"
-                    issues.append("Memory usage above 85% - monitor closely")
-                elif memory_usage_pct >= 75:
-                    status = "caution"
-                    issues.append("Memory usage above 75% - consider optimization")
-            else:
-                # No maxmemory set - check absolute usage
-                used_mb = used_memory / (1024 * 1024)
-                if used_mb > 1000:  # 1GB
-                    status = "warning"
-                    issues.append(
-                        "No memory limit set with high usage - consider setting maxmemory"
-                    )
-
-            # Check fragmentation
-            fragmentation_ratio = info.get("mem_fragmentation_ratio", 1.0)
-            if fragmentation_ratio > 1.5:
-                if status == "healthy":
-                    status = "warning"
-                issues.append(f"High memory fragmentation ratio: {fragmentation_ratio}")
+            # Get fragmentation ratio
+            info.get("mem_fragmentation_ratio", 1.0)
 
             # Get memory breakdown
             memory_breakdown = {}
@@ -205,8 +144,6 @@ class RedisDiagnostics:
                     memory_breakdown[key] = value
 
             return {
-                "status": status,
-                "issues": issues,
                 "used_memory_bytes": used_memory,
                 "used_memory_human": info.get("used_memory_human"),
                 "max_memory_bytes": maxmemory,
@@ -663,6 +600,7 @@ async def capture_redis_diagnostics(
         "redis_url": diagnostics.redis_url,
         "sections_captured": sorted(list(requested_sections)),
         "time_window_seconds": time_window_seconds,
+        "capture_status": "success",  # Default to success, will be changed if errors occur
         "diagnostics": {},
     }
 
@@ -716,12 +654,10 @@ async def capture_redis_diagnostics(
         if "cpu" in requested_sections:
             result["diagnostics"]["cpu"] = await _capture_cpu_metrics(client, include_raw_data)
 
-        result["capture_status"] = "success"
-
     except Exception as e:
         logger.error(f"Failed to capture Redis diagnostics: {e}")
+        result["capture_status"] = "failed"
         result["diagnostics"]["error"] = str(e)
-        result["capture_status"] = "error"
 
     return result
 
