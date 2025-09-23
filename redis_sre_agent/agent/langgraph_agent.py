@@ -870,14 +870,14 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
         # Each task gets its own isolated MemorySaver instance to prevent cross-contamination.
         # TODO: Switch to RedisSaver when async support is available for true persistence.
         checkpointer = MemorySaver()
-        app = self.workflow.compile(checkpointer=checkpointer)
+        self.app = self.workflow.compile(checkpointer=checkpointer)
 
         # Configure thread for session persistence
         thread_config = {"configurable": {"thread_id": session_id}}
 
         try:
             # Run the workflow with isolated memory
-            final_state = await app.ainvoke(initial_state, config=thread_config)
+            final_state = await self.app.ainvoke(initial_state, config=thread_config)
 
             # Extract the final response
             messages = final_state["messages"]

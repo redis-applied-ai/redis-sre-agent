@@ -190,7 +190,7 @@ class MultiTurnAgentEvaluator:
         # Run agent conversation
         try:
             agent_response = await self.agent.process_query(
-                query=scenario["user_query"], session_id=thread_id, user_id="evaluator"
+                query=scenario["user_query"], session_id=thread_id, user_id="evaluator", max_iterations=20
             )
 
             # Extract conversation history with tool usage

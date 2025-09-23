@@ -156,12 +156,13 @@ class DiagnosticContextEvaluator:
                     "timestamp": datetime.now().isoformat(),
                 }
 
-            # Process query with diagnostic context
+            # Process query with diagnostic context (increased iterations for complex analysis)
             response = await self.agent.process_query_with_diagnostics(
                 query=scenario["user_query"],
                 session_id=f"diagnostic_eval_{scenario['scenario_id']}",
                 user_id="evaluator",
                 baseline_diagnostics=baseline_diagnostics,
+                max_iterations=20,  # Increased for complex diagnostic analysis
             )
 
             # Analyze agent's diagnostic tool usage

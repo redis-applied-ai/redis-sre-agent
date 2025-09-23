@@ -183,6 +183,7 @@ class StructuredToolEvaluator:
                 query=scenario["user_query"],
                 session_id=f"structured_eval_{scenario['scenario_id']}",
                 user_id="evaluator",
+                max_iterations=20,  # Increased for complex structured analysis
             )
 
             # Parse structured investigation summary
