@@ -218,7 +218,9 @@ async def get_provider_status() -> Dict[str, Any]:
             "summary": {
                 "total_providers": registry_status["total_providers"],
                 "healthy_providers": sum(
-                    1 for result in health_results.values() if isinstance(result, dict) and result.get("status") == "healthy"
+                    1
+                    for result in health_results.values()
+                    if isinstance(result, dict) and result.get("status") == "healthy"
                 ),
                 "capabilities_available": registry_status["capabilities_available"],
             },
