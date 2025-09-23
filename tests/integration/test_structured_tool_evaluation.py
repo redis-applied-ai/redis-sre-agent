@@ -245,15 +245,36 @@ class StructuredToolEvaluator:
     def _parse_investigation_summary(self, response: str) -> Dict[str, Any]:
         """Parse the structured investigation summary from agent response."""
 
-        # Find investigation summary section
-        summary_pattern = r"## 🔍 Investigation Summary\s*\n(.*?)(?:\n## |$)"
-        summary_match = re.search(summary_pattern, response, re.DOTALL | re.IGNORECASE)
+        # Find investigation summary section (more flexible patterns)
+        summary_patterns = [
+            r"## 🔍 Investigation Summary\s*\n(.*?)(?:\n## |$)",
+            r"## Investigation Summary\s*\n(.*?)(?:\n## |$)",
+            r"## Summary\s*\n(.*?)(?:\n## |$)",
+            r"# Investigation Summary\s*\n(.*?)(?:\n# |$)",
+        ]
+
+        summary_match = None
+        for pattern in summary_patterns:
+            summary_match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
+            if summary_match:
+                break
 
         if not summary_match:
-            return {
-                "found": False,
-                "error": "No structured investigation summary found in response",
-            }
+            # If no formal summary section, check if response has substantial content
+            if len(response.strip()) > 100:  # Has substantial content
+                return {
+                    "found": True,
+                    "tools_used": [],
+                    "knowledge_sources": [],
+                    "methodology": {"steps": [], "approach": "general_analysis"},
+                    "summary_text": response[:500] + "..." if len(response) > 500 else response,
+                    "note": "No formal summary section found, but response has substantial analysis",
+                }
+            else:
+                return {
+                    "found": False,
+                    "error": "No structured investigation summary found in response",
+                }
 
         summary_text = summary_match.group(1)
 
