@@ -264,8 +264,8 @@ class StructuredToolEvaluator:
             if len(response.strip()) > 100:  # Has substantial content
                 return {
                     "found": True,
-                    "tools_used": [],
-                    "knowledge_sources": [],
+                    "tools_used": {},  # Should be dict, not list
+                    "knowledge_sources": {},  # Should be dict, not list
                     "methodology": {"steps": [], "approach": "general_analysis"},
                     "summary_text": response[:500] + "..." if len(response) > 500 else response,
                     "note": "No formal summary section found, but response has substantial analysis",
@@ -674,6 +674,12 @@ async def run_structured_tool_evaluation() -> List[Dict[str, Any]]:
 
     successful_results = [r for r in results if "error" not in r]
 
+    # Initialize default values
+    avg_composite = 0
+    avg_tool_compliance = 0
+    avg_knowledge_quality = 0
+    avg_methodology = 0
+
     if successful_results:
         # Calculate aggregate metrics
         composite_scores = [r["overall_assessment"]["composite_score"] for r in successful_results]
@@ -763,11 +769,9 @@ async def run_structured_tool_evaluation() -> List[Dict[str, Any]]:
 @pytest.mark.integration
 async def test_structured_tool_evaluation():
     """Test structured tool usage evaluation."""
-    # Skip if OpenAI API key is not available
-    if (
-        not os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
-    ):
+    # Skip if OpenAI API key is not available or is a test key
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key or api_key.startswith("test-"):
         pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
     results = await run_structured_tool_evaluation()
