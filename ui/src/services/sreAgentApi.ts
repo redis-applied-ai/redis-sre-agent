@@ -61,6 +61,7 @@ export interface RedisInstance {
   notes?: string;
   monitoring_identifier?: string;
   logging_identifier?: string;
+  instance_type?: string;
   status?: string;
   version?: string;
   memory?: string;
@@ -80,6 +81,7 @@ export interface CreateInstanceRequest {
   notes?: string;
   monitoring_identifier?: string;
   logging_identifier?: string;
+  instance_type?: string;
 }
 
 export interface UpdateInstanceRequest {
@@ -92,6 +94,7 @@ export interface UpdateInstanceRequest {
   notes?: string;
   monitoring_identifier?: string;
   logging_identifier?: string;
+  instance_type?: string;
   status?: string;
   version?: string;
   memory?: string;
@@ -101,8 +104,14 @@ export interface UpdateInstanceRequest {
 export interface ConnectionTestResult {
   success: boolean;
   message: string;
-  instance_id: string;
+  instance_id?: string;
+  host?: string;
+  port?: number;
   tested_at: string;
+}
+
+export interface TestConnectionUrlRequest {
+  connection_url: string;
 }
 
 export interface AgentStatus {
@@ -121,9 +130,61 @@ class SREAgentAPI {
   private baseUrl: string;
   private tasksBaseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:8000/api/v1') {
-    this.baseUrl = `${baseUrl}/agent`;
-    this.tasksBaseUrl = `${baseUrl}`;
+  constructor(baseUrl?: string) {
+    // Determine the base URL dynamically
+    const apiBaseUrl = this.getApiBaseUrl(baseUrl);
+    this.baseUrl = `${apiBaseUrl}/agent`;
+    this.tasksBaseUrl = `${apiBaseUrl}`;
+  }
+
+  private getApiBaseUrl(providedBaseUrl?: string): string {
+    // 1. Use provided base URL if given
+    if (providedBaseUrl) {
+      return providedBaseUrl;
+    }
+
+    // 2. Use environment variable if available (for build-time configuration)
+    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) {
+      return import.meta.env.VITE_API_BASE_URL;
+    }
+
+    // 3. In production builds or when using nginx proxy, use relative URLs
+    if (typeof window !== 'undefined') {
+      // Check if we're in development mode (Vite dev server)
+      // Vite typically uses ports 3000, 3001, etc. and serves from localhost
+      const isDevelopment = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+                           (window.location.port.startsWith('30') || window.location.port === '5173'); // 5173 is Vite's default
+
+      if (!isDevelopment) {
+        // In production, use relative URLs (nginx will proxy to backend)
+        return '/api/v1';
+      }
+
+      // In development, construct URL using current host but backend port
+      const protocol = window.location.protocol;
+      const hostname = window.location.hostname;
+
+      // Use the current hostname but with backend port (8000)
+      return `${protocol}//${hostname}:8000/api/v1`;
+    }
+
+    // 4. Fallback for server-side rendering or other edge cases
+    return '/api/v1';
+  }
+
+  private createURL(urlString: string): URL {
+    // If the URL is already absolute, use it directly
+    if (urlString.startsWith('http://') || urlString.startsWith('https://')) {
+      return new URL(urlString);
+    }
+
+    // For relative URLs, use the current window location as base
+    if (typeof window !== 'undefined') {
+      return new URL(urlString, window.location.origin);
+    }
+
+    // Fallback for server-side rendering - assume localhost
+    return new URL(urlString, 'http://localhost:3000');
   }
 
   async submitTriageRequest(
@@ -199,7 +260,8 @@ class SREAgentAPI {
     statusFilter?: string,
     limit: number = 50
   ): Promise<TaskStatusResponse[]> {
-    const url = new URL(`${this.tasksBaseUrl}/tasks`);
+    const baseUrl = `${this.tasksBaseUrl}/tasks`;
+    const url = this.createURL(baseUrl);
     if (userId) url.searchParams.append('user_id', userId);
     if (statusFilter) url.searchParams.append('status_filter', statusFilter);
     url.searchParams.append('limit', limit.toString());
@@ -215,7 +277,8 @@ class SREAgentAPI {
   }
 
   async cancelTask(threadId: string, deleteThread: boolean = false): Promise<void> {
-    const url = new URL(`${this.tasksBaseUrl}/tasks/${threadId}`);
+    const baseUrl = `${this.tasksBaseUrl}/tasks/${threadId}`;
+    const url = this.createURL(baseUrl);
     if (deleteThread) {
       url.searchParams.set('delete', 'true');
     }
@@ -447,6 +510,23 @@ class SREAgentAPI {
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || `Failed to test connection: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  async testConnectionUrl(connectionUrl: string): Promise<ConnectionTestResult> {
+    const response = await fetch(`${this.tasksBaseUrl}/instances/test-connection-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ connection_url: connectionUrl }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `Failed to test connection URL: ${response.statusText}`);
     }
 
     return response.json();

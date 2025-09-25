@@ -40,6 +40,10 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "text",
         },
         {
+            "name": "document_hash",
+            "type": "tag",
+        },
+        {
             "name": "source",
             "type": "tag",
         },
@@ -288,6 +292,13 @@ async def initialize_redis_infrastructure() -> dict:
     else:
         status["indices_created"] = "unavailable"
 
+    # Initialize Docket infrastructure if Redis is available
+    if redis_ok:
+        docket_ok = await initialize_docket_infrastructure()
+        status["docket_infrastructure"] = "available" if docket_ok else "unavailable"
+    else:
+        status["docket_infrastructure"] = "unavailable"
+
     # Test vector search index after creation (only if Redis is available)
     if redis_ok:
         vector_ok = await test_vector_search()
@@ -296,6 +307,28 @@ async def initialize_redis_infrastructure() -> dict:
         status["vector_search"] = "unavailable"
 
     return status
+
+
+async def initialize_docket_infrastructure() -> bool:
+    """Initialize Docket task queue infrastructure."""
+    try:
+        # Import Docket here to avoid circular imports
+        from docket import Docket
+
+        # Test Docket connection and ensure infrastructure is ready
+        async with Docket(url=settings.redis_url, name="sre_docket") as docket:
+            # Test basic Docket functionality
+            # This will create necessary Redis structures if they don't exist
+            await docket.ping()
+            logger.info("Docket infrastructure initialized successfully")
+            return True
+
+    except ImportError:
+        logger.warning("Docket not available - task queue functionality will be limited")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to initialize Docket infrastructure: {e}")
+        return False
 
 
 async def cleanup_redis_connections():

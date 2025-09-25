@@ -33,7 +33,27 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
 
   const connectWebSocket = () => {
     try {
-      const wsUrl = `ws://localhost:8000/api/v1/ws/tasks/${threadId}`;
+      // Construct WebSocket URL dynamically based on current location
+      const getWebSocketUrl = () => {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const hostname = window.location.hostname;
+
+        // Check if we're in development mode (Vite dev server)
+        // Vite typically uses ports 3000, 3001, etc. and serves from localhost
+        const isDevelopment = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+                             (window.location.port.startsWith('30') || window.location.port === '5173'); // 5173 is Vite's default
+
+        if (!isDevelopment) {
+          // In production, use current host (nginx will proxy WebSocket connections)
+          const port = window.location.port ? `:${window.location.port}` : '';
+          return `${protocol}//${hostname}${port}/api/v1/ws/tasks/${threadId}`;
+        }
+
+        // In development, use current hostname but with backend port (8000)
+        return `${protocol}//${hostname}:8000/api/v1/ws/tasks/${threadId}`;
+      };
+
+      const wsUrl = getWebSocketUrl();
       const ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {
@@ -214,20 +234,10 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
 
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            {getStatusIcon(currentStatus)}
-            <span className={getStatusColor(currentStatus)}>
-              {currentStatus}
+            <span className="inline-block w-3 h-3 bg-blue-500 rounded-full animate-pulse"></span>
+            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">
+              Processing
             </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsAutoScroll(!isAutoScroll)}
-            >
-              {isAutoScroll ? '⏸️' : '▶️'} Auto-scroll
-            </Button>
           </div>
         </div>
 
@@ -248,14 +258,21 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
                 Waiting for updates...
               </div>
             ) : (
-              updates.map((update, index) => (
+              updates
+                .filter(update => {
+                  // Filter out technical update types that users shouldn't see
+                  const technicalTypes = [
+                    'task_queued', 'task_started', 'task_completed', 'task_failed',
+                    'agent_init', 'agent_complete', 'turn_start', 'turn_complete',
+                    'status_update', 'internal', 'debug'
+                  ];
+                  return !technicalTypes.includes(update.update_type);
+                })
+                .map((update, index) => (
                 <div key={index} className="border rounded-lg p-3 bg-white shadow-sm">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
-                          {update.update_type}
-                        </span>
                         <span className="text-xs text-gray-500">
                           {formatTimestamp(update.timestamp)}
                         </span>

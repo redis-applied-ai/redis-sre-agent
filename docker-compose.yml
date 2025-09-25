@@ -31,6 +31,31 @@ services:
     networks:
       - sre-network
 
+  # Redis Enterprise Software - For testing enterprise runbooks
+  redis-enterprise:
+    image: redislabs/redis:latest
+    container_name: redis-enterprise-node1
+    ports:
+      - "8443:8443"   # HTTPS Cluster Manager UI
+      - "9443:9443"   # REST API
+      - "12000:12000" # Database port
+      - "12001:12001" # Additional database port
+      - "12002:12002" # Additional database port
+    cap_add:
+      - sys_resource
+    volumes:
+      - redis_enterprise_data:/opt/redislabs/persist
+    environment:
+      - CLUSTER_FQDN=cluster.local
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - sre-network
+
   # Redis Exporter for Prometheus metrics
   redis-exporter:
     image: oliver006/redis_exporter:latest
@@ -138,6 +163,25 @@ services:
     networks:
       - sre-network
 
+  # SRE Agent UI
+  sre-ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://sre-agent:8000
+    depends_on:
+      - sre-agent
+    volumes:
+      - ./ui:/app
+      - /app/node_modules  # Anonymous volume for node_modules
+    networks:
+      - sre-network
+
 networks:
   sre-network:
     driver: bridge
@@ -145,5 +189,6 @@ networks:
 volumes:
   redis_data:
   redis_demo_data:
+  redis_enterprise_data:
   prometheus_data:
   grafana_data:

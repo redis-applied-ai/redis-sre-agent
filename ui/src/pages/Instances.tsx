@@ -30,7 +30,7 @@ const Tooltip = ({ content, children }: { content: string; children: React.React
 );
 
 // Use the API interface but with camelCase for UI consistency
-interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier'> {
+interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier' | 'instance_type'> {
   connectionUrl: string;
   repoUrl?: string;
   lastChecked?: string;
@@ -38,6 +38,7 @@ interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checke
   updatedAt?: string;
   monitoringIdentifier?: string;
   loggingIdentifier?: string;
+  instanceType?: string;
 }
 
 // Add Instance Form Component
@@ -62,7 +63,8 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     repoUrl: initialData?.repoUrl || '',
     notes: initialData?.notes || '',
     monitoringIdentifier: initialData?.monitoringIdentifier || '',
-    loggingIdentifier: initialData?.loggingIdentifier || ''
+    loggingIdentifier: initialData?.loggingIdentifier || '',
+    instanceType: initialData?.instanceType || 'unknown'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -86,6 +88,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         notes: formData.notes || undefined,
         monitoringIdentifier: formData.monitoringIdentifier || undefined,
         loggingIdentifier: formData.loggingIdentifier || undefined,
+        instanceType: formData.instanceType,
         status: initialData?.status || 'unknown',
         version: initialData?.version,
         memory: initialData?.memory,
@@ -101,26 +104,61 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     }
   };
 
+  const parseConnectionUrl = (url: string) => {
+    try {
+      const parsed = new URL(url);
+      return {
+        host: parsed.hostname || 'unknown',
+        port: parsed.port || (parsed.protocol === 'rediss:' ? '6380' : '6379'),
+        protocol: parsed.protocol
+      };
+    } catch (error) {
+      return {
+        host: 'unknown',
+        port: 'unknown',
+        protocol: 'redis:'
+      };
+    }
+  };
+
   const testConnection = async () => {
     setTestingConnection(true);
     setConnectionResult(null);
 
     try {
-      // For new instances, we can't test via API since they don't exist yet
-      // So we'll simulate the test for now
       if (!initialData) {
-        // Simulate connection test for new instances
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // For new instances, provide URL format validation and helpful feedback
+        const { host, port, protocol } = parseConnectionUrl(formData.connectionUrl);
 
-        const isLocalhost = formData.host.toLowerCase().includes('localhost') || formData.host === '127.0.0.1';
-        const success = isLocalhost ? Math.random() > 0.2 : Math.random() > 0.6;
+        // Basic URL validation
+        if (host === 'unknown' || port === 'unknown') {
+          setConnectionResult({
+            success: false,
+            message: `❌ Invalid connection URL format. Please use format: redis://[username:password@]host:port[/database]`
+          });
+          return;
+        }
 
-        setConnectionResult({
-          success,
-          message: success
-            ? `✅ Successfully connected to Redis at ${formData.host}:${formData.port}. Connection is healthy!`
-            : `❌ Failed to connect to Redis at ${formData.host}:${formData.port}. Please verify the host and port are correct and Redis is running.`
-        });
+        // Simulate connection test with realistic timing
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Provide helpful feedback based on URL patterns
+        let message = '';
+        let success = true; // Default to success for URL format validation
+
+        if (host.includes('localhost') || host === '127.0.0.1') {
+          message = `✅ Connection URL format is valid for ${host}:${port}. Note: Create the instance to test actual connectivity.`;
+        } else if (host.includes('redis.cloud') || host.includes('redislabs.com')) {
+          message = `✅ Redis Cloud URL detected for ${host}:${port}. Format appears valid for cloud service.`;
+        } else if (host.includes('cache.amazonaws.com')) {
+          message = `✅ AWS ElastiCache URL detected for ${host}:${port}. Format appears valid for AWS service.`;
+        } else if (port === '12000' || (parseInt(port) >= 12000 && parseInt(port) <= 12005)) {
+          message = `✅ Redis Enterprise port detected for ${host}:${port}. Format appears valid for Enterprise deployment.`;
+        } else {
+          message = `✅ Connection URL format is valid for ${host}:${port}. Create the instance to test actual connectivity.`;
+        }
+
+        setConnectionResult({ success, message });
       } else {
         // For existing instances, use the API test endpoint
         const result = await sreAgentApi.testInstanceConnection(initialData.id);
@@ -130,9 +168,10 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         });
       }
     } catch (error) {
+      const { host, port } = parseConnectionUrl(formData.connectionUrl);
       setConnectionResult({
         success: false,
-        message: '❌ Connection test failed due to an unexpected error. Please try again.'
+        message: `❌ Connection test failed for ${host}:${port}. ${error instanceof Error ? error.message : 'Please try again.'}`
       });
     } finally {
       setTestingConnection(false);
@@ -219,6 +258,26 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
             />
           </div>
         )}
+      </div>
+
+      <div>
+        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          Instance Type
+        </label>
+        <select
+          value={formData.instanceType}
+          onChange={(e) => setFormData(prev => ({ ...prev, instanceType: e.target.value }))}
+          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+        >
+          <option value="unknown">Unknown / Auto-detect</option>
+          <option value="oss_single">Redis OSS (Single Node)</option>
+          <option value="oss_cluster">Redis OSS (Cluster Mode)</option>
+          <option value="redis_enterprise">Redis Enterprise</option>
+          <option value="redis_cloud">Redis Cloud / Managed Service</option>
+        </select>
+        <p className="text-redis-xs text-redis-dusk-04 mt-1">
+          Specify the type of Redis instance. Choose "Unknown" to auto-detect during health checks.
+        </p>
       </div>
 
       <div>
@@ -392,6 +451,7 @@ const Instances = () => {
         updatedAt: instance.updated_at,
         monitoringIdentifier: instance.monitoring_identifier,
         loggingIdentifier: instance.logging_identifier,
+        instanceType: instance.instance_type || 'unknown',
       }));
 
       setInstances(uiInstances);
@@ -408,6 +468,22 @@ const Instances = () => {
     setIsRefreshing(true);
     await loadInstances();
     setIsRefreshing(false);
+  };
+
+  const handleTestInstanceConnection = async (instanceId: string) => {
+    try {
+      const result = await sreAgentApi.testInstanceConnection(instanceId);
+
+      // Show result in a simple alert for now
+      // In a real app, you might want to show this in a modal or toast
+      const message = result.success
+        ? `✅ ${result.message}`
+        : `❌ ${result.message}`;
+
+      alert(message);
+    } catch (error) {
+      alert(`❌ Connection test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const getEnvironmentColor = (environment: string) => {
@@ -440,6 +516,28 @@ const Instances = () => {
       case 'timeseries': return 'bg-orange-500 text-white';
       case 'search': return 'bg-teal-500 text-white';
       default: return 'bg-redis-dusk-06 text-white';
+    }
+  };
+
+  const getInstanceTypeColor = (instanceType: string) => {
+    switch (instanceType) {
+      case 'redis_enterprise': return 'bg-gradient-to-r from-redis-red to-red-600 text-white';
+      case 'redis_cloud': return 'bg-gradient-to-r from-blue-500 to-blue-600 text-white';
+      case 'oss_cluster': return 'bg-gradient-to-r from-green-500 to-green-600 text-white';
+      case 'oss_single': return 'bg-redis-blue-03 text-white';
+      case 'unknown': return 'bg-redis-dusk-06 text-white';
+      default: return 'bg-redis-dusk-06 text-white';
+    }
+  };
+
+  const getInstanceTypeLabel = (instanceType: string) => {
+    switch (instanceType) {
+      case 'redis_enterprise': return 'Enterprise';
+      case 'redis_cloud': return 'Cloud';
+      case 'oss_cluster': return 'OSS Cluster';
+      case 'oss_single': return 'OSS Single';
+      case 'unknown': return 'Unknown';
+      default: return 'Unknown';
     }
   };
 
@@ -594,6 +692,11 @@ const Instances = () => {
                           <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getUsageColor(instance.usage)}`}>
                             {instance.usage.toUpperCase()}
                           </span>
+                          {instance.instanceType && (
+                            <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getInstanceTypeColor(instance.instanceType)}`}>
+                              {getInstanceTypeLabel(instance.instanceType)}
+                            </span>
+                          )}
                           {instance.status && (
                             <span className={`text-redis-xs font-medium capitalize ${getStatusColor(instance.status)}`}>
                               ● {instance.status}
@@ -643,7 +746,11 @@ const Instances = () => {
                         >
                           Edit
                         </Button>
-                        <Button variant="primary" size="sm">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => handleTestInstanceConnection(instance.id)}
+                        >
                           Test Connection
                         </Button>
                       </div>
@@ -694,6 +801,7 @@ const Instances = () => {
                       notes: instance.notes,
                       monitoring_identifier: instance.monitoringIdentifier,
                       logging_identifier: instance.loggingIdentifier,
+                      instance_type: instance.instanceType,
                     };
                     await sreAgentApi.updateInstance(instance.id, updateRequest);
                   } else {
@@ -708,6 +816,7 @@ const Instances = () => {
                       notes: instance.notes,
                       monitoring_identifier: instance.monitoringIdentifier,
                       logging_identifier: instance.loggingIdentifier,
+                      instance_type: instance.instanceType,
                     };
                     await sreAgentApi.createInstance(createRequest);
                   }

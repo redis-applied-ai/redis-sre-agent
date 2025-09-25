@@ -303,21 +303,26 @@ async def generate_runbook_for_scenario(
 
 
 async def save_runbook_to_source_documents(runbook, topic: str) -> Path:
-    """Save generated runbook to source_documents directory."""
+    """Save generated runbook to source_documents directory in the correct category."""
     # Create safe filename
     safe_topic = "".join(c if c.isalnum() or c in "-_" else "-" for c in topic.lower())
     safe_topic = safe_topic.replace("--", "-").strip("-")
 
-    # Ensure source_documents/runbooks directory exists
-    runbooks_dir = Path("source_documents/runbooks")
-    runbooks_dir.mkdir(parents=True, exist_ok=True)
+    # Determine category directory from runbook category
+    category = runbook.category.lower()
+    if category not in ["oss", "enterprise", "shared", "cloud"]:
+        category = "shared"  # Default fallback
+
+    # Ensure source_documents/{category} directory exists
+    category_dir = Path(f"source_documents/{category}")
+    category_dir.mkdir(parents=True, exist_ok=True)
 
     # Save runbook
     filename = f"redis-{safe_topic}.md"
-    file_path = runbooks_dir / filename
+    file_path = category_dir / filename
 
     file_path.write_text(runbook.content, encoding="utf-8")
-    logger.info(f"💾 Saved runbook: {file_path}")
+    logger.info(f"💾 Saved runbook to {category} category: {file_path}")
 
     return file_path
 

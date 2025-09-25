@@ -641,6 +641,9 @@ async def capture_redis_diagnostics(
                 client, include_raw_data
             )
 
+        # Always include client list for comprehensive analysis
+        result["diagnostics"]["client_list"] = await _capture_client_list(client)
+
         if "replication" in requested_sections:
             result["diagnostics"]["replication"] = await _capture_replication_metrics(
                 client, include_raw_data
@@ -966,6 +969,61 @@ async def _capture_cpu_metrics(client: redis.Redis, include_raw: bool = True) ->
             metrics["raw_cpu_info"] = info
 
         return metrics
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _capture_client_list(client: redis.Redis) -> Dict[str, Any]:
+    """Capture detailed client connection list for analysis."""
+    try:
+        clients_list = await client.client_list()
+
+        # Parse and analyze client connections
+        active_clients = []
+        idle_clients = []
+        blocked_clients = []
+
+        for client_info in clients_list:
+            client_data = {
+                "id": client_info.get("id"),
+                "addr": client_info.get("addr"),
+                "name": client_info.get("name", ""),
+                "age": client_info.get("age", 0),
+                "idle": client_info.get("idle", 0),
+                "flags": client_info.get("flags", ""),
+                "db": client_info.get("db", 0),
+                "sub": client_info.get("sub", 0),
+                "psub": client_info.get("psub", 0),
+                "multi": client_info.get("multi", -1),
+                "qbuf": client_info.get("qbuf", 0),
+                "qbuf_free": client_info.get("qbuf-free", 0),
+                "obl": client_info.get("obl", 0),
+                "oll": client_info.get("oll", 0),
+                "omem": client_info.get("omem", 0),
+                "cmd": client_info.get("cmd", ""),
+            }
+
+            # Categorize clients
+            if "b" in client_info.get("flags", ""):
+                blocked_clients.append(client_data)
+            elif client_info.get("idle", 0) > 300:  # Idle for more than 5 minutes
+                idle_clients.append(client_data)
+            else:
+                active_clients.append(client_data)
+
+        return {
+            "total_clients": len(clients_list),
+            "active_clients": len(active_clients),
+            "idle_clients": len(idle_clients),
+            "blocked_clients": len(blocked_clients),
+            "client_details": {
+                "active": active_clients[:10],  # Limit to first 10 for brevity
+                "idle": idle_clients[:5],       # Limit to first 5 for brevity
+                "blocked": blocked_clients,     # Show all blocked clients
+            },
+            "raw_client_list": clients_list,  # Full raw data for agent analysis
+        }
 
     except Exception as e:
         return {"error": str(e)}

@@ -323,19 +323,8 @@ class IngestionPipeline:
         # Extract or generate title
         title = metadata.get("title", md_file.stem.replace("-", " ").title())
 
-        # Map category strings to DocumentCategory enum
-        category_str = metadata.get("category", "shared").lower()
-        category_map = {
-            "operational_runbook": DocumentCategory.SHARED,
-            "troubleshooting": DocumentCategory.SHARED,
-            "connection_troubleshooting": DocumentCategory.SHARED,
-            "performance": DocumentCategory.SHARED,
-            "monitoring": DocumentCategory.SHARED,
-            "oss": DocumentCategory.OSS,
-            "enterprise": DocumentCategory.ENTERPRISE,
-            "shared": DocumentCategory.SHARED,
-        }
-        category = category_map.get(category_str, DocumentCategory.SHARED)
+        # Determine category from explicit metadata or directory structure
+        category = self._determine_document_category(md_file, metadata)
 
         # Map severity strings to SeverityLevel enum
         severity_str = metadata.get("severity", "medium")
@@ -359,11 +348,45 @@ class IngestionPipeline:
             metadata={
                 "file_path": str(md_file),
                 "file_size": md_file.stat().st_size,
-                "original_category": category_str,
+                "original_category": metadata.get("category", "shared").lower(),
                 "original_severity": severity_str,
+                "determined_category": category.value,
                 **metadata,
             },
         )
+
+    def _determine_document_category(self, md_file: Path, metadata: Dict[str, Any]) -> DocumentCategory:
+        """Determine document category from explicit metadata or directory structure."""
+
+        # 1. Check for explicit category in metadata
+        explicit_category = metadata.get("category", "").lower()
+        if explicit_category in ["oss", "enterprise", "shared", "cloud"]:
+            category_map = {
+                "oss": DocumentCategory.OSS,
+                "enterprise": DocumentCategory.ENTERPRISE,
+                "shared": DocumentCategory.SHARED,
+                "cloud": DocumentCategory.SHARED,  # Cloud is a type of shared knowledge
+            }
+            return category_map[explicit_category]
+
+        # 2. Determine from directory structure
+        # Check if file is in a categorized subdirectory
+        path_parts = md_file.parts
+        for part in path_parts:
+            if part in ["oss", "enterprise", "shared", "cloud"]:
+                category_map = {
+                    "oss": DocumentCategory.OSS,
+                    "enterprise": DocumentCategory.ENTERPRISE,
+                    "shared": DocumentCategory.SHARED,
+                    "cloud": DocumentCategory.SHARED,
+                }
+                return category_map[part]
+
+        # 3. Legacy handling: if no explicit category, default to shared
+        # This handles existing documents that haven't been categorized yet
+        return DocumentCategory.SHARED
+
+
 
     async def ingest_source_documents(self, source_dir: Path) -> List[Dict[str, Any]]:
         """Ingest runbook source documents from the source_documents directory."""

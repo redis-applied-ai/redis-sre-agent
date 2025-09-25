@@ -9,6 +9,7 @@ from .ingestion.processor import IngestionPipeline
 from .scraper.base import ArtifactStorage
 from .scraper.redis_docs import RedisDocsScraper, RedisRunbookScraper
 from .scraper.redis_kb import RedisKBScraper
+from .scraper.redis_cloud_api import RedisCloudAPIScraper
 from .scraper.runbook_generator import RunbookGenerator
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,9 @@ class PipelineOrchestrator:
                 self.storage, self.config.get("redis_runbooks", {})
             ),
             "redis_kb": RedisKBScraper(self.storage, self.config.get("redis_kb", {})),
+            "redis_cloud_api": RedisCloudAPIScraper(
+                self.storage, self.config.get("redis_cloud_api", {})
+            ),
             "runbook_generator": RunbookGenerator(
                 self.storage, self.config.get("runbook_generator", {})
             ),

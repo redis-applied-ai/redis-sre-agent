@@ -65,12 +65,19 @@ ui/
 
 ### API Integration
 
-The UI connects to the Redis SRE Agent API at `http://localhost:8000` by default. Key endpoints:
+The UI automatically detects the correct API endpoint based on the current host. When accessed from different hosts, it will use the same host for API calls. Key endpoints:
 
 - `POST /api/v1/agent/query` - Send queries to the agent
 - `POST /api/v1/agent/chat` - Continue conversations
 - `GET /api/v1/agent/sessions/{id}/history` - Get conversation history
 - `GET /api/v1/health` - Check API health
+
+#### Host Detection Logic
+
+1. **Environment Variable**: Uses `VITE_API_BASE_URL` if set
+2. **Production Mode**: Uses relative URLs (relies on nginx proxy)
+3. **Development Mode**: Uses current hostname with port 8000
+4. **Fallback**: Uses relative URLs
 
 ### Styling
 
@@ -102,11 +109,17 @@ EXPOSE 80
 
 ### Environment Configuration
 
-Configure the API endpoint via environment variables:
+The UI automatically detects the correct API endpoint, but you can override it:
 
 ```bash
-VITE_API_BASE_URL=http://localhost:8000
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env to set custom API URL (optional)
+VITE_API_BASE_URL=http://your-custom-host:8000
 ```
+
+**Note**: In most cases, you don't need to set `VITE_API_BASE_URL` as the UI will automatically use the correct host.
 
 ## Contributing
 

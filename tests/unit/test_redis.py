@@ -205,6 +205,7 @@ class TestRedisInfrastructure:
             patch("redis_sre_agent.core.redis.get_vectorizer", return_value=Mock()),
             patch("redis_sre_agent.core.redis.create_indices", return_value=True),
             patch("redis_sre_agent.core.redis.test_vector_search", return_value=True),
+            patch("redis_sre_agent.core.redis.initialize_docket_infrastructure", return_value=True),
         ):
             result = await initialize_redis_infrastructure()
 
@@ -212,6 +213,7 @@ class TestRedisInfrastructure:
             "redis_connection": "available",
             "vectorizer": "available",
             "indices_created": "available",
+            "docket_infrastructure": "available",
             "vector_search": "available",
         }
         assert result == expected_status

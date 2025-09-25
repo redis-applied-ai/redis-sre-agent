@@ -36,13 +36,17 @@ async def detailed_health_check():
     task_system_ok = await test_task_system()
 
     # Test worker availability (non-blocking)
+    docket_available = True
     try:
         async with Docket(url=settings.redis_url, name="sre_docket") as docket:
             workers = await docket.workers()
             workers_available = len(workers) > 0
+            if not workers_available:
+                logger.info("No workers currently available - this is normal in development")
     except Exception as e:
         logger.warning(f"Worker status check failed: {e}")
         workers_available = False
+        docket_available = False
 
     # Compile component status
     components = {
@@ -52,12 +56,18 @@ async def detailed_health_check():
         "vector_search": redis_status.get("vector_search", "unavailable"),
         "task_system": "available" if task_system_ok else "unavailable",
         "workers": "available" if workers_available else "unavailable",
+        "docket": "available" if docket_available else "unavailable",
     }
 
     # Determine overall status
-    all_healthy = all(status == "available" for status in components.values())
-    status = "healthy" if all_healthy else "unhealthy"
-    status_code = 200 if all_healthy else 503
+    # Consider the system healthy if core components are available
+    # Workers are optional in development environments, but docket connection is required
+    core_components = {k: v for k, v in components.items() if k not in ["workers"]}
+    core_healthy = all(status == "available" for status in core_components.values())
+
+    # System is healthy if core components work, including docket connection
+    status = "healthy" if core_healthy else "unhealthy"
+    status_code = 200 if core_healthy else 503
 
     response_data = {
         "status": status,

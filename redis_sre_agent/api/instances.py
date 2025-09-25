@@ -37,6 +37,9 @@ class RedisInstance(BaseModel):
     logging_identifier: Optional[str] = Field(
         None, description="Name used in logging systems (defaults to instance name)"
     )
+    instance_type: Optional[str] = Field(
+        "unknown", description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown"
+    )
     status: Optional[str] = "unknown"
     version: Optional[str] = None
     memory: Optional[str] = None
@@ -63,6 +66,9 @@ class CreateInstanceRequest(BaseModel):
     )
     logging_identifier: Optional[str] = Field(
         None, description="Name used in logging systems (defaults to instance name)"
+    )
+    instance_type: Optional[str] = Field(
+        "unknown", description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown"
     )
 
     @field_validator("connection_url")
@@ -114,6 +120,9 @@ class UpdateInstanceRequest(BaseModel):
     )
     logging_identifier: Optional[str] = Field(
         None, description="Name used in logging systems (defaults to instance name)"
+    )
+    instance_type: Optional[str] = Field(
+        None, description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown"
     )
     status: Optional[str] = None
     version: Optional[str] = None
@@ -186,6 +195,7 @@ async def create_instance(request: CreateInstanceRequest):
             notes=request.notes,
             monitoring_identifier=request.monitoring_identifier,
             logging_identifier=request.logging_identifier,
+            instance_type=request.instance_type,
         )
 
         # Add to instances list
@@ -292,6 +302,82 @@ async def delete_instance(instance_id: str):
     except Exception as e:
         logger.error(f"Failed to delete instance {instance_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete instance")
+
+
+class TestConnectionRequest(BaseModel):
+    """Request model for testing a connection URL."""
+    connection_url: str = Field(..., description="Redis connection URL to test")
+
+
+@router.post("/instances/test-connection-url")
+async def test_connection_url(request: TestConnectionRequest):
+    """Test a Redis connection URL without creating an instance."""
+    try:
+        # Parse connection URL to extract host and port
+        from urllib.parse import urlparse
+
+        try:
+            parsed_url = urlparse(request.connection_url)
+            host = parsed_url.hostname or "unknown"
+            port = parsed_url.port or 6379
+
+            # Implement actual Redis connection test
+            import asyncio
+
+            import redis.asyncio as redis
+
+            try:
+                # Create Redis client from connection URL
+                redis_client = redis.from_url(request.connection_url)
+
+                # Test connection with a simple ping
+                await asyncio.wait_for(redis_client.ping(), timeout=5.0)
+                await redis_client.aclose()
+
+                success = True
+                message = f"Successfully connected to Redis at {host}:{port}"
+
+            except asyncio.TimeoutError:
+                success = False
+                message = f"Connection timeout to Redis at {host}:{port}. Please check if Redis is running and accessible."
+            except redis.ConnectionError as conn_error:
+                success = False
+                message = f"Failed to connect to Redis at {host}:{port}: {str(conn_error)}"
+            except redis.AuthenticationError:
+                success = False
+                message = (
+                    f"Authentication failed for Redis at {host}:{port}. Please check credentials."
+                )
+            except Exception as test_error:
+                success = False
+                message = f"Connection test failed for Redis at {host}:{port}: {str(test_error)}"
+
+            result = {
+                "success": success,
+                "message": message,
+                "host": host,
+                "port": port,
+                "tested_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        except Exception as parse_error:
+            logger.error(
+                f"Failed to parse connection URL {request.connection_url}: {parse_error}"
+            )
+            result = {
+                "success": False,
+                "message": f"Invalid connection URL format: {request.connection_url}",
+                "host": "unknown",
+                "port": "unknown",
+                "tested_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        logger.info(f"Connection URL test: {'SUCCESS' if result['success'] else 'FAILED'} - {request.connection_url}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to test connection URL {request.connection_url}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to test connection URL")
 
 
 @router.post("/instances/{instance_id}/test-connection")

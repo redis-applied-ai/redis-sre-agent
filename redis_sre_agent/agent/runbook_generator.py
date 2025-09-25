@@ -30,7 +30,7 @@ class RunbookRequest:
     topic: str
     scenario_description: str
     severity: str = "warning"  # critical, warning, info
-    category: str = "operational_runbook"
+    category: str = "shared"  # oss, enterprise, shared, cloud
     specific_requirements: Optional[List[str]] = None
 
 
@@ -516,7 +516,7 @@ Provide your evaluation in this exact JSON format:
         topic: str,
         scenario_description: str,
         severity: str = "warning",
-        category: str = "operational_runbook",
+        category: str = "shared",
         specific_requirements: Optional[List[str]] = None,
         max_iterations: int = 2,
     ) -> Dict[str, Any]:

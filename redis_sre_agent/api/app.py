@@ -9,6 +9,7 @@ from redis_sre_agent.api.agent import router as agent_router
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
 from redis_sre_agent.api.knowledge import router as knowledge_router
+from redis_sre_agent.api.metrics import router as metrics_router
 from redis_sre_agent.api.middleware import setup_middleware
 from redis_sre_agent.api.schedules import router as schedules_router
 from redis_sre_agent.api.tasks import router as tasks_router
@@ -101,6 +102,7 @@ setup_middleware(app)
 
 # Include routers
 app.include_router(health_router, tags=["Health"])
+app.include_router(metrics_router, tags=["Metrics"])
 app.include_router(agent_router, prefix="/api/v1", tags=["Agent"])
 app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
 app.include_router(knowledge_router, tags=["Knowledge"])

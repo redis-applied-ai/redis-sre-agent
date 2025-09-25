@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -28,6 +29,18 @@ from ..tools.sre_functions import (
 )  # Keep knowledge base functions
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
+    """Parse Redis connection URL to extract host and port."""
+    try:
+        parsed = urlparse(connection_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 6379
+        return host, port
+    except Exception as e:
+        logger.warning(f"Failed to parse connection URL {connection_url}: {e}")
+        return "localhost", 6379
 
 # SRE-focused system prompt
 SRE_SYSTEM_PROMPT = """
@@ -404,12 +417,12 @@ class SRELangGraphAgent:
         logger.info("SRE LangGraph agent initialized with tool bindings")
 
     async def _resolve_instance_redis_url(self, instance_id: str) -> str:
-        """Resolve instance ID to Redis URL using host and port from instance data."""
+        """Resolve instance ID to Redis URL using connection_url from instance data."""
         try:
             instances = await get_instances_from_redis()
             for instance in instances:
                 if instance.id == instance_id:
-                    return f"redis://{instance.host}:{instance.port}"
+                    return instance.connection_url
 
             logger.error(f"Instance {instance_id} not found, falling back to default Redis URL")
             return settings.redis_url
@@ -521,9 +534,7 @@ class SRELangGraphAgent:
                                     "redis_url" not in modified_args
                                     or modified_args["redis_url"] == "redis://localhost:6379"
                                 ):
-                                    modified_args["redis_url"] = (
-                                        f"redis://{target_instance.host}:{target_instance.port}"
-                                    )
+                                    modified_args["redis_url"] = target_instance.connection_url
                                     logger.info(
                                         f"Using instance Redis URL: {modified_args['redis_url']}"
                                     )
@@ -532,9 +543,10 @@ class SRELangGraphAgent:
                             elif tool_name == "analyze_system_metrics":
                                 # Add instance host context for Prometheus queries
                                 if "instance_host" not in modified_args:
-                                    modified_args["instance_host"] = target_instance.host
+                                    host, _ = _parse_redis_connection_url(target_instance.connection_url)
+                                    modified_args["instance_host"] = host
                                     logger.info(
-                                        f"Using instance host for metrics: {target_instance.host}"
+                                        f"Using instance host for metrics: {host}"
                                     )
 
                         # Call the async SRE function
@@ -822,19 +834,22 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                         break
 
                 if target_instance:
-                    redis_url = f"redis://{target_instance.host}:{target_instance.port}"
+                    host, port = _parse_redis_connection_url(target_instance.connection_url)
+                    redis_url = target_instance.connection_url
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
 
 IMPORTANT CONTEXT: This query is specifically about Redis instance:
 - Instance ID: {instance_id}
 - Instance Name: {target_instance.name}
-- Host: {target_instance.host}
-- Port: {target_instance.port}
+- Host: {host}
+- Port: {port}
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
 
 When using Redis diagnostic tools, use this Redis URL: {redis_url}
+
+SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this specific Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations.
 
 Please use the available tools to get information about this specific Redis instance and provide targeted troubleshooting and analysis."""
                 else:
@@ -849,6 +864,54 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but the instance
                 enhanced_query = f"""User Query: {query}
 
 CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an error retrieving instance details. Please proceed with general Redis troubleshooting."""
+
+        else:
+            # No specific instance provided - check if we should auto-detect
+            logger.info("No specific Redis instance provided, checking for available instances")
+            try:
+                instances = await get_instances_from_redis()
+                if len(instances) == 1:
+                    # Only one instance available - use it automatically
+                    target_instance = instances[0]
+                    host, port = _parse_redis_connection_url(target_instance.connection_url)
+                    redis_url = target_instance.connection_url
+                    logger.info(f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})")
+
+                    enhanced_query = f"""User Query: {query}
+
+AUTO-DETECTED CONTEXT: Since no specific Redis instance was mentioned, I am analyzing the available Redis instance:
+- Instance Name: {target_instance.name}
+- Host: {host}
+- Port: {port}
+- Environment: {target_instance.environment}
+- Usage: {target_instance.usage}
+
+When using Redis diagnostic tools, use this Redis URL: {redis_url}
+
+SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations."""
+
+                elif len(instances) > 1:
+                    # Multiple instances - ask user to specify
+                    instance_list = "\n".join([f"- {inst.name} ({inst.environment}): {inst.connection_url}" for inst in instances])
+                    enhanced_query = f"""User Query: {query}
+
+MULTIPLE REDIS INSTANCES DETECTED: I found {len(instances)} Redis instances configured. Please specify which instance you want me to analyze:
+
+{instance_list}
+
+To get targeted analysis, please rephrase your query to specify which instance, or use the instance selector in the UI."""
+
+                else:
+                    # No instances configured - use default but warn
+                    logger.warning("No Redis instances configured, falling back to default")
+                    enhanced_query = f"""User Query: {query}
+
+WARNING: No Redis instances are configured in the system. I will attempt to analyze the default Redis connection, but this may not be the instance you intended to troubleshoot.
+
+SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful data before making any recommendations."""
+
+            except Exception as e:
+                logger.error(f"Failed to check available instances: {e}")
 
         # Create initial state
         initial_state: AgentState = {

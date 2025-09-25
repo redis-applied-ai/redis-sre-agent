@@ -231,15 +231,21 @@ const Triage = () => {
           // Filter out technical/internal messages that users shouldn't see
           const technicalMessageTypes = [
             'turn_complete', 'agent_complete', 'completion', 'agent_init',
-            'turn_start', 'queued', 'triage', 'agent_status'
+            'turn_start', 'queued', 'triage', 'agent_status', 'task_queued',
+            'task_started', 'task_completed', 'task_failed', 'status_update'
           ];
 
           const technicalMessagePatterns = [
             /agent turn completed successfully/i,
             /task completed/i,
+            /task queued/i,
+            /task started/i,
+            /task failed/i,
             /processing complete/i,
             /initialization complete/i,
-            /agent initialized/i
+            /agent initialized/i,
+            /queued for processing/i,
+            /task.*processing/i
           ];
 
           // Skip technical messages
@@ -508,12 +514,12 @@ const Triage = () => {
         });
       }
 
-      // Add error message if task failed
+      // Add error message if processing failed
       if (status.status === 'failed') {
         newMessages.push({
           id: `error-${threadId}`,
           role: 'assistant',
-          content: `❌ Triage failed. Please try again or contact support if the issue persists.`,
+          content: `❌ I encountered an issue while processing your request. Please try again or contact support if the issue persists.`,
           timestamp: status.metadata.updated_at,
         });
       }
@@ -522,7 +528,7 @@ const Triage = () => {
       setMessages(newMessages);
 
       // Show WebSocket monitor for active tasks, traditional chat for completed ones
-      if (status.status === 'queued' || status.status === 'in_progress') {
+      if (status.status === 'in_progress') {
         setShowWebSocketMonitor(true);
       } else {
         setShowWebSocketMonitor(false);
