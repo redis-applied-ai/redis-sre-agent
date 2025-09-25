@@ -55,6 +55,7 @@ class RedisSREDemo:
             "connections": self.connection_issues_scenario,
             "performance": self.performance_scenario,
             "health": self.full_health_check,
+            "enterprise": self.redis_enterprise_scenario,
         }
         self._setup_demo_logging()
 
@@ -149,6 +150,10 @@ class RedisSREDemo:
             print("  • 'Redis is running slowly, help me find the bottleneck'")
             print("  • 'Check for slow Redis operations'")
             print("  • 'Analyze Redis performance issues'")
+        elif "enterprise" in scenario_name.lower():
+            print("  • 'Redis Enterprise has low buffer settings, what are the risks?'")
+            print("  • 'Analyze Redis Enterprise buffer configuration'")
+            print("  • 'How should I optimize slave_buffer and client_buffer settings?'")
         else:
             print("  • 'Run a complete health check on this Redis instance'")
             print("  • 'What issues do you see with this Redis setup?'")
@@ -175,16 +180,17 @@ class RedisSREDemo:
         print("2. 🔗 Connection Issues - Analyze connection limits and timeouts")
         print("3. ⚡ Performance Analysis - Detect slow operations and bottlenecks")
         print("4. 🏥 Full Health Check - Complete diagnostic with agent consultation")
-        print("5. 🚀 Run All Scenarios - Complete demonstration")
+        print("5. 🏢 Redis Enterprise - Buffer configuration and tuning issues")
+        print("6. 🚀 Run All Scenarios - Complete demonstration")
         print("0. 🚪 Exit")
 
         while True:
             try:
-                choice = input("\nSelect scenario (0-5): ").strip()
-                if choice in ["0", "1", "2", "3", "4", "5"]:
+                choice = input("\nSelect scenario (0-6): ").strip()
+                if choice in ["0", "1", "2", "3", "4", "5", "6"]:
                     return choice
                 else:
-                    print("❌ Invalid choice, please select 0-5")
+                    print("❌ Invalid choice, please select 0-6")
             except KeyboardInterrupt:
                 print("\n👋 Demo interrupted by user")
                 return "0"
@@ -854,6 +860,116 @@ class RedisSREDemo:
                 f"Complete Redis health check completed. Total keys: {total_keys}, memory usage: {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB, role: {role}. Please provide a comprehensive health assessment and recommendations for optimization, security, and best practices."
             )
 
+    async def redis_enterprise_scenario(self):
+        """Simulate Redis Enterprise buffer configuration issues."""
+        self.print_header("Redis Enterprise Buffer Configuration Scenario", "🏢")
+
+        self.print_step(1, "Setting up Redis Enterprise buffer configuration scenario")
+
+        print("   📋 This scenario simulates a Redis Enterprise database with:")
+        print("   • Very low buffer limits (1MB slave_buffer and client_buffer)")
+        print("   • Active database with significant memory usage")
+        print("   • Potential for buffer overflow and connection issues")
+        print()
+
+        # Note: This scenario is designed to work with the actual Redis Enterprise instance
+        # that was configured via the setup script, not the demo Redis instance
+        enterprise_url = "redis://:admin@redis-enterprise:12000/0"
+
+        try:
+            # Test connection to Redis Enterprise
+            import redis
+            enterprise_client = redis.from_url(enterprise_url)
+            enterprise_client.ping()
+            print("   ✅ Connected to Redis Enterprise instance")
+
+            # Get current memory usage
+            info = enterprise_client.info("memory")
+            used_memory = info.get("used_memory", 0)
+            print(f"   📊 Current memory usage: {used_memory / (1024 * 1024):.2f} MB")
+
+        except Exception as e:
+            print(f"   ❌ Could not connect to Redis Enterprise: {e}")
+            print("   💡 Make sure Redis Enterprise is running with the demo setup")
+            print("   💡 Expected connection: redis://:admin@redis-enterprise:12000/0")
+            return
+
+        self.print_step(2, "Analyzing Redis Enterprise buffer configuration")
+
+        print("   🔍 The Redis Enterprise database has been configured with:")
+        print("   • slave_buffer: 1 MB (extremely low)")
+        print("   • client_buffer: 1 MB (extremely low)")
+        print("   • Database memory usage: ~54 MB")
+        print("   • This creates risk of buffer overflows and connection drops")
+        print()
+
+        # Create some load to demonstrate buffer pressure
+        print("   🧪 Creating buffer pressure scenario...")
+
+        # Add some data to increase memory pressure
+        pipe = enterprise_client.pipeline()
+        for i in range(100):
+            key = f"enterprise:buffer_test:{i}"
+            # Create moderately sized values that could stress buffers
+            value = f"buffer_test_data_{i}_" + "x" * 1000  # ~1KB per key
+            pipe.set(key, value)
+        pipe.execute()
+
+        # Get updated memory info
+        updated_info = enterprise_client.info("memory")
+        updated_memory = updated_info.get("used_memory", 0)
+        print(f"   📊 Updated memory usage: {updated_memory / (1024 * 1024):.2f} MB")
+
+        # Simulate some operations that could stress buffers
+        print("   🔄 Simulating operations that stress client/slave buffers...")
+
+        # Large MGET operations (stress client buffers)
+        keys_to_get = [f"enterprise:buffer_test:{i}" for i in range(50)]
+        large_response = enterprise_client.mget(keys_to_get)
+        print(f"   📤 MGET operation returned {len([r for r in large_response if r])} values")
+
+        # SCAN operations (can generate large responses)
+        scan_results = []
+        cursor = 0
+        while True:
+            cursor, keys = enterprise_client.scan(cursor, match="enterprise:*", count=100)
+            scan_results.extend(keys)
+            if cursor == 0:
+                break
+        print(f"   🔍 SCAN operation found {len(scan_results)} keys")
+
+        self.print_step(3, "Demonstrating buffer-related issues")
+
+        print("   ⚠️  With 1MB buffer limits, the following issues may occur:")
+        print("   • Client disconnections during large responses (MGET, SCAN)")
+        print("   • Replication lag if slave buffer overflows")
+        print("   • Connection timeouts under load")
+        print("   • Potential data loss in replication scenarios")
+        print()
+
+        # Handle UI mode vs CLI mode
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Redis Enterprise Buffer Configuration",
+                f"Redis Enterprise with constrained buffers (1MB each), {updated_memory / (1024 * 1024):.1f}MB memory usage, {len(scan_results)} keys"
+            )
+        else:
+            # Query the agent about the buffer configuration issue
+            await self._run_diagnostics_and_agent_query(
+                f"Redis Enterprise database analysis: The database has very low buffer settings (slave_buffer=1MB, client_buffer=1MB) but is using {updated_memory / (1024 * 1024):.1f}MB of memory with {len(scan_results)} keys. Recent operations include MGET of {len(keys_to_get)} keys and SCAN operations. What are the risks of these buffer settings and how should they be optimized for this workload?"
+            )
+
+        # Cleanup test data
+        self.print_step(4, "Cleaning up test data")
+        test_keys = enterprise_client.keys("enterprise:buffer_test:*")
+        if test_keys:
+            enterprise_client.delete(*test_keys)
+            print(f"   🧹 Cleaned up {len(test_keys)} test keys")
+
+        print("   ✅ Redis Enterprise scenario completed")
+        print("   💡 In production, consider increasing buffer limits to 32MB+ for slave_buffer")
+        print("   💡 and 16MB+ for client_buffer based on workload requirements")
+
     async def _run_diagnostics_and_agent_query(self, query: str):
         """Run diagnostics and query the SRE agent."""
         self.print_step(4, "Consulting SRE Agent for expert analysis")
@@ -1084,6 +1200,8 @@ Analyze the diagnostic data above to identify problems and provide immediate rem
             elif choice == "4":
                 await self.full_health_check()
             elif choice == "5":
+                await self.redis_enterprise_scenario()
+            elif choice == "6":
                 print("\n🚀 Running all scenarios...")
                 for name, scenario_func in self.scenarios.items():
                     print(f"\n{'=' * 15} {name.title()} Scenario {'=' * 15}")
@@ -1094,7 +1212,7 @@ Analyze the diagnostic data above to identify problems and provide immediate rem
                 print("\n✅ All scenarios completed!")
 
             # Ask if user wants to continue
-            if choice in ["1", "2", "3", "4", "5"]:
+            if choice in ["1", "2", "3", "4", "5", "6"]:
                 print("\n" + "-" * 60)
                 try:
                     continue_choice = (
@@ -1113,7 +1231,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Redis SRE Agent Interactive Demo")
     parser.add_argument(
         "--scenario",
-        choices=["memory", "connections", "performance", "health"],
+        choices=["memory", "connections", "performance", "health", "enterprise"],
         help="Run a specific scenario",
     )
     parser.add_argument(
