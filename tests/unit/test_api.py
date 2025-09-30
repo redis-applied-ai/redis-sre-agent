@@ -127,7 +127,7 @@ class TestHealthEndpoints:
                 return_value=mock_infrastructure_status,
             ),
             patch("redis_sre_agent.api.health.test_task_system", return_value=True),
-            patch("docket.Docket", side_effect=Exception("Docket connection failed")),
+            patch("redis_sre_agent.api.health.Docket", side_effect=Exception("Docket connection failed")),
         ):
             response = test_client.get("/health")
 
