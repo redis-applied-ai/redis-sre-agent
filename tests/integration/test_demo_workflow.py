@@ -552,8 +552,8 @@ Would you like me to help analyze specific Redis INFO output or run diagnostic c
         assert len(status["available_batches"]) >= 3
         assert "scrapers" in status
         assert (
-            len(status["scrapers"]) == 4
-        )  # redis_docs, redis_kb, redis_runbooks, runbook_generator
+            len(status["scrapers"]) == 5
+        )  # redis_docs, redis_kb, redis_runbooks, redis_cloud_api, runbook_generator
 
         # Test ingestion status
         assert "ingestion" in status

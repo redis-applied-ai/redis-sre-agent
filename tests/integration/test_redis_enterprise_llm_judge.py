@@ -54,20 +54,20 @@ REDIS_ENTERPRISE_SCENARIOS = [
             "Redis Enterprise buffer management",
             "Enterprise-specific buffer recommendations",
             "Cluster-level configuration",
-            "Enterprise monitoring tools"
+            "Enterprise monitoring tools",
         ],
     },
     {
         "scenario": "Redis Enterprise Cluster Node Maintenance",
         "context": "Need to perform maintenance on Redis Enterprise cluster node. Single-node cluster preventing standard maintenance mode due to shard evacuation requirements.",
         "query": "How do I put a Redis Enterprise cluster node into maintenance mode when I have a single-node cluster and can't evacuate shards?",
-        "instance_type": "enterprise", 
+        "instance_type": "enterprise",
         "expected_enterprise_elements": [
             "rladmin maintenance_mode command",
             "Enterprise cluster management",
             "Shard evacuation options",
             "Enterprise-specific maintenance procedures",
-            "Cluster topology considerations"
+            "Cluster topology considerations",
         ],
     },
     {
@@ -78,9 +78,9 @@ REDIS_ENTERPRISE_SCENARIOS = [
         "expected_enterprise_elements": [
             "Enterprise memory management",
             "rladmin memory tuning",
-            "Enterprise-specific eviction policies", 
+            "Enterprise-specific eviction policies",
             "Database-level memory configuration",
-            "Enterprise monitoring and alerting"
+            "Enterprise monitoring and alerting",
         ],
     },
     {
@@ -93,7 +93,7 @@ REDIS_ENTERPRISE_SCENARIOS = [
             "rladmin replication commands",
             "Enterprise-specific replication tuning",
             "Cluster replication topology",
-            "Enterprise replication metrics"
+            "Enterprise replication metrics",
         ],
     },
     {
@@ -106,7 +106,7 @@ REDIS_ENTERPRISE_SCENARIOS = [
             "rladmin security configuration",
             "Enterprise encryption features",
             "Role-based access control",
-            "Enterprise security best practices"
+            "Enterprise security best practices",
         ],
     },
     {
@@ -119,7 +119,7 @@ REDIS_ENTERPRISE_SCENARIOS = [
             "rladmin tune commands",
             "Enterprise-specific metrics",
             "Database-level optimization",
-            "Enterprise performance monitoring"
+            "Enterprise performance monitoring",
         ],
     },
 ]
@@ -127,24 +127,24 @@ REDIS_ENTERPRISE_SCENARIOS = [
 
 async def evaluate_enterprise_response_with_llm_judge(scenario: Dict[str, Any]) -> Dict[str, Any]:
     """Evaluate a Redis Enterprise scenario response using LLM judge."""
-    
+
     logger.info(f"🏢 Evaluating Enterprise Scenario: {scenario['scenario']}")
-    
+
     # Get agent response
     agent = get_sre_agent()
-    
+
     # Create enhanced query that indicates this is an enterprise instance
     enhanced_query = f"""Instance Type: Redis Enterprise
     
-{scenario['query']}
+{scenario["query"]}
 
-Context: {scenario['context']}"""
-    
+Context: {scenario["context"]}"""
+
     try:
         response = await agent.process_query_with_fact_check(
             query=enhanced_query,
             session_id="enterprise_test_session",
-            user_id="enterprise_test_user"
+            user_id="enterprise_test_user",
         )
     except Exception as e:
         logger.error(f"Agent query failed: {e}")
@@ -154,7 +154,7 @@ Context: {scenario['context']}"""
             "error": f"Agent query failed: {str(e)}",
             "overall_score": 0,
         }
-    
+
     # Prepare context for the judge
     judge_prompt = f"""
 ## Redis Enterprise Scenario: {scenario["scenario"]}
@@ -197,7 +197,7 @@ Format your response as JSON:
 }}
 ```
 """
-    
+
     # Call GPT-4o for evaluation
     try:
         judge_response = openai.chat.completions.create(
@@ -208,29 +208,29 @@ Format your response as JSON:
             ],
             max_tokens=2000,
         )
-        
+
         # Extract and parse the JSON response
         judge_content = judge_response.choices[0].message.content
-        
+
         # Try to extract JSON from the response
         json_start = judge_content.find("```json")
         json_end = judge_content.find("```", json_start + 7)
-        
+
         if json_start != -1 and json_end != -1:
             json_content = judge_content[json_start + 7 : json_end].strip()
             evaluation = json.loads(json_content)
         else:
             # Fallback: try to parse the entire response as JSON
             evaluation = json.loads(judge_content)
-        
+
         # Add metadata
         evaluation["scenario"] = scenario["scenario"]
         evaluation["query"] = scenario["query"]
         evaluation["agent_response"] = response
         evaluation["expected_enterprise_elements"] = scenario["expected_enterprise_elements"]
-        
+
         return evaluation
-        
+
     except Exception as e:
         logger.error(f"LLM judge evaluation failed: {e}")
         return {
@@ -243,28 +243,30 @@ Format your response as JSON:
 
 async def run_redis_enterprise_llm_judge_evaluation():
     """Run comprehensive Redis Enterprise LLM judge evaluation."""
-    
+
     logger.info("🏢 Starting Redis Enterprise LLM Judge Evaluation")
     logger.info("=" * 70)
-    
+
     evaluations = []
-    
+
     # Evaluate each enterprise scenario
     for scenario in REDIS_ENTERPRISE_SCENARIOS:
         try:
             evaluation = await evaluate_enterprise_response_with_llm_judge(scenario)
             evaluations.append(evaluation)
-            
+
             # Brief summary for each scenario
             if "error" not in evaluation:
                 score = evaluation.get("overall_score", 0)
                 logger.info(f"✅ {scenario['scenario']}: Overall Score {score:.1f}/5.0")
             else:
-                logger.error(f"❌ {scenario['scenario']}: Evaluation failed - {evaluation.get('error')}")
-                
+                logger.error(
+                    f"❌ {scenario['scenario']}: Evaluation failed - {evaluation.get('error')}"
+                )
+
         except Exception as e:
             logger.error(f"❌ Failed to evaluate {scenario['scenario']}: {e}")
-    
+
     # Aggregate results
     logger.info("\n📊 Redis Enterprise LLM Judge Evaluation Results")
     logger.info("=" * 70)
@@ -274,11 +276,21 @@ async def run_redis_enterprise_llm_judge_evaluation():
     if valid_evaluations:
         # Calculate overall statistics
         avg_overall = sum(e["overall_score"] for e in valid_evaluations) / len(valid_evaluations)
-        avg_enterprise_recognition = sum(e["enterprise_recognition"] for e in valid_evaluations) / len(valid_evaluations)
-        avg_enterprise_guidance = sum(e["enterprise_specific_guidance"] for e in valid_evaluations) / len(valid_evaluations)
-        avg_technical = sum(e["technical_accuracy"] for e in valid_evaluations) / len(valid_evaluations)
-        avg_operational = sum(e["operational_relevance"] for e in valid_evaluations) / len(valid_evaluations)
-        avg_production = sum(e["production_readiness"] for e in valid_evaluations) / len(valid_evaluations)
+        avg_enterprise_recognition = sum(
+            e["enterprise_recognition"] for e in valid_evaluations
+        ) / len(valid_evaluations)
+        avg_enterprise_guidance = sum(
+            e["enterprise_specific_guidance"] for e in valid_evaluations
+        ) / len(valid_evaluations)
+        avg_technical = sum(e["technical_accuracy"] for e in valid_evaluations) / len(
+            valid_evaluations
+        )
+        avg_operational = sum(e["operational_relevance"] for e in valid_evaluations) / len(
+            valid_evaluations
+        )
+        avg_production = sum(e["production_readiness"] for e in valid_evaluations) / len(
+            valid_evaluations
+        )
 
         logger.info("Redis Enterprise Performance Summary:")
         logger.info(f"  📈 Overall Score: {avg_overall:.2f}/5.0")
@@ -294,9 +306,15 @@ async def run_redis_enterprise_llm_judge_evaluation():
         needs_improvement = sum(1 for e in valid_evaluations if e["overall_score"] < 3.0)
 
         logger.info("\nRedis Enterprise Performance Distribution:")
-        logger.info(f"  🟢 Excellent (≥4.0): {excellent}/{len(valid_evaluations)} ({excellent / len(valid_evaluations) * 100:.1f}%)")
-        logger.info(f"  🟡 Good (3.0-3.9): {good}/{len(valid_evaluations)} ({good / len(valid_evaluations) * 100:.1f}%)")
-        logger.info(f"  🔴 Needs Improvement (<3.0): {needs_improvement}/{len(valid_evaluations)} ({needs_improvement / len(valid_evaluations) * 100:.1f}%)")
+        logger.info(
+            f"  🟢 Excellent (≥4.0): {excellent}/{len(valid_evaluations)} ({excellent / len(valid_evaluations) * 100:.1f}%)"
+        )
+        logger.info(
+            f"  🟡 Good (3.0-3.9): {good}/{len(valid_evaluations)} ({good / len(valid_evaluations) * 100:.1f}%)"
+        )
+        logger.info(
+            f"  🔴 Needs Improvement (<3.0): {needs_improvement}/{len(valid_evaluations)} ({needs_improvement / len(valid_evaluations) * 100:.1f}%)"
+        )
 
         # Detailed per-scenario results
         logger.info("\n🔍 Detailed Redis Enterprise Results by Scenario:")
@@ -307,8 +325,10 @@ async def run_redis_enterprise_llm_judge_evaluation():
             scenario = evaluation["scenario"]
 
             performance_level = (
-                "🟢 Excellent" if score >= 4.0
-                else "🟡 Good" if score >= 3.0
+                "🟢 Excellent"
+                if score >= 4.0
+                else "🟡 Good"
+                if score >= 3.0
                 else "🔴 Needs Improvement"
             )
 
@@ -316,9 +336,13 @@ async def run_redis_enterprise_llm_judge_evaluation():
             logger.info(f'  Query: "{evaluation["query"]}"')
 
             if evaluation.get("enterprise_elements_found"):
-                logger.info(f"  Enterprise Elements Found: {', '.join(evaluation['enterprise_elements_found'][:3])}")
+                logger.info(
+                    f"  Enterprise Elements Found: {', '.join(evaluation['enterprise_elements_found'][:3])}"
+                )
             if evaluation.get("enterprise_elements_missing"):
-                logger.info(f"  Missing Enterprise Elements: {', '.join(evaluation['enterprise_elements_missing'][:2])}")
+                logger.info(
+                    f"  Missing Enterprise Elements: {', '.join(evaluation['enterprise_elements_missing'][:2])}"
+                )
             if evaluation.get("strengths"):
                 logger.info(f"  Strengths: {', '.join(evaluation['strengths'][:2])}")
             if evaluation.get("weaknesses"):
@@ -339,8 +363,12 @@ async def run_redis_enterprise_llm_judge_evaluation():
                 "successful_evaluations": len(valid_evaluations),
                 "summary_metrics": {
                     "avg_overall_score": avg_overall if valid_evaluations else 0,
-                    "avg_enterprise_recognition": avg_enterprise_recognition if valid_evaluations else 0,
-                    "avg_enterprise_specific_guidance": avg_enterprise_guidance if valid_evaluations else 0,
+                    "avg_enterprise_recognition": avg_enterprise_recognition
+                    if valid_evaluations
+                    else 0,
+                    "avg_enterprise_specific_guidance": avg_enterprise_guidance
+                    if valid_evaluations
+                    else 0,
                     "avg_technical_accuracy": avg_technical if valid_evaluations else 0,
                     "avg_operational_relevance": avg_operational if valid_evaluations else 0,
                     "avg_production_readiness": avg_production if valid_evaluations else 0,
@@ -355,15 +383,23 @@ async def run_redis_enterprise_llm_judge_evaluation():
 
     # Enterprise-specific assessment
     if valid_evaluations:
-        enterprise_recognition_avg = sum(e["enterprise_recognition"] for e in valid_evaluations) / len(valid_evaluations)
-        enterprise_guidance_avg = sum(e["enterprise_specific_guidance"] for e in valid_evaluations) / len(valid_evaluations)
+        enterprise_recognition_avg = sum(
+            e["enterprise_recognition"] for e in valid_evaluations
+        ) / len(valid_evaluations)
+        enterprise_guidance_avg = sum(
+            e["enterprise_specific_guidance"] for e in valid_evaluations
+        ) / len(valid_evaluations)
 
         if avg_overall >= 4.0 and enterprise_recognition_avg >= 4.0:
             logger.info("\n🎉 EXCELLENT: Agent demonstrates strong Redis Enterprise expertise!")
         elif avg_overall >= 3.0 and enterprise_recognition_avg >= 3.0:
-            logger.info("\n✅ GOOD: Agent shows Redis Enterprise awareness with room for improvement")
+            logger.info(
+                "\n✅ GOOD: Agent shows Redis Enterprise awareness with room for improvement"
+            )
         else:
-            logger.info("\n⚠️  NEEDS WORK: Agent requires better Redis Enterprise recognition and guidance")
+            logger.info(
+                "\n⚠️  NEEDS WORK: Agent requires better Redis Enterprise recognition and guidance"
+            )
     else:
         logger.info("\n⚠️  No valid evaluations; infrastructure may be unavailable.")
 
@@ -407,14 +443,20 @@ async def test_redis_enterprise_llm_judge_evaluation():
 
     # Enterprise-specific assertions
     enterprise_recognition_scores = [e["enterprise_recognition"] for e in valid_evaluations]
-    avg_enterprise_recognition = sum(enterprise_recognition_scores) / len(enterprise_recognition_scores)
+    avg_enterprise_recognition = sum(enterprise_recognition_scores) / len(
+        enterprise_recognition_scores
+    )
 
     # Agent should recognize Redis Enterprise instances (score >= 3.0)
-    assert avg_enterprise_recognition >= 3.0, f"Agent should recognize Redis Enterprise instances (avg: {avg_enterprise_recognition:.2f})"
+    assert avg_enterprise_recognition >= 3.0, (
+        f"Agent should recognize Redis Enterprise instances (avg: {avg_enterprise_recognition:.2f})"
+    )
 
     # At least 50% of scenarios should have good enterprise recognition (>= 4.0)
     good_enterprise_recognition = sum(1 for score in enterprise_recognition_scores if score >= 4.0)
-    assert good_enterprise_recognition >= len(valid_evaluations) * 0.5, "At least 50% should have good enterprise recognition"
+    assert good_enterprise_recognition >= len(valid_evaluations) * 0.5, (
+        "At least 50% should have good enterprise recognition"
+    )
 
 
 @pytest.mark.asyncio

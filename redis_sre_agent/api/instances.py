@@ -38,7 +38,8 @@ class RedisInstance(BaseModel):
         None, description="Name used in logging systems (defaults to instance name)"
     )
     instance_type: Optional[str] = Field(
-        "unknown", description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown"
+        "unknown",
+        description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
     status: Optional[str] = "unknown"
     version: Optional[str] = None
@@ -68,7 +69,8 @@ class CreateInstanceRequest(BaseModel):
         None, description="Name used in logging systems (defaults to instance name)"
     )
     instance_type: Optional[str] = Field(
-        "unknown", description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown"
+        "unknown",
+        description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
 
     @field_validator("connection_url")
@@ -122,7 +124,8 @@ class UpdateInstanceRequest(BaseModel):
         None, description="Name used in logging systems (defaults to instance name)"
     )
     instance_type: Optional[str] = Field(
-        None, description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown"
+        None,
+        description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
     status: Optional[str] = None
     version: Optional[str] = None
@@ -306,6 +309,7 @@ async def delete_instance(instance_id: str):
 
 class TestConnectionRequest(BaseModel):
     """Request model for testing a connection URL."""
+
     connection_url: str = Field(..., description="Redis connection URL to test")
 
 
@@ -361,9 +365,7 @@ async def test_connection_url(request: TestConnectionRequest):
             }
 
         except Exception as parse_error:
-            logger.error(
-                f"Failed to parse connection URL {request.connection_url}: {parse_error}"
-            )
+            logger.error(f"Failed to parse connection URL {request.connection_url}: {parse_error}")
             result = {
                 "success": False,
                 "message": f"Invalid connection URL format: {request.connection_url}",
@@ -372,7 +374,9 @@ async def test_connection_url(request: TestConnectionRequest):
                 "tested_at": datetime.now(timezone.utc).isoformat(),
             }
 
-        logger.info(f"Connection URL test: {'SUCCESS' if result['success'] else 'FAILED'} - {request.connection_url}")
+        logger.info(
+            f"Connection URL test: {'SUCCESS' if result['success'] else 'FAILED'} - {request.connection_url}"
+        )
         return result
 
     except Exception as e:

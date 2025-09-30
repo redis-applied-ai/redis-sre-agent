@@ -1019,8 +1019,8 @@ async def _capture_client_list(client: redis.Redis) -> Dict[str, Any]:
             "blocked_clients": len(blocked_clients),
             "client_details": {
                 "active": active_clients[:10],  # Limit to first 10 for brevity
-                "idle": idle_clients[:5],       # Limit to first 5 for brevity
-                "blocked": blocked_clients,     # Show all blocked clients
+                "idle": idle_clients[:5],  # Limit to first 5 for brevity
+                "blocked": blocked_clients,  # Show all blocked clients
             },
             "raw_client_list": clients_list,  # Full raw data for agent analysis
         }

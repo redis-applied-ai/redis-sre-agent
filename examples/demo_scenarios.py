@@ -879,6 +879,7 @@ class RedisSREDemo:
         try:
             # Test connection to Redis Enterprise
             import redis
+
             enterprise_client = redis.from_url(enterprise_url)
             enterprise_client.ping()
             print("   ✅ Connected to Redis Enterprise instance")
@@ -951,7 +952,7 @@ class RedisSREDemo:
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Redis Enterprise Buffer Configuration",
-                f"Redis Enterprise with constrained buffers (1MB each), {updated_memory / (1024 * 1024):.1f}MB memory usage, {len(scan_results)} keys"
+                f"Redis Enterprise with constrained buffers (1MB each), {updated_memory / (1024 * 1024):.1f}MB memory usage, {len(scan_results)} keys",
             )
         else:
             # Query the agent about the buffer configuration issue

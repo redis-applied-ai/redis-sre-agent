@@ -355,7 +355,9 @@ class IngestionPipeline:
             },
         )
 
-    def _determine_document_category(self, md_file: Path, metadata: Dict[str, Any]) -> DocumentCategory:
+    def _determine_document_category(
+        self, md_file: Path, metadata: Dict[str, Any]
+    ) -> DocumentCategory:
         """Determine document category from explicit metadata or directory structure."""
 
         # 1. Check for explicit category in metadata
@@ -385,8 +387,6 @@ class IngestionPipeline:
         # 3. Legacy handling: if no explicit category, default to shared
         # This handles existing documents that haven't been categorized yet
         return DocumentCategory.SHARED
-
-
 
     async def ingest_source_documents(self, source_dir: Path) -> List[Dict[str, Any]]:
         """Ingest runbook source documents from the source_documents directory."""

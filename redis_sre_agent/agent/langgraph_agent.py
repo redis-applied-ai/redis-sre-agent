@@ -42,6 +42,7 @@ def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
         logger.warning(f"Failed to parse connection URL {connection_url}: {e}")
         return "localhost", 6379
 
+
 # SRE-focused system prompt
 SRE_SYSTEM_PROMPT = """
 You are an experienced Redis SRE who writes clear, actionable triage notes. You sound like a knowledgeable colleague sharing findings and recommendations - professional but conversational.
@@ -543,11 +544,11 @@ class SRELangGraphAgent:
                             elif tool_name == "analyze_system_metrics":
                                 # Add instance host context for Prometheus queries
                                 if "instance_host" not in modified_args:
-                                    host, _ = _parse_redis_connection_url(target_instance.connection_url)
-                                    modified_args["instance_host"] = host
-                                    logger.info(
-                                        f"Using instance host for metrics: {host}"
+                                    host, _ = _parse_redis_connection_url(
+                                        target_instance.connection_url
                                     )
+                                    modified_args["instance_host"] = host
+                                    logger.info(f"Using instance host for metrics: {host}")
 
                         # Call the async SRE function
                         result = await self.sre_tools[tool_name](**modified_args)
@@ -875,7 +876,9 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
                     target_instance = instances[0]
                     host, port = _parse_redis_connection_url(target_instance.connection_url)
                     redis_url = target_instance.connection_url
-                    logger.info(f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})")
+                    logger.info(
+                        f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})"
+                    )
 
                     enhanced_query = f"""User Query: {query}
 
@@ -892,7 +895,12 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this
 
                 elif len(instances) > 1:
                     # Multiple instances - ask user to specify
-                    instance_list = "\n".join([f"- {inst.name} ({inst.environment}): {inst.connection_url}" for inst in instances])
+                    instance_list = "\n".join(
+                        [
+                            f"- {inst.name} ({inst.environment}): {inst.connection_url}"
+                            for inst in instances
+                        ]
+                    )
                     enhanced_query = f"""User Query: {query}
 
 MULTIPLE REDIS INSTANCES DETECTED: I found {len(instances)} Redis instances configured. Please specify which instance you want me to analyze:

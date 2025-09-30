@@ -662,7 +662,9 @@ async def process_agent_turn(
             "thread_id": thread_id,
         }
 
-        logger.info(f"DEBUG: conversation_state messages type: {type(conversation_state['messages'])}")
+        logger.info(
+            f"DEBUG: conversation_state messages type: {type(conversation_state['messages'])}"
+        )
 
         # Add the new user message
         conversation_state["messages"].append(

@@ -68,7 +68,9 @@ class RedisCloudAPIScraper(BaseScraper):
                 if response.status == 200:
                     return await response.json()
                 else:
-                    self.logger.warning(f"HTTP {response.status} for Swagger JSON: {self.config['swagger_json_url']}")
+                    self.logger.warning(
+                        f"HTTP {response.status} for Swagger JSON: {self.config['swagger_json_url']}"
+                    )
                     return None
         except Exception as e:
             self.logger.error(f"Failed to fetch Swagger JSON: {e}")
@@ -90,7 +92,7 @@ class RedisCloudAPIScraper(BaseScraper):
 {api_description}
 
 ## Base URL
-{swagger_doc.get('host', 'api.redislabs.com')}{swagger_doc.get('basePath', '/v1')}
+{swagger_doc.get("host", "api.redislabs.com")}{swagger_doc.get("basePath", "/v1")}
 
 ## Authentication
 {self._extract_auth_info(swagger_doc)}
@@ -119,7 +121,9 @@ class RedisCloudAPIScraper(BaseScraper):
         for path, methods in paths.items():
             for method, operation in methods.items():
                 if isinstance(operation, dict):
-                    endpoint_doc = self._create_endpoint_document(path, method, operation, swagger_doc)
+                    endpoint_doc = self._create_endpoint_document(
+                        path, method, operation, swagger_doc
+                    )
                     if endpoint_doc:
                         documents.append(endpoint_doc)
 
@@ -223,7 +227,9 @@ class RedisCloudAPIScraper(BaseScraper):
             required = "**Required**" if param.get("required", False) else "Optional"
             description = param.get("description", "No description")
 
-            param_lines.append(f"- **{name}** ({param_type}, {location}): {required} - {description}")
+            param_lines.append(
+                f"- **{name}** ({param_type}, {location}): {required} - {description}"
+            )
 
         return "\n".join(param_lines)
 
@@ -252,7 +258,9 @@ class RedisCloudAPIScraper(BaseScraper):
         try:
             async with self.session.get(self.config["swagger_ui_url"]) as response:
                 if response.status != 200:
-                    self.logger.warning(f"HTTP {response.status} for Swagger UI: {self.config['swagger_ui_url']}")
+                    self.logger.warning(
+                        f"HTTP {response.status} for Swagger UI: {self.config['swagger_ui_url']}"
+                    )
                     return documents
 
                 html = await response.text()
@@ -267,7 +275,7 @@ class RedisCloudAPIScraper(BaseScraper):
 
 This documentation was scraped from the Redis Cloud API Swagger UI.
 
-**Source**: {self.config['swagger_ui_url']}
+**Source**: {self.config["swagger_ui_url"]}
 
 For complete API documentation, please visit the Swagger UI directly.
 
