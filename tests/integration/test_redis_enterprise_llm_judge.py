@@ -446,15 +446,15 @@ async def test_redis_enterprise_llm_judge_evaluation():
     )
 
     # Agent should recognize Redis Enterprise instances (score >= 3.0)
-    assert avg_enterprise_recognition >= 3.0, (
-        f"Agent should recognize Redis Enterprise instances (avg: {avg_enterprise_recognition:.2f})"
-    )
+    assert (
+        avg_enterprise_recognition >= 3.0
+    ), f"Agent should recognize Redis Enterprise instances (avg: {avg_enterprise_recognition:.2f})"
 
     # At least 50% of scenarios should have good enterprise recognition (>= 4.0)
     good_enterprise_recognition = sum(1 for score in enterprise_recognition_scores if score >= 4.0)
-    assert good_enterprise_recognition >= len(valid_evaluations) * 0.5, (
-        "At least 50% should have good enterprise recognition"
-    )
+    assert (
+        good_enterprise_recognition >= len(valid_evaluations) * 0.5
+    ), "At least 50% should have good enterprise recognition"
 
 
 @pytest.mark.asyncio

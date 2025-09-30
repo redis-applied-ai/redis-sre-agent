@@ -27,7 +27,7 @@ describe('URL Construction', () => {
   test('should use relative URLs in production', () => {
     mockLocation('example.com', '80');
     const api = new (SREAgentAPI as any)();
-    
+
     // Access private method for testing
     const baseUrl = api.getApiBaseUrl();
     expect(baseUrl).toBe('/api/v1');
@@ -36,7 +36,7 @@ describe('URL Construction', () => {
   test('should use current hostname with port 8000 in development', () => {
     mockLocation('localhost', '3000');
     const api = new (SREAgentAPI as any)();
-    
+
     const baseUrl = api.getApiBaseUrl();
     expect(baseUrl).toBe('http://localhost:8000/api/v1');
   });
@@ -44,19 +44,19 @@ describe('URL Construction', () => {
   test('should handle different development ports', () => {
     mockLocation('localhost', '3001');
     const api = new (SREAgentAPI as any)();
-    
+
     const baseUrl = api.getApiBaseUrl();
     expect(baseUrl).toBe('http://localhost:8000/api/v1');
   });
 
   test('should use environment variable when provided', () => {
     mockLocation('localhost', '3000');
-    
+
     // Mock import.meta.env
     (import.meta as any).env = {
       VITE_API_BASE_URL: 'https://custom-api.example.com/api/v1'
     };
-    
+
     const api = new (SREAgentAPI as any)();
     const baseUrl = api.getApiBaseUrl();
     expect(baseUrl).toBe('https://custom-api.example.com/api/v1');
@@ -65,7 +65,7 @@ describe('URL Construction', () => {
   test('should handle remote hosts correctly', () => {
     mockLocation('my-server.example.com', '3000');
     const api = new (SREAgentAPI as any)();
-    
+
     const baseUrl = api.getApiBaseUrl();
     expect(baseUrl).toBe('http://my-server.example.com:8000/api/v1');
   });

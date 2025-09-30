@@ -124,14 +124,14 @@ import websockets
 
 async def monitor_task(thread_id):
     uri = f"ws://localhost:8000/api/v1/ws/tasks/{thread_id}"
-    
+
     async with websockets.connect(uri) as websocket:
         print(f"Connected to task {thread_id}")
-        
+
         async for message in websocket:
             data = json.loads(message)
             print(f"Update: {data['update_type']} - {data.get('message', '')}")
-            
+
             if data.get('status') == 'completed':
                 print("Task completed!")
                 break
@@ -152,7 +152,7 @@ ws.onopen = () => {
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     console.log('Task update:', data);
-    
+
     if (data.update_type === 'status_change') {
         updateTaskStatus(data.status);
     } else if (data.update_type === 'thread_update') {

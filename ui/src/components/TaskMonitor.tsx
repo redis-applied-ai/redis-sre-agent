@@ -26,7 +26,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
   const [currentStatus, setCurrentStatus] = useState<string>('unknown');
   const [taskResult, setTaskResult] = useState<any>(null);
   const [isAutoScroll, setIsAutoScroll] = useState(true);
-  
+
   const wsRef = useRef<WebSocket | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -55,12 +55,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
 
       const wsUrl = getWebSocketUrl();
       const ws = new WebSocket(wsUrl);
-      
+
       ws.onopen = () => {
         console.log('WebSocket connected');
         setIsConnected(true);
         setConnectionError(null);
-        
+
         // Send periodic pings to keep connection alive
         const pingInterval = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -70,15 +70,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
           }
         }, 30000);
       };
-      
+
       ws.onmessage = (event) => {
         try {
           const data: TaskUpdate = JSON.parse(event.data);
-          
+
           if (data.type === 'pong') {
             return; // Ignore pong responses
           }
-          
+
           // Handle different update types
           if (data.update_type === 'initial_state') {
             setCurrentStatus(data.status || 'unknown');
@@ -91,16 +91,16 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
           } else {
             // Add new update
             setUpdates(prev => [...prev, data]);
-            
+
             if (data.status) {
               setCurrentStatus(data.status);
             }
-            
+
             if (data.result) {
               setTaskResult(data.result);
             }
           }
-          
+
           // Auto-scroll to bottom if enabled
           if (isAutoScroll && scrollAreaRef.current) {
             setTimeout(() => {
@@ -114,11 +114,11 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
           console.error('Error parsing WebSocket message:', error);
         }
       };
-      
+
       ws.onclose = (event) => {
         console.log('WebSocket closed:', event.code, event.reason);
         setIsConnected(false);
-        
+
         // Attempt to reconnect after a delay (unless manually closed)
         if (event.code !== 1000) {
           setConnectionError('Connection lost. Attempting to reconnect...');
@@ -127,12 +127,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
           }, 3000);
         }
       };
-      
+
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
         setConnectionError('WebSocket connection error');
       };
-      
+
       wsRef.current = ws;
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error);
@@ -145,19 +145,19 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
       wsRef.current.close(1000, 'Manual disconnect');
       wsRef.current = null;
     }
-    
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-    
+
     setIsConnected(false);
     setConnectionError(null);
   };
 
   useEffect(() => {
     connectWebSocket();
-    
+
     return () => {
       disconnect();
     };

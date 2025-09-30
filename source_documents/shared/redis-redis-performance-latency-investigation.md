@@ -1,7 +1,7 @@
 # Redis Performance Latency Investigation
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

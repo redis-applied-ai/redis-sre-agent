@@ -1,7 +1,7 @@
 # Redis RDB Snapshot High Disk IO Blocking
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

@@ -1,7 +1,7 @@
 # Redis Lua Script Timeout Blocking Server
 
-**Category**: shared  
-**Severity**: critical  
+**Category**: shared
+**Severity**: critical
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

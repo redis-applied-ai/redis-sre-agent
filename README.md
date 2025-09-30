@@ -45,7 +45,7 @@ uv run python scripts/seed.py
 # Start worker (Terminal 1)
 uv run python -m redis_sre_agent.worker
 
-# Start API (Terminal 2)  
+# Start API (Terminal 2)
 uv run fastapi dev redis_sre_agent/api/app.py
 ```
 
@@ -200,7 +200,7 @@ docker-compose up -d
 - [x] Core project structure and configuration
 - [x] FastAPI foundation with health checks
 - [x] Redis infrastructure (RedisVL + Docket)
-- [x] LangGraph agent implementation  
+- [x] LangGraph agent implementation
 - [x] POC of SRE tools (metrics, logs, health checks)
 - [x] POC of data pipeline for knowledge ingestion
 - [x] API endpoints

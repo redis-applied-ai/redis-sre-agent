@@ -1,7 +1,7 @@
 # Redis Usage Pattern Identification for Memory Troubleshooting
 
-**Category**: shared  
-**Severity**: info  
+**Category**: shared
+**Severity**: info
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

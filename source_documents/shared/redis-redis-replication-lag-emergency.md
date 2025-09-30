@@ -1,7 +1,7 @@
 # Redis Replication Lag Emergency
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

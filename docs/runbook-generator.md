@@ -37,7 +37,7 @@ uv run python -m redis_sre_agent.cli.main runbook evaluate
 
 Each runbook is automatically evaluated on:
 - **Technical Accuracy** - Redis commands correctness
-- **Completeness** - Coverage of necessary aspects  
+- **Completeness** - Coverage of necessary aspects
 - **Actionability** - Clear executable steps
 - **Production Readiness** - Real incident response utility
 
@@ -46,7 +46,7 @@ Each runbook is automatically evaluated on:
 ## Integration
 
 1. **Generate** runbooks for poor-performing scenarios
-2. **Ingest** via `pipeline ingest-sources`  
+2. **Ingest** via `pipeline ingest-sources`
 3. **Verify** improvement with evaluation tests
 
 ## Architecture

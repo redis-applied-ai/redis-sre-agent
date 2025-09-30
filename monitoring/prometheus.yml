@@ -33,7 +33,7 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 15s
     scrape_timeout: 10s
-    
+
   # System metrics via node_exporter
   - job_name: 'node'
     static_configs:

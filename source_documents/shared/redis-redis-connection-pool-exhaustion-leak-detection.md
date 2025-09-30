@@ -1,7 +1,7 @@
 # Redis Connection Pool Exhaustion Leak Detection
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

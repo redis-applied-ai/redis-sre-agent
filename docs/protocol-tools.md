@@ -51,19 +51,19 @@ class MyMetricsProvider:
     @property
     def provider_name(self) -> str:
         return "My Custom Metrics"
-    
-    @property 
+
+    @property
     def supports_time_queries(self) -> bool:
         return True  # or False for current-value-only providers
-    
+
     async def list_metrics(self) -> List[MetricDefinition]:
         # Return available metrics with descriptions
         pass
-    
+
     async def get_current_value(self, metric_name: str, labels=None) -> Optional[MetricValue]:
         # Return current metric value
         pass
-    
+
     async def query_time_range(self, metric_name: str, time_range, labels=None, step=None):
         # Return historical values (if supported)
         pass
@@ -84,7 +84,7 @@ class MyLogsProvider:
     async def search_logs(self, query: str, time_range, log_groups=None, level_filter=None, limit=100):
         # Search logs and return LogEntry objects
         pass
-    
+
     async def get_log_groups(self) -> List[str]:
         # Return available log groups/streams
         pass
@@ -104,11 +104,11 @@ class MyTicketsProvider:
     async def create_ticket(self, title: str, description: str, labels=None, assignee=None, priority=None):
         # Create and return Ticket object
         pass
-    
+
     async def update_ticket(self, ticket_id: str, **updates):
         # Update existing ticket
         pass
-    
+
     async def search_tickets(self, query=None, status=None, assignee=None, labels=None, limit=50):
         # Search and return list of Ticket objects
         pass
@@ -128,11 +128,11 @@ class MyReposProvider:
     async def list_repositories(self, organization=None) -> List[Repository]:
         # Return available repositories
         pass
-    
+
     async def search_code(self, query: str, repositories=None, file_extensions=None, limit=50):
         # Search code across repositories
         pass
-    
+
     async def get_file_content(self, repository: str, file_path: str, branch="main") -> str:
         # Get specific file content
         pass
@@ -152,11 +152,11 @@ class MyTracesProvider:
     async def search_traces(self, service_name=None, operation_name=None, time_range=None, min_duration_ms=None):
         # Search and return TraceSpan objects
         pass
-    
+
     async def get_trace_details(self, trace_id: str):
         # Get detailed trace information
         pass
-    
+
     async def get_service_map(self, time_range=None):
         # Get service dependency map
         pass
@@ -175,7 +175,7 @@ from redis_sre_agent.tools.registry import get_global_registry, auto_register_de
 # Auto-register providers based on environment variables
 config = {
     "redis_url": "redis://localhost:6379/0",
-    "prometheus_url": "http://localhost:9090", 
+    "prometheus_url": "http://localhost:9090",
     "github_token": "ghp_...",
     "aws_region": "us-east-1"
 }
@@ -199,7 +199,7 @@ registry = get_global_registry()
 redis_provider = create_redis_provider("redis://prod-redis:6379/0")
 registry.register_provider("production-redis", redis_provider)
 
-# Register GitHub provider  
+# Register GitHub provider
 github_provider = create_github_provider(
     token="ghp_...",
     organization="my-org",
@@ -246,7 +246,7 @@ aws_provider = create_aws_provider(
 registry.register_provider("aws", aws_provider)
 ```
 
-### GitHub Provider  
+### GitHub Provider
 Combines GitHub Issues + Repositories:
 ```python
 from redis_sre_agent.tools.providers import create_github_provider
@@ -282,26 +282,26 @@ class DatabaseMetricsProvider:
     @property
     def provider_name(self) -> str:
         return "Database Metrics"
-    
+
     @property
     def supports_time_queries(self) -> bool:
         return False
-    
+
     async def list_metrics(self):
         return [
             MetricDefinition("db_connections", "Active database connections", "count", "gauge"),
             MetricDefinition("db_query_time", "Average query time", "milliseconds", "gauge")
         ]
-    
+
     async def get_current_value(self, metric_name: str, labels=None):
         # Connect to your database and get metrics
         if metric_name == "db_connections":
             return MetricValue(42)  # Your actual logic here
         return None
-    
+
     async def query_time_range(self, metric_name: str, time_range, labels=None, step=None):
         raise NotImplementedError("Time queries not supported")
-    
+
     async def health_check(self):
         return {"status": "healthy", "provider": self.provider_name}
 
@@ -310,17 +310,17 @@ class DatabaseProvider:
     @property
     def provider_name(self) -> str:
         return "Database SRE Provider"
-    
+
     @property
     def capabilities(self):
         return [ToolCapability.METRICS]
-    
+
     async def get_metrics_provider(self):
         return DatabaseMetricsProvider()
-    
+
     # Other providers return None
     async def get_logs_provider(self): return None
-    async def get_tickets_provider(self): return None  
+    async def get_tickets_provider(self): return None
     async def get_repos_provider(self): return None
     async def get_traces_provider(self): return None
     async def initialize(self, config): pass
@@ -349,7 +349,7 @@ tool_functions = PROTOCOL_TOOL_FUNCTIONS
 ## Benefits
 
 1. **Extensibility**: Add new monitoring systems without changing agent code
-2. **Flexibility**: Mix providers based on your infrastructure  
+2. **Flexibility**: Mix providers based on your infrastructure
 3. **Maintainability**: Clear separation between agent logic and external integrations
 4. **Testability**: Easy to mock providers for testing
 5. **Discoverability**: Agent automatically finds and uses available capabilities
@@ -359,7 +359,7 @@ tool_functions = PROTOCOL_TOOL_FUNCTIONS
 The old hardcoded tools (`analyze_system_metrics`, `check_service_health`, etc.) are replaced by:
 
 - `query_instance_metrics` - Queries any registered metrics provider
-- `list_available_metrics` - Discovers available metrics across providers  
+- `list_available_metrics` - Discovers available metrics across providers
 - `search_logs` - Searches across any registered log provider
 - `create_incident_ticket` - Creates tickets in any registered ticket system
 - `search_related_repositories` - Searches code across registered repo providers

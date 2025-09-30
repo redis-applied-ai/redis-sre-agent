@@ -66,15 +66,15 @@ remove_data() {
 # Remove Docker images
 remove_images() {
     log "Removing Docker images..."
-    
+
     # Remove built images
     docker rmi redis-sre-agent-sre-agent:latest 2>/dev/null || true
     docker rmi redis-sre-agent-sre-worker:latest 2>/dev/null || true
     docker rmi redis-sre-agent-sre-ui:latest 2>/dev/null || true
-    
+
     # Remove unused images
     docker image prune -f
-    
+
     success "Docker images removed"
 }
 
@@ -82,7 +82,7 @@ remove_images() {
 main() {
     local remove_data=false
     local remove_images=false
-    
+
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -105,21 +105,21 @@ main() {
                 ;;
         esac
     done
-    
+
     echo "🧹 Redis SRE Agent Cleanup"
     echo "=========================="
     echo
-    
+
     if [ "$remove_data" = true ]; then
         remove_data
     else
         stop_services
     fi
-    
+
     if [ "$remove_images" = true ]; then
         remove_images
     fi
-    
+
     echo
     success "Cleanup completed!"
     echo

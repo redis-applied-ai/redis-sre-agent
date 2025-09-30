@@ -31,30 +31,30 @@ error() {
 # Check if Docker and Docker Compose are available
 check_prerequisites() {
     log "Checking prerequisites..."
-    
+
     if ! command -v docker &> /dev/null; then
         error "Docker is not installed or not in PATH"
         exit 1
     fi
-    
+
     if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
         error "Docker Compose is not installed or not in PATH"
         exit 1
     fi
-    
+
     success "Prerequisites check passed"
 }
 
 # Start core services
 start_core_services() {
     log "Starting core services (Redis, Prometheus, Grafana)..."
-    
+
     # Start core infrastructure first
     docker-compose up -d redis redis-demo prometheus grafana redis-exporter node-exporter
-    
+
     log "Waiting for Redis to be healthy..."
     timeout 60 bash -c 'until docker-compose exec -T redis redis-cli ping | grep -q PONG; do sleep 2; done'
-    
+
     success "Core services started successfully"
 }
 
@@ -147,27 +147,27 @@ setup_redis_enterprise() {
 # Load demo data
 load_demo_data() {
     log "Loading demo data into Redis instances..."
-    
+
     # Load data into demo Redis
     log "Loading enterprise-like data into demo Redis..."
     docker-compose exec -T redis-demo bash -c '
         redis-cli CONFIG SET maxmemory 256mb
         redis-cli CONFIG SET maxmemory-policy allkeys-lru
-        
+
         for i in {1..1000}; do
             redis-cli SET "user:$i" "{\"id\":$i,\"name\":\"User$i\",\"email\":\"user$i@company.com\"}" >/dev/null
             redis-cli SET "session:$i" "{\"user_id\":$i,\"token\":\"tok_$i\"}" >/dev/null
             redis-cli SADD "active_users" "user:$i" >/dev/null
         done
-        
+
         for i in {1..500}; do
             redis-cli SET "cache:product:$i" "{\"id\":$i,\"name\":\"Product$i\",\"price\":$((i * 10))}" >/dev/null
             redis-cli EXPIRE "cache:product:$i" 3600 >/dev/null
         done
-        
+
         echo "Demo Redis: $(redis-cli DBSIZE) keys loaded"
     '
-    
+
     # Load data into Redis Enterprise (if available)
     if docker exec redis-enterprise-node1 redis-cli -p 12000 -a admin ping &>/dev/null; then
         log "Loading enterprise data into Redis Enterprise..."
@@ -188,39 +188,39 @@ load_demo_data() {
     else
         warning "Redis Enterprise database not available, skipping enterprise data load"
     fi
-    
+
     success "Demo data loaded successfully"
 }
 
 # Start SRE Agent services
 start_sre_services() {
     log "Starting SRE Agent services..."
-    
+
     # Start the API first
     docker-compose up -d sre-agent
-    
+
     log "Waiting for SRE Agent API to be ready..."
     timeout 60 bash -c 'until curl -s http://localhost:8000/health >/dev/null; do sleep 2; done'
-    
+
     # Start the worker
     docker-compose up -d sre-worker
-    
+
     # Start the UI
     docker-compose up -d sre-ui
-    
+
     log "Waiting for UI to be ready..."
     timeout 60 bash -c 'until curl -s http://localhost:3002 >/dev/null; do sleep 2; done'
-    
+
     success "SRE Agent services started successfully"
 }
 
 # Configure initial instances
 configure_instances() {
     log "Configuring Redis instances..."
-    
+
     # Wait a bit for the API to fully initialize
     sleep 10
-    
+
     # Configure demo instance
     log "Configuring demo Redis instance..."
     curl -X POST "http://localhost:8000/api/v1/instances" \
@@ -233,7 +233,7 @@ configure_instances() {
             "description": "Demo Redis instance loaded with enterprise-like data (users, sessions, cache, analytics)",
             "notes": "Contains 1000 users, 1000 sessions, 500 cached products, analytics data. Configured with 256MB maxmemory and LRU eviction."
         }' >/dev/null 2>&1 || warning "Failed to configure demo instance"
-    
+
     # Configure Redis Enterprise instance (if available)
     if docker exec redis-enterprise-node1 redis-cli -p 12000 -a admin ping &>/dev/null; then
         log "Configuring Redis Enterprise instance..."
@@ -249,7 +249,7 @@ configure_instances() {
                 "instance_type": "enterprise"
             }' >/dev/null 2>&1 || warning "Failed to configure Redis Enterprise instance"
     fi
-    
+
     success "Instance configuration completed"
 }
 
@@ -293,7 +293,7 @@ main() {
     echo "🚀 Redis SRE Agent Setup"
     echo "========================"
     echo
-    
+
     check_prerequisites
     start_core_services
     setup_redis_enterprise
@@ -301,7 +301,7 @@ main() {
     start_sre_services
     configure_instances
     verify_setup
-    
+
     echo
     echo "🎉 Setup completed successfully!"
     echo

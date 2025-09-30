@@ -43,7 +43,7 @@ docker-compose logs -f redis
 
 # Access services
 # - SRE Agent API: http://localhost:8000
-# - Prometheus: http://localhost:9090  
+# - Prometheus: http://localhost:9090
 # - Grafana: http://localhost:3000 (admin/admin)
 # - Redis: localhost:6379
 ```

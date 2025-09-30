@@ -200,29 +200,29 @@ async def submit_and_wait_for_results():
             "priority": 1,
             "tags": ["redis", "memory"]
         }
-        
+
         async with session.post("/api/v1/triage", json=triage_data) as resp:
             result = await resp.json()
             thread_id = result["thread_id"]
             print(f"Submitted issue, tracking: {thread_id}")
-        
+
         # Poll for completion
         while True:
             async with session.get(f"/api/v1/tasks/{thread_id}") as resp:
                 status_data = await resp.json()
-                
+
                 print(f"Status: {status_data['status']}")
-                
+
                 # Print new updates
                 for update in status_data["updates"][-3:]:  # Last 3 updates
                     print(f"  {update['timestamp']}: {update['message']}")
-                
+
                 if status_data["status"] in ["done", "failed", "cancelled"]:
                     if status_data["status"] == "done":
                         print("Final response:", status_data["result"]["response"])
                         print("Action items:", len(status_data["action_items"]))
                     break
-                
+
                 await asyncio.sleep(2)  # Poll every 2 seconds
 
 # Run the example
@@ -239,24 +239,24 @@ async def conversation_example():
             "query": "Help me optimize Redis performance",
             "user_id": "engineer-1"
         }
-        
+
         async with session.post("/api/v1/triage", json=triage_data) as resp:
             result = await resp.json()
             thread_id = result["thread_id"]
-        
+
         # Wait for first response
         final_result = await wait_for_completion(session, thread_id)
         print("Agent:", final_result["response"])
-        
+
         # Continue conversation
         follow_up = {
             "query": "What specific metrics should I monitor?",
             "context": {"previous_response": final_result["response"]}
         }
-        
+
         async with session.post(f"/api/v1/tasks/{thread_id}/continue", json=follow_up) as resp:
             continue_result = await resp.json()
-        
+
         # Wait for follow-up response
         final_result = await wait_for_completion(session, thread_id)
         print("Agent:", final_result["response"])

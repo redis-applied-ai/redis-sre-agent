@@ -71,7 +71,7 @@ To stop services and optionally remove data:
 
 - **Docker**: Version 20.10 or later
 - **Docker Compose**: Version 2.0 or later
-- **System Resources**: 
+- **System Resources**:
   - 4GB RAM minimum (8GB recommended)
   - 2GB free disk space
 

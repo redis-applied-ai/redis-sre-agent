@@ -61,11 +61,11 @@ const Modal = ({
   const modalContent = (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div 
+      <div
         className="absolute inset-0 bg-black bg-opacity-50 transition-opacity"
         onClick={handleOverlayClick}
       />
-      
+
       {/* Modal */}
       <div className={`relative bg-white rounded-redis-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}>
         {/* Header */}

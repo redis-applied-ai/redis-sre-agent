@@ -1,7 +1,7 @@
 # Redis PubSub Message Loss During Restart
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

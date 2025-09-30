@@ -1,7 +1,7 @@
 # Redis Cluster Split-Brain Network Partition
 
-**Category**: shared  
-**Severity**: critical  
+**Category**: shared
+**Severity**: critical
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

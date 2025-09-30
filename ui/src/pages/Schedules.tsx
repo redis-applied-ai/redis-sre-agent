@@ -261,8 +261,8 @@ const Schedules = () => {
               <div className="text-center py-8 text-redis-dusk-04">
                 <div className="text-lg mb-2">📅</div>
                 <div className="text-sm mb-3">No schedules configured</div>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => setShowCreateForm(true)}
                 >
                   Create First Schedule
@@ -295,9 +295,9 @@ const Schedules = () => {
                     <Button variant="outline" size="sm" onClick={() => setEditingSchedule(schedule)}>
                       Edit
                     </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => handleDeleteSchedule(schedule.id, schedule.name)}
                       className="text-redis-red hover:bg-redis-red hover:text-white"
                     >
@@ -311,7 +311,7 @@ const Schedules = () => {
                   {schedule.description && (
                     <p className="text-redis-sm text-redis-dusk-04">{schedule.description}</p>
                   )}
-                  
+
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-redis-sm">
                     <div>
                       <div className="font-medium text-redis-dusk-01">Interval</div>
@@ -319,24 +319,24 @@ const Schedules = () => {
                         {formatInterval(schedule.interval_type, schedule.interval_value)}
                       </div>
                     </div>
-                    
+
                     <div>
                       <div className="font-medium text-redis-dusk-01">Redis Instance</div>
                       <div className="text-redis-dusk-04">
-                        {schedule.redis_instance_id 
+                        {schedule.redis_instance_id
                           ? instances.find(i => i.id === schedule.redis_instance_id)?.name || 'Unknown'
                           : 'Any/Knowledge-only'
                         }
                       </div>
                     </div>
-                    
+
                     <div>
                       <div className="font-medium text-redis-dusk-01">Last Run</div>
                       <div className="text-redis-dusk-04">
                         {schedule.last_run_at ? formatTimestamp(schedule.last_run_at) : 'Never'}
                       </div>
                     </div>
-                    
+
                     <div>
                       <div className="font-medium text-redis-dusk-01">Next Run</div>
                       <div className="text-redis-dusk-04">
@@ -344,7 +344,7 @@ const Schedules = () => {
                       </div>
                     </div>
                   </div>
-                  
+
                   <div>
                     <div className="font-medium text-redis-dusk-01 text-redis-sm mb-1">Instructions</div>
                     <div className="text-redis-sm text-redis-dusk-04 bg-redis-dusk-09 p-3 rounded">

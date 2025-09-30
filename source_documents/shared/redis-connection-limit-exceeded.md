@@ -1,7 +1,7 @@
 # Redis Connection Limit Exceeded (ERR max number of clients reached)
 
-**Category**: shared  
-**Severity**: critical  
+**Category**: shared
+**Severity**: critical
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms
@@ -18,7 +18,7 @@ redis-cli INFO clients
 # Look for: connected_clients, blocked_clients, tracking_clients
 ```
 
-### 2. Identify Connection Sources  
+### 2. Identify Connection Sources
 ```bash
 redis-cli CLIENT LIST
 # Analyze: addr (source), age (connection duration), idle (inactive time)
@@ -72,7 +72,7 @@ redis-cli CONFIG SET timeout 300
 
 ### 4. Application Best Practices
 - Use connection pooling libraries (Jedis, redis-py with connection pool)
-- Implement proper connection cleanup in exception handlers  
+- Implement proper connection cleanup in exception handlers
 - Avoid creating connections in tight loops
 - Use Redis Sentinel/Cluster for connection distribution
 

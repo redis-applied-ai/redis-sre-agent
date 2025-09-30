@@ -1,7 +1,7 @@
 # Redis Memory Optimization and Eviction Policy
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

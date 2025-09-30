@@ -1,7 +1,7 @@
 # Redis Security Authentication and Access Control
 
-**Category**: shared  
-**Severity**: critical  
+**Category**: shared
+**Severity**: critical
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

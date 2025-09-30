@@ -1,7 +1,7 @@
 # Redis Enterprise Database Sync Issues
 
-**Category**: enterprise  
-**Severity**: critical  
+**Category**: enterprise
+**Severity**: critical
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

@@ -21,14 +21,14 @@ main() {
     echo "⚡ Redis SRE Agent Quick Setup"
     echo "============================="
     echo
-    
+
     log "Starting essential services..."
     docker-compose up -d redis redis-demo sre-agent sre-worker sre-ui
-    
+
     log "Waiting for services to be ready..."
     timeout 60 bash -c 'until curl -s http://localhost:8000/health >/dev/null; do sleep 2; done'
     timeout 60 bash -c 'until curl -s http://localhost:3002 >/dev/null; do sleep 2; done'
-    
+
     log "Loading basic demo data..."
     docker-compose exec -T redis-demo bash -c '
         for i in {1..100}; do
@@ -37,7 +37,7 @@ main() {
         done
         echo "Loaded $(redis-cli DBSIZE) keys"
     '
-    
+
     log "Configuring demo instance..."
     sleep 5
     curl -X POST "http://localhost:8000/api/v1/instances" \
@@ -49,7 +49,7 @@ main() {
             "usage": "App data",
             "description": "Demo Redis instance for testing"
         }' >/dev/null 2>&1 || true
-    
+
     echo
     success "Quick setup completed!"
     echo

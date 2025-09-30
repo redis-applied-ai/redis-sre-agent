@@ -59,10 +59,10 @@ redis-sre-agent = "redis_sre_agent.cli:main"
 include = [
     "redis_sre_agent/",
     "*.py",
-    "*.md", 
+    "*.md",
     "*.txt",
     "*.yaml",
-    "*.yml", 
+    "*.yml",
     "*.json",
     "*.toml",
     "*.sh",

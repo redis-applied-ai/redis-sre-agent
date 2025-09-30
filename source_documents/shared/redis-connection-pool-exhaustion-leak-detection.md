@@ -1,7 +1,7 @@
 # Redis Connection Pool Exhaustion and Leak Detection
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms
@@ -57,7 +57,7 @@ while True:
 - Implement proper exception handling
 - Add connection lifecycle logging
 
-### 2. Pool Size Misconfiguration  
+### 2. Pool Size Misconfiguration
 **Cause**: Pool too small for application concurrency
 **Solutions**:
 ```python
@@ -119,14 +119,14 @@ result = client.get('key')  # Automatically handles connection lifecycle
 def check_pool_health():
     pool = redis_client.connection_pool
     total_connections = pool._created_connections
-    available = len(pool._available_connections) 
+    available = len(pool._available_connections)
     in_use = len(pool._in_use_connections)
-    
+
     utilization = in_use / pool.max_connections
-    
+
     if utilization > 0.8:  # 80% pool utilization
         logger.warning(f"High pool utilization: {utilization:.2%}")
-    
+
     return {
         'total': total_connections,
         'available': available,
@@ -183,7 +183,7 @@ def monitor_memory_and_connections():
 
 ## Production Troubleshooting Checklist
 - [ ] Check application connection pool metrics
-- [ ] Analyze Redis CLIENT LIST for connection patterns  
+- [ ] Analyze Redis CLIENT LIST for connection patterns
 - [ ] Monitor file descriptor usage in applications
 - [ ] Review recent code changes affecting Redis usage
 - [ ] Check for blocking operations tying up connections

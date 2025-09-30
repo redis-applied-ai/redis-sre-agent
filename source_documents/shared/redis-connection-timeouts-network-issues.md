@@ -1,7 +1,7 @@
 # Redis Connection Timeouts and Network Issues
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms
@@ -46,7 +46,7 @@ redis-cli INFO server
 - Verify Redis is on dedicated network segment
 - Use Redis Cluster for geographic distribution
 
-### 2. TCP Keep-Alive Issues  
+### 2. TCP Keep-Alive Issues
 **Symptoms**: Connections dropping after idle period
 **Solutions**:
 ```bash
@@ -123,7 +123,7 @@ redis-cli --latency-history -i 1
 
 ### 1. Immediate Actions
 1. Check Redis process status: `ps aux | grep redis`
-2. Verify Redis responds: `redis-cli ping`  
+2. Verify Redis responds: `redis-cli ping`
 3. Check system resources: CPU, memory, network
 4. Review recent configuration changes
 

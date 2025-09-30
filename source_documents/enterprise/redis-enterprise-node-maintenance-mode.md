@@ -1,7 +1,7 @@
 # Redis Enterprise Node in Maintenance Mode
 
-**Category**: enterprise  
-**Severity**: warning  
+**Category**: enterprise
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

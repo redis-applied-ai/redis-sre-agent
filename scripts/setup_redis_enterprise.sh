@@ -45,53 +45,53 @@ wait_for_service() {
     local attempt=1
 
     log "Waiting for $service_name to be ready..."
-    
+
     while [ $attempt -le $max_attempts ]; do
         if curl -k -f -s "$url" > /dev/null 2>&1; then
             success "$service_name is ready!"
             return 0
         fi
-        
+
         echo -n "."
         sleep 2
         attempt=$((attempt + 1))
     done
-    
+
     error "$service_name failed to start after $((max_attempts * 2)) seconds"
     return 1
 }
 
 check_prerequisites() {
     log "Checking prerequisites..."
-    
+
     # Check if Docker is running
     if ! docker info > /dev/null 2>&1; then
         error "Docker is not running. Please start Docker and try again."
         exit 1
     fi
-    
+
     # Check if curl is available
     if ! command -v curl > /dev/null 2>&1; then
         error "curl is required but not installed."
         exit 1
     fi
-    
+
     # Check if jq is available (optional but helpful)
     if ! command -v jq > /dev/null 2>&1; then
         warning "jq is not installed. JSON responses will not be formatted."
     fi
-    
+
     success "Prerequisites check passed"
 }
 
 start_redis_enterprise() {
     log "Starting Redis Enterprise container..."
-    
+
     cd "$PROJECT_ROOT"
-    
+
     # Start only the Redis Enterprise service
     docker-compose up -d redis-enterprise
-    
+
     # Wait for the service to be ready
     wait_for_service "Redis Enterprise" "https://localhost:8443/" 60
 }
@@ -227,17 +227,17 @@ EOF
 
 test_database_connection() {
     log "Testing database connection..."
-    
+
     # Test connection using redis-cli inside the container
     local test_result=$(docker exec redis-enterprise-node1 redis-cli -p $DATABASE_PORT ping 2>/dev/null || echo "FAILED")
-    
+
     if [ "$test_result" = "PONG" ]; then
         success "Database connection test passed"
-        
+
         # Set a test key
         docker exec redis-enterprise-node1 redis-cli -p $DATABASE_PORT set test:key "Redis Enterprise is working!" > /dev/null
         local value=$(docker exec redis-enterprise-node1 redis-cli -p $DATABASE_PORT get test:key)
-        
+
         if [ "$value" = "Redis Enterprise is working!" ]; then
             success "Database read/write test passed"
         else
@@ -251,7 +251,7 @@ test_database_connection() {
 
 show_cluster_info() {
     log "Retrieving cluster information..."
-    
+
     echo ""
     echo "🎉 Redis Enterprise cluster setup complete!"
     echo ""
@@ -276,7 +276,7 @@ show_cluster_info() {
     echo "  • Access the cluster UI to simulate enterprise scenarios"
     echo "  • Test database operations, maintenance mode, etc."
     echo ""
-    
+
     # Show cluster status
     log "Current cluster status:"
     docker exec redis-enterprise-node1 rladmin status 2>/dev/null || warning "Could not retrieve cluster status"
@@ -292,22 +292,22 @@ main() {
     echo "🚀 Redis Enterprise Setup for SRE Agent Testing"
     echo "=============================================="
     echo ""
-    
+
     # Set up cleanup trap
     trap cleanup EXIT
-    
+
     # Run setup steps
     check_prerequisites
     start_redis_enterprise
-    
+
     # Wait a bit more for full startup
     sleep 20
-    
+
     setup_cluster
     create_database
     test_database_connection
     show_cluster_info
-    
+
     echo ""
     success "Redis Enterprise setup completed successfully!"
     echo ""

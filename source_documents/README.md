@@ -27,7 +27,7 @@ source_documents/
 2. Include metadata at the top:
    ```markdown
    # Document Title
-   
+
    **Category**: runbook_category
    **Severity**: critical|warning|info
    **Source**: document_source

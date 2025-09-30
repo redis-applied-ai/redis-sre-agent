@@ -1,7 +1,7 @@
 # Redis Cluster Hash Slot Distribution Imbalance
 
-**Category**: shared  
-**Severity**: warning  
+**Category**: shared
+**Severity**: warning
 **Source**: Generated runbook for Redis SRE Agent
 
 ## Symptoms

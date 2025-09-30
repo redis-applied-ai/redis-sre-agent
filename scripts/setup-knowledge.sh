@@ -26,16 +26,16 @@ main() {
     echo "📚 Redis SRE Agent Knowledge Base Setup"
     echo "======================================="
     echo
-    
+
     # Check if SRE Agent is running
     if ! curl -s http://localhost:8000/health >/dev/null; then
         warning "SRE Agent API is not running. Please start it first:"
         echo "  docker-compose up -d sre-agent"
         exit 1
     fi
-    
+
     log "Populating knowledge base with Redis documentation..."
-    
+
     # Use the CLI to populate knowledge base
     if docker-compose exec -T sre-agent uv run redis-sre-agent knowledge populate --scrapers redis_kb 2>/dev/null; then
         success "Knowledge base populated successfully"
@@ -44,14 +44,14 @@ main() {
         log "You can manually populate it later with:"
         echo "  docker-compose exec sre-agent uv run redis-sre-agent knowledge populate"
     fi
-    
+
     log "Checking knowledge base status..."
     if curl -s "http://localhost:8000/knowledge/search?q=redis+memory&limit=1" | grep -q "results"; then
         success "Knowledge base is working and searchable"
     else
         warning "Knowledge base search may not be working properly"
     fi
-    
+
     echo
     success "Knowledge base setup completed!"
     echo

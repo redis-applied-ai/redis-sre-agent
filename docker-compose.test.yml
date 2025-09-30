@@ -22,7 +22,7 @@ services:
   node-exporter:
     ports:
       - "19100:9100"
-    
+
   sre-agent:
     environment:
       - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
