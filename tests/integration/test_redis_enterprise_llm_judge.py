@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import openai
 import pytest
@@ -135,7 +135,7 @@ async def evaluate_enterprise_response_with_llm_judge(scenario: Dict[str, Any]) 
 
     # Create enhanced query that indicates this is an enterprise instance
     enhanced_query = f"""Instance Type: Redis Enterprise
-    
+
 {scenario["query"]}
 
 Context: {scenario["context"]}"""
@@ -386,9 +386,7 @@ async def run_redis_enterprise_llm_judge_evaluation():
         enterprise_recognition_avg = sum(
             e["enterprise_recognition"] for e in valid_evaluations
         ) / len(valid_evaluations)
-        enterprise_guidance_avg = sum(
-            e["enterprise_specific_guidance"] for e in valid_evaluations
-        ) / len(valid_evaluations)
+        sum(e["enterprise_specific_guidance"] for e in valid_evaluations) / len(valid_evaluations)
 
         if avg_overall >= 4.0 and enterprise_recognition_avg >= 4.0:
             logger.info("\n🎉 EXCELLENT: Agent demonstrates strong Redis Enterprise expertise!")

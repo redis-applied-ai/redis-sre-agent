@@ -8,12 +8,12 @@ identify Redis Enterprise vs OSS instances.
 """
 
 import asyncio
-import json
 import sys
+
 from redis_sre_agent.tools.redis_instance_detector import (
+    RedisInstanceType,
     detect_redis_instance_type,
     get_redis_enterprise_info,
-    RedisInstanceType,
 )
 
 

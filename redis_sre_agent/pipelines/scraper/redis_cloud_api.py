@@ -1,9 +1,7 @@
 """Scraper for Redis Cloud API documentation from Swagger/OpenAPI specs."""
 
-import json
 import logging
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -174,7 +172,7 @@ class RedisCloudAPIScraper(BaseScraper):
             # Build comprehensive endpoint documentation
             content = f"""# {summary}
 
-**Endpoint**: `{method.upper()} {path}`  
+**Endpoint**: `{method.upper()} {path}`
 **Operation ID**: `{operation_id}`
 
 ## Description

@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Dict, Any
+from typing import Any, Dict
 
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse

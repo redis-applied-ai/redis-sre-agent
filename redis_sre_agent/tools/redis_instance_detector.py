@@ -5,13 +5,12 @@ This module provides functions to detect the type of Redis instance
 on connection information and server responses.
 """
 
-import asyncio
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Tuple
 from urllib.parse import urlparse
 
 import redis.asyncio as redis
-from redis.exceptions import ConnectionError, TimeoutError, ResponseError
+from redis.exceptions import ConnectionError, ResponseError, TimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +109,7 @@ async def detect_redis_instance_type(
             enterprise_indicators = []
 
             # Check server section for Enterprise markers
-            server_info = info.get("server", {}) if isinstance(info.get("server"), dict) else {}
+            info.get("server", {}) if isinstance(info.get("server"), dict) else {}
 
             # Enterprise often has specific version patterns or build info
             redis_version = info.get("redis_version", "")

@@ -7,9 +7,9 @@ from typing import Any, Dict, List, Optional
 
 from .ingestion.processor import IngestionPipeline
 from .scraper.base import ArtifactStorage
+from .scraper.redis_cloud_api import RedisCloudAPIScraper
 from .scraper.redis_docs import RedisDocsScraper, RedisRunbookScraper
 from .scraper.redis_kb import RedisKBScraper
-from .scraper.redis_cloud_api import RedisCloudAPIScraper
 from .scraper.runbook_generator import RunbookGenerator
 
 logger = logging.getLogger(__name__)
