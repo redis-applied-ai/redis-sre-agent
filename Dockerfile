@@ -30,6 +30,19 @@ COPY . .
 # Install dependencies and package in editable mode
 RUN uv sync --frozen --no-dev
 
+# Pre-build knowledge base artifacts for faster production startup
+# This prepares batch artifacts from source documents without requiring Redis at build time
+RUN mkdir -p /app/artifacts && \
+    uv run redis-sre-agent pipeline prepare-sources \
+        --source-dir /app/source_documents \
+        --prepare-only \
+        --artifacts-path /app/artifacts || \
+    echo "Warning: Could not prepare source documents at build time"
+
+# Copy and setup entrypoint script
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Create non-root user and add to docker group
 RUN useradd --create-home --shell /bin/bash app \
     && groupadd -g 999 docker || true \
@@ -40,6 +53,9 @@ USER app
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
+
+# Use entrypoint for initialization
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Default command (can be overridden)
 CMD ["uv", "run", "uvicorn", "redis_sre_agent.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

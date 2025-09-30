@@ -190,7 +190,29 @@ Docket tasks for:
 docker-compose up -d
 ```
 
-**Production**: Docker containers with Redis 8 (or 7.x with RediSearch module) and monitoring integration.
+**Production**:
+```bash
+# Build with pre-built knowledge base artifacts
+docker build -t redis-sre-agent:latest .
+
+# Run with automatic knowledge base initialization
+docker run -d \
+  -e REDIS_URL=redis://your-redis:6379/0 \
+  -e OPENAI_API_KEY=your-key \
+  -p 8000:8000 \
+  redis-sre-agent:latest
+
+# Skip knowledge base initialization if already populated
+docker run -d \
+  -e SKIP_KNOWLEDGE_INIT=true \
+  -e REDIS_URL=redis://your-redis:6379/0 \
+  redis-sre-agent:latest
+```
+
+The Docker image includes:
+- Pre-built knowledge base artifacts from `source_documents/`
+- Automatic initialization on first startup
+- Redis 8 (or 7.x with RediSearch module) required
 
 ## Project Status
 
