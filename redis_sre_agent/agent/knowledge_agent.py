@@ -10,7 +10,7 @@ from typing import Any, Dict, List, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.redis import RedisSaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -252,8 +252,10 @@ class KnowledgeOnlyAgent:
             "max_iterations": max_iterations,
         }
 
-        # Create isolated memory for this query
-        checkpointer = MemorySaver()
+        # Create RedisSaver for persistent conversation state
+        from redis_sre_agent.core.config import settings
+
+        checkpointer = RedisSaver.from_conn_string(settings.redis_url)
         app = self.workflow.compile(checkpointer=checkpointer)
 
         # Configure thread for session persistence

@@ -829,7 +829,7 @@ async def run_agent_with_progress(
         if not latest_user_message:
             raise ValueError("No user message found in conversation")
 
-        # Use the process_query method to handle context properly
+        # Use the process_query method - RedisSaver will handle conversation persistence
         response = await progress_agent.process_query(
             query=latest_user_message,
             session_id=thread_id,

@@ -259,17 +259,19 @@ def sample_task_result():
 @pytest.fixture(scope="session", autouse=True)
 def redis_container(request):
     """
-    Redis container for integration tests.
-    Only created if INTEGRATION_TESTS environment variable is set.
-    """
-    if not os.environ.get("INTEGRATION_TESTS"):
-        yield None
-        return
+    Redis testcontainer for ALL tests.
 
-    container = RedisContainer("redis:8-alpine")
+    Now that we use RedisSaver for conversation persistence, ALL tests
+    need a Redis instance. This fixture:
+    - Starts automatically for every test session
+    - Uses Redis 8.2.1 (same as production)
+    - Sets REDIS_URL environment variable
+    - Ensures isolated test environment
+    """
+    container = RedisContainer("redis:8.2.1")
     container.start()
 
-    # Update Redis URL for integration tests
+    # Update Redis URL for all tests
     try:
         redis_url = container.get_connection_url()
     except AttributeError:
@@ -280,31 +282,33 @@ def redis_container(request):
     # Also expose Prometheus URL default for tests when docker-compose is used
     os.environ.setdefault("PROMETHEUS_URL", "http://localhost:9090")
 
+    print(f"\n✅ Redis testcontainer started: {redis_url}")
+
     yield container
 
     container.stop()
+    print("\n🛑 Redis testcontainer stopped")
 
 
 @pytest_asyncio.fixture()
 async def async_redis_client(redis_container):
     """
-    Real Redis client for integration tests.
-    Only available when redis_container is active.
+    Real Redis client for all tests.
+
+    Provides a clean Redis client connected to the testcontainer.
+    Flushes the database before each test to ensure clean state.
     """
-    if not redis_container:
-        pytest.skip("Integration tests not enabled")
+    # Get Redis URL from environment (set by redis_container fixture)
+    redis_url = os.environ.get("REDIS_URL")
 
-    # Prefer the REDIS_URL set by the redis_container fixture; fall back to exposed port
-    try:
-        redis_url = os.environ.get("REDIS_URL")
-        if not redis_url:
-            # Fallback for older testcontainers APIs without get_connection_url
-            redis_url = f"redis://localhost:{redis_container.get_exposed_port(6379)}/0"
-    except AttributeError:
-        redis_url = f"redis://localhost:{redis_container.get_exposed_port(6379)}/0"
+    client = AsyncRedis.from_url(redis_url, decode_responses=False)
 
-    client = AsyncRedis.from_url(redis_url)
+    # Flush database to ensure clean state for this test
+    await client.flushdb()
+
     yield client
+
+    # Cleanup
     await client.aclose()
 
 

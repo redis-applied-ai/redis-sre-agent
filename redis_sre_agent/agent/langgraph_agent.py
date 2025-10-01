@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.redis import RedisSaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
@@ -958,12 +958,11 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
         if context and context.get("instance_id"):
             initial_state["instance_context"] = context
 
-        # Create MemorySaver for conversation state
-        # NOTE: Using MemorySaver instead of RedisSaver because langgraph-checkpoint-redis
-        # doesn't fully support async operations (aget_tuple raises NotImplementedError).
-        # Each task gets its own isolated MemorySaver instance to prevent cross-contamination.
-        # TODO: Switch to RedisSaver when async support is available for true persistence.
-        checkpointer = MemorySaver()
+        # Create RedisSaver for persistent conversation state
+        # RedisSaver needs the Redis URL string
+        from redis_sre_agent.core.config import settings
+
+        checkpointer = RedisSaver.from_conn_string(settings.redis_url)
         self.app = self.workflow.compile(checkpointer=checkpointer)
 
         # Configure thread for session persistence
