@@ -519,59 +519,63 @@ class SRELangGraphAgent:
                 try:
                     # Execute the SRE tool (async call)
                     if tool_name in self.sre_tools:
-                        # Get instance context from state if available
-                        instance_context = state.get("instance_context")
-                        target_instance = None
-
-                        if instance_context and instance_context.get("instance_id"):
-                            # Resolve instance details for tool execution
-                            try:
-                                instances = await get_instances_from_redis()
-                                for instance in instances:
-                                    if instance.id == instance_context["instance_id"]:
-                                        target_instance = instance
-                                        break
-                            except Exception as e:
-                                logger.error(f"Failed to resolve instance context: {e}")
-
-                        # Modify tool arguments based on instance context
+                        # Check if this tool has bound parameters (from instance-specific tools)
+                        # Bound parameters are stored in the tool definition metadata
                         modified_args = tool_args.copy()
 
-                        if target_instance:
-                            # For Redis diagnostic tools, use the instance's connection details
-                            if tool_name == "get_detailed_redis_diagnostics":
-                                # ALWAYS use the target instance URL, never fall back to application database
-                                modified_args["redis_url"] = target_instance.connection_url
-                                logger.info(
-                                    f"Using target instance Redis URL: {target_instance.connection_url}"
-                                )
-                        else:
-                            # No target instance found - fail gracefully for Redis tools
-                            if tool_name == "get_detailed_redis_diagnostics":
-                                logger.error(
-                                    f"Cannot execute {tool_name} without target instance. "
-                                    "Refusing to fall back to application database."
-                                )
-                                # Return error message instead of executing tool
-                                tool_messages.append(
-                                    ToolMessage(
-                                        content="Error: Cannot connect to Redis instance. "
-                                        "Instance context is required but was not found. "
-                                        "Please specify which Redis instance to diagnose.",
-                                        tool_call_id=tool_call_id,
-                                    )
-                                )
-                                continue  # Skip tool execution
+                        # Look for bound parameters in the current tool definitions
+                        bound_params = {}
+                        for tool_def in self.llm_with_tools.kwargs.get("tools", []):
+                            if tool_def["function"]["name"] == tool_name:
+                                # Extract bound parameters (prefixed with _bound_)
+                                for key, value in tool_def["function"].items():
+                                    if key.startswith("_bound_"):
+                                        param_name = key.replace("_bound_", "")
+                                        bound_params[param_name] = value
+                                break
 
-                            # For metrics tools, use the instance's host for Prometheus queries
-                            elif tool_name == "analyze_system_metrics":
-                                # Add instance host context for Prometheus queries
-                                if "instance_host" not in modified_args:
-                                    host, _ = _parse_redis_connection_url(
-                                        target_instance.connection_url
+                        # Apply bound parameters (these override any LLM-provided values)
+                        if bound_params:
+                            logger.info(f"Applying bound parameters to {tool_name}: {bound_params}")
+                            modified_args.update(bound_params)
+
+                            # For diagnostics tool, redis_url is the bound parameter
+                            if (
+                                tool_name == "get_detailed_redis_diagnostics"
+                                and "redis_url" in bound_params
+                            ):
+                                logger.info(f"Tool bound to Redis URL: {bound_params['redis_url']}")
+
+                            # For metrics tool, instance_host/port are bound
+                            elif tool_name == "query_instance_metrics":
+                                if "instance_host" in bound_params:
+                                    logger.info(
+                                        f"Tool bound to instance: {bound_params['instance_host']}:{bound_params.get('instance_port', 6379)}"
                                     )
-                                    modified_args["instance_host"] = host
-                                    logger.info(f"Using instance host for metrics: {host}")
+
+                        # If no bound parameters and this is a Redis tool requiring instance context
+                        if not bound_params:
+                            if tool_name == "get_detailed_redis_diagnostics":
+                                # Check if redis_url was provided by LLM (unbound mode)
+                                if "redis_url" not in modified_args:
+                                    logger.error(
+                                        f"Cannot execute {tool_name} without redis_url. "
+                                        "No instance binding and no redis_url parameter provided."
+                                    )
+                                    # Return error message instead of executing tool
+                                    tool_messages.append(
+                                        ToolMessage(
+                                            content="Error: Cannot connect to Redis instance. "
+                                            "No instance selected and no redis_url provided. "
+                                            "Please specify which Redis instance to diagnose.",
+                                            tool_call_id=tool_call_id,
+                                        )
+                                    )
+                                    continue  # Skip tool execution
+                                else:
+                                    logger.info(
+                                        f"Using LLM-provided redis_url: {modified_args['redis_url']}"
+                                    )
 
                         # Call the async SRE function
                         result = await self.sre_tools[tool_name](**modified_args)
@@ -861,6 +865,37 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                 if target_instance:
                     host, port = _parse_redis_connection_url(target_instance.connection_url)
                     redis_url = target_instance.connection_url
+
+                    # CRITICAL: Rebind tools with instance-specific versions
+                    # This ensures the LLM cannot accidentally use wrong connection details
+                    logger.info(f"Rebinding tools for instance: {target_instance.name}")
+                    from redis_sre_agent.tools.instance_bound_tools import get_tools_for_instance
+
+                    # Get instance-bound tool definitions
+                    instance_tools = get_tools_for_instance(target_instance)
+
+                    # Get knowledge tools (these don't need instance binding)
+                    knowledge_tools = [
+                        tool
+                        for tool in self.llm_with_tools.kwargs.get("tools", [])
+                        if tool["function"]["name"]
+                        in [
+                            "search_knowledge_base",
+                            "ingest_sre_document",
+                            "get_all_document_fragments",
+                            "get_related_document_fragments",
+                        ]
+                    ]
+
+                    # Combine instance-bound tools with knowledge tools
+                    all_tools = instance_tools + knowledge_tools
+
+                    # Rebind LLM with new tool set
+                    self.llm_with_tools = self.llm.bind_tools(all_tools)
+                    logger.info(
+                        f"Tools rebound: {len(instance_tools)} instance-specific, {len(knowledge_tools)} knowledge tools"
+                    )
+
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
 
@@ -872,7 +907,7 @@ IMPORTANT CONTEXT: This query is specifically about Redis instance:
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
 
-When using Redis diagnostic tools, use this Redis URL: {redis_url}
+Your diagnostic tools are PRE-CONFIGURED for this instance. You do NOT need to specify redis_url or instance details - they are already set. Just call the tools directly.
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this specific Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations.
 
