@@ -14,7 +14,7 @@ interface TaskUpdate {
 
 interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'thinking';
+  role: 'user' | 'assistant' | 'thinking' | 'status';
   content: string;
   timestamp: string;
 }
@@ -71,8 +71,14 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
             timestamp: msg.timestamp,
           }));
 
-          setMessages(chatMessages);
-          console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}:`, chatMessages);
+          // Only update messages if we actually got some from the API
+          // This prevents clearing the user's just-sent message
+          if (chatMessages.length > 0) {
+            setMessages(chatMessages);
+            console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}:`, chatMessages);
+          } else {
+            console.log('No messages in thread yet, keeping current messages');
+          }
 
           // Set status and thinking indicator based on thread status
           setCurrentStatus(threadData.status);
@@ -256,19 +262,43 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
     });
   };
 
+  const addStatusMessage = (content: string, timestamp: string) => {
+    // Create a unique ID for this status message
+    const messageId = `status-${timestamp}-${content.substring(0, 30)}`;
+
+    setMessages(prev => {
+      // Check if this status message already exists
+      const exists = prev.some(msg => msg.id === messageId);
+
+      if (exists) {
+        return prev;
+      }
+
+      console.log('Adding status message:', content);
+      return [...prev, {
+        id: messageId,
+        role: 'status',
+        content,
+        timestamp,
+      }];
+    });
+  };
+
   const processUpdate = (update: TaskUpdate) => {
     // Throttle updates to prevent constant re-renders
     const now = Date.now();
     const timeSinceLastRender = now - lastRenderTimeRef.current;
 
     // Only process updates if enough time has passed (100ms throttle)
-    // OR if it's a final result
+    // OR if it's a final result or important status message
     const isFinalResult = update.result?.response ||
                           update.status === 'completed' ||
                           update.status === 'done' ||
                           update.status === 'failed';
 
-    if (!isFinalResult && timeSinceLastRender < 100) {
+    const isImportantUpdate = update.message && update.message.length > 0;
+
+    if (!isFinalResult && !isImportantUpdate && timeSinceLastRender < 100) {
       return; // Skip this update to prevent flashing
     }
 
@@ -287,8 +317,23 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
       }
     }
 
-    // Don't process 'response' type updates here - they're handled by the final result
-    // This prevents duplicate messages
+    // Show status messages from the agent (progress updates)
+    if (update.message && update.message.length > 0) {
+      // Filter out technical/internal messages
+      const technicalPatterns = [
+        /agent turn completed/i,
+        /task completed/i,
+        /task queued/i,
+        /processing complete/i,
+        /initialization complete/i,
+      ];
+
+      const isTechnical = technicalPatterns.some(pattern => pattern.test(update.message!));
+
+      if (!isTechnical) {
+        addStatusMessage(update.message, update.timestamp);
+      }
+    }
 
     // Handle final result (only from new updates, not initial_state)
     if (update.result?.response) {
@@ -350,12 +395,14 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
           {messages.map((message) => (
             <div
               key={message.id}
-              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              className={`flex ${message.role === 'user' ? 'justify-end' : message.role === 'status' ? 'justify-center' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[80%] p-3 rounded-redis-md ${
+                className={`${message.role === 'status' ? 'max-w-full' : 'max-w-[80%]'} p-3 rounded-redis-md ${
                   message.role === 'user'
                     ? 'bg-redis-blue-03 text-white'
+                    : message.role === 'status'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-center text-sm italic'
                     : 'bg-redis-dusk-09 text-foreground'
                 }`}
               >
@@ -384,10 +431,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
                       {message.content}
                     </ReactMarkdown>
                   </div>
+                ) : message.role === 'status' ? (
+                  <div className="text-redis-sm">{message.content}</div>
                 ) : (
                   <div className="text-redis-sm whitespace-pre-wrap">{message.content}</div>
                 )}
-                {message.timestamp && (
+                {message.timestamp && message.role !== 'status' && (
                   <div
                     className={`text-redis-xs mt-1 ${
                       message.role === 'user' ? 'text-blue-100' : 'text-redis-dusk-04'
