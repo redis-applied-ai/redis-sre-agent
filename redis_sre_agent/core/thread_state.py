@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from ulid import ULID
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -86,15 +87,7 @@ class ThreadManager:
 
     def _get_thread_keys(self, thread_id: str) -> Dict[str, str]:
         """Get all Redis keys for a thread."""
-        return {
-            "status": f"sre:thread:{thread_id}:status",
-            "updates": f"sre:thread:{thread_id}:updates",
-            "context": f"sre:thread:{thread_id}:context",
-            "action_items": f"sre:thread:{thread_id}:action_items",
-            "metadata": f"sre:thread:{thread_id}:metadata",
-            "result": f"sre:thread:{thread_id}:result",
-            "error": f"sre:thread:{thread_id}:error",
-        }
+        return RedisKeys.all_thread_keys(thread_id)
 
     async def _generate_thread_subject(self, original_message: str) -> str:
         """Generate a concise subject for the thread based on the original message."""
@@ -192,16 +185,16 @@ Subject:"""
             timestamp = datetime.now(timezone.utc).timestamp()
 
             # Add to global thread index (sorted by creation time)
-            await client.zadd("sre:threads:index", {thread_id: timestamp})
+            await client.zadd(RedisKeys.threads_index(), {thread_id: timestamp})
 
             # Add to user-specific index if user_id provided
             if user_id:
-                await client.zadd(f"sre:threads:user:{user_id}", {thread_id: timestamp})
+                await client.zadd(RedisKeys.threads_user_index(user_id), {thread_id: timestamp})
 
             # Set TTL for indices (30 days)
-            await client.expire("sre:threads:index", 2592000)
+            await client.expire(RedisKeys.threads_index(), 2592000)
             if user_id:
-                await client.expire(f"sre:threads:user:{user_id}", 2592000)
+                await client.expire(RedisKeys.threads_user_index(user_id), 2592000)
 
             return True
 
@@ -217,11 +210,11 @@ Subject:"""
             client = await self._get_client()
 
             # Remove from global index
-            await client.zrem("sre:threads:index", thread_id)
+            await client.zrem(RedisKeys.threads_index(), thread_id)
 
             # Remove from user index if user_id provided
             if user_id:
-                await client.zrem(f"sre:threads:user:{user_id}", thread_id)
+                await client.zrem(RedisKeys.threads_user_index(user_id), thread_id)
 
             return True
 
@@ -241,7 +234,9 @@ Subject:"""
             client = await self._get_client()
 
             # Choose index based on user_id
-            index_key = f"sre:threads:user:{user_id}" if user_id else "sre:threads:index"
+            index_key = (
+                RedisKeys.threads_user_index(user_id) if user_id else RedisKeys.threads_index()
+            )
 
             # Get thread IDs from index (most recent first)
             thread_ids = await client.zrevrange(

@@ -8,6 +8,7 @@ from docket import ConcurrencyLimit, Docket, Perpetual, Retry
 from ulid import ULID
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import (
     get_knowledge_index,
     get_redis_client,
@@ -99,7 +100,7 @@ async def analyze_system_metrics(
         import json
 
         client = get_redis_client()
-        result_key = f"sre:metrics:{result['task_id']}"
+        result_key = RedisKeys.metrics_result(result["task_id"])
         await client.hset(result_key, mapping={"data": json.dumps(result)})
         await client.expire(result_key, 3600)  # 1 hour TTL
 
@@ -250,7 +251,7 @@ async def check_service_health(
         import json
 
         client = get_redis_client()
-        result_key = f"sre:health:{result['task_id']}"
+        result_key = RedisKeys.health_result(result["task_id"])
         await client.set(result_key, json.dumps(result))
         await client.expire(result_key, 1800)  # 30 minutes TTL
 
@@ -305,7 +306,7 @@ async def ingest_sre_document(
         }
 
         # Store in vector index
-        doc_key = f"sre_knowledge:{doc_id}"
+        doc_key = RedisKeys.knowledge_document(doc_id)
         await index.load(data=[document], id_field="id", keys=[doc_key])
 
         result = {

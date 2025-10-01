@@ -168,7 +168,6 @@ class _AsyncVectorizerProxy:
         return other is self._inner or other == self._inner
 
 
-# TODO: This should be using a RedisVL vectorizer
 def get_vectorizer() -> OpenAITextVectorizer:
     """Get OpenAI vectorizer with Redis caching (creates fresh to avoid event loop issues).
 

@@ -484,9 +484,11 @@ class TestIngestionPipeline:
         mock_index.load.assert_called_once()
         call_args = mock_index.load.call_args
 
+        from redis_sre_agent.core.keys import RedisKeys
+
         assert call_args[1]["id_field"] == "id"
         assert len(call_args[1]["keys"]) == 2
-        assert all(key.startswith("sre_knowledge:") for key in call_args[1]["keys"])
+        assert all(key.startswith(RedisKeys.PREFIX_KNOWLEDGE + ":") for key in call_args[1]["keys"])
 
         # Check that embeddings were added to documents
         indexed_docs = call_args[1]["data"]

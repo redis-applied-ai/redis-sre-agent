@@ -24,8 +24,10 @@ class TestRedisInfrastructure:
         """Test SRE knowledge schema definition."""
         schema = SRE_KNOWLEDGE_SCHEMA
 
+        from redis_sre_agent.core.keys import RedisKeys
+
         assert schema["index"]["name"] == "sre_knowledge"
-        assert schema["index"]["prefix"] == "sre_knowledge:"
+        assert schema["index"]["prefix"] == RedisKeys.PREFIX_KNOWLEDGE + ":"
         assert schema["index"]["storage_type"] == "hash"
 
         # Check required fields

@@ -7,12 +7,14 @@ the agent's tools connect to THAT instance, not the application's Redis.
 import pytest
 
 from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import process_agent_turn
 from redis_sre_agent.core.thread_state import get_thread_manager
 
 
 @pytest.fixture
-async def thread_manager():
+async def thread_manager(redis_container):
     """Get the thread manager for testing."""
     manager = get_thread_manager()
     yield manager
@@ -191,11 +193,9 @@ async def test_instance_context_passed_to_agent(thread_manager):
         description="Test instance for context passing",
     )
 
-    from redis_sre_agent.core.redis import get_redis_client
-
     redis_client = get_redis_client()
 
-    instance_key = f"sre:instance:{test_instance.id}"
+    instance_key = RedisKeys.instance(test_instance.id)
     await redis_client.hset(
         instance_key,
         mapping={
@@ -207,7 +207,7 @@ async def test_instance_context_passed_to_agent(thread_manager):
             "description": test_instance.description,
         },
     )
-    await redis_client.sadd("sre:instances", test_instance.id)
+    await redis_client.sadd(RedisKeys.instances_set(), test_instance.id)
 
     # Create thread WITH instance context
     thread_id = await thread_manager.create_thread(
@@ -229,7 +229,7 @@ async def test_instance_context_passed_to_agent(thread_manager):
 
     # Cleanup
     await redis_client.delete(instance_key)
-    await redis_client.srem("sre:instances", test_instance.id)
+    await redis_client.srem(RedisKeys.instances_set(), test_instance.id)
     await thread_manager.delete_thread(thread_id)
 
 

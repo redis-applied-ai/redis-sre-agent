@@ -41,7 +41,9 @@ class TestTaskStreamManager:
             stream_key = call_args[0][0]
             stream_data = call_args[0][1]
 
-            assert stream_key == "sre:stream:task:test_thread"
+            from redis_sre_agent.core.keys import RedisKeys
+
+            assert stream_key == RedisKeys.task_stream("test_thread")
             assert "timestamp" in stream_data
             assert stream_data["update_type"] == "status_change"
             assert stream_data["thread_id"] == "test_thread"
@@ -204,8 +206,10 @@ class TestWebSocketEndpoint:
             assert response.status_code == 200
             data = response.json()
 
+            from redis_sre_agent.core.keys import RedisKeys
+
             assert data["thread_id"] == thread_id
-            assert data["stream_key"] == f"sre:stream:task:{thread_id}"
+            assert data["stream_key"] == RedisKeys.task_stream(thread_id)
             assert data["stream_length"] == 5
             assert data["active_connections"] == 0
             assert data["consumer_active"] is False

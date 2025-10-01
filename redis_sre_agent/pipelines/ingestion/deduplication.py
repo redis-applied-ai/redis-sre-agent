@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from redis_sre_agent.core.keys import RedisKeys
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,7 +19,7 @@ class DocumentDeduplicator:
 
     def generate_deterministic_chunk_key(self, document_hash: str, chunk_index: int) -> str:
         """Generate deterministic key for a document chunk."""
-        return f"sre_knowledge:{document_hash}:chunk:{chunk_index}"
+        return RedisKeys.knowledge_chunk(document_hash, chunk_index)
 
     def generate_document_tracking_key(self, document_hash: str) -> str:
         """Generate key for tracking document metadata."""
@@ -34,7 +36,7 @@ class DocumentDeduplicator:
             redis_client = self.index.client
 
             # Search for all chunks with this document hash
-            pattern = f"sre_knowledge:{document_hash}:chunk:*"
+            pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
             existing_keys = []
 
             async for key in redis_client.scan_iter(match=pattern):

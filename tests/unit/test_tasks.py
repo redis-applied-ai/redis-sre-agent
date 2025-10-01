@@ -59,8 +59,12 @@ class TestAnalyzeSystemMetrics:
         assert "findings" in result
 
         # Verify Redis operations
+        from redis_sre_agent.core.keys import RedisKeys
+
         mock_redis_client.hset.assert_called_once()
-        mock_redis_client.expire.assert_called_once_with(f"sre:metrics:{result['task_id']}", 3600)
+        mock_redis_client.expire.assert_called_once_with(
+            RedisKeys.metrics_result(result["task_id"]), 3600
+        )
 
     @pytest.mark.asyncio
     async def test_analyze_metrics_with_retry(self, mock_redis_client):
