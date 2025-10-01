@@ -631,21 +631,10 @@ async def process_agent_turn(
 
         # Prepare the conversation state with thread context
         messages = thread_state.context.get("messages", [])
-        logger.info(f"DEBUG: messages type: {type(messages)}, value: {messages}")
-
-        # Filter messages to only include user and assistant messages
-        # This prevents OpenAI API errors about tool messages without tool_calls
-        filtered_messages = [
-            msg
-            for msg in messages
-            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
-        ]
-        logger.info(
-            f"Filtered {len(messages)} messages to {len(filtered_messages)} (user/assistant only)"
-        )
+        logger.info(f"DEBUG: Loaded {len(messages)} messages from thread context")
 
         conversation_state = {
-            "messages": filtered_messages,
+            "messages": messages,
             "thread_id": thread_id,
         }
 
@@ -710,7 +699,8 @@ async def process_agent_turn(
         )
 
         # Update thread context with new conversation state
-        # Only save user/assistant messages (filter out any tool messages)
+        # Only save user/assistant messages - tool messages are internal to LangGraph
+        # and shouldn't be persisted across turns
         clean_messages = [
             msg
             for msg in conversation_state["messages"]
@@ -722,7 +712,7 @@ async def process_agent_turn(
         # Save the updated context to Redis
         await thread_manager._save_thread_state(thread_state)
         logger.info(
-            f"Saved conversation history with {len(clean_messages)} messages (filtered from {len(conversation_state['messages'])})"
+            f"Saved conversation history: {len(clean_messages)} user/assistant messages (filtered from {len(conversation_state['messages'])} total)"
         )
 
         # Extract action items if present
@@ -800,6 +790,7 @@ async def run_agent_with_progress(
         progress_agent = SRELangGraphAgent(progress_callback=progress_callback)
 
         # Convert conversation messages to LangChain format
+        # We only store user/assistant messages, tool messages are internal to LangGraph
         from langchain_core.messages import AIMessage, HumanMessage
 
         lc_messages = []
