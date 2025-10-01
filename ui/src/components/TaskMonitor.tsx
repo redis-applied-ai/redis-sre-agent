@@ -55,9 +55,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
         setIsThinking(true);
         setCurrentStatus('loading');
 
-        const response = await fetch(`/api/v1/threads/${threadId}`);
+        const response = await fetch(`/api/v1/tasks/${threadId}`);
         if (response.ok) {
           const threadData = await response.json();
+          console.log('Thread data:', threadData);
+          console.log('Context:', threadData.context);
+          console.log('Messages:', threadData.context?.messages);
+
           const threadMessages = threadData.context?.messages || [];
 
           // Convert to ChatMessage format
@@ -69,8 +73,9 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
           }));
 
           setMessages(chatMessages);
-          console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}`);
+          console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}:`, chatMessages);
         } else {
+          console.error('Failed to load thread:', response.status, response.statusText);
           // If thread doesn't exist yet or error, start fresh
           setMessages([]);
         }
