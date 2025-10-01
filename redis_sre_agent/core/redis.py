@@ -1,4 +1,4 @@
-"""Redis connection management with URL-aware caching."""
+"""Redis connection management with URL and event-loop aware caching."""
 
 import asyncio
 import logging
@@ -13,10 +13,11 @@ from redis_sre_agent.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Cache for Redis objects keyed by URL (so testcontainer URLs work)
-_redis_cache: dict[str, Redis] = {}
-_vectorizer_cache: dict[str, Any] = {}
-_knowledge_index_cache: dict[str, AsyncSearchIndex] = {}
+# Cache for Redis objects keyed by (URL, event_loop_id)
+# This prevents reusing connections across different event loops
+_redis_cache: dict[tuple[str, int], Redis] = {}
+_vectorizer_cache: dict[tuple[str, int], Any] = {}
+_knowledge_index_cache: dict[tuple[str, int], AsyncSearchIndex] = {}
 
 # Index names
 SRE_KNOWLEDGE_INDEX = "sre_knowledge"
@@ -140,15 +141,23 @@ SRE_SCHEDULES_SCHEMA = {
 
 
 def get_redis_client() -> Redis:
-    """Get Redis client (cached per URL for testability)."""
+    """Get Redis client (cached per URL and event loop for testability)."""
     url = settings.redis_url
-    if url not in _redis_cache:
-        _redis_cache[url] = Redis.from_url(
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        # No event loop running, use a sentinel value
+        loop_id = 0
+
+    cache_key = (url, loop_id)
+    if cache_key not in _redis_cache:
+        _redis_cache[cache_key] = Redis.from_url(
             url=url,
             password=settings.redis_password,
             decode_responses=False,  # Keep as bytes for RedisVL compatibility
         )
-    return _redis_cache[url]
+    return _redis_cache[cache_key]
 
 
 class _AsyncVectorizerProxy:
@@ -178,7 +187,7 @@ class _AsyncVectorizerProxy:
 
 # TODO: This should be using a RedisVL vectorizer
 def get_vectorizer() -> OpenAITextVectorizer:
-    """Get OpenAI vectorizer with Redis caching (cached per URL for testability).
+    """Get OpenAI vectorizer with Redis caching (cached per URL and event loop).
 
     Additionally, make ``embed_many`` awaitable on the instance so callers can
     use ``await vectorizer.embed_many([...])``. This preserves backward
@@ -186,25 +195,41 @@ def get_vectorizer() -> OpenAITextVectorizer:
     instance while enabling async integration tests to ``await`` the call.
     """
     url = settings.redis_url
-    if url not in _vectorizer_cache:
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        # No event loop running, use a sentinel value
+        loop_id = 0
+
+    cache_key = (url, loop_id)
+    if cache_key not in _vectorizer_cache:
         cache = EmbeddingsCache(redis_url=url)
         inner = OpenAITextVectorizer(
             model=settings.embedding_model,
             cache=cache,
             api_config={"api_key": settings.openai_api_key},
         )
-        _vectorizer_cache[url] = _AsyncVectorizerProxy(inner)
-    return _vectorizer_cache[url]
+        _vectorizer_cache[cache_key] = _AsyncVectorizerProxy(inner)
+    return _vectorizer_cache[cache_key]
 
 
 def get_knowledge_index() -> AsyncSearchIndex:
-    """Get SRE knowledge base index (cached per URL for testability)."""
+    """Get SRE knowledge base index (cached per URL and event loop)."""
     url = settings.redis_url
-    if url not in _knowledge_index_cache:
-        _knowledge_index_cache[url] = AsyncSearchIndex.from_dict(
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        # No event loop running, use a sentinel value
+        loop_id = 0
+
+    cache_key = (url, loop_id)
+    if cache_key not in _knowledge_index_cache:
+        _knowledge_index_cache[cache_key] = AsyncSearchIndex.from_dict(
             SRE_KNOWLEDGE_SCHEMA, redis_url=url
         )
-    return _knowledge_index_cache[url]
+    return _knowledge_index_cache[cache_key]
 
 
 def get_schedules_index() -> AsyncSearchIndex:
