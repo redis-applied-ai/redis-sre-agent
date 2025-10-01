@@ -106,10 +106,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
             setCurrentStatus(data.status || 'unknown');
 
             // Process initial updates to extract user query and responses
+            // Filter out the final result to avoid duplicates
             if (data.updates) {
-              processUpdates(data.updates);
+              const updatesWithoutFinalResult = data.updates.filter(u => !u.result?.response);
+              processUpdates(updatesWithoutFinalResult);
             }
 
+            // Add the final result once
             if (data.result?.response) {
               addAssistantMessage(data.result.response, data.result.turn_completed_at || new Date().toISOString());
               setIsThinking(false);

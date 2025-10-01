@@ -71,6 +71,20 @@ select option {
   color: var(--card-foreground) !important;
 }
 
+/* Text color support */
+.text-foreground {
+  color: var(--foreground) !important;
+}
+
+.text-muted-foreground {
+  color: var(--muted-foreground) !important;
+}
+
+/* Border support */
+.border {
+  border-color: var(--border) !important;
+}
+
 /* Enhanced markdown content spacing for agent responses */
 .markdown-content {
   line-height: 1.6;
