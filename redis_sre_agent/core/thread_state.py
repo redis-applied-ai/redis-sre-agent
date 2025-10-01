@@ -577,58 +577,62 @@ Subject:"""
             client = await self._get_client()
             keys = self._get_thread_keys(thread_state.thread_id)
 
-            # Use pipeline for atomic operations
-            pipe = client.pipeline()
+            # Use async pipeline for atomic operations
+            async with client.pipeline(transaction=True) as pipe:
+                # Set basic fields
+                pipe.set(keys["status"], thread_state.status.value)
 
-            # Set basic fields
-            pipe.set(keys["status"], thread_state.status.value)
+                # Set context as hash
+                if thread_state.context:
+                    # Filter out None values and serialize complex objects as JSON
+                    clean_context = {}
+                    for k, v in thread_state.context.items():
+                        if v is None:
+                            clean_context[k] = ""
+                        elif isinstance(v, (dict, list)):
+                            # Serialize complex objects as JSON
+                            clean_context[k] = json.dumps(v)
+                        else:
+                            # Keep simple types as strings
+                            clean_context[k] = str(v)
 
-            # Set context as hash
-            if thread_state.context:
-                # Filter out None values and serialize complex objects as JSON
-                clean_context = {}
-                for k, v in thread_state.context.items():
-                    if v is None:
-                        clean_context[k] = ""
-                    elif isinstance(v, (dict, list)):
-                        # Serialize complex objects as JSON
-                        clean_context[k] = json.dumps(v)
-                    else:
-                        # Keep simple types as strings
-                        clean_context[k] = str(v)
+                    if clean_context:
+                        pipe.hset(keys["context"], mapping=clean_context)
 
-                if clean_context:
-                    pipe.hset(keys["context"], mapping=clean_context)
+                # Set metadata as hash
+                metadata_dict = thread_state.metadata.model_dump()
+                metadata_dict["tags"] = json.dumps(metadata_dict["tags"])
+                # Ensure all metadata values are strings and not None
+                clean_metadata = {
+                    k: str(v) if v is not None else "" for k, v in metadata_dict.items()
+                }
+                pipe.hset(keys["metadata"], mapping=clean_metadata)
 
-            # Set metadata as hash
-            metadata_dict = thread_state.metadata.model_dump()
-            metadata_dict["tags"] = json.dumps(metadata_dict["tags"])
-            # Ensure all metadata values are strings and not None
-            clean_metadata = {k: str(v) if v is not None else "" for k, v in metadata_dict.items()}
-            pipe.hset(keys["metadata"], mapping=clean_metadata)
+                # Set action items as JSON
+                if thread_state.action_items:
+                    items_json = json.dumps(
+                        [item.model_dump() for item in thread_state.action_items]
+                    )
+                    pipe.set(keys["action_items"], items_json)
 
-            # Set action items as JSON
-            if thread_state.action_items:
-                items_json = json.dumps([item.model_dump() for item in thread_state.action_items])
-                pipe.set(keys["action_items"], items_json)
+                # Set result if exists
+                if thread_state.result:
+                    pipe.set(keys["result"], json.dumps(thread_state.result))
 
-            # Set result if exists
-            if thread_state.result:
-                pipe.set(keys["result"], json.dumps(thread_state.result))
+                # Set error if exists
+                if thread_state.error_message:
+                    pipe.set(keys["error"], thread_state.error_message)
 
-            # Set error if exists
-            if thread_state.error_message:
-                pipe.set(keys["error"], thread_state.error_message)
+                # Add updates
+                for update in thread_state.updates:
+                    pipe.lpush(keys["updates"], update.model_dump_json())
 
-            # Add updates
-            for update in thread_state.updates:
-                pipe.lpush(keys["updates"], update.model_dump_json())
+                # Set TTL (24 hours for thread data)
+                for key in keys.values():
+                    pipe.expire(key, 86400)
 
-            # Set TTL (24 hours for thread data)
-            for key in keys.values():
-                pipe.expire(key, 86400)
-
-            await pipe.execute()
+                # Execute pipeline
+                await pipe.execute()
 
             logger.info(f"Saved thread state for {thread_state.thread_id}")
             return True
