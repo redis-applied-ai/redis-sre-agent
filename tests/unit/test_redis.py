@@ -89,14 +89,19 @@ class TestRedisInfrastructure:
     @patch("redis_sre_agent.core.redis.AsyncSearchIndex")
     def test_get_knowledge_index(self, mock_index):
         """Test knowledge index singleton creation."""
+        import os
+
         mock_index_instance = Mock()
         mock_index.from_dict.return_value = mock_index_instance
 
         # First call creates index
         index1 = get_knowledge_index()
         assert index1 == mock_index_instance
+
+        # Should use whatever REDIS_URL is set in environment
+        expected_redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
         mock_index.from_dict.assert_called_once_with(
-            SRE_KNOWLEDGE_SCHEMA, redis_url="redis://localhost:6379/0"
+            SRE_KNOWLEDGE_SCHEMA, redis_url=expected_redis_url
         )
 
         # Second call returns same instance
