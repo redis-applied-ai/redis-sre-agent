@@ -49,7 +49,12 @@ class TestRedisInfrastructure:
 
     @patch("redis_sre_agent.core.redis.Redis")
     def test_get_redis_client(self, mock_redis):
-        """Test Redis client creation (no singleton - creates fresh each time)."""
+        """Test Redis client creation (cached per URL)."""
+        # Clear cache before test
+        from redis_sre_agent.core.redis import _redis_cache
+
+        _redis_cache.clear()
+
         mock_client = Mock()
         mock_redis.from_url.return_value = mock_client
 
@@ -58,16 +63,22 @@ class TestRedisInfrastructure:
         assert client1 == mock_client
         mock_redis.from_url.assert_called_once()
 
-        # Second call creates NEW instance (no singleton)
+        # Second call returns SAME instance (cached by URL)
         client2 = get_redis_client()
         assert client2 == mock_client
-        # from_url should be called TWICE (no singleton caching)
-        assert mock_redis.from_url.call_count == 2
+        assert client1 is client2
+        # from_url should still only be called once (cached)
+        assert mock_redis.from_url.call_count == 1
 
     @patch("redis_sre_agent.core.redis.EmbeddingsCache")
     @patch("redis_sre_agent.core.redis.OpenAITextVectorizer")
     def test_get_vectorizer(self, mock_vectorizer, mock_cache):
-        """Test vectorizer creation (no singleton - creates fresh each time)."""
+        """Test vectorizer creation (cached per URL)."""
+        # Clear cache before test
+        from redis_sre_agent.core.redis import _vectorizer_cache
+
+        _vectorizer_cache.clear()
+
         mock_cache_instance = Mock()
         mock_cache.return_value = mock_cache_instance
 
@@ -80,17 +91,23 @@ class TestRedisInfrastructure:
         mock_cache.assert_called_once()
         mock_vectorizer.assert_called_once()
 
-        # Second call creates NEW instance (no singleton)
+        # Second call returns SAME instance (cached by URL)
         vectorizer2 = get_vectorizer()
         assert vectorizer2 == mock_vectorizer_instance
-        # Should be called TWICE (no singleton caching)
-        assert mock_cache.call_count == 2
-        assert mock_vectorizer.call_count == 2
+        assert vectorizer1 is vectorizer2
+        # Should still only be called once (cached)
+        assert mock_cache.call_count == 1
+        assert mock_vectorizer.call_count == 1
 
     @patch("redis_sre_agent.core.redis.AsyncSearchIndex")
     def test_get_knowledge_index(self, mock_index):
-        """Test knowledge index singleton creation."""
+        """Test knowledge index creation (cached per URL)."""
+        # Clear cache before test
         from unittest.mock import ANY
+
+        from redis_sre_agent.core.redis import _knowledge_index_cache
+
+        _knowledge_index_cache.clear()
 
         mock_index_instance = Mock()
         mock_index.from_dict.return_value = mock_index_instance
@@ -101,6 +118,13 @@ class TestRedisInfrastructure:
 
         # Should be called with schema and some redis_url (don't care which one)
         mock_index.from_dict.assert_called_once_with(SRE_KNOWLEDGE_SCHEMA, redis_url=ANY)
+
+        # Second call returns SAME instance (cached by URL)
+        index2 = get_knowledge_index()
+        assert index2 == mock_index_instance
+        assert index1 is index2
+        # Should still only be called once (cached)
+        assert mock_index.from_dict.call_count == 1
 
         # Second call returns same instance
         index2 = get_knowledge_index()

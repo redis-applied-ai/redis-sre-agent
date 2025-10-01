@@ -1,4 +1,4 @@
-"""Redis connection management (no singletons - reads settings dynamically)."""
+"""Redis connection management with URL-aware caching."""
 
 import asyncio
 import logging
@@ -12,6 +12,11 @@ from redisvl.utils.vectorize import OpenAITextVectorizer
 from redis_sre_agent.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Cache for Redis objects keyed by URL (so testcontainer URLs work)
+_redis_cache: dict[str, Redis] = {}
+_vectorizer_cache: dict[str, Any] = {}
+_knowledge_index_cache: dict[str, AsyncSearchIndex] = {}
 
 # Index names
 SRE_KNOWLEDGE_INDEX = "sre_knowledge"
@@ -135,13 +140,15 @@ SRE_SCHEDULES_SCHEMA = {
 
 
 def get_redis_client() -> Redis:
-    """Get Redis client (reads settings.redis_url dynamically for testability)."""
-    # Don't use singleton - create fresh client each time to pick up settings changes
-    return Redis.from_url(
-        url=settings.redis_url,
-        password=settings.redis_password,
-        decode_responses=False,  # Keep as bytes for RedisVL compatibility
-    )
+    """Get Redis client (cached per URL for testability)."""
+    url = settings.redis_url
+    if url not in _redis_cache:
+        _redis_cache[url] = Redis.from_url(
+            url=url,
+            password=settings.redis_password,
+            decode_responses=False,  # Keep as bytes for RedisVL compatibility
+        )
+    return _redis_cache[url]
 
 
 class _AsyncVectorizerProxy:
@@ -171,27 +178,33 @@ class _AsyncVectorizerProxy:
 
 # TODO: This should be using a RedisVL vectorizer
 def get_vectorizer() -> OpenAITextVectorizer:
-    """Get OpenAI vectorizer with Redis caching (reads settings dynamically for testability).
+    """Get OpenAI vectorizer with Redis caching (cached per URL for testability).
 
     Additionally, make ``embed_many`` awaitable on the instance so callers can
     use ``await vectorizer.embed_many([...])``. This preserves backward
     compatibility for unit tests that expect the raw OpenAITextVectorizer
     instance while enabling async integration tests to ``await`` the call.
     """
-    # Don't use singleton - create fresh vectorizer each time to pick up settings changes
-    cache = EmbeddingsCache(redis_url=settings.redis_url)
-    inner = OpenAITextVectorizer(
-        model=settings.embedding_model,
-        cache=cache,
-        api_config={"api_key": settings.openai_api_key},
-    )
-    return _AsyncVectorizerProxy(inner)
+    url = settings.redis_url
+    if url not in _vectorizer_cache:
+        cache = EmbeddingsCache(redis_url=url)
+        inner = OpenAITextVectorizer(
+            model=settings.embedding_model,
+            cache=cache,
+            api_config={"api_key": settings.openai_api_key},
+        )
+        _vectorizer_cache[url] = _AsyncVectorizerProxy(inner)
+    return _vectorizer_cache[url]
 
 
 def get_knowledge_index() -> AsyncSearchIndex:
-    """Get SRE knowledge base index (reads settings dynamically for testability)."""
-    # Don't use singleton - create fresh index each time to pick up settings changes
-    return AsyncSearchIndex.from_dict(SRE_KNOWLEDGE_SCHEMA, redis_url=settings.redis_url)
+    """Get SRE knowledge base index (cached per URL for testability)."""
+    url = settings.redis_url
+    if url not in _knowledge_index_cache:
+        _knowledge_index_cache[url] = AsyncSearchIndex.from_dict(
+            SRE_KNOWLEDGE_SCHEMA, redis_url=url
+        )
+    return _knowledge_index_cache[url]
 
 
 def get_schedules_index() -> AsyncSearchIndex:
