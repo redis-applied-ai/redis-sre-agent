@@ -12,23 +12,23 @@ from redis_sre_agent.tools.providers.comprehensive_provider import (
     RedisProvider,
 )
 from redis_sre_agent.tools.providers.prometheus_metrics import PrometheusMetricsProvider
-from redis_sre_agent.tools.providers.redis_cli_metrics import RedisCLIMetricsProvider
+from redis_sre_agent.tools.providers.redis_command_metrics import RedisCommandMetricsProvider
 
 
-class TestRedisCLIMetricsProvider:
+class TestRedisCommandMetricsProvider:
     """Test Redis CLI metrics provider."""
 
     def test_provider_properties(self):
         """Test provider basic properties."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
 
-        assert provider.provider_name == "Redis CLI (redis://localhost:6379)"
+        assert provider.provider_name == "Redis Commands (redis://localhost:6379)"
         assert provider.supports_time_queries is False
 
     @pytest.mark.asyncio
     async def test_list_metrics(self):
         """Test listing available metrics."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
 
         metrics = await provider.list_metrics()
 
@@ -41,7 +41,7 @@ class TestRedisCLIMetricsProvider:
     @pytest.mark.asyncio
     async def test_get_current_value_success(self):
         """Test getting current metric value successfully."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
 
         # Mock Redis client
         mock_client = AsyncMock()
@@ -61,7 +61,7 @@ class TestRedisCLIMetricsProvider:
     @pytest.mark.asyncio
     async def test_get_current_value_calculated_metric(self):
         """Test getting calculated metric (hit rate)."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
 
         mock_client = AsyncMock()
         mock_client.info.return_value = {"keyspace_hits": 90, "keyspace_misses": 10}
@@ -75,7 +75,7 @@ class TestRedisCLIMetricsProvider:
     @pytest.mark.asyncio
     async def test_get_current_value_database_metric(self):
         """Test getting database-specific metric."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
 
         mock_client = AsyncMock()
         mock_client.info.return_value = {"db0": {"keys": 100, "expires": 50, "avg_ttl": 3600}}
@@ -89,7 +89,7 @@ class TestRedisCLIMetricsProvider:
     @pytest.mark.asyncio
     async def test_query_time_range_not_supported(self):
         """Test that time range queries raise NotImplementedError."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
         time_range = TimeRange(datetime.now() - timedelta(hours=1), datetime.now())
 
         with pytest.raises(NotImplementedError):
@@ -98,7 +98,7 @@ class TestRedisCLIMetricsProvider:
     @pytest.mark.asyncio
     async def test_health_check_success(self):
         """Test successful health check."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
 
         mock_client = AsyncMock()
         mock_client.ping.return_value = True
@@ -114,7 +114,7 @@ class TestRedisCLIMetricsProvider:
     @pytest.mark.asyncio
     async def test_health_check_failure(self):
         """Test health check failure."""
-        provider = RedisCLIMetricsProvider("redis://localhost:6379")
+        provider = RedisCommandMetricsProvider("redis://localhost:6379")
 
         mock_client = AsyncMock()
         mock_client.ping.side_effect = Exception("Connection failed")
@@ -350,7 +350,7 @@ class TestComprehensiveProviders:
 
         # Should return Redis CLI provider
         assert metrics_provider is not None
-        assert "Redis CLI" in metrics_provider.provider_name
+        assert "Redis Commands" in metrics_provider.provider_name
 
     @pytest.mark.asyncio
     async def test_provider_health_checks(self):
