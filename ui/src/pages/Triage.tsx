@@ -810,13 +810,43 @@ const Triage = () => {
           </CardHeader>
 
           {activeThreadId ? (
-            /* WebSocket Chat Interface */
-            <CardContent className="flex-1 overflow-hidden">
-              <TaskMonitor
-                threadId={activeThreadId}
-                initialQuery={sessionStorage.getItem(`thread-${activeThreadId}-query`) || undefined}
-              />
-            </CardContent>
+            <>
+              {/* WebSocket Chat Interface */}
+              <CardContent className="flex-1 overflow-hidden">
+                <TaskMonitor
+                  threadId={activeThreadId}
+                  initialQuery={sessionStorage.getItem(`thread-${activeThreadId}-query`) || undefined}
+                />
+              </CardContent>
+
+              {/* Input Area for Follow-up Messages */}
+              <div className="p-4 border-t border-redis-dusk-08">
+                <div className="flex gap-2">
+                  <textarea
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder="Continue the conversation..."
+                    className="flex-1 p-3 border border-redis-dusk-06 rounded-redis-sm resize-none focus:outline-none focus:ring-2 focus:ring-redis-blue-03 focus:border-transparent min-h-[60px]"
+                    rows={2}
+                    disabled={isLoading || agentStatus !== 'available'}
+                  />
+                  <Button
+                    variant="primary"
+                    onClick={sendMessage}
+                    disabled={!inputMessage.trim() || isLoading || agentStatus !== 'available'}
+                    className="self-end"
+                  >
+                    {isLoading ? <Loader size="sm" /> : 'Send'}
+                  </Button>
+                </div>
+                <div className="text-redis-xs text-redis-dusk-04 mt-2">
+                  {agentStatus === 'available'
+                    ? 'Press Enter to send, Shift+Enter for new line'
+                    : 'Agent is currently unavailable'}
+                </div>
+              </div>
+            </>
           ) : (
             <>
               {/* Empty State - No Active Thread */}
