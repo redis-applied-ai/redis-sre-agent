@@ -660,38 +660,36 @@ const Triage = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex-shrink-0 p-6 pb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* Mobile sidebar toggle */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="md:hidden"
-              onClick={() => setShowSidebar(!showSidebar)}
-            >
-              ☰
-            </Button>
-            <div>
-              <h1 className="text-redis-xl font-bold text-foreground">SRE Agent Triage</h1>
-              <p className="text-redis-sm text-redis-dusk-04 mt-1">
-                {activeThreadId
-                  ? 'Chat with the Redis SRE Agent for troubleshooting and support'
-                  : 'Describe your Redis issue or ask a question to get started'
-                }
-              </p>
-            </div>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {/* Mobile sidebar toggle */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="md:hidden"
+            onClick={() => setShowSidebar(!showSidebar)}
+          >
+            ☰
+          </Button>
+          <div>
+            <h1 className="text-redis-xl font-bold text-foreground">SRE Agent Triage</h1>
+            <p className="text-redis-sm text-redis-dusk-04 mt-1">
+              {activeThreadId
+                ? 'Chat with the Redis SRE Agent for troubleshooting and support'
+                : 'Describe your Redis issue or ask a question to get started'
+              }
+            </p>
           </div>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex gap-4 p-4">
+      <div className="flex gap-4 h-[calc(100vh-200px)]">
         {/* Thread Sidebar - Responsive visibility */}
-        <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col`}>
-          <Card className="flex-1 flex flex-col" padding="none">
+        <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-full`}>
+          <Card className="flex-1 flex flex-col h-full" padding="none">
           <CardHeader className="flex-shrink-0 p-4 pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -809,8 +807,8 @@ const Triage = () => {
       </div>
 
         {/* Chat Area */}
-        <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col`}>
-          <Card className="flex-1 flex flex-col">
+        <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col h-full`}>
+          <Card className="flex-1 flex flex-col h-full">
             {activeThreadId ? (
             <>
               {/* WebSocket Chat Interface */}

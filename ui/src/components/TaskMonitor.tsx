@@ -41,14 +41,46 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Reset state when threadId changes
+  // Load thread messages when threadId changes
   useEffect(() => {
     console.log('Thread changed to:', threadId);
-    setMessages([]);
-    setIsThinking(false);
-    setCurrentStatus('unknown');
+
+    // Reset tracking refs
     lastMessageIdRef.current = null;
     lastRenderTimeRef.current = 0;
+
+    // Fetch thread messages from API
+    const loadThreadMessages = async () => {
+      try {
+        setIsThinking(true);
+        setCurrentStatus('loading');
+
+        const response = await fetch(`/api/v1/threads/${threadId}`);
+        if (response.ok) {
+          const threadData = await response.json();
+          const threadMessages = threadData.context?.messages || [];
+
+          // Convert to ChatMessage format
+          const chatMessages: ChatMessage[] = threadMessages.map((msg: any, index: number) => ({
+            id: `${msg.role}-${index}-${msg.timestamp}`,
+            role: msg.role,
+            content: msg.content,
+            timestamp: msg.timestamp,
+          }));
+
+          setMessages(chatMessages);
+          console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}`);
+        } else {
+          // If thread doesn't exist yet or error, start fresh
+          setMessages([]);
+        }
+      } catch (error) {
+        console.error('Error loading thread messages:', error);
+        setMessages([]);
+      }
+    };
+
+    loadThreadMessages();
   }, [threadId]);
 
   // Only scroll when messages change, not on every state update
