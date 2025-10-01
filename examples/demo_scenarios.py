@@ -7,12 +7,16 @@ This comprehensive demo showcases the Redis SRE Agent's capabilities across mult
 2. Connection Issues Simulation - Simulate and resolve connection problems
 3. Performance Degradation - Analyze slow operations and optimization
 4. Full Health Check - Complete diagnostic suite with agent consultation
+5. Redis Enterprise Buffer Configuration - Buffer tuning issues
+6. Redis Enterprise Node Maintenance Mode - Node stuck in maintenance
+7. Redis Enterprise Lua Script Latency - Problematic Lua script causing high latency
 
 Usage:
     python demo_scenarios.py [--scenario <name>] [--auto-run] [--ui]
 
 Options:
-    --scenario: Run specific scenario (memory, connections, performance, health)
+    --scenario: Run specific scenario (memory, connections, performance, health, enterprise,
+                enterprise_maintenance, enterprise_lua)
     --auto-run: Run all scenarios automatically without user input
     --ui: Use web UI instead of CLI for agent interaction
 """
@@ -56,6 +60,8 @@ class RedisSREDemo:
             "performance": self.performance_scenario,
             "health": self.full_health_check,
             "enterprise": self.redis_enterprise_scenario,
+            "enterprise_maintenance": self.redis_enterprise_maintenance_scenario,
+            "enterprise_lua": self.redis_enterprise_lua_latency_scenario,
         }
         self._setup_demo_logging()
 
@@ -181,16 +187,18 @@ class RedisSREDemo:
         print("3. ⚡ Performance Analysis - Detect slow operations and bottlenecks")
         print("4. 🏥 Full Health Check - Complete diagnostic with agent consultation")
         print("5. 🏢 Redis Enterprise - Buffer configuration and tuning issues")
-        print("6. 🚀 Run All Scenarios - Complete demonstration")
+        print("6. 🔧 Redis Enterprise - Node in Maintenance Mode")
+        print("7. 🐌 Redis Enterprise - Lua Script High Latency")
+        print("8. 🚀 Run All Scenarios - Complete demonstration")
         print("0. 🚪 Exit")
 
         while True:
             try:
-                choice = input("\nSelect scenario (0-6): ").strip()
-                if choice in ["0", "1", "2", "3", "4", "5", "6"]:
+                choice = input("\nSelect scenario (0-8): ").strip()
+                if choice in ["0", "1", "2", "3", "4", "5", "6", "7", "8"]:
                     return choice
                 else:
-                    print("❌ Invalid choice, please select 0-6")
+                    print("❌ Invalid choice, please select 0-8")
             except KeyboardInterrupt:
                 print("\n👋 Demo interrupted by user")
                 return "0"
@@ -971,6 +979,517 @@ class RedisSREDemo:
         print("   💡 In production, consider increasing buffer limits to 32MB+ for slave_buffer")
         print("   💡 and 16MB+ for client_buffer based on workload requirements")
 
+    async def redis_enterprise_maintenance_scenario(self):
+        """Simulate Redis Enterprise node stuck in maintenance mode."""
+        self.print_header("Redis Enterprise Node Maintenance Mode Scenario", "🔧")
+
+        self.print_step(1, "Checking Redis Enterprise cluster setup")
+
+        print("   📋 This scenario requires a multi-node Redis Enterprise cluster")
+        print("   📋 to demonstrate actual maintenance mode.")
+        print()
+        print("   ⚙️  Prerequisites:")
+        print("   1. Start Redis Enterprise nodes:")
+        print(
+            "      docker-compose up -d redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3"
+        )
+        print()
+        print("   2. Initialize the cluster:")
+        print("      ./scripts/setup_redis_enterprise_cluster.sh")
+        print()
+        print("   💡 If you haven't done this yet, press Ctrl+C and run the setup commands above.")
+        print()
+
+        # Give user a moment to read
+        import time
+
+        time.sleep(2)
+
+        # Note: This scenario works with the Redis Enterprise instance in docker-compose
+        enterprise_url = "redis://:admin@redis-enterprise:12000/0"
+
+        try:
+            # Test connection to Redis Enterprise
+            import redis
+
+            enterprise_client = redis.from_url(enterprise_url)
+            enterprise_client.ping()
+            print("   ✅ Connected to Redis Enterprise instance")
+
+            # Get current server info
+            info = enterprise_client.info("server")
+            redis_version = info.get("redis_version", "unknown")
+            print(f"   📊 Redis Enterprise version: {redis_version}")
+
+        except Exception as e:
+            print(f"   ❌ Could not connect to Redis Enterprise: {e}")
+            print("   💡 Make sure Redis Enterprise is running with the demo setup")
+            print("   💡 Expected connection: redis://:admin@redis-enterprise:12000/0")
+            return
+
+        self.print_step(2, "Putting node 2 in maintenance mode")
+
+        print("   🔧 Attempting to place Redis Enterprise node 2 in maintenance mode...")
+        print()
+
+        # Try to put node 2 in maintenance mode
+        import subprocess
+
+        try:
+            # First check if we have a multi-node cluster
+            result = subprocess.run(
+                ["docker", "exec", "redis-enterprise-node1", "rladmin", "status", "nodes"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            if result.returncode == 0:
+                print("   📊 Current cluster status:")
+                print(result.stdout)
+                print()
+
+                # Count nodes
+                node_count = result.stdout.count("node:")
+
+                if node_count >= 2:
+                    print(f"   ✅ Found {node_count}-node cluster")
+                    print("   🔧 Placing node 2 in maintenance mode...")
+                    print()
+
+                    # Put node 2 in maintenance mode
+                    maint_result = subprocess.run(
+                        [
+                            "docker",
+                            "exec",
+                            "redis-enterprise-node1",
+                            "rladmin",
+                            "node",
+                            "2",
+                            "maintenance_mode",
+                            "on",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+
+                    if maint_result.returncode == 0:
+                        print("   ✅ Node 2 successfully placed in maintenance mode!")
+                        print(maint_result.stdout)
+                        print()
+
+                        # Verify the change
+                        verify_result = subprocess.run(
+                            [
+                                "docker",
+                                "exec",
+                                "redis-enterprise-node1",
+                                "rladmin",
+                                "status",
+                                "nodes",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+
+                        if verify_result.returncode == 0:
+                            print("   📊 Updated cluster status:")
+                            print(verify_result.stdout)
+                            print()
+
+                            # Parse and highlight the maintenance mode status
+                            print("   🔍 VERIFICATION:")
+                            if "0/0" in verify_result.stdout:
+                                print("   ✅ SUCCESS: Node 2 is now in maintenance mode!")
+                                print(
+                                    "   ✅ Look for 'node:2' with SHARDS showing '0/0' in the output above"
+                                )
+                                print("   ✅ This means all shards have been migrated away")
+                            else:
+                                print(
+                                    "   ⚠️  Could not confirm maintenance mode - check output above"
+                                )
+                            print()
+                    else:
+                        print(
+                            f"   ⚠️  Failed to place node in maintenance mode: {maint_result.stderr}"
+                        )
+                        print(
+                            "   💡 This is expected if node 2 doesn't exist or cluster isn't ready"
+                        )
+                        print()
+                else:
+                    print(
+                        f"   ⚠️  Only {node_count} node(s) found - need at least 2 nodes for maintenance mode"
+                    )
+                    print(
+                        "   💡 Run: ./scripts/setup_redis_enterprise_cluster.sh to create a 3-node cluster"
+                    )
+                    print()
+            else:
+                print(f"   ⚠️  Could not get cluster status: {result.stderr}")
+                print("   💡 Make sure Redis Enterprise cluster is initialized")
+                print()
+
+        except subprocess.TimeoutExpired:
+            print("   ⚠️  Command timed out - cluster may not be fully initialized")
+            print()
+        except Exception as e:
+            print(f"   ⚠️  Could not execute rladmin command: {e}")
+            print()
+
+        print("   📋 This demo creates a scenario where you can use the agent to investigate")
+        print("   📋 a node in maintenance mode. The agent has access to rladmin commands")
+        print("   📋 through the get_redis_enterprise_node_status tool.")
+        print()
+        print("   💡 In the UI, you can ask the agent:")
+        print("   💡 - 'Check the Redis Enterprise cluster status'")
+        print("   💡 - 'Are any nodes in maintenance mode?'")
+        print("   💡 - 'Show me the node status'")
+        print()
+        print("   🔍 The agent will use rladmin commands to check the actual cluster state")
+        print("   🔍 and provide recommendations based on what it finds.")
+        print()
+
+        # Add some test data to make the scenario more realistic
+        print("   🧪 Creating test data to simulate active database...")
+        pipe = enterprise_client.pipeline()
+        for i in range(50):
+            key = f"enterprise:maint_test:{i}"
+            value = f"data_{i}_" + "x" * 500  # ~500 bytes per key
+            pipe.set(key, value)
+        pipe.execute()
+
+        # Get memory info
+        memory_info = enterprise_client.info("memory")
+        used_memory = memory_info.get("used_memory", 0)
+        print(f"   📊 Database memory usage: {used_memory / (1024 * 1024):.2f} MB")
+
+        self.print_step(3, "Analyzing maintenance mode impact")
+
+        print("   ⚠️  Impact of node in maintenance mode:")
+        print("   • Reduced cluster capacity (node not serving traffic)")
+        print("   • Potential performance impact on remaining nodes")
+        print("   • Risk if another node fails (reduced redundancy)")
+        print("   • Databases may be running with fewer replicas")
+        print("   • Cluster rebalancing may be needed after exit")
+        print()
+
+        print("   🔍 Common reasons for forgotten maintenance mode:")
+        print("   • Incomplete maintenance procedure")
+        print("   • Manual intervention without documentation")
+        print("   • Automated script failure")
+        print("   • Communication gap between team members")
+        print()
+
+        # Summary before agent interaction
+        print("=" * 80)
+        print("📋 SCENARIO READY FOR INVESTIGATION")
+        print("=" * 80)
+        print()
+        print("✅ Setup Complete:")
+        print("   • Redis Enterprise cluster is running")
+        print("   • Node 2 has been placed in maintenance mode (if multi-node cluster)")
+        print("   • Test data created (50 keys)")
+        print(f"   • Database memory usage: {used_memory / (1024 * 1024):.2f} MB")
+        print()
+        print("🔍 What to Verify:")
+        print("   • Check if node 2 shows SHARDS: 0/0 (maintenance mode indicator)")
+        print("   • Verify shards have migrated to other nodes")
+        print("   • Confirm cluster is still operational")
+        print()
+        print("💡 Questions to Ask the Agent:")
+        print("   • 'Check the Redis Enterprise cluster status'")
+        print("   • 'Are any nodes in maintenance mode?'")
+        print("   • 'Show me the node status and explain what I'm seeing'")
+        print("   • 'What should I do about the node in maintenance mode?'")
+        print()
+        print("=" * 80)
+        print()
+
+        # Handle UI mode vs CLI mode
+        if self.ui_mode:
+            print("🌐 UI MODE: Scenario is ready for investigation")
+            print("   Open the UI and start asking the agent questions!")
+            print()
+            self._wait_for_ui_interaction(
+                "Redis Enterprise Node Maintenance Mode",
+                f"Node 2 in maintenance mode. Database active with {used_memory / (1024 * 1024):.1f}MB. Ask agent to investigate!",
+            )
+            return  # Leave scenario in place for UI interaction
+
+        # CLI mode: Query the agent - it will use its tools to check the cluster status
+        query = f"""I need help investigating a Redis Enterprise cluster. The database is active with {used_memory / (1024 * 1024):.1f}MB memory usage.
+
+Please check the Redis Enterprise cluster status and node status to see if there are any issues. Specifically:
+1. Check if any nodes are in maintenance mode
+2. Check the overall cluster health
+3. If you find any issues, provide recommendations for investigation and remediation.
+
+Use your Redis Enterprise tools to check the actual cluster state."""
+
+        await self._run_diagnostics_and_agent_query(query)
+
+        self.print_step(4, "Recommended investigation steps")
+
+        print("   📋 Steps to investigate and resolve:")
+        print()
+        print("   1. Check node health:")
+        print("      docker exec redis-enterprise-node1 rladmin info node 2")
+        print()
+        print("   2. Check maintenance mode history:")
+        print("      docker exec redis-enterprise-node1 rladmin status | grep -i maintenance")
+        print()
+        print("   3. Verify node is healthy before exiting:")
+        print("      docker exec redis-enterprise-node1 rladmin status nodes")
+        print()
+        print("   4. Exit maintenance mode (if safe):")
+        print("      docker exec redis-enterprise-node1 rladmin node 2 maintenance_mode off")
+        print()
+        print("   5. Verify node is back online:")
+        print("      docker exec redis-enterprise-node1 rladmin status nodes")
+        print()
+
+        # Note: We don't clean up the test data here to leave the scenario in place
+        print()
+        print("   ✅ Redis Enterprise maintenance mode scenario setup completed")
+        print()
+        print("   💡 The agent now has access to Redis Enterprise tools:")
+        print("   💡 - get_redis_enterprise_cluster_status")
+        print("   💡 - get_redis_enterprise_node_status")
+        print("   💡 - get_redis_enterprise_database_status")
+        print()
+        print("   💡 In the UI, ask the agent to check the cluster status!")
+        print("   💡 Test data left in place - to clean up:")
+        print(
+            "   💡 redis-cli -h localhost -p 12000 -a admin --scan --pattern 'enterprise:maint_test:*' | xargs redis-cli -h localhost -p 12000 -a admin DEL"
+        )
+
+    async def redis_enterprise_lua_latency_scenario(self):
+        """Simulate Redis Enterprise database with Lua script causing high latency."""
+        self.print_header("Redis Enterprise Lua Script High Latency Scenario", "🐌")
+
+        self.print_step(1, "Setting up Redis Enterprise Lua latency scenario")
+
+        print("   📋 This scenario simulates a Redis Enterprise database with:")
+        print("   • Lua script causing high latency")
+        print("   • CPU-intensive operations blocking Redis")
+        print("   • Slow operations appearing in slowlog")
+        print("   • Performance degradation affecting all operations")
+        print()
+
+        # Note: This scenario works with the Redis Enterprise instance in docker-compose
+        enterprise_url = "redis://:admin@redis-enterprise:12000/0"
+
+        try:
+            # Test connection to Redis Enterprise
+            import redis
+
+            enterprise_client = redis.from_url(enterprise_url)
+            enterprise_client.ping()
+            print("   ✅ Connected to Redis Enterprise instance")
+
+            # Get current server info
+            info = enterprise_client.info("server")
+            redis_version = info.get("redis_version", "unknown")
+            print(f"   📊 Redis Enterprise version: {redis_version}")
+
+        except Exception as e:
+            print(f"   ❌ Could not connect to Redis Enterprise: {e}")
+            print("   💡 Make sure Redis Enterprise is running with the demo setup")
+            print("   💡 Expected connection: redis://:admin@redis-enterprise:12000/0")
+            return
+
+        self.print_step(2, "Creating test data and problematic Lua script")
+
+        # Create test data
+        print("   Creating test data structures...")
+        pipe = enterprise_client.pipeline()
+        for i in range(200):
+            key = f"enterprise:lua_test:string:{i}"
+            value = f"value_{i}_{random.randint(1000, 9999)}"
+            pipe.set(key, value)
+        pipe.execute()
+        print("   ✅ Created 200 test keys")
+
+        # Create a problematic Lua script that causes high latency
+        problematic_lua_script = """
+        -- Problematic Lua script with CPU-intensive operations
+        local iterations = tonumber(ARGV[1]) or 200000
+        local key_prefix = ARGV[2] or "enterprise:lua_test"
+
+        -- CPU-intensive computation (blocks Redis)
+        local result = 0
+        for i = 1, iterations do
+            for j = 1, 150 do
+                result = result + (i * j) % 1000
+                -- Additional computation to increase latency
+                local temp = math.sqrt(i * j)
+                result = result + math.floor(temp)
+            end
+        end
+
+        -- Multiple Redis operations that compound the latency
+        local keys_processed = 0
+        for i = 1, 20 do
+            local key = key_prefix .. ":string:" .. i
+            local value = redis.call('GET', key)
+            if value then
+                -- Unnecessary computation on each value
+                redis.call('SET', key .. ":processed", value .. "_" .. result)
+                keys_processed = keys_processed + 1
+            end
+        end
+
+        -- More unnecessary operations
+        for i = 1, 10 do
+            redis.call('SET', 'temp:lua:' .. i, 'processing_' .. result .. '_' .. i)
+            redis.call('GET', 'temp:lua:' .. i)
+            redis.call('DEL', 'temp:lua:' .. i)
+        end
+
+        return {result, keys_processed, "completed"}
+        """
+
+        self.print_step(3, "Executing problematic Lua script to generate high latency")
+
+        print("   🐌 Running CPU-intensive Lua script multiple times...")
+        print("   ⚠️  This will cause significant latency and block Redis operations")
+        print()
+
+        lua_times = []
+        for i in range(5):
+            try:
+                print(f"   Executing slow Lua operation {i + 1}/5...")
+                start_time = time.time()
+                # Execute the problematic script with high iteration count
+                result = enterprise_client.eval(
+                    problematic_lua_script, 0, str(100000 + i * 20000), "enterprise:lua_test"
+                )
+                duration = time.time() - start_time
+                lua_times.append(duration * 1000)  # Convert to milliseconds
+                print(
+                    f"   Lua operation {i + 1} completed in {duration * 1000:.1f}ms (result: {result})"
+                )
+                time.sleep(0.3)  # Brief pause between operations
+            except Exception as e:
+                print(f"   Warning: Lua operation {i + 1} failed: {e}")
+
+        # Test normal operations to show the contrast
+        print("\n   Testing normal operations for comparison...")
+        start_time = time.time()
+        for i in range(100):
+            enterprise_client.get(f"enterprise:lua_test:string:{i}")
+        normal_time = time.time() - start_time
+        print(
+            f"   100 GET operations: {normal_time:.3f} seconds ({normal_time / 100 * 1000:.2f}ms avg)"
+        )
+
+        # Show performance comparison
+        avg_lua_time = sum(lua_times) / len(lua_times) if lua_times else 0
+
+        print("\n   📊 Performance Summary:")
+        print(f"   🐌 Average Lua script execution: {avg_lua_time:.1f}ms")
+        print(f"   ✅ Average GET operation: {normal_time / 100 * 1000:.2f}ms")
+        print(f"   📈 Lua script is {avg_lua_time / (normal_time / 100 * 1000):.1f}x slower")
+
+        if avg_lua_time > 100:
+            print("   🚨 SEVERE LATENCY DETECTED - Lua script is blocking Redis!")
+
+        # Check slowlog
+        try:
+            slowlog_entries = enterprise_client.slowlog_get(10)
+            print(f"\n   📋 Slowlog contains {len(slowlog_entries)} entries")
+
+            if slowlog_entries:
+                print("   Recent slow operations:")
+                for idx, entry in enumerate(slowlog_entries[:3], 1):
+                    duration_us = entry.get("duration", 0)
+                    duration_ms = duration_us / 1000
+                    command = " ".join(str(arg) for arg in entry.get("command", [])[:5])
+                    if len(command) > 60:
+                        command = command[:60] + "..."
+                    print(f"   {idx}. {duration_ms:.1f}ms - {command}")
+        except Exception as e:
+            print(f"   ⚠️  Could not retrieve slowlog: {e}")
+
+        self.print_step(4, "Analyzing Lua script performance impact")
+
+        print("   ⚠️  Impact of problematic Lua script:")
+        print("   • Redis is single-threaded - Lua blocks all operations")
+        print("   • Other clients experience timeouts and delays")
+        print("   • CPU utilization spikes during script execution")
+        print("   • Replication lag may increase")
+        print("   • Overall database performance degrades")
+        print()
+
+        print("   🔍 Common Lua script performance issues:")
+        print("   • CPU-intensive computations in Lua")
+        print("   • Excessive iterations/loops")
+        print("   • Too many Redis operations in single script")
+        print("   • Lack of script optimization")
+        print("   • Missing script execution time limits")
+        print()
+
+        # Handle UI mode vs CLI mode
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Redis Enterprise Lua Script Latency",
+                f"Lua script causing {avg_lua_time:.1f}ms average latency, blocking Redis operations",
+            )
+            return  # Leave scenario in place for UI interaction
+
+        # CLI mode: Query the agent about the Lua latency issue
+        await self._run_diagnostics_and_agent_query(
+            f"Redis Enterprise Lua script performance issue: A Lua script is causing severe latency "
+            f"(average {avg_lua_time:.1f}ms per execution). The script performs CPU-intensive computations "
+            f"with nested loops and multiple Redis operations. Normal GET operations take "
+            f"{normal_time / 100 * 1000:.2f}ms, but the Lua script is {avg_lua_time / (normal_time / 100 * 1000):.1f}x slower. "
+            f"The slowlog shows {len(slowlog_entries) if 'slowlog_entries' in locals() else 'multiple'} slow operations. "
+            f"What steps should be taken to identify, optimize, or mitigate this Lua script performance issue?"
+        )
+
+        self.print_step(5, "Recommended optimization steps")
+
+        print("   📋 Steps to optimize Lua script performance:")
+        print()
+        print("   1. Identify the problematic script:")
+        print("      redis-cli -h redis-enterprise -p 12000 SLOWLOG GET 10")
+        print()
+        print("   2. Analyze script complexity:")
+        print("      • Count iterations and nested loops")
+        print("      • Identify CPU-intensive operations")
+        print("      • Review number of Redis commands")
+        print()
+        print("   3. Optimization strategies:")
+        print("      • Reduce iteration counts")
+        print("      • Move computation to application layer")
+        print("      • Break script into smaller operations")
+        print("      • Use pipelining instead of Lua for bulk operations")
+        print("      • Consider Redis modules for complex operations")
+        print()
+        print("   4. Set script execution limits:")
+        print("      CONFIG SET lua-time-limit 5000  # 5 second limit")
+        print()
+        print("   5. Monitor script performance:")
+        print("      • Track slowlog regularly")
+        print("      • Monitor CPU utilization")
+        print("      • Set up latency monitoring")
+        print()
+
+        # Cleanup test data
+        print("   🧹 Cleaning up test data...")
+        test_keys = enterprise_client.keys("enterprise:lua_test:*")
+        if test_keys:
+            enterprise_client.delete(*test_keys)
+            print(f"   ✅ Cleaned up {len(test_keys)} test keys")
+
+        print("\n   ✅ Redis Enterprise Lua latency scenario completed")
+        print("   💡 In production, always test Lua scripts under load before deployment")
+        print("   💡 Consider using Redis modules or moving complex logic to application layer")
+
     async def _run_diagnostics_and_agent_query(self, query: str):
         """Run diagnostics and query the SRE agent."""
         self.print_step(4, "Consulting SRE Agent for expert analysis")
@@ -1203,6 +1722,10 @@ Analyze the diagnostic data above to identify problems and provide immediate rem
             elif choice == "5":
                 await self.redis_enterprise_scenario()
             elif choice == "6":
+                await self.redis_enterprise_maintenance_scenario()
+            elif choice == "7":
+                await self.redis_enterprise_lua_latency_scenario()
+            elif choice == "8":
                 print("\n🚀 Running all scenarios...")
                 for name, scenario_func in self.scenarios.items():
                     print(f"\n{'=' * 15} {name.title()} Scenario {'=' * 15}")
@@ -1213,7 +1736,7 @@ Analyze the diagnostic data above to identify problems and provide immediate rem
                 print("\n✅ All scenarios completed!")
 
             # Ask if user wants to continue
-            if choice in ["1", "2", "3", "4", "5", "6"]:
+            if choice in ["1", "2", "3", "4", "5", "6", "7", "8"]:
                 print("\n" + "-" * 60)
                 try:
                     continue_choice = (
@@ -1232,7 +1755,15 @@ async def main():
     parser = argparse.ArgumentParser(description="Redis SRE Agent Interactive Demo")
     parser.add_argument(
         "--scenario",
-        choices=["memory", "connections", "performance", "health", "enterprise"],
+        choices=[
+            "memory",
+            "connections",
+            "performance",
+            "health",
+            "enterprise",
+            "enterprise_maintenance",
+            "enterprise_lua",
+        ],
         help="Run a specific scenario",
     )
     parser.add_argument(

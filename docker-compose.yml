@@ -31,10 +31,11 @@ services:
     networks:
       - sre-network
 
-  # Redis Enterprise Software - For testing enterprise runbooks
-  redis-enterprise:
+  # Redis Enterprise Software - Multi-node cluster for testing enterprise runbooks
+  redis-enterprise-node1:
     image: redislabs/redis:latest
     container_name: redis-enterprise-node1
+    hostname: redis-enterprise-node1
     ports:
       - "8443:8443"   # HTTPS Cluster Manager UI
       - "9443:9443"   # REST API
@@ -44,7 +45,7 @@ services:
     cap_add:
       - sys_resource
     volumes:
-      - redis_enterprise_data:/opt/redislabs/persist
+      - redis_enterprise_node1_data:/opt/redislabs/persist
     environment:
       - CLUSTER_FQDN=cluster.local
     healthcheck:
@@ -54,7 +55,69 @@ services:
       retries: 5
       start_period: 60s
     networks:
-      - sre-network
+      sre-network:
+        ipv4_address: 172.28.0.10
+
+  redis-enterprise-node2:
+    image: redislabs/redis:latest
+    container_name: redis-enterprise-node2
+    hostname: redis-enterprise-node2
+    ports:
+      - "8444:8443"   # HTTPS Cluster Manager UI
+      - "9444:9443"   # REST API
+      - "12003:12000" # Database port
+    cap_add:
+      - sys_resource
+    volumes:
+      - redis_enterprise_node2_data:/opt/redislabs/persist
+    environment:
+      - CLUSTER_FQDN=cluster.local
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      sre-network:
+        ipv4_address: 172.28.0.11
+    depends_on:
+      - redis-enterprise-node1
+
+  redis-enterprise-node3:
+    image: redislabs/redis:latest
+    container_name: redis-enterprise-node3
+    hostname: redis-enterprise-node3
+    ports:
+      - "8445:8443"   # HTTPS Cluster Manager UI
+      - "9445:9443"   # REST API
+      - "12004:12000" # Database port
+    cap_add:
+      - sys_resource
+    volumes:
+      - redis_enterprise_node3_data:/opt/redislabs/persist
+    environment:
+      - CLUSTER_FQDN=cluster.local
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      sre-network:
+        ipv4_address: 172.28.0.12
+    depends_on:
+      - redis-enterprise-node1
+
+  # Alias for backward compatibility
+  redis-enterprise:
+    image: redislabs/redis:latest
+    container_name: redis-enterprise
+    network_mode: "service:redis-enterprise-node1"
+    depends_on:
+      - redis-enterprise-node1
+    entrypoint: ["tail", "-f", "/dev/null"]
 
   # Redis Exporter for Prometheus metrics
   redis-exporter:
@@ -189,10 +252,15 @@ services:
 networks:
   sre-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   redis_data:
   redis_demo_data:
-  redis_enterprise_data:
+  redis_enterprise_node1_data:
+  redis_enterprise_node2_data:
+  redis_enterprise_node3_data:
   prometheus_data:
   grafana_data:

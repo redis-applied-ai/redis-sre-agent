@@ -70,7 +70,7 @@ class TestSRELangGraphAgent:
         assert agent.settings == mock_settings
         assert agent.llm is not None
         assert agent.llm_with_tools is not None
-        assert len(agent.sre_tools) == 10  # Protocol tools + knowledge tools
+        assert len(agent.sre_tools) == 13  # Protocol tools + knowledge tools + enterprise tools
         assert "query_instance_metrics" in agent.sre_tools
         assert "list_available_metrics" in agent.sre_tools
         assert "search_logs" in agent.sre_tools
@@ -95,6 +95,9 @@ class TestSRELangGraphAgent:
             "ingest_sre_document",
             "get_all_document_fragments",
             "get_related_document_fragments",
+            "get_redis_enterprise_cluster_status",
+            "get_redis_enterprise_node_status",
+            "get_redis_enterprise_database_status",
         ]
 
         assert set(agent.sre_tools.keys()) == set(expected_tools)
@@ -224,7 +227,7 @@ class TestAgentToolBindings:
         # Get the tool definitions that were passed
         tool_definitions = mock_llm.bind_tools.call_args[0][0]
 
-        assert len(tool_definitions) == 10
+        assert len(tool_definitions) == 13  # Protocol + knowledge + enterprise tools
 
         # Check that all expected tools are defined
         tool_names = [tool["function"]["name"] for tool in tool_definitions]
@@ -239,6 +242,9 @@ class TestAgentToolBindings:
             "ingest_sre_document",
             "get_all_document_fragments",
             "get_related_document_fragments",
+            "get_redis_enterprise_cluster_status",
+            "get_redis_enterprise_node_status",
+            "get_redis_enterprise_database_status",
         ]
 
         assert set(tool_names) == set(expected_names)

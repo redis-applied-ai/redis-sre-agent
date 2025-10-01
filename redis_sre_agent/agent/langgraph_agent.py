@@ -20,6 +20,11 @@ from pydantic import BaseModel, Field
 from ..api.instances import get_instances_from_redis
 from ..core.config import settings
 from ..tools.protocol_agent_tools import PROTOCOL_TOOL_FUNCTIONS, get_protocol_based_tools
+from ..tools.redis_enterprise_tools import (
+    get_redis_enterprise_cluster_status,
+    get_redis_enterprise_database_status,
+    get_redis_enterprise_node_status,
+)
 from ..tools.registry import auto_register_default_providers
 from ..tools.sre_functions import (
     get_all_document_fragments,
@@ -395,8 +400,71 @@ class SRELangGraphAgent:
             },
         ]
 
-        # Combine protocol tools with knowledge tools
-        all_tools = protocol_tools + knowledge_tools
+        # Add Redis Enterprise tools
+        redis_enterprise_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_redis_enterprise_cluster_status",
+                    "description": "Get Redis Enterprise cluster status using rladmin. Returns comprehensive cluster information including nodes, databases, and shards. Use this to check cluster health, node status, and overall cluster state.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "container_name": {
+                                "type": "string",
+                                "description": "Docker container name for Redis Enterprise node",
+                                "default": "redis-enterprise-node1",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_redis_enterprise_node_status",
+                    "description": "Get Redis Enterprise node status using rladmin. Returns detailed node information including maintenance mode status, shard distribution, and node health. Use this to check if nodes are in maintenance mode or to investigate node-specific issues.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "container_name": {
+                                "type": "string",
+                                "description": "Docker container name for Redis Enterprise node",
+                                "default": "redis-enterprise-node1",
+                            },
+                            "node_id": {
+                                "type": "integer",
+                                "description": "Optional specific node ID to get detailed info for",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_redis_enterprise_database_status",
+                    "description": "Get Redis Enterprise database status using rladmin. Returns database information including endpoints, memory usage, and replication status. Use this to check database health and configuration.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "container_name": {
+                                "type": "string",
+                                "description": "Docker container name for Redis Enterprise node",
+                                "default": "redis-enterprise-node1",
+                            },
+                            "database_name": {
+                                "type": "string",
+                                "description": "Optional specific database name to get detailed info for",
+                            },
+                        },
+                    },
+                },
+            },
+        ]
+
+        # Combine protocol tools with knowledge tools and Redis Enterprise tools
+        all_tools = protocol_tools + knowledge_tools + redis_enterprise_tools
 
         # Bind all tools to the LLM
         self.llm_with_tools = self.llm.bind_tools(all_tools)
@@ -406,13 +474,16 @@ class SRELangGraphAgent:
         # Note: We'll create a new MemorySaver for each query to ensure proper isolation
         # This prevents cross-contamination between different tasks/threads
 
-        # SRE tool mapping - combine protocol-based tools with knowledge base tools
+        # SRE tool mapping - combine protocol-based tools with knowledge base tools and Redis Enterprise tools
         self.sre_tools = {
             **PROTOCOL_TOOL_FUNCTIONS,  # Protocol-based tools
             "search_knowledge_base": search_knowledge_base,  # Knowledge base tools
             "ingest_sre_document": ingest_sre_document,
             "get_all_document_fragments": get_all_document_fragments,  # Fragment retrieval tools
             "get_related_document_fragments": get_related_document_fragments,
+            "get_redis_enterprise_cluster_status": get_redis_enterprise_cluster_status,  # Redis Enterprise tools
+            "get_redis_enterprise_node_status": get_redis_enterprise_node_status,
+            "get_redis_enterprise_database_status": get_redis_enterprise_database_status,
         }
 
         logger.info("SRE LangGraph agent initialized with tool bindings")
