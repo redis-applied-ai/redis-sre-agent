@@ -829,7 +829,8 @@ async def run_agent_with_progress(
         if not latest_user_message:
             raise ValueError("No user message found in conversation")
 
-        # Use the process_query method - RedisSaver will handle conversation persistence
+        # Pass conversation history to the agent
+        # MemorySaver is created fresh each time, so we need to provide history
         response = await progress_agent.process_query(
             query=latest_user_message,
             session_id=thread_id,
@@ -837,6 +838,9 @@ async def run_agent_with_progress(
             max_iterations=10,
             context=agent_context,
             progress_callback=progress_callback,
+            conversation_history=lc_messages[:-1]
+            if lc_messages
+            else None,  # Exclude the latest message (it's added in process_query)
         )
 
         # Create a mock final state for compatibility

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.redis import RedisSaver
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
@@ -823,6 +823,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         max_iterations: int = 10,
         context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+        conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """Process a single SRE query through the LangGraph workflow.
 
@@ -944,9 +945,16 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
             except Exception as e:
                 logger.error(f"Failed to check available instances: {e}")
 
-        # Create initial state
+        # Create initial state with conversation history
+        # If conversation_history is provided, include it before the new query
+        initial_messages = []
+        if conversation_history:
+            initial_messages = list(conversation_history)
+            logger.info(f"Including {len(conversation_history)} messages from conversation history")
+        initial_messages.append(HumanMessage(content=enhanced_query))
+
         initial_state: AgentState = {
-            "messages": [HumanMessage(content=enhanced_query)],
+            "messages": initial_messages,
             "session_id": session_id,
             "user_id": user_id,
             "current_tool_calls": [],
@@ -958,11 +966,11 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
         if context and context.get("instance_id"):
             initial_state["instance_context"] = context
 
-        # Create RedisSaver for persistent conversation state
-        # RedisSaver needs the Redis URL string
-        from redis_sre_agent.core.config import settings
-
-        checkpointer = RedisSaver.from_conn_string(settings.redis_url)
+        # Create MemorySaver for this query
+        # NOTE: RedisSaver doesn't support async (aget_tuple raises NotImplementedError)
+        # Conversation history is managed by our ThreadManager in Redis
+        # and passed via initial_state when needed
+        checkpointer = MemorySaver()
         self.app = self.workflow.compile(checkpointer=checkpointer)
 
         # Configure thread for session persistence
