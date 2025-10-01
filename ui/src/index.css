@@ -42,21 +42,27 @@ label {
 
 /* Helper text dark mode support */
 .text-redis-dusk-04 {
-  color: var(--muted-foreground);
+  color: var(--muted-foreground) !important;
 }
 
 /* Foreground text color */
 .text-foreground {
-  color: var(--foreground);
+  color: var(--foreground) !important;
 }
 
 /* Border color support */
 .border {
-  border-color: var(--border);
+  border-color: var(--border) !important;
 }
 
 .border-t {
-  border-color: var(--border);
+  border-color: var(--border) !important;
+}
+
+/* Ensure select options inherit background in dark mode */
+select option {
+  background-color: var(--input);
+  color: var(--input-foreground);
 }
 
 /* Enhanced markdown content spacing for agent responses */
