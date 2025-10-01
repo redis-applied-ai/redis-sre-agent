@@ -670,11 +670,22 @@ async def process_agent_turn(
                 thread_id, "Processing query with knowledge-only agent", "agent_processing"
             )
 
+            # Convert conversation history to LangChain messages for knowledge agent
+            from langchain_core.messages import AIMessage, HumanMessage
+
+            lc_history = []
+            for msg in conversation_state["messages"][:-1]:  # Exclude the latest message
+                if msg["role"] == "user":
+                    lc_history.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    lc_history.append(AIMessage(content=msg["content"]))
+
             response_text = await agent.process_query(
                 query=message,
                 user_id=thread_state.metadata.user_id or "unknown",
                 session_id=thread_state.metadata.session_id or thread_id,
                 progress_callback=progress_callback,
+                conversation_history=lc_history if lc_history else None,
             )
 
             agent_response = {

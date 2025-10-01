@@ -6,7 +6,7 @@ focusing on general SRE guidance, best practices, and knowledge base search.
 """
 
 import logging
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -222,6 +222,7 @@ class KnowledgeOnlyAgent:
         session_id: str = "knowledge-session",
         max_iterations: int = 5,
         progress_callback=None,
+        conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """
         Process a knowledge-only query.
@@ -232,6 +233,7 @@ class KnowledgeOnlyAgent:
             session_id: Session identifier
             max_iterations: Maximum number of agent iterations
             progress_callback: Optional callback for progress updates
+            conversation_history: Optional list of previous messages for context
 
         Returns:
             Agent's response as a string
@@ -242,9 +244,15 @@ class KnowledgeOnlyAgent:
         if progress_callback:
             self.progress_callback = progress_callback
 
-        # Create initial state
+        # Create initial state with conversation history
+        initial_messages = []
+        if conversation_history:
+            initial_messages = list(conversation_history)
+            logger.info(f"Including {len(conversation_history)} messages from conversation history")
+        initial_messages.append(HumanMessage(content=query))
+
         initial_state: KnowledgeAgentState = {
-            "messages": [HumanMessage(content=query)],
+            "messages": initial_messages,
             "session_id": session_id,
             "user_id": user_id,
             "current_tool_calls": [],

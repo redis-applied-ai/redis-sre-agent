@@ -951,7 +951,10 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
         if conversation_history:
             initial_messages = list(conversation_history)
             logger.info(f"Including {len(conversation_history)} messages from conversation history")
+            for i, msg in enumerate(conversation_history):
+                logger.info(f"  History[{i}]: {type(msg).__name__} - {str(msg.content)[:100]}")
         initial_messages.append(HumanMessage(content=enhanced_query))
+        logger.info(f"Total messages in initial_state: {len(initial_messages)}")
 
         initial_state: AgentState = {
             "messages": initial_messages,
