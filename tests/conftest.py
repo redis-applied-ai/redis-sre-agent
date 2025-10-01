@@ -84,13 +84,21 @@ def pytest_collection_modifyitems(config, items):
         ) and not config.getoption("--run-api-tests"):
             item.add_marker(skip_api)
 
+        # Integration tests need the redis_container fixture
+        if "integration" in item.keywords:
+            # Add redis_container as a fixture dependency
+            item.fixturenames.append("redis_container")
+
 
 # Test environment variables - only set if not already present
 test_env = {
-    "REDIS_URL": "redis://localhost:6379/0",
     "APP_NAME": "Redis SRE Agent Test",
     "DEBUG": "true",
 }
+
+# Set default REDIS_URL for unit tests (will be overridden by redis_container for integration tests)
+if not os.environ.get("REDIS_URL"):
+    test_env["REDIS_URL"] = "redis://localhost:6379/0"
 
 # Only set test API key if no real key is present
 if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "":
@@ -256,27 +264,32 @@ def sample_task_result():
     }
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session", autouse=False)  # Changed to autouse=False
 def redis_container(request):
     """
-    Redis testcontainer for ALL tests.
+    Redis testcontainer for integration tests only.
 
-    Now that we use RedisSaver for conversation persistence, ALL tests
-    need a Redis instance. This fixture:
-    - Starts automatically for every test session
+    This fixture:
+    - Starts Redis testcontainer
     - Uses Redis 8.2.1 (same as production)
     - Sets REDIS_URL environment variable
     - Ensures isolated test environment
+
+    NOTE: autouse=False means this only runs for tests that explicitly request it
+    or are marked with @pytest.mark.integration
     """
     container = RedisContainer("redis:8.2.1")
     container.start()
 
-    # Update Redis URL for all tests
+    # Update Redis URL for integration tests
     try:
         redis_url = container.get_connection_url()
     except AttributeError:
         # Try alternative method names
         redis_url = f"redis://localhost:{container.get_exposed_port(6379)}/0"
+
+    # Save old REDIS_URL
+    old_redis_url = os.environ.get("REDIS_URL")
 
     os.environ["REDIS_URL"] = redis_url
     # Also expose Prometheus URL default for tests when docker-compose is used
@@ -285,6 +298,10 @@ def redis_container(request):
     print(f"\n✅ Redis testcontainer started: {redis_url}")
 
     yield container
+
+    # Restore old REDIS_URL
+    if old_redis_url:
+        os.environ["REDIS_URL"] = old_redis_url
 
     container.stop()
     print("\n🛑 Redis testcontainer stopped")
