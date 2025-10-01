@@ -88,7 +88,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
     # Print ALL updates to see what happened
     print("\n📝 All updates:")
     for i, update in enumerate(thread_state.updates):
-        print(f"   {i+1}. [{update.update_type}] {update.message[:150]}")
+        print(f"   {i + 1}. [{update.update_type}] {update.message[:150]}")
 
     # Check the updates for evidence of which Redis URL was used
     redis_urls_mentioned = []

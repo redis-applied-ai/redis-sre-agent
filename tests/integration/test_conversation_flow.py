@@ -97,7 +97,7 @@ async def test_follow_up_message_has_context(thread_manager, test_thread):
     # Debug: print all messages
     print(f"\n=== CONVERSATION HISTORY ({len(messages)} messages) ===")
     for i, msg in enumerate(messages):
-        print(f"{i+1}. {msg['role']}: {msg['content'][:100]}")
+        print(f"{i + 1}. {msg['role']}: {msg['content'][:100]}")
     print("=" * 50)
 
     # Should have 4 messages: user1, assistant1, user2, assistant2
