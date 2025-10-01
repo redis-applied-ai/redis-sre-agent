@@ -519,60 +519,29 @@ class SRELangGraphAgent:
                 try:
                     # Execute the SRE tool (async call)
                     if tool_name in self.sre_tools:
-                        # Check if this tool has bound parameters (from instance-specific tools)
-                        # Bound parameters are stored in the tool definition metadata
                         modified_args = tool_args.copy()
 
-                        # Look for bound parameters in the current tool definitions
-                        bound_params = {}
-                        for tool_def in self.llm_with_tools.kwargs.get("tools", []):
-                            if tool_def["function"]["name"] == tool_name:
-                                # Extract bound parameters (prefixed with _bound_)
-                                for key, value in tool_def["function"].items():
-                                    if key.startswith("_bound_"):
-                                        param_name = key.replace("_bound_", "")
-                                        bound_params[param_name] = value
-                                break
+                        # Get instance context from state
+                        instance_context = state.get("instance_context")
+                        if instance_context and instance_context.get("instance_id"):
+                            # Resolve instance to get redis_url
+                            try:
+                                instances = await get_instances_from_redis()
+                                target_instance = None
+                                for instance in instances:
+                                    if instance.id == instance_context["instance_id"]:
+                                        target_instance = instance
+                                        break
 
-                        # Apply bound parameters (these override any LLM-provided values)
-                        if bound_params:
-                            logger.info(f"Applying bound parameters to {tool_name}: {bound_params}")
-
-                            # For metrics tool with bound redis_url, configure provider
-                            if (
-                                tool_name == "query_instance_metrics"
-                                and "redis_url" in bound_params
-                            ):
-                                # Use the Redis provider with the bound URL
-                                modified_args["provider_name"] = "redis"
-                                # The redis_url will be used by the provider
-                                # Store it in a way the provider can access it
-                                modified_args["redis_url"] = bound_params["redis_url"]
-                                logger.info(f"Tool bound to Redis URL: {bound_params['redis_url']}")
-
-                        # If no bound parameters and this is a Redis tool requiring instance context
-                        if not bound_params:
-                            if tool_name == "get_detailed_redis_diagnostics":
-                                # Check if redis_url was provided by LLM (unbound mode)
-                                if "redis_url" not in modified_args:
-                                    logger.error(
-                                        f"Cannot execute {tool_name} without redis_url. "
-                                        "No instance binding and no redis_url parameter provided."
-                                    )
-                                    # Return error message instead of executing tool
-                                    tool_messages.append(
-                                        ToolMessage(
-                                            content="Error: Cannot connect to Redis instance. "
-                                            "No instance selected and no redis_url provided. "
-                                            "Please specify which Redis instance to diagnose.",
-                                            tool_call_id=tool_call_id,
+                                if target_instance:
+                                    # Bind redis_url for metrics queries
+                                    if tool_name == "query_instance_metrics":
+                                        modified_args["redis_url"] = target_instance.connection_url
+                                        logger.info(
+                                            f"Binding redis_url to tool: {target_instance.connection_url}"
                                         )
-                                    )
-                                    continue  # Skip tool execution
-                                else:
-                                    logger.info(
-                                        f"Using LLM-provided redis_url: {modified_args['redis_url']}"
-                                    )
+                            except Exception as e:
+                                logger.error(f"Failed to resolve instance context: {e}")
 
                         # Call the async SRE function
                         result = await self.sre_tools[tool_name](**modified_args)
@@ -863,18 +832,10 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                     host, port = _parse_redis_connection_url(target_instance.connection_url)
                     redis_url = target_instance.connection_url
 
-                    # CRITICAL: Register a provider for this specific instance
-                    # This ensures tools connect to the correct Redis instance
-                    logger.info(f"Registering provider for instance: {target_instance.name}")
-                    from redis_sre_agent.tools.providers import RedisCommandMetricsProvider
-                    from redis_sre_agent.tools.registry import get_global_registry
-
-                    registry = get_global_registry()
-
-                    # Register instance-specific provider (will replace existing 'redis' provider)
-                    instance_provider = RedisCommandMetricsProvider(redis_url)
-                    registry.register_provider("redis", instance_provider)
-                    logger.info(f"Registered Redis provider for {redis_url}")
+                    # Store instance context - will be used to bind tool parameters
+                    logger.info(
+                        f"Setting instance context for: {target_instance.name} ({redis_url})"
+                    )
 
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}

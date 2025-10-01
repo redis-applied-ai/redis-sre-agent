@@ -19,6 +19,7 @@ async def query_instance_metrics(
     provider_name: Optional[str] = None,
     labels: Optional[Dict[str, str]] = None,
     time_range_hours: Optional[float] = None,
+    redis_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Query instance metrics from available providers.
 
@@ -27,6 +28,7 @@ async def query_instance_metrics(
         provider_name: Optional specific provider to use
         labels: Optional label filters
         time_range_hours: Optional time range in hours for historical data
+        redis_url: Optional Redis URL for instance-specific queries
 
     Returns:
         Metric query results
@@ -34,8 +36,21 @@ async def query_instance_metrics(
     try:
         registry = get_global_registry()
 
+        # If redis_url is provided, create a temporary Redis provider for this query
+        temp_provider = None
+        if redis_url:
+            logger.info(f"Creating temporary Redis provider for {redis_url}")
+            from .providers import RedisCommandMetricsProvider
+
+            temp_provider = RedisCommandMetricsProvider(redis_url)
+            provider_name = "temp_redis"  # Use temp provider
+
         # Get metrics providers
-        if provider_name:
+        if temp_provider:
+            # Use the temporary provider created for this specific redis_url
+            providers = [temp_provider]
+            logger.info(f"Using temporary Redis provider: {temp_provider.provider_name}")
+        elif provider_name:
             provider_instance = registry.get_provider(provider_name)
             if not provider_instance:
                 return {"error": f"Provider '{provider_name}' not found"}
