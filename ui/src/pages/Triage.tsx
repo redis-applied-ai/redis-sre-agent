@@ -662,7 +662,7 @@ const Triage = () => {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* Page Header */}
-      <div className="flex-shrink-0 p-6 pb-4 border-b border-redis-dusk-08">
+      <div className="flex-shrink-0 p-6 pb-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             {/* Mobile sidebar toggle */}

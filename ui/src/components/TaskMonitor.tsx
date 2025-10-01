@@ -34,10 +34,22 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
+  const lastRenderTimeRef = useRef<number>(0);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  // Reset state when threadId changes
+  useEffect(() => {
+    console.log('Thread changed to:', threadId);
+    setMessages([]);
+    setIsThinking(false);
+    setCurrentStatus('unknown');
+    lastMessageIdRef.current = null;
+    lastRenderTimeRef.current = 0;
+  }, [threadId]);
 
   // Only scroll when messages change, not on every state update
   useEffect(() => {
@@ -161,6 +173,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   };
 
   const addAssistantMessage = (content: string, timestamp: string) => {
+    // Create a unique ID for this message
+    const messageId = `assistant-${timestamp}-${content.substring(0, 50)}`;
+
+    // Check if we've already added this exact message
+    if (lastMessageIdRef.current === messageId) {
+      console.log('Skipping duplicate message (same ID):', content.substring(0, 50));
+      return;
+    }
+
     setMessages(prev => {
       // Check if this message already exists to prevent duplicates
       const exists = prev.some(msg =>
@@ -175,8 +196,9 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
       }
 
       console.log('Adding assistant message:', content.substring(0, 50));
+      lastMessageIdRef.current = messageId;
       return [...prev, {
-        id: `assistant-${Date.now()}-${Math.random()}`,
+        id: messageId,
         role: 'assistant',
         content,
         timestamp,
@@ -185,6 +207,23 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   };
 
   const processUpdate = (update: TaskUpdate) => {
+    // Throttle updates to prevent constant re-renders
+    const now = Date.now();
+    const timeSinceLastRender = now - lastRenderTimeRef.current;
+
+    // Only process updates if enough time has passed (100ms throttle)
+    // OR if it's a final result
+    const isFinalResult = update.result?.response ||
+                          update.status === 'completed' ||
+                          update.status === 'done' ||
+                          update.status === 'failed';
+
+    if (!isFinalResult && timeSinceLastRender < 100) {
+      return; // Skip this update to prevent flashing
+    }
+
+    lastRenderTimeRef.current = now;
+
     // Update status only if it changed
     if (update.status) {
       setCurrentStatus(prev => {
