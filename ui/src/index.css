@@ -15,6 +15,50 @@ main > div {
   padding-top: 1rem !important; /* Override the default pt-6 (24px) with pt-4 (16px) */
 }
 
+/* Form input dark mode support */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="url"],
+select,
+textarea {
+  background-color: var(--input);
+  color: var(--input-foreground);
+  border-color: var(--border);
+}
+
+input[type="text"]::placeholder,
+input[type="email"]::placeholder,
+input[type="password"]::placeholder,
+input[type="url"]::placeholder,
+textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* Form label dark mode support */
+label {
+  color: var(--foreground);
+}
+
+/* Helper text dark mode support */
+.text-redis-dusk-04 {
+  color: var(--muted-foreground);
+}
+
+/* Foreground text color */
+.text-foreground {
+  color: var(--foreground);
+}
+
+/* Border color support */
+.border {
+  border-color: var(--border);
+}
+
+.border-t {
+  border-color: var(--border);
+}
+
 /* Enhanced markdown content spacing for agent responses */
 .markdown-content {
   line-height: 1.6;

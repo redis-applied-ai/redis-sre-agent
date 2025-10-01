@@ -660,14 +660,14 @@ const Triage = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-120px)] flex gap-4 bg-redis-dusk-01">
+    <div className="h-[calc(100vh-120px)] flex gap-4" style={{ backgroundColor: 'var(--background)' }}>
       {/* Thread Sidebar - Responsive visibility */}
       <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-full`}>
         <Card className="flex-1 flex flex-col" padding="none">
           <CardHeader className="flex-shrink-0 p-4 pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Conversations</h3>
+                <h3 className="text-redis-lg font-semibold text-foreground">Conversations</h3>
                 {/* Mobile close sidebar button */}
                 <Button
                   variant="outline"
@@ -726,7 +726,7 @@ const Triage = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <div className={`font-medium text-redis-sm truncate ${
-                        activeThreadId === thread.id ? 'text-white' : 'text-redis-dusk-01'
+                        activeThreadId === thread.id ? 'text-white' : 'text-foreground'
                       }`}>
                         {thread.name}
                       </div>
@@ -796,7 +796,7 @@ const Triage = () => {
                   ☰
                 </Button>
                 <div>
-                  <h1 className="text-redis-xl font-bold text-redis-dusk-01">SRE Agent Triage</h1>
+                  <h1 className="text-redis-xl font-bold text-foreground">SRE Agent Triage</h1>
                 <p className="text-redis-sm text-redis-dusk-04 mt-1">
                   {activeThreadId
                     ? 'Chat with the Redis SRE Agent for troubleshooting and support'
@@ -851,7 +851,7 @@ const Triage = () => {
                             ? 'bg-orange-100 text-orange-800 border border-orange-200'
                             : message.role === 'system'
                             ? 'bg-blue-50 text-blue-700 border border-blue-200 text-sm'
-                            : 'bg-redis-dusk-09 text-redis-dusk-01'
+                            : 'bg-redis-dusk-09 text-foreground'
                         }`}
                       >
                         {message.role === 'tool' ? (
@@ -889,7 +889,7 @@ const Triage = () => {
                                     <code className="block bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3">{children}</code>;
                                 },
                                 pre: ({children}) => <pre className="bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3 overflow-x-auto">{children}</pre>,
-                                strong: ({children}) => <strong className="font-semibold text-redis-dusk-01">{children}</strong>,
+                                strong: ({children}) => <strong className="font-semibold text-foreground">{children}</strong>,
                                 blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 mb-3 italic">{children}</blockquote>,
                               }}
                             >
@@ -932,7 +932,7 @@ const Triage = () => {
                 {/* Instance Selection */}
                 {instances.length > 0 && (
                   <div className="mb-3">
-                    <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                    <label className="block text-redis-sm font-medium text-foreground mb-2">
                       Redis Instance (optional)
                     </label>
                     <select
