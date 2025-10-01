@@ -83,12 +83,7 @@ class TestRedisIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
-        # Clear global state
-        from redis_sre_agent.core import redis
         from redis_sre_agent.core.tasks import ingest_sre_document
-
-        redis._document_index = None
-        redis._vectorizer = None
 
         # Mock vectorizer for embedding generation
         with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer:
@@ -117,12 +112,7 @@ class TestRedisIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
-        # Clear global state
-        from redis_sre_agent.core import redis
         from redis_sre_agent.core.tasks import ingest_sre_document, search_knowledge_base
-
-        redis._document_index = None
-        redis._vectorizer = None
 
         # Mock vectorizer
         with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer:
