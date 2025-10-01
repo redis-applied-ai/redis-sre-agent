@@ -519,48 +519,11 @@ class SRELangGraphAgent:
                 try:
                     # Execute the SRE tool (async call)
                     if tool_name in self.sre_tools:
+                        # With functools.partial, bound parameters are already in the function
+                        # Just pass the args the LLM provided
                         modified_args = tool_args.copy()
 
-                        # Check if this tool has bound parameters (from instance-specific tools)
-                        # Bound parameters are stored in the tool definition metadata
-                        bound_params = {}
-                        for tool_def in self.llm_with_tools.kwargs.get("tools", []):
-                            if tool_def["function"]["name"] == tool_name:
-                                # Extract bound parameters (prefixed with _bound_)
-                                for key, value in tool_def["function"].items():
-                                    if key.startswith("_bound_"):
-                                        param_name = key.replace("_bound_", "")
-                                        bound_params[param_name] = value
-                                break
-
-                        # Apply bound parameters (these override any LLM-provided values)
-                        if bound_params:
-                            logger.info(f"Applying bound parameters to {tool_name}: {bound_params}")
-                            modified_args.update(bound_params)
-                        else:
-                            # No bound parameters - try to get from instance context
-                            instance_context = state.get("instance_context")
-                            if instance_context and instance_context.get("instance_id"):
-                                # Resolve instance to get redis_url
-                                try:
-                                    instances = await get_instances_from_redis()
-                                    target_instance = None
-                                    for instance in instances:
-                                        if instance.id == instance_context["instance_id"]:
-                                            target_instance = instance
-                                            break
-
-                                    if target_instance:
-                                        # Bind redis_url for metrics queries
-                                        if tool_name == "query_instance_metrics":
-                                            modified_args["redis_url"] = (
-                                                target_instance.connection_url
-                                            )
-                                            logger.info(
-                                                f"Binding redis_url to tool: {target_instance.connection_url}"
-                                            )
-                                except Exception as e:
-                                    logger.error(f"Failed to resolve instance context: {e}")
+                        logger.info(f"Executing tool {tool_name} with args: {modified_args}")
 
                         # Call the async SRE function
                         result = await self.sre_tools[tool_name](**modified_args)
