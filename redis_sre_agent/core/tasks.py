@@ -713,6 +713,12 @@ async def process_agent_turn(
         thread_state.context["messages"] = conversation_state["messages"]
         thread_state.context["last_updated"] = datetime.now(timezone.utc).isoformat()
 
+        # Save the updated context to Redis
+        await thread_manager._save_thread_state(thread_state)
+        logger.info(
+            f"Saved conversation history with {len(conversation_state['messages'])} messages"
+        )
+
         # Extract action items if present
         action_items = agent_response.get("action_items", [])
         if action_items:
