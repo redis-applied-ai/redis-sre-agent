@@ -857,6 +857,12 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                         f"{len(non_metrics_tools)} protocol, {len(knowledge_tools)} knowledge"
                     )
 
+                    # CRITICAL: Rebuild workflow with new tools
+                    # The workflow was built in __init__ with old tools
+                    # We need to rebuild it with the instance-bound tools
+                    logger.info("Rebuilding workflow with instance-bound tools")
+                    self.workflow = self._build_workflow()
+
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
 
