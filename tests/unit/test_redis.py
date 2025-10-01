@@ -49,7 +49,7 @@ class TestRedisInfrastructure:
 
     @patch("redis_sre_agent.core.redis.Redis")
     def test_get_redis_client(self, mock_redis):
-        """Test Redis client singleton."""
+        """Test Redis client creation (no singleton - creates fresh each time)."""
         mock_client = Mock()
         mock_redis.from_url.return_value = mock_client
 
@@ -58,17 +58,16 @@ class TestRedisInfrastructure:
         assert client1 == mock_client
         mock_redis.from_url.assert_called_once()
 
-        # Second call returns same instance
+        # Second call creates NEW instance (no singleton)
         client2 = get_redis_client()
         assert client2 == mock_client
-        assert client1 is client2
-        # from_url should still only be called once
-        assert mock_redis.from_url.call_count == 1
+        # from_url should be called TWICE (no singleton caching)
+        assert mock_redis.from_url.call_count == 2
 
     @patch("redis_sre_agent.core.redis.EmbeddingsCache")
     @patch("redis_sre_agent.core.redis.OpenAITextVectorizer")
     def test_get_vectorizer(self, mock_vectorizer, mock_cache):
-        """Test vectorizer singleton creation."""
+        """Test vectorizer creation (no singleton - creates fresh each time)."""
         mock_cache_instance = Mock()
         mock_cache.return_value = mock_cache_instance
 
@@ -81,10 +80,12 @@ class TestRedisInfrastructure:
         mock_cache.assert_called_once()
         mock_vectorizer.assert_called_once()
 
-        # Second call returns same instance
+        # Second call creates NEW instance (no singleton)
         vectorizer2 = get_vectorizer()
         assert vectorizer2 == mock_vectorizer_instance
-        assert vectorizer1 is vectorizer2
+        # Should be called TWICE (no singleton caching)
+        assert mock_cache.call_count == 2
+        assert mock_vectorizer.call_count == 2
 
     @patch("redis_sre_agent.core.redis.AsyncSearchIndex")
     def test_get_knowledge_index(self, mock_index):
