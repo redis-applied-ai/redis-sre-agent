@@ -36,6 +36,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const lastRenderTimeRef = useRef<number>(0);
+  const isIntentionalCloseRef = useRef<boolean>(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -52,15 +53,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
     // Fetch thread messages from API
     const loadThreadMessages = async () => {
       try {
-        setIsThinking(true);
-        setCurrentStatus('loading');
-
         const response = await fetch(`/api/v1/tasks/${threadId}`);
         if (response.ok) {
           const threadData = await response.json();
           console.log('Thread data:', threadData);
           console.log('Context:', threadData.context);
           console.log('Messages:', threadData.context?.messages);
+          console.log('Thread status:', threadData.status);
 
           const threadMessages = threadData.context?.messages || [];
 
@@ -74,14 +73,23 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
 
           setMessages(chatMessages);
           console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}:`, chatMessages);
+
+          // Set status and thinking indicator based on thread status
+          setCurrentStatus(threadData.status);
+
+          // Only show thinking if thread is actually in progress
+          const inProgressStatuses = ['queued', 'in_progress', 'running'];
+          setIsThinking(inProgressStatuses.includes(threadData.status));
         } else {
           console.error('Failed to load thread:', response.status, response.statusText);
           // If thread doesn't exist yet or error, start fresh
           setMessages([]);
+          setIsThinking(false);
         }
       } catch (error) {
         console.error('Error loading thread messages:', error);
         setMessages([]);
+        setIsThinking(false);
       }
     };
 
@@ -109,6 +117,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
     // Close existing connection if any
     if (wsRef.current) {
       console.log('Closing existing WebSocket connection');
+      isIntentionalCloseRef.current = true; // Mark as intentional to avoid error message
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -139,6 +148,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
         console.log('WebSocket connected');
         setIsConnected(true);
         setConnectionError(null);
+        isIntentionalCloseRef.current = false; // Reset flag on successful connection
         setIsThinking(true);
 
         // Send periodic pings to keep connection alive
@@ -188,12 +198,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
         console.log('WebSocket closed:', event.code, event.reason);
         setIsConnected(false);
 
-        // Attempt to reconnect after a delay (unless manually closed)
-        if (event.code !== 1000) {
+        // Only show error and reconnect if this wasn't an intentional close
+        if (!isIntentionalCloseRef.current && event.code !== 1000) {
           setConnectionError('Connection lost. Attempting to reconnect...');
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
           }, 3000);
+        } else {
+          // Clear error on intentional close
+          setConnectionError(null);
         }
       };
 
@@ -290,6 +303,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
 
   const disconnect = () => {
     if (wsRef.current) {
+      isIntentionalCloseRef.current = true; // Mark as intentional
       wsRef.current.close(1000, 'Manual disconnect');
       wsRef.current = null;
     }
