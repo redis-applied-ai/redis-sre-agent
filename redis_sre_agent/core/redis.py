@@ -310,9 +310,6 @@ async def initialize_docket_infrastructure() -> bool:
 
 
 async def cleanup_redis_connections():
-    """Cleanup Redis connections on shutdown."""
-    global _redis_client
-    if _redis_client:
-        await _redis_client.aclose()
-        _redis_client = None
-    logger.info("Redis connections cleaned up")
+    """Cleanup Redis connections on shutdown (no-op since we removed caching)."""
+    # No cleanup needed since we don't cache connections anymore
+    logger.info("Redis connections cleanup called (no-op)")

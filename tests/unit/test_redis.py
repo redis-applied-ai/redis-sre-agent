@@ -1,6 +1,6 @@
 """Unit tests for Redis infrastructure components."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -251,24 +251,7 @@ class TestRedisInfrastructure:
 
     @pytest.mark.asyncio
     async def test_cleanup_redis_connections(self, mock_redis_client):
-        """Test Redis connection cleanup."""
-        mock_redis_client.aclose = AsyncMock()
-
-        with patch("redis_sre_agent.core.redis._redis_client", mock_redis_client):
-            await cleanup_redis_connections()
-
-        mock_redis_client.aclose.assert_called_once()
-
-
-class TestRedisSingletons:
-    """Test singleton behavior reset between tests."""
-
-    def test_singleton_reset(self):
-        """Test that singletons are properly reset between tests."""
-        # This test verifies that our fixtures properly reset global state
-        from redis_sre_agent.core import redis
-
-        # All singletons should be None at start of test
-        assert redis._redis_client is None
-        assert redis._vectorizer is None
-        assert redis._document_index is None
+        """Test Redis connection cleanup (no-op since we removed caching)."""
+        # Cleanup function still exists but does nothing since we removed caching
+        await cleanup_redis_connections()
+        # No assertions needed - just verify it doesn't crash

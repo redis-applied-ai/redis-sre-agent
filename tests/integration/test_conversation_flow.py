@@ -16,8 +16,8 @@ from redis_sre_agent.core.thread_state import get_thread_manager
 
 
 @pytest.fixture
-async def thread_manager():
-    """Get the thread manager for testing."""
+async def thread_manager(redis_container):
+    """Get the thread manager for testing (depends on redis_container to ensure URL is set)."""
     manager = get_thread_manager()
     yield manager
 

@@ -374,21 +374,3 @@ def mock_health_check_response():
             "timestamp": "2025-08-19T21:00:00+00:00",
         },
     ]
-
-
-@pytest.fixture(autouse=True)
-def reset_singletons():
-    """Reset global singletons between tests."""
-    # Import and reset Redis singletons
-    from redis_sre_agent.core import redis
-
-    redis._redis_client = None
-    redis._vectorizer = None
-    redis._document_index = None
-
-    yield
-
-    # Clean up after test
-    redis._redis_client = None
-    redis._vectorizer = None
-    redis._document_index = None
