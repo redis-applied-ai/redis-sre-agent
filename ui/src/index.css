@@ -65,6 +65,12 @@ select option {
   color: var(--input-foreground);
 }
 
+/* Card background support */
+.bg-card {
+  background-color: var(--card) !important;
+  color: var(--card-foreground) !important;
+}
+
 /* Enhanced markdown content spacing for agent responses */
 .markdown-content {
   line-height: 1.6;
@@ -130,7 +136,7 @@ select option {
 .markdown-content pre {
   margin-bottom: 0.75rem;
   padding: 0.75rem;
-  background-color: #f5f5f5;
+  background-color: var(--muted);
   border-radius: 0.375rem;
   overflow-x: auto;
   font-size: 0.75rem;
@@ -143,18 +149,19 @@ select option {
 }
 
 .markdown-content p code {
-  background-color: #f5f5f5;
+  background-color: var(--muted);
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
 }
 
 .markdown-content strong {
   font-weight: 600;
+  color: var(--foreground);
 }
 
 .markdown-content blockquote {
   margin-bottom: 0.75rem;
   padding-left: 1rem;
-  border-left: 4px solid #d1d5db;
+  border-left: 4px solid var(--border);
   font-style: italic;
 }
