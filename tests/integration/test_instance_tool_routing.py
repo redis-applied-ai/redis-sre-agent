@@ -220,9 +220,9 @@ async def test_instance_context_passed_to_agent(thread_manager):
 
     # Verify context was stored
     thread_state = await thread_manager.get_thread_state(thread_id)
-    assert (
-        thread_state.context.get("instance_id") == test_instance.id
-    ), "Instance ID should be in thread context"
+    assert thread_state.context.get("instance_id") == test_instance.id, (
+        "Instance ID should be in thread context"
+    )
 
     print("✅ Instance context properly stored in thread")
     print(f"   Instance ID: {thread_state.context.get('instance_id')}")

@@ -109,9 +109,9 @@ async def test_follow_up_message_has_context(thread_manager, test_thread):
 
     # The assistant's response should mention "Alice"
     final_response = messages[3]["content"]
-    assert (
-        "Alice" in final_response or "alice" in final_response.lower()
-    ), f"Agent should remember the name Alice. Response: {final_response}"
+    assert "Alice" in final_response or "alice" in final_response.lower(), (
+        f"Agent should remember the name Alice. Response: {final_response}"
+    )
 
 
 @pytest.mark.integration
@@ -176,9 +176,9 @@ async def test_multiple_follow_ups_maintain_context(thread_manager, test_thread)
 
     # The final response should calculate 48GB (3 nodes * 16GB)
     final_response = messages[-1]["content"]
-    assert (
-        "48" in final_response or "forty-eight" in final_response.lower()
-    ), f"Agent should calculate total memory. Response: {final_response}"
+    assert "48" in final_response or "forty-eight" in final_response.lower(), (
+        f"Agent should calculate total memory. Response: {final_response}"
+    )
 
 
 @pytest.mark.integration
@@ -212,9 +212,9 @@ async def test_langgraph_checkpointer_integration(thread_manager, test_thread):
 
     # Verify the agent remembered
     final_response = messages_2[-1]["content"]
-    assert (
-        "42" in final_response
-    ), f"Agent should remember the number 42. Response: {final_response}"
+    assert "42" in final_response, (
+        f"Agent should remember the number 42. Response: {final_response}"
+    )
 
 
 @pytest.mark.integration
@@ -237,9 +237,9 @@ async def test_no_duplicate_messages_in_history(thread_manager, test_thread):
     seen_messages = set()
     for msg in messages:
         msg_key = (msg["role"], msg["content"], msg.get("timestamp"))
-        assert (
-            msg_key not in seen_messages
-        ), f"Duplicate message found: {msg['role']}: {msg['content'][:50]}"
+        assert msg_key not in seen_messages, (
+            f"Duplicate message found: {msg['role']}: {msg['content'][:50]}"
+        )
         seen_messages.add(msg_key)
 
 
@@ -282,16 +282,16 @@ async def test_different_threads_have_separate_history(thread_manager):
     # Verify thread 1 mentions blue
     thread1_user_msg = thread1_messages[0]["content"]
     assert "blue" in thread1_user_msg.lower(), f"Thread 1 should mention blue: {thread1_user_msg}"
-    assert (
-        "red" not in thread1_user_msg.lower()
-    ), f"Thread 1 should not mention red: {thread1_user_msg}"
+    assert "red" not in thread1_user_msg.lower(), (
+        f"Thread 1 should not mention red: {thread1_user_msg}"
+    )
 
     # Verify thread 2 mentions red
     thread2_user_msg = thread2_messages[0]["content"]
     assert "red" in thread2_user_msg.lower(), f"Thread 2 should mention red: {thread2_user_msg}"
-    assert (
-        "blue" not in thread2_user_msg.lower()
-    ), f"Thread 2 should not mention blue: {thread2_user_msg}"
+    assert "blue" not in thread2_user_msg.lower(), (
+        f"Thread 2 should not mention blue: {thread2_user_msg}"
+    )
 
     # Cleanup
     try:
