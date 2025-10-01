@@ -243,6 +243,64 @@ async def test_no_duplicate_messages_in_history(thread_manager, test_thread):
         seen_messages.add(msg_key)
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_different_threads_have_separate_history(thread_manager):
+    """Test that different threads maintain separate conversation histories."""
+    # Create two separate threads
+    thread1_id = await thread_manager.create_thread(
+        user_id="test-user", session_id="session-1", initial_context={"test": True}
+    )
+
+    thread2_id = await thread_manager.create_thread(
+        user_id="test-user", session_id="session-2", initial_context={"test": True}
+    )
+
+    class TestThread:
+        def __init__(self, tid):
+            self.thread_id = tid
+
+    thread1 = TestThread(thread1_id)
+    thread2 = TestThread(thread2_id)
+
+    # Send different messages to each thread
+    await process_agent_turn(thread_id=thread1.thread_id, message="My favorite color is blue")
+
+    await process_agent_turn(thread_id=thread2.thread_id, message="My favorite color is red")
+
+    # Load both thread states
+    thread1_state = await thread_manager.get_thread_state(thread1.thread_id)
+    thread2_state = await thread_manager.get_thread_state(thread2.thread_id)
+
+    thread1_messages = thread1_state.context.get("messages", [])
+    thread2_messages = thread2_state.context.get("messages", [])
+
+    # Verify each thread has its own messages
+    assert len(thread1_messages) >= 2, "Thread 1 should have messages"
+    assert len(thread2_messages) >= 2, "Thread 2 should have messages"
+
+    # Verify thread 1 mentions blue
+    thread1_user_msg = thread1_messages[0]["content"]
+    assert "blue" in thread1_user_msg.lower(), f"Thread 1 should mention blue: {thread1_user_msg}"
+    assert (
+        "red" not in thread1_user_msg.lower()
+    ), f"Thread 1 should not mention red: {thread1_user_msg}"
+
+    # Verify thread 2 mentions red
+    thread2_user_msg = thread2_messages[0]["content"]
+    assert "red" in thread2_user_msg.lower(), f"Thread 2 should mention red: {thread2_user_msg}"
+    assert (
+        "blue" not in thread2_user_msg.lower()
+    ), f"Thread 2 should not mention blue: {thread2_user_msg}"
+
+    # Cleanup
+    try:
+        await thread_manager.delete_thread(thread1_id)
+        await thread_manager.delete_thread(thread2_id)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     # Run tests
     pytest.main([__file__, "-v", "-s"])
