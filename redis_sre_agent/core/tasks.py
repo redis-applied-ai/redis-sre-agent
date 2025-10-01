@@ -633,8 +633,19 @@ async def process_agent_turn(
         messages = thread_state.context.get("messages", [])
         logger.info(f"DEBUG: messages type: {type(messages)}, value: {messages}")
 
+        # Filter messages to only include user and assistant messages
+        # This prevents OpenAI API errors about tool messages without tool_calls
+        filtered_messages = [
+            msg
+            for msg in messages
+            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
+        ]
+        logger.info(
+            f"Filtered {len(messages)} messages to {len(filtered_messages)} (user/assistant only)"
+        )
+
         conversation_state = {
-            "messages": messages,
+            "messages": filtered_messages,
             "thread_id": thread_id,
         }
 

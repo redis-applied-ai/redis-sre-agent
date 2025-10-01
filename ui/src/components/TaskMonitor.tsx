@@ -171,13 +171,10 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
       }
     }
 
-    // Add response messages
-    if (update.update_type === 'response' && update.message) {
-      addAssistantMessage(update.message, update.timestamp);
-      setIsThinking(false);
-    }
+    // Don't process 'response' type updates here - they're handled by the final result
+    // This prevents duplicate messages
 
-    // Handle final result
+    // Handle final result (only from new updates, not initial_state)
     if (update.result?.response) {
       addAssistantMessage(update.result.response, update.timestamp);
       setIsThinking(false);
