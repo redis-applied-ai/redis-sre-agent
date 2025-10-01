@@ -39,9 +39,10 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Only scroll when messages change, not on every state update
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isThinking]);
+  }, [messages.length]); // Only trigger when message count changes
 
   useEffect(() => {
     // Add initial user message if provided
@@ -184,9 +185,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   };
 
   const processUpdate = (update: TaskUpdate) => {
-    // Update status
+    // Update status only if it changed
     if (update.status) {
-      setCurrentStatus(update.status);
+      setCurrentStatus(prev => {
+        if (prev === update.status) return prev; // Avoid unnecessary re-render
+        return update.status!;
+      });
 
       // Stop thinking indicator when task completes
       if (update.status === 'completed' || update.status === 'done' || update.status === 'failed') {
