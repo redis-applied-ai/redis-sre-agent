@@ -196,64 +196,40 @@ async def check_service_health(
     try:
         logger.info(f"Checking health for service: {service_name}")
 
-        # Check if this is Redis service - use direct diagnostics
-        if service_name.lower() in ["redis", "redis-server", "redis-cluster"]:
-            from ..tools.redis_diagnostics import get_redis_diagnostics
+        # Perform HTTP health checks
+        # NOTE: For Redis-specific diagnostics, use get_detailed_redis_diagnostics()
+        # with an explicit redis_url parameter instead of this generic health check.
+        import aiohttp
 
-            redis_diag = get_redis_diagnostics()
-            diagnostic_results = await redis_diag.run_diagnostic_suite()
+        health_results = []
 
-            # Convert diagnostics to health check format
-            health_results = [
-                {
-                    "endpoint": "redis_diagnostics",
-                    "status": (
-                        "healthy"
-                        if diagnostic_results["overall_status"] in ["healthy", "warning"]
-                        else "unhealthy"
-                    ),
-                    "response_time_ms": None,
-                    "diagnostic_data": diagnostic_results,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-            ]
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            for endpoint in endpoints:
+                start_time = datetime.now()
 
-            await redis_diag.close()
-        else:
-            # For other services, perform HTTP health checks
-            import aiohttp
+                try:
+                    async with session.get(endpoint) as response:
+                        response_time = (datetime.now() - start_time).total_seconds() * 1000
 
-            health_results = []
-
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=timeout)
-            ) as session:
-                for endpoint in endpoints:
-                    start_time = datetime.now()
-
-                    try:
-                        async with session.get(endpoint) as response:
-                            response_time = (datetime.now() - start_time).total_seconds() * 1000
-
-                            health_check = {
-                                "endpoint": endpoint,
-                                "status": "healthy" if response.status < 400 else "unhealthy",
-                                "response_time_ms": round(response_time, 2),
-                                "status_code": response.status,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            }
-
-                    except Exception as e:
                         health_check = {
                             "endpoint": endpoint,
-                            "status": "unhealthy",
-                            "response_time_ms": None,
-                            "status_code": None,
-                            "error": str(e),
+                            "status": "healthy" if response.status < 400 else "unhealthy",
+                            "response_time_ms": round(response_time, 2),
+                            "status_code": response.status,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         }
 
-                    health_results.append(health_check)
+                except Exception as e:
+                    health_check = {
+                        "endpoint": endpoint,
+                        "status": "unhealthy",
+                        "response_time_ms": None,
+                        "status_code": None,
+                        "error": str(e),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+
+                health_results.append(health_check)
 
         overall_status = (
             "healthy"

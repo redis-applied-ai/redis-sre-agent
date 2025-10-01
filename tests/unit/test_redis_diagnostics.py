@@ -174,12 +174,17 @@ class TestRedisDiagnostics:
         assert diagnostics._client is None
 
     @pytest.mark.asyncio
-    async def test_init_default_url(self):
-        """Test initialization with default URL from settings."""
-        with patch("redis_sre_agent.tools.redis_diagnostics.settings") as mock_settings:
-            mock_settings.redis_url = "redis://default:6379"
-            diagnostics = RedisDiagnostics()
-            assert diagnostics.redis_url == "redis://default:6379"
+    async def test_init_requires_url(self):
+        """Test that initialization requires an explicit redis_url."""
+        with pytest.raises(ValueError, match="redis_url is required"):
+            RedisDiagnostics(redis_url=None)
+
+        with pytest.raises(ValueError, match="redis_url is required"):
+            RedisDiagnostics(redis_url="")
+
+        # Should work with valid URL
+        diagnostics = RedisDiagnostics(redis_url="redis://target:6379")
+        assert diagnostics.redis_url == "redis://target:6379"
 
     @pytest.mark.asyncio
     async def test_get_client(self):

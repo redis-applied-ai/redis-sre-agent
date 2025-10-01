@@ -417,21 +417,30 @@ class SRELangGraphAgent:
 
         logger.info("SRE LangGraph agent initialized with tool bindings")
 
-    async def _resolve_instance_redis_url(self, instance_id: str) -> str:
-        """Resolve instance ID to Redis URL using connection_url from instance data."""
+    async def _resolve_instance_redis_url(self, instance_id: str) -> Optional[str]:
+        """Resolve instance ID to Redis URL using connection_url from instance data.
+
+        IMPORTANT: This method returns None if the instance cannot be found.
+        It NEVER falls back to settings.redis_url (the application database).
+        Tools must handle None and fail gracefully rather than connecting to the wrong database.
+        """
         try:
             instances = await get_instances_from_redis()
             for instance in instances:
                 if instance.id == instance_id:
                     return instance.connection_url
 
-            logger.error(f"Instance {instance_id} not found, falling back to default Redis URL")
-            return settings.redis_url
+            logger.error(
+                f"Instance {instance_id} not found. "
+                "NOT falling back to application database - tools must fail gracefully."
+            )
+            return None
         except Exception as e:
             logger.error(
-                f"Failed to resolve instance {instance_id}: {e}, falling back to default Redis URL"
+                f"Failed to resolve instance {instance_id}: {e}. "
+                "NOT falling back to application database - tools must fail gracefully."
             )
-            return settings.redis_url
+            return None
 
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow for SRE operations."""
@@ -531,14 +540,28 @@ class SRELangGraphAgent:
                         if target_instance:
                             # For Redis diagnostic tools, use the instance's connection details
                             if tool_name == "get_detailed_redis_diagnostics":
-                                if (
-                                    "redis_url" not in modified_args
-                                    or modified_args["redis_url"] == "redis://localhost:6379"
-                                ):
-                                    modified_args["redis_url"] = target_instance.connection_url
-                                    logger.info(
-                                        f"Using instance Redis URL: {modified_args['redis_url']}"
+                                # ALWAYS use the target instance URL, never fall back to application database
+                                modified_args["redis_url"] = target_instance.connection_url
+                                logger.info(
+                                    f"Using target instance Redis URL: {target_instance.connection_url}"
+                                )
+                        else:
+                            # No target instance found - fail gracefully for Redis tools
+                            if tool_name == "get_detailed_redis_diagnostics":
+                                logger.error(
+                                    f"Cannot execute {tool_name} without target instance. "
+                                    "Refusing to fall back to application database."
+                                )
+                                # Return error message instead of executing tool
+                                tool_messages.append(
+                                    ToolMessage(
+                                        content="Error: Cannot connect to Redis instance. "
+                                        "Instance context is required but was not found. "
+                                        "Please specify which Redis instance to diagnose.",
+                                        tool_call_id=tool_call_id,
                                     )
+                                )
+                                continue  # Skip tool execution
 
                             # For metrics tools, use the instance's host for Prometheus queries
                             elif tool_name == "analyze_system_metrics":
