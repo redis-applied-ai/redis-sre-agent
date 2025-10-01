@@ -537,21 +537,18 @@ class SRELangGraphAgent:
                         # Apply bound parameters (these override any LLM-provided values)
                         if bound_params:
                             logger.info(f"Applying bound parameters to {tool_name}: {bound_params}")
-                            modified_args.update(bound_params)
 
-                            # For diagnostics tool, redis_url is the bound parameter
+                            # For metrics tool with bound redis_url, configure provider
                             if (
-                                tool_name == "get_detailed_redis_diagnostics"
+                                tool_name == "query_instance_metrics"
                                 and "redis_url" in bound_params
                             ):
+                                # Use the Redis provider with the bound URL
+                                modified_args["provider_name"] = "redis"
+                                # The redis_url will be used by the provider
+                                # Store it in a way the provider can access it
+                                modified_args["redis_url"] = bound_params["redis_url"]
                                 logger.info(f"Tool bound to Redis URL: {bound_params['redis_url']}")
-
-                            # For metrics tool, instance_host/port are bound
-                            elif tool_name == "query_instance_metrics":
-                                if "instance_host" in bound_params:
-                                    logger.info(
-                                        f"Tool bound to instance: {bound_params['instance_host']}:{bound_params.get('instance_port', 6379)}"
-                                    )
 
                         # If no bound parameters and this is a Redis tool requiring instance context
                         if not bound_params:
@@ -866,35 +863,18 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                     host, port = _parse_redis_connection_url(target_instance.connection_url)
                     redis_url = target_instance.connection_url
 
-                    # CRITICAL: Rebind tools with instance-specific versions
-                    # This ensures the LLM cannot accidentally use wrong connection details
-                    logger.info(f"Rebinding tools for instance: {target_instance.name}")
-                    from redis_sre_agent.tools.instance_bound_tools import get_tools_for_instance
+                    # CRITICAL: Register a provider for this specific instance
+                    # This ensures tools connect to the correct Redis instance
+                    logger.info(f"Registering provider for instance: {target_instance.name}")
+                    from redis_sre_agent.tools.providers import RedisCommandMetricsProvider
+                    from redis_sre_agent.tools.registry import get_global_registry
 
-                    # Get instance-bound tool definitions
-                    instance_tools = get_tools_for_instance(target_instance)
+                    registry = get_global_registry()
 
-                    # Get knowledge tools (these don't need instance binding)
-                    knowledge_tools = [
-                        tool
-                        for tool in self.llm_with_tools.kwargs.get("tools", [])
-                        if tool["function"]["name"]
-                        in [
-                            "search_knowledge_base",
-                            "ingest_sre_document",
-                            "get_all_document_fragments",
-                            "get_related_document_fragments",
-                        ]
-                    ]
-
-                    # Combine instance-bound tools with knowledge tools
-                    all_tools = instance_tools + knowledge_tools
-
-                    # Rebind LLM with new tool set
-                    self.llm_with_tools = self.llm.bind_tools(all_tools)
-                    logger.info(
-                        f"Tools rebound: {len(instance_tools)} instance-specific, {len(knowledge_tools)} knowledge tools"
-                    )
+                    # Register instance-specific provider (will replace existing 'redis' provider)
+                    instance_provider = RedisCommandMetricsProvider(redis_url)
+                    registry.register_provider("redis", instance_provider)
+                    logger.info(f"Registered Redis provider for {redis_url}")
 
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
