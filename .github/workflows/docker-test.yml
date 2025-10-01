@@ -34,6 +34,7 @@ jobs:
         # Testcontainers will start Redis automatically
         # No need to start it manually with docker-compose
         DOCKER_HOST: unix:///var/run/docker.sock
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     - name: Run demo scenario test
       run: |
