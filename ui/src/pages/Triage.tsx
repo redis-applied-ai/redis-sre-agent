@@ -660,10 +660,38 @@ const Triage = () => {
   };
 
   return (
-    <div className="min-h-screen flex gap-4 bg-background">
-      {/* Thread Sidebar - Responsive visibility */}
-      <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-[calc(100vh-120px)]`}>
-        <Card className="flex-1 flex flex-col h-full" padding="none">
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* Page Header */}
+      <div className="flex-shrink-0 p-6 pb-4 border-b border-redis-dusk-08">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {/* Mobile sidebar toggle */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="md:hidden"
+              onClick={() => setShowSidebar(!showSidebar)}
+            >
+              ☰
+            </Button>
+            <div>
+              <h1 className="text-redis-xl font-bold text-foreground">SRE Agent Triage</h1>
+              <p className="text-redis-sm text-redis-dusk-04 mt-1">
+                {activeThreadId
+                  ? 'Chat with the Redis SRE Agent for troubleshooting and support'
+                  : 'Describe your Redis issue or ask a question to get started'
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex gap-4 p-4">
+        {/* Thread Sidebar - Responsive visibility */}
+        <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col`}>
+          <Card className="flex-1 flex flex-col" padding="none">
           <CardHeader className="flex-shrink-0 p-4 pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -780,37 +808,10 @@ const Triage = () => {
         </Card>
       </div>
 
-      {/* Chat Area */}
-      <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col h-[calc(100vh-120px)]`}>
-        <Card className="flex-1 flex flex-col h-full">
-          <CardHeader className="flex-shrink-0">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {/* Mobile sidebar toggle */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="md:hidden"
-                  onClick={() => setShowSidebar(!showSidebar)}
-                >
-                  ☰
-                </Button>
-                <div>
-                  <h1 className="text-redis-xl font-bold text-foreground">SRE Agent Triage</h1>
-                <p className="text-redis-sm text-redis-dusk-04 mt-1">
-                  {activeThreadId
-                    ? 'Chat with the Redis SRE Agent for troubleshooting and support'
-                    : 'Describe your Redis issue or ask a question to get started'
-                  }
-                </p>
-
-                </div>
-              </div>
-
-            </div>
-          </CardHeader>
-
-          {activeThreadId ? (
+        {/* Chat Area */}
+        <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col`}>
+          <Card className="flex-1 flex flex-col">
+            {activeThreadId ? (
             <>
               {/* WebSocket Chat Interface */}
               <CardContent className="flex-1 overflow-hidden">
@@ -917,7 +918,8 @@ const Triage = () => {
               </div>
             </>
           )}
-        </Card>
+          </Card>
+        </div>
       </div>
 
       {/* Delete Confirmation Dialog */}
