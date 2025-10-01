@@ -273,6 +273,7 @@ def redis_container(request):
     - Starts Redis testcontainer
     - Uses Redis 8.2.1 (same as production)
     - Sets REDIS_URL environment variable
+    - **Resets all Redis singletons** to pick up new URL
     - Ensures isolated test environment
 
     NOTE: autouse=False means this only runs for tests that explicitly request it
@@ -295,13 +296,34 @@ def redis_container(request):
     # Also expose Prometheus URL default for tests when docker-compose is used
     os.environ.setdefault("PROMETHEUS_URL", "http://localhost:9090")
 
+    # CRITICAL: Reset all Redis singletons so they pick up the new URL
+    # This must happen BEFORE any test code runs
+    import redis_sre_agent.core.redis as redis_module
+
+    redis_module._redis_client = None
+    redis_module._vectorizer = None
+    redis_module._knowledge_index = None
+
+    # Also reset settings to pick up new environment variable
+    import importlib
+
+    from redis_sre_agent.core import config
+
+    importlib.reload(config)
+
     print(f"\n✅ Redis testcontainer started: {redis_url}")
+    print("✅ Redis singletons reset to use testcontainer")
 
     yield container
 
     # Restore old REDIS_URL
     if old_redis_url:
         os.environ["REDIS_URL"] = old_redis_url
+        # Reload settings and reset singletons again
+        importlib.reload(config)
+        redis_module._redis_client = None
+        redis_module._vectorizer = None
+        redis_module._knowledge_index = None
 
     container.stop()
     print("\n🛑 Redis testcontainer stopped")
