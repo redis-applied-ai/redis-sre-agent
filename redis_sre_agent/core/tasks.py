@@ -710,13 +710,19 @@ async def process_agent_turn(
         )
 
         # Update thread context with new conversation state
-        thread_state.context["messages"] = conversation_state["messages"]
+        # Only save user/assistant messages (filter out any tool messages)
+        clean_messages = [
+            msg
+            for msg in conversation_state["messages"]
+            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
+        ]
+        thread_state.context["messages"] = clean_messages
         thread_state.context["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         # Save the updated context to Redis
         await thread_manager._save_thread_state(thread_state)
         logger.info(
-            f"Saved conversation history with {len(conversation_state['messages'])} messages"
+            f"Saved conversation history with {len(clean_messages)} messages (filtered from {len(conversation_state['messages'])})"
         )
 
         # Extract action items if present
