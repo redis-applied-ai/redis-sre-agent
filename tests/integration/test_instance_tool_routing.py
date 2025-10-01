@@ -6,17 +6,21 @@ the agent's tools connect to THAT instance, not the application's Redis.
 
 import pytest
 
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.api.instances import (
+    RedisInstance,
+    get_instances_from_redis,
+    save_instances_to_redis,
+)
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import process_agent_turn
-from redis_sre_agent.core.thread_state import get_thread_manager
+from redis_sre_agent.core.thread_state import ThreadManager
 
 
 @pytest.fixture
-async def thread_manager(redis_container):
+async def thread_manager(async_redis_client):
     """Get the thread manager for testing."""
-    manager = get_thread_manager()
+    manager = ThreadManager()
     yield manager
 
 
@@ -36,7 +40,6 @@ async def test_tools_connect_to_correct_instance(thread_manager):
     )
 
     # Store instance using the correct API format
-    from redis_sre_agent.api.instances import get_instances_from_redis, save_instances_to_redis
 
     # Get existing instances
     existing_instances = await get_instances_from_redis()

@@ -294,9 +294,11 @@ async def list_schedule_runs(schedule_id: str):
             )
 
         # Get all threads created by the scheduler
-        from ..core.thread_state import get_thread_manager
+        from ..core.redis import get_redis_client
+        from ..core.thread_state import ThreadManager
 
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
 
         # Get all scheduler threads (user_id="scheduler")
         all_scheduler_threads = await thread_manager.list_threads(
@@ -375,9 +377,11 @@ async def trigger_schedule_now(schedule_id: str):
         logger.info(f"Manually triggering schedule {schedule_id} to run immediately")
 
         # Create thread for the manual run
-        from ..core.thread_state import get_thread_manager
+        from ..core.redis import get_redis_client
+        from ..core.thread_state import ThreadManager
 
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
 
         # Prepare context for the manual run
         run_context = {

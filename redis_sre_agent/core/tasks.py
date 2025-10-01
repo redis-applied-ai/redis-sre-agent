@@ -14,7 +14,7 @@ from redis_sre_agent.core.redis import (
     get_redis_client,
     get_vectorizer,
 )
-from redis_sre_agent.core.thread_state import ThreadStatus, get_thread_manager
+from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
 
 logger = logging.getLogger(__name__)
 
@@ -385,9 +385,8 @@ async def scheduler_task(
                         scheduled_time = current_time
 
                     # Create a thread for this scheduled task
-                    from ..core.thread_state import get_thread_manager
-
-                    thread_manager = get_thread_manager()
+                    redis_client = get_redis_client()
+                    thread_manager = ThreadManager(redis_client=redis_client)
 
                     # Prepare context for the scheduled run
                     run_context = {
@@ -573,7 +572,8 @@ async def process_agent_turn(
         context: Additional context for the turn
         retry: Retry configuration
     """
-    thread_manager = get_thread_manager()
+    redis_client = get_redis_client()
+    thread_manager = ThreadManager(redis_client=redis_client)
 
     try:
         logger.info(f"Processing agent turn for thread {thread_id}")

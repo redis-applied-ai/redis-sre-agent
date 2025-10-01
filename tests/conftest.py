@@ -13,7 +13,7 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis as AsyncRedis
-from testcontainers.redis import RedisContainer
+from testcontainers.compose import DockerCompose
 
 # Load environment variables from .env file
 try:
@@ -264,69 +264,54 @@ def sample_task_result():
     }
 
 
-@pytest.fixture(scope="session", autouse=False)  # Changed to autouse=False
-def redis_container(request):
+@pytest.fixture(scope="session")
+def worker_id(request):
     """
-    Redis testcontainer for integration tests only.
+    Get the worker ID for the current test.
 
-    This fixture:
-    - Starts Redis testcontainer
-    - Uses Redis 8.2.1 (same as production)
-    - Sets REDIS_URL environment variable
-    - **Resets all Redis singletons** to pick up new URL
-    - Ensures isolated test environment
-
-    NOTE: autouse=False means this only runs for tests that explicitly request it
-    or are marked with @pytest.mark.integration
+    In pytest-xdist, the config has "workerid" in workerinput.
+    This fixture abstracts that logic to provide a consistent worker_id
+    across all tests.
     """
-    container = RedisContainer("redis:8.2.1")
-    container.start()
+    workerinput = getattr(request.config, "workerinput", {})
+    return workerinput.get("workerid", "master")
 
-    # Update Redis URL for integration tests
-    try:
-        redis_url = container.get_connection_url()
-    except AttributeError:
-        # Try alternative method names
-        redis_url = f"redis://localhost:{container.get_exposed_port(6379)}/0"
 
-    # Save old REDIS_URL
-    old_redis_url = os.environ.get("REDIS_URL")
+@pytest.fixture(scope="session", autouse=True)
+def redis_container(worker_id):
+    """
+    If using xdist, create a unique Compose project for each xdist worker by
+    setting COMPOSE_PROJECT_NAME. That prevents collisions on container/volume
+    names.
+    """
+    # Set the Compose project name so containers do not clash across workers
+    os.environ["COMPOSE_PROJECT_NAME"] = f"redis_test_{worker_id}"
+    os.environ.setdefault("REDIS_IMAGE", "redis/redis-stack-server:latest")
 
-    os.environ["REDIS_URL"] = redis_url
-    # Also expose Prometheus URL default for tests when docker-compose is used
-    os.environ.setdefault("PROMETHEUS_URL", "http://localhost:9090")
+    compose = DockerCompose(
+        context="tests",
+        compose_file_name="docker-compose.yml",
+        pull=True,
+    )
+    compose.start()
 
-    # CRITICAL: Update the settings object IN PLACE
-    # No singletons anymore - all Redis clients read settings.redis_url dynamically
-    from redis_sre_agent.core.config import settings
+    yield compose
 
-    settings.redis_url = redis_url
+    compose.stop()
 
-    print(f"\n✅ Redis testcontainer started: {redis_url}")
-    print(f"✅ Settings updated: settings.redis_url = {settings.redis_url}")
 
-    yield container
-
-    # Restore old REDIS_URL
-    if old_redis_url:
-        os.environ["REDIS_URL"] = old_redis_url
-        settings.redis_url = old_redis_url
-
-    container.stop()
-    print("\n🛑 Redis testcontainer stopped")
+@pytest.fixture(scope="session")
+def redis_url(redis_container):
+    """
+    Use the `DockerCompose` fixture to get host/port of the 'redis' service
+    on container port 6379 (mapped to an ephemeral port on the host).
+    """
+    host, port = redis_container.get_service_host_and_port("redis", 6379)
+    return f"redis://{host}:{port}"
 
 
 @pytest_asyncio.fixture()
-async def async_redis_client(redis_container):
-    """
-    Real Redis client for all tests.
-
-    Provides a clean Redis client connected to the testcontainer.
-    Flushes the database before each test to ensure clean state.
-    """
-    # Get Redis URL from environment (set by redis_container fixture)
-    redis_url = os.environ.get("REDIS_URL")
-
+async def async_redis_client(redis_url):
     client = AsyncRedis.from_url(redis_url, decode_responses=False)
 
     # Flush database to ensure clean state for this test

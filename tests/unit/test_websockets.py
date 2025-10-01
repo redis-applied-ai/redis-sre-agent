@@ -134,10 +134,16 @@ class TestWebSocketEndpoint:
     @pytest.mark.asyncio
     async def test_websocket_connection_thread_not_found(self, test_client):
         """Test WebSocket connection when thread doesn't exist."""
-        with patch("redis_sre_agent.api.websockets.get_thread_manager") as mock_get_manager:
+        with (
+            patch("redis_sre_agent.api.websockets.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.api.websockets.ThreadManager") as mock_manager_class,
+        ):
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
             mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
             mock_manager.get_thread_state.return_value = None
-            mock_get_manager.return_value = mock_manager
 
             with test_client.websocket_connect("/api/v1/ws/tasks/nonexistent") as websocket:
                 data = websocket.receive_json()
@@ -165,12 +171,16 @@ class TestWebSocketEndpoint:
         )
 
         with (
-            patch("redis_sre_agent.api.websockets.get_thread_manager") as mock_get_manager,
+            patch("redis_sre_agent.api.websockets.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.api.websockets.ThreadManager") as mock_manager_class,
             patch("redis_sre_agent.api.websockets._stream_manager") as mock_stream_manager,
         ):
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
             mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
             mock_manager.get_thread_state.return_value = mock_thread_state
-            mock_get_manager.return_value = mock_manager
 
             mock_stream_manager.start_consumer = AsyncMock()
             mock_stream_manager.stop_consumer = AsyncMock()

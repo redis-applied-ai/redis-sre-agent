@@ -76,7 +76,8 @@ class ThreadState(BaseModel):
 class ThreadManager:
     """Manages thread state in Redis."""
 
-    def __init__(self):
+    def __init__(self, redis_url: str):
+        self._redis_url = redis_url
         self.redis_client = None
 
     async def _get_client(self):
@@ -660,15 +661,3 @@ Subject:"""
         except Exception as e:
             logger.error(f"Failed to delete thread {thread_id}: {e}")
             return False
-
-
-# Singleton instance
-_thread_manager = None
-
-
-def get_thread_manager() -> ThreadManager:
-    """Get the global thread manager instance."""
-    global _thread_manager
-    if _thread_manager is None:
-        _thread_manager = ThreadManager()
-    return _thread_manager
