@@ -521,27 +521,46 @@ class SRELangGraphAgent:
                     if tool_name in self.sre_tools:
                         modified_args = tool_args.copy()
 
-                        # Get instance context from state
-                        instance_context = state.get("instance_context")
-                        if instance_context and instance_context.get("instance_id"):
-                            # Resolve instance to get redis_url
-                            try:
-                                instances = await get_instances_from_redis()
-                                target_instance = None
-                                for instance in instances:
-                                    if instance.id == instance_context["instance_id"]:
-                                        target_instance = instance
-                                        break
+                        # Check if this tool has bound parameters (from instance-specific tools)
+                        # Bound parameters are stored in the tool definition metadata
+                        bound_params = {}
+                        for tool_def in self.llm_with_tools.kwargs.get("tools", []):
+                            if tool_def["function"]["name"] == tool_name:
+                                # Extract bound parameters (prefixed with _bound_)
+                                for key, value in tool_def["function"].items():
+                                    if key.startswith("_bound_"):
+                                        param_name = key.replace("_bound_", "")
+                                        bound_params[param_name] = value
+                                break
 
-                                if target_instance:
-                                    # Bind redis_url for metrics queries
-                                    if tool_name == "query_instance_metrics":
-                                        modified_args["redis_url"] = target_instance.connection_url
-                                        logger.info(
-                                            f"Binding redis_url to tool: {target_instance.connection_url}"
-                                        )
-                            except Exception as e:
-                                logger.error(f"Failed to resolve instance context: {e}")
+                        # Apply bound parameters (these override any LLM-provided values)
+                        if bound_params:
+                            logger.info(f"Applying bound parameters to {tool_name}: {bound_params}")
+                            modified_args.update(bound_params)
+                        else:
+                            # No bound parameters - try to get from instance context
+                            instance_context = state.get("instance_context")
+                            if instance_context and instance_context.get("instance_id"):
+                                # Resolve instance to get redis_url
+                                try:
+                                    instances = await get_instances_from_redis()
+                                    target_instance = None
+                                    for instance in instances:
+                                        if instance.id == instance_context["instance_id"]:
+                                            target_instance = instance
+                                            break
+
+                                    if target_instance:
+                                        # Bind redis_url for metrics queries
+                                        if tool_name == "query_instance_metrics":
+                                            modified_args["redis_url"] = (
+                                                target_instance.connection_url
+                                            )
+                                            logger.info(
+                                                f"Binding redis_url to tool: {target_instance.connection_url}"
+                                            )
+                                except Exception as e:
+                                    logger.error(f"Failed to resolve instance context: {e}")
 
                         # Call the async SRE function
                         result = await self.sre_tools[tool_name](**modified_args)
@@ -832,9 +851,47 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                     host, port = _parse_redis_connection_url(target_instance.connection_url)
                     redis_url = target_instance.connection_url
 
-                    # Store instance context - will be used to bind tool parameters
+                    # CRITICAL: Rebind tools with instance-specific versions
+                    # This changes the tool schema so LLM knows to use this instance
                     logger.info(
-                        f"Setting instance context for: {target_instance.name} ({redis_url})"
+                        f"Rebinding tools for instance: {target_instance.name} ({redis_url})"
+                    )
+                    from redis_sre_agent.tools.instance_bound_tools import get_tools_for_instance
+
+                    # Get instance-bound tool definitions (these have modified schemas)
+                    instance_tools = get_tools_for_instance(target_instance)
+
+                    # Get knowledge tools (these don't need instance binding)
+                    knowledge_tools = [
+                        tool
+                        for tool in self.llm_with_tools.kwargs.get("tools", [])
+                        if tool["function"]["name"]
+                        in [
+                            "search_knowledge_base",
+                            "ingest_sre_document",
+                            "get_all_document_fragments",
+                            "get_related_document_fragments",
+                        ]
+                    ]
+
+                    # Get other protocol tools (logs, tickets, etc - not metrics)
+                    from redis_sre_agent.tools.protocol_agent_tools import get_protocol_based_tools
+
+                    protocol_tools = get_protocol_based_tools()
+                    non_metrics_tools = [
+                        tool
+                        for tool in protocol_tools
+                        if tool["function"]["name"] != "query_instance_metrics"
+                    ]
+
+                    # Combine: instance-bound metrics + other protocol tools + knowledge tools
+                    all_tools = instance_tools + non_metrics_tools + knowledge_tools
+
+                    # Rebind LLM with new tool set
+                    self.llm_with_tools = self.llm.bind_tools(all_tools)
+                    logger.info(
+                        f"Tools rebound: {len(instance_tools)} instance-specific, "
+                        f"{len(non_metrics_tools)} protocol, {len(knowledge_tools)} knowledge"
                     )
 
                     # Add instance context to the query
