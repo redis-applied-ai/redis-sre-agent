@@ -134,10 +134,10 @@ SRE_SCHEDULES_SCHEMA = {
 }
 
 
-def get_redis_client() -> Redis:
+def get_redis_client(url: Optional[str] = None) -> Redis:
     """Get Redis client (creates fresh client to avoid event loop issues)."""
     return Redis.from_url(
-        url=settings.redis_url,
+        url=url or settings.redis_url,
         password=settings.redis_password,
         decode_responses=False,  # Keep as bytes for RedisVL compatibility
     )

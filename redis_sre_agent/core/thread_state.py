@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 from ulid import ULID
 
 from redis_sre_agent.core.config import settings
@@ -76,15 +77,15 @@ class ThreadState(BaseModel):
 class ThreadManager:
     """Manages thread state in Redis."""
 
-    def __init__(self, redis_url: str):
+    def __init__(self, redis_url: Optional[str] = None, redis_client: Optional[Redis] = None):
         self._redis_url = redis_url
-        self.redis_client = None
+        self._redis_client = redis_client
 
-    async def _get_client(self):
+    async def _get_client(self) -> Redis:
         """Get Redis client (lazy initialization)."""
-        if self.redis_client is None:
-            self.redis_client = get_redis_client()
-        return self.redis_client
+        if self._redis_client is None:
+            self._redis_client = get_redis_client(self._redis_url)
+        return self._redis_client
 
     def _get_thread_keys(self, thread_id: str) -> Dict[str, str]:
         """Get all Redis keys for a thread."""
