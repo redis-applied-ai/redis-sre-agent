@@ -283,10 +283,10 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
                         code: ({children, ...props}) => {
                           const isInline = !props.className?.includes('language-');
                           return isInline ?
-                            <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code> :
-                            <code className="block bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3">{children}</code>;
+                            <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">{children}</code> :
+                            <code className="block bg-redis-dusk-08 text-foreground p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3">{children}</code>;
                         },
-                        pre: ({children}) => <pre className="bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3 overflow-x-auto">{children}</pre>,
+                        pre: ({children}) => <pre className="bg-redis-dusk-08 text-foreground p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3 overflow-x-auto">{children}</pre>,
                         strong: ({children}) => <strong className="font-semibold text-foreground">{children}</strong>,
                         blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 mb-3 italic">{children}</blockquote>,
                       }}

@@ -660,10 +660,10 @@ const Triage = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-120px)] flex gap-4" style={{ backgroundColor: 'var(--background)' }}>
+    <div className="min-h-screen flex gap-4 bg-background">
       {/* Thread Sidebar - Responsive visibility */}
-      <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-full`}>
-        <Card className="flex-1 flex flex-col" padding="none">
+      <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-[calc(100vh-120px)]`}>
+        <Card className="flex-1 flex flex-col h-full" padding="none">
           <CardHeader className="flex-shrink-0 p-4 pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -781,8 +781,8 @@ const Triage = () => {
       </div>
 
       {/* Chat Area */}
-      <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col`}>
-        <Card className="flex-1 flex flex-col">
+      <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col h-[calc(100vh-120px)]`}>
+        <Card className="flex-1 flex flex-col h-full">
           <CardHeader className="flex-shrink-0">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
