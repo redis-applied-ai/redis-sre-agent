@@ -317,9 +317,9 @@ async def initialize_docket_infrastructure() -> bool:
 
         # Test Docket connection and ensure infrastructure is ready
         async with Docket(url=settings.redis_url, name="sre_docket") as docket:
-            # Test basic Docket functionality
+            # Test basic Docket functionality by accessing the Redis connection
             # This will create necessary Redis structures if they don't exist
-            await docket.ping()
+            await docket.redis.ping()
             logger.info("Docket infrastructure initialized successfully")
             return True
 
