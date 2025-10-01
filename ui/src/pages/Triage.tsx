@@ -595,7 +595,8 @@ const Triage = () => {
         await sreAgentApi.continueConversation(threadId!, messageContent, userId);
       }
 
-      // WebSocket will handle updates - no polling needed
+      // WebSocket will handle updates - reset loading state after API call succeeds
+      setIsLoading(false);
 
     } catch (err) {
       setError(`Failed to send message: ${err instanceof Error ? err.message : 'Unknown error'}`);

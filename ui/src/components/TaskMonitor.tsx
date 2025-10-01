@@ -56,6 +56,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   }, [initialQuery]);
 
   const connectWebSocket = () => {
+    // Close existing connection if any
+    if (wsRef.current) {
+      console.log('Closing existing WebSocket connection');
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
     try {
       // Construct WebSocket URL dynamically based on current location
       const getWebSocketUrl = () => {
@@ -75,6 +82,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
       };
 
       const wsUrl = getWebSocketUrl();
+      console.log('Connecting to WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
@@ -152,12 +160,27 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   };
 
   const addAssistantMessage = (content: string, timestamp: string) => {
-    setMessages(prev => [...prev, {
-      id: `assistant-${Date.now()}`,
-      role: 'assistant',
-      content,
-      timestamp,
-    }]);
+    setMessages(prev => {
+      // Check if this message already exists to prevent duplicates
+      const exists = prev.some(msg =>
+        msg.role === 'assistant' &&
+        msg.content === content &&
+        msg.timestamp === timestamp
+      );
+
+      if (exists) {
+        console.log('Duplicate message detected, skipping:', content.substring(0, 50));
+        return prev;
+      }
+
+      console.log('Adding assistant message:', content.substring(0, 50));
+      return [...prev, {
+        id: `assistant-${Date.now()}-${Math.random()}`,
+        role: 'assistant',
+        content,
+        timestamp,
+      }];
+    });
   };
 
   const processUpdate = (update: TaskUpdate) => {
