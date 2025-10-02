@@ -767,6 +767,7 @@ async def run_structured_tool_evaluation() -> List[Dict[str, Any]]:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_structured_tool_evaluation():
     """Test structured tool usage evaluation."""
     # Skip if OpenAI API key is not available or is a test key

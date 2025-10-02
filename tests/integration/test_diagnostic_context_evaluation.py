@@ -630,6 +630,7 @@ async def run_diagnostic_context_evaluation() -> List[Dict[str, Any]]:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_diagnostic_context_evaluation():
     """Test diagnostic context evaluation with real data."""
     # Skip if OpenAI API key is not available

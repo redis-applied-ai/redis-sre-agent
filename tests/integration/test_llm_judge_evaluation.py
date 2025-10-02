@@ -550,6 +550,7 @@ async def run_comprehensive_llm_judge_evaluation():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 @redis_search_required
 async def test_llm_judge_evaluation():
     """Test comprehensive LLM judge evaluation of Redis SRE search quality."""
@@ -587,6 +588,7 @@ async def test_llm_judge_evaluation():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 @redis_search_required
 async def test_single_scenario_evaluation():
     """Test evaluation of a single scenario for faster feedback."""
