@@ -141,17 +141,16 @@ class TestCaptureRedisDiagnostics:
     @pytest.mark.asyncio
     async def test_capture_connection_error(self):
         """Test handling connection errors."""
-        # Mock the _test_connection method directly to return an error
-        with patch(
-            "redis_sre_agent.tools.redis_diagnostics.get_redis_diagnostics"
-        ) as mock_get_diagnostics:
-            mock_diagnostics = AsyncMock()
-            mock_diagnostics._test_connection.return_value = {
+        # Patch the RedisDiagnostics._test_connection method to return an error
+        with patch.object(
+            RedisDiagnostics, "_test_connection", new_callable=AsyncMock
+        ) as mock_test_connection:
+            # Mock the method to return a connection error
+            mock_test_connection.return_value = {
                 "error": "Connection failed",
                 "ping_duration_ms": None,
                 "basic_operations_test": False,
             }
-            mock_get_diagnostics.return_value = mock_diagnostics
 
             result = await capture_redis_diagnostics("redis://localhost:6379")
 
