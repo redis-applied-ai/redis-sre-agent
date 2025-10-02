@@ -406,6 +406,7 @@ async def run_redis_enterprise_llm_judge_evaluation():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_redis_enterprise_llm_judge_evaluation():
     """Test comprehensive Redis Enterprise LLM judge evaluation."""
     # Skip if OpenAI API key is not available
@@ -459,6 +460,7 @@ async def test_redis_enterprise_llm_judge_evaluation():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_single_redis_enterprise_scenario():
     """Test evaluation of a single Redis Enterprise scenario for faster feedback."""
     # Skip if OpenAI API key is not available
