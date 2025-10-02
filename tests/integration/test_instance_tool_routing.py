@@ -20,7 +20,7 @@ from redis_sre_agent.core.thread_state import ThreadManager
 @pytest.fixture
 async def thread_manager(async_redis_client):
     """Get the thread manager for testing."""
-    manager = ThreadManager()
+    manager = ThreadManager(redis_client=async_redis_client)
     yield manager
 
 
@@ -107,6 +107,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
             redis_urls_mentioned.extend(urls)
 
     # Also check the final result
+    result_str = ""
     if thread_state.result:
         print("\n📄 Final result:")
         result_str = str(thread_state.result)

@@ -577,7 +577,6 @@ Subject:"""
             client = await self._get_client()
             keys = self._get_thread_keys(thread_state.thread_id)
 
-            # Use async pipeline for atomic operations
             async with client.pipeline(transaction=True) as pipe:
                 # Set basic fields
                 pipe.set(keys["status"], thread_state.status.value)

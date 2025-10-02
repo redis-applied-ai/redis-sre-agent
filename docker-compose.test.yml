@@ -1,31 +1,144 @@
 # Docker Compose override for integration testing scenarios
 # Use: docker-compose -f docker-compose.yml -f docker-compose.test.yml up
 
-version: '3.8'
-
 services:
   redis:
+    image: redis:8.2.1
     ports:
-      - "47942:6379"  # Obscure host port to avoid collisions
+      - "6369"
     volumes:
       - ./monitoring/redis-low-memory.conf:/usr/local/etc/redis/redis.conf
     command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sre-network-test
+
+  # Redis Exporter for Prometheus metrics
   redis-exporter:
+    image: oliver006/redis_exporter:latest
     ports:
-      - "19121:9121"
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+      - REDIS_EXPORTER_LOG_FORMAT=txt
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - sre-network-test
+
+  # Prometheus - Metrics collection
   prometheus:
+    image: prom/prometheus:latest
     ports:
-      - "19090:9090"
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - sre-network-test
+
+  # Grafana - Metrics visualization
   grafana:
+    image: grafana/grafana:latest
     ports:
-      - "13000:3000"
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - sre-network-test
+
+  # Node Exporter - System metrics
   node-exporter:
+    image: prom/node-exporter:latest
     ports:
-      - "19100:9100"
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - sre-network-test
 
   sre-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
     environment:
       - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
       - PROMETHEUS_URL=http://prometheus:9090
       - GRAFANA_URL=http://grafana:3000
-      - LOG_LEVEL=DEBUG
+    depends_on:
+      redis:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    volumes:
+      - .env:/app/.env
+      - ./artifacts:/app/artifacts  # For data pipeline
+      - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
+      - ./tests:/app/tests  # Mount tests for development
+    command: uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - sre-network-test
+
+  # SRE Agent Background Worker
+  sre-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
+      - PROMETHEUS_URL=http://prometheus:9090
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .env:/app/.env
+      - ./artifacts:/app/artifacts
+      - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for log access
+      - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
+      - ./tests:/app/tests  # Mount tests for development
+    command: uv run python -m redis_sre_agent.worker
+    networks:
+      - sre-network-test
+
+networks:
+  sre-network-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/16
+
+volumes:
+  redis_data:
+  redis_demo_data:
+  redis_enterprise_node1_data:
+  redis_enterprise_node2_data:
+  redis_enterprise_node3_data:
+  prometheus_data:
+  grafana_data:

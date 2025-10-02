@@ -283,14 +283,17 @@ def redis_container(worker_id):
     If using xdist, create a unique Compose project for each xdist worker by
     setting COMPOSE_PROJECT_NAME. That prevents collisions on container/volume
     names.
+
+    Uses docker-compose.integration.yml which only includes Redis service
+    (no app services that need building).
     """
     # Set the Compose project name so containers do not clash across workers
     os.environ["COMPOSE_PROJECT_NAME"] = f"redis_test_{worker_id}"
     os.environ.setdefault("REDIS_IMAGE", "redis/redis-stack-server:latest")
 
     compose = DockerCompose(
-        context="tests",
-        compose_file_name="docker-compose.yml",
+        context="./",
+        compose_file_name="docker-compose.integration.yml",
         pull=True,
     )
     compose.start()

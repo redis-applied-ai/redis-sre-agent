@@ -1,0 +1,26 @@
+# Minimal Docker Compose for integration tests
+# Only includes Redis - no app services that need building
+
+services:
+  redis:
+    image: redis:8.2.1
+    ports:
+      - "6379"
+    volumes:
+      - ./monitoring/redis-low-memory.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sre-network-test
+
+networks:
+  sre-network-test:
+    driver: bridge
+
+volumes:
+  redis_data:
+
