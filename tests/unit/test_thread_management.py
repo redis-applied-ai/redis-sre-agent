@@ -282,7 +282,7 @@ class TestProcessAgentTurn:
     async def test_process_agent_turn_agent_error(self):
         """Test agent turn processing with agent error."""
         with (
-            patch("redis_sre_agent.core.tasks.get_thread_manager") as mock_get_manager,
+            patch("redis_sre_agent.core.tasks.ThreadManager") as mock_thread_manager_class,
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
             patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
             patch(
@@ -301,7 +301,7 @@ class TestProcessAgentTurn:
             mock_manager.update_thread_status.return_value = True
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_error.return_value = True
-            mock_get_manager.return_value = mock_manager
+            mock_thread_manager_class.return_value = mock_manager
 
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
