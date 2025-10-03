@@ -1006,7 +1006,7 @@ class RedisSREDemo:
         time.sleep(2)
 
         # Note: This scenario works with the Redis Enterprise instance in docker-compose
-        enterprise_url = "redis://:admin@redis-enterprise:12000/0"
+        enterprise_url = "redis://localhost:12000/0"
 
         try:
             # Test connection to Redis Enterprise
@@ -1024,7 +1024,7 @@ class RedisSREDemo:
         except Exception as e:
             print(f"   ❌ Could not connect to Redis Enterprise: {e}")
             print("   💡 Make sure Redis Enterprise is running with the demo setup")
-            print("   💡 Expected connection: redis://:admin@redis-enterprise:12000/0")
+            print("   💡 Expected connection: redis://localhost:12000/0")
             return
 
         self.print_step(2, "Putting node 2 in maintenance mode")

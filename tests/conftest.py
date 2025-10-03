@@ -286,15 +286,7 @@ def redis_container(worker_id):
 
     Uses docker-compose.integration.yml which only includes Redis service
     (no app services that need building).
-
-    In CI (when REDIS_URL is set), this fixture does nothing since Redis
-    is already running as a service.
     """
-    # If REDIS_URL is set (CI environment), skip Docker Compose
-    if os.environ.get("REDIS_URL"):
-        yield None
-        return
-
     # Set the Compose project name so containers do not clash across workers
     os.environ["COMPOSE_PROJECT_NAME"] = f"redis_test_{worker_id}"
     os.environ.setdefault("REDIS_IMAGE", "redis/redis-stack-server:latest")
@@ -316,14 +308,7 @@ def redis_url(redis_container):
     """
     Use the `DockerCompose` fixture to get host/port of the 'redis' service
     on container port 6379 (mapped to an ephemeral port on the host).
-
-    In CI (when REDIS_URL env var is set), use that instead of Docker Compose.
     """
-    # If REDIS_URL is set (CI environment), use it
-    if os.environ.get("REDIS_URL"):
-        return os.environ["REDIS_URL"]
-
-    # Otherwise, get from Docker Compose
     host, port = redis_container.get_service_host_and_port("redis", 6379)
     return f"redis://{host}:{port}"
 
