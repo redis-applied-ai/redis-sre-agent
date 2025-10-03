@@ -162,6 +162,7 @@ async def run_retrieval_evaluation():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_retrieval_evaluation():
     """Test retrieval evaluation with IR metrics."""
     await run_retrieval_evaluation()
@@ -173,6 +174,7 @@ async def test_retrieval_evaluation():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_retrieval_metrics_calculation():
     """Test that retrieval metrics are calculated correctly."""
     evaluator = RetrievalEvaluator()

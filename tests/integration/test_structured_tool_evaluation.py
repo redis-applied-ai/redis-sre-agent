@@ -767,6 +767,7 @@ async def run_structured_tool_evaluation() -> List[Dict[str, Any]]:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_structured_tool_evaluation():
     """Test structured tool usage evaluation."""
     # Skip if OpenAI API key is not available or is a test key
@@ -785,9 +786,9 @@ async def test_structured_tool_evaluation():
     # Check structured reporting
     for result in successful_results:
         investigation_summary = result["investigation_summary"]
-        assert investigation_summary.get(
-            "found", False
-        ), "Agent should provide structured investigation summary"
+        assert investigation_summary.get("found", False), (
+            "Agent should provide structured investigation summary"
+        )
 
     # Check overall assessment quality (focus on composite score rather than strict tool compliance)
     composite_scores = []
@@ -798,9 +799,9 @@ async def test_structured_tool_evaluation():
 
     # Require reasonable overall quality even if tool compliance is low
     avg_composite = sum(composite_scores) / len(composite_scores) if composite_scores else 0
-    assert (
-        avg_composite >= 2.0
-    ), f"Average composite score should be at least 2.0, got {avg_composite:.2f}"
+    assert avg_composite >= 2.0, (
+        f"Average composite score should be at least 2.0, got {avg_composite:.2f}"
+    )
 
 
 if __name__ == "__main__":

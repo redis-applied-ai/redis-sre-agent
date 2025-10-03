@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from ulid import ULID
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import (
     get_knowledge_index,
     get_vectorizer,
@@ -405,7 +406,7 @@ async def get_all_document_fragments(
         redis_client = get_redis_client()
 
         # Find all chunks for this document
-        pattern = f"sre_knowledge:{document_hash}:chunk:*"
+        pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
         chunk_keys = []
 
         async for key in redis_client.scan_iter(match=pattern):
@@ -740,7 +741,7 @@ async def ingest_sre_document(
         }
 
         # Store in vector index
-        doc_key = f"sre_knowledge:{doc_id}"
+        doc_key = RedisKeys.knowledge_document(doc_id)
         document["id"] = doc_id  # Add id field for the index
 
         async with index:

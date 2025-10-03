@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  Button,
-} from '@radar/ui-kit';
+import ReactMarkdown from 'react-markdown';
 
 interface TaskUpdate {
   timestamp: string;
@@ -14,24 +12,122 @@ interface TaskUpdate {
   updates?: TaskUpdate[];
 }
 
-interface TaskMonitorProps {
-  threadId: string;
-  onClose?: () => void;
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'thinking' | 'status';
+  content: string;
+  timestamp: string;
 }
 
-const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
+interface TaskMonitorProps {
+  threadId: string;
+  initialQuery?: string;
+}
+
+const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [updates, setUpdates] = useState<TaskUpdate[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isThinking, setIsThinking] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<string>('unknown');
-  const [taskResult, setTaskResult] = useState<any>(null);
-  const [isAutoScroll, setIsAutoScroll] = useState(true);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
+  const lastRenderTimeRef = useRef<number>(0);
+  const isIntentionalCloseRef = useRef<boolean>(false);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Load thread messages when threadId changes
+  useEffect(() => {
+    console.log('Thread changed to:', threadId);
+
+    // Reset tracking refs
+    lastMessageIdRef.current = null;
+    lastRenderTimeRef.current = 0;
+
+    // Fetch thread messages from API
+    const loadThreadMessages = async () => {
+      try {
+        const response = await fetch(`/api/v1/tasks/${threadId}`);
+        if (response.ok) {
+          const threadData = await response.json();
+          console.log('Thread data:', threadData);
+          console.log('Context:', threadData.context);
+          console.log('Messages:', threadData.context?.messages);
+          console.log('Thread status:', threadData.status);
+
+          const threadMessages = threadData.context?.messages || [];
+
+          // Convert to ChatMessage format
+          const chatMessages: ChatMessage[] = threadMessages.map((msg: any, index: number) => ({
+            id: `${msg.role}-${index}-${msg.timestamp}`,
+            role: msg.role,
+            content: msg.content,
+            timestamp: msg.timestamp,
+          }));
+
+          // Only update messages if we actually got some from the API
+          // This prevents clearing the user's just-sent message
+          if (chatMessages.length > 0) {
+            setMessages(chatMessages);
+            console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}:`, chatMessages);
+          } else {
+            console.log('No messages in thread yet, keeping current messages');
+          }
+
+          // Set status and thinking indicator based on thread status
+          setCurrentStatus(threadData.status);
+
+          // Only show thinking if thread is actually in progress
+          const inProgressStatuses = ['queued', 'in_progress', 'running'];
+          setIsThinking(inProgressStatuses.includes(threadData.status));
+        } else {
+          console.error('Failed to load thread:', response.status, response.statusText);
+          // If thread doesn't exist yet or error, start fresh
+          setMessages([]);
+          setIsThinking(false);
+        }
+      } catch (error) {
+        console.error('Error loading thread messages:', error);
+        setMessages([]);
+        setIsThinking(false);
+      }
+    };
+
+    loadThreadMessages();
+  }, [threadId]);
+
+  // Only scroll when messages change, not on every state update
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages.length]); // Only trigger when message count changes
+
+  useEffect(() => {
+    // Add initial user message if provided
+    if (initialQuery) {
+      setMessages([{
+        id: 'initial',
+        role: 'user',
+        content: initialQuery,
+        timestamp: new Date().toISOString(),
+      }]);
+    }
+  }, [initialQuery]);
 
   const connectWebSocket = () => {
+    // Close existing connection if any
+    if (wsRef.current) {
+      console.log('Closing existing WebSocket connection');
+      isIntentionalCloseRef.current = true; // Mark as intentional to avoid error message
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
     try {
       // Construct WebSocket URL dynamically based on current location
       const getWebSocketUrl = () => {
@@ -39,27 +135,27 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
         const hostname = window.location.hostname;
 
         // Check if we're in development mode (Vite dev server)
-        // Vite typically uses ports 3000, 3001, etc. and serves from localhost
         const isDevelopment = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
-                             (window.location.port.startsWith('30') || window.location.port === '5173'); // 5173 is Vite's default
+                             (window.location.port.startsWith('30') || window.location.port === '5173');
 
         if (!isDevelopment) {
-          // In production, use current host (nginx will proxy WebSocket connections)
           const port = window.location.port ? `:${window.location.port}` : '';
           return `${protocol}//${hostname}${port}/api/v1/ws/tasks/${threadId}`;
         }
 
-        // In development, use current hostname but with backend port (8000)
         return `${protocol}//${hostname}:8000/api/v1/ws/tasks/${threadId}`;
       };
 
       const wsUrl = getWebSocketUrl();
+      console.log('Connecting to WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         console.log('WebSocket connected');
         setIsConnected(true);
         setConnectionError(null);
+        isIntentionalCloseRef.current = false; // Reset flag on successful connection
+        setIsThinking(true);
 
         // Send periodic pings to keep connection alive
         const pingInterval = setInterval(() => {
@@ -76,39 +172,28 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
           const data: TaskUpdate = JSON.parse(event.data);
 
           if (data.type === 'pong') {
-            return; // Ignore pong responses
+            return;
           }
 
           // Handle different update types
           if (data.update_type === 'initial_state') {
             setCurrentStatus(data.status || 'unknown');
+
+            // Process initial updates to extract user query and responses
+            // Filter out the final result to avoid duplicates
             if (data.updates) {
-              setUpdates([...data.updates].reverse()); // Reverse to show chronological order
+              const updatesWithoutFinalResult = data.updates.filter(u => !u.result?.response);
+              processUpdates(updatesWithoutFinalResult);
             }
-            if (data.result) {
-              setTaskResult(data.result);
+
+            // Add the final result once
+            if (data.result?.response) {
+              addAssistantMessage(data.result.response, data.result.turn_completed_at || new Date().toISOString());
+              setIsThinking(false);
             }
           } else {
-            // Add new update
-            setUpdates(prev => [...prev, data]);
-
-            if (data.status) {
-              setCurrentStatus(data.status);
-            }
-
-            if (data.result) {
-              setTaskResult(data.result);
-            }
-          }
-
-          // Auto-scroll to bottom if enabled
-          if (isAutoScroll && scrollAreaRef.current) {
-            setTimeout(() => {
-              const scrollElement = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]');
-              if (scrollElement) {
-                scrollElement.scrollTop = scrollElement.scrollHeight;
-              }
-            }, 100);
+            // Process new update
+            processUpdate(data);
           }
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -119,29 +204,151 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
         console.log('WebSocket closed:', event.code, event.reason);
         setIsConnected(false);
 
-        // Attempt to reconnect after a delay (unless manually closed)
-        if (event.code !== 1000) {
+        // Only show error and reconnect if this wasn't an intentional close
+        if (!isIntentionalCloseRef.current && event.code !== 1000) {
           setConnectionError('Connection lost. Attempting to reconnect...');
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
           }, 3000);
+        } else {
+          // Clear error on intentional close
+          setConnectionError(null);
         }
       };
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        setConnectionError('WebSocket connection error');
+        setConnectionError('Connection error. Please refresh the page.');
       };
 
       wsRef.current = ws;
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error);
-      setConnectionError('Failed to create WebSocket connection');
+      setConnectionError('Failed to connect. Please refresh the page.');
     }
+  };
+
+  const addAssistantMessage = (content: string, timestamp: string) => {
+    // Create a unique ID for this message
+    const messageId = `assistant-${timestamp}-${content.substring(0, 50)}`;
+
+    // Check if we've already added this exact message
+    if (lastMessageIdRef.current === messageId) {
+      console.log('Skipping duplicate message (same ID):', content.substring(0, 50));
+      return;
+    }
+
+    setMessages(prev => {
+      // Check if this message already exists to prevent duplicates
+      const exists = prev.some(msg =>
+        msg.role === 'assistant' &&
+        msg.content === content &&
+        msg.timestamp === timestamp
+      );
+
+      if (exists) {
+        console.log('Duplicate message detected, skipping:', content.substring(0, 50));
+        return prev;
+      }
+
+      console.log('Adding assistant message:', content.substring(0, 50));
+      lastMessageIdRef.current = messageId;
+      return [...prev, {
+        id: messageId,
+        role: 'assistant',
+        content,
+        timestamp,
+      }];
+    });
+  };
+
+  const addStatusMessage = (content: string, timestamp: string) => {
+    // Create a unique ID for this status message
+    const messageId = `status-${timestamp}-${content.substring(0, 30)}`;
+
+    setMessages(prev => {
+      // Check if this status message already exists
+      const exists = prev.some(msg => msg.id === messageId);
+
+      if (exists) {
+        return prev;
+      }
+
+      console.log('Adding status message:', content);
+      return [...prev, {
+        id: messageId,
+        role: 'status',
+        content,
+        timestamp,
+      }];
+    });
+  };
+
+  const processUpdate = (update: TaskUpdate) => {
+    // Throttle updates to prevent constant re-renders
+    const now = Date.now();
+    const timeSinceLastRender = now - lastRenderTimeRef.current;
+
+    // Only process updates if enough time has passed (100ms throttle)
+    // OR if it's a final result or important status message
+    const isFinalResult = update.result?.response ||
+                          update.status === 'completed' ||
+                          update.status === 'done' ||
+                          update.status === 'failed';
+
+    const isImportantUpdate = update.message && update.message.length > 0;
+
+    if (!isFinalResult && !isImportantUpdate && timeSinceLastRender < 100) {
+      return; // Skip this update to prevent flashing
+    }
+
+    lastRenderTimeRef.current = now;
+
+    // Update status only if it changed
+    if (update.status) {
+      setCurrentStatus(prev => {
+        if (prev === update.status) return prev; // Avoid unnecessary re-render
+        return update.status!;
+      });
+
+      // Stop thinking indicator when task completes
+      if (update.status === 'completed' || update.status === 'done' || update.status === 'failed') {
+        setIsThinking(false);
+      }
+    }
+
+    // Show status messages from the agent (progress updates)
+    if (update.message && update.message.length > 0) {
+      // Filter out technical/internal messages
+      const technicalPatterns = [
+        /agent turn completed/i,
+        /task completed/i,
+        /task queued/i,
+        /processing complete/i,
+        /initialization complete/i,
+      ];
+
+      const isTechnical = technicalPatterns.some(pattern => pattern.test(update.message!));
+
+      if (!isTechnical) {
+        addStatusMessage(update.message, update.timestamp);
+      }
+    }
+
+    // Handle final result (only from new updates, not initial_state)
+    if (update.result?.response) {
+      addAssistantMessage(update.result.response, update.timestamp);
+      setIsThinking(false);
+    }
+  };
+
+  const processUpdates = (updates: TaskUpdate[]) => {
+    updates.forEach(update => processUpdate(update));
   };
 
   const disconnect = () => {
     if (wsRef.current) {
+      isIntentionalCloseRef.current = true; // Mark as intentional
       wsRef.current.close(1000, 'Manual disconnect');
       wsRef.current = null;
     }
@@ -163,44 +370,6 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
     };
   }, [threadId]);
 
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'running':
-      case 'in_progress':
-        return <span className="inline-block w-3 h-3 bg-blue-500 rounded-full animate-pulse"></span>;
-      case 'completed':
-      case 'success':
-        return <span className="inline-block w-3 h-3 bg-green-500 rounded-full"></span>;
-      case 'failed':
-      case 'error':
-        return <span className="inline-block w-3 h-3 bg-red-500 rounded-full"></span>;
-      case 'pending':
-      case 'queued':
-        return <span className="inline-block w-3 h-3 bg-yellow-500 rounded-full"></span>;
-      default:
-        return <span className="inline-block w-3 h-3 bg-gray-500 rounded-full"></span>;
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'running':
-      case 'in_progress':
-        return 'bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs';
-      case 'completed':
-      case 'success':
-        return 'bg-green-100 text-green-800 px-2 py-1 rounded text-xs';
-      case 'failed':
-      case 'error':
-        return 'bg-red-100 text-red-800 px-2 py-1 rounded text-xs';
-      case 'pending':
-      case 'queued':
-        return 'bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs';
-      default:
-        return 'bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs';
-    }
-  };
-
   const formatTimestamp = (timestamp: string) => {
     try {
       return new Date(timestamp).toLocaleTimeString();
@@ -210,106 +379,94 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, onClose }) => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col">
-      {/* Header */}
-      <div className="flex-shrink-0 border-b border-gray-200 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-gray-900">
-            Real-time Task Monitor
-          </h3>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              <span className="text-sm text-gray-600">
-                {isConnected ? 'Connected' : 'Disconnected'}
-              </span>
-            </div>
-            {onClose && (
-              <Button variant="outline" size="sm" onClick={onClose}>
-                Back to Chat
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-3 h-3 bg-blue-500 rounded-full animate-pulse"></span>
-            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">
-              Processing
-            </span>
-          </div>
-        </div>
-
-        {connectionError && (
-          <div className="text-sm text-red-600 bg-red-50 p-2 rounded mt-2">
+    <div className="h-full flex flex-col">
+      {/* Connection Error */}
+      {connectionError && (
+        <div className="flex-shrink-0 p-4">
+          <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-md">
             {connectionError}
           </div>
-        )}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-hidden">
-        <div className="h-full overflow-y-auto p-4" ref={scrollAreaRef}>
-          <div className="space-y-3">
-            {updates.length === 0 ? (
-              <div className="text-center text-gray-500 py-8">
-                <div className="animate-spin w-6 h-6 border-2 border-gray-300 border-t-blue-600 rounded-full mx-auto mb-2"></div>
-                Waiting for updates...
-              </div>
-            ) : (
-              updates
-                .filter(update => {
-                  // Filter out technical update types that users shouldn't see
-                  const technicalTypes = [
-                    'task_queued', 'task_started', 'task_completed', 'task_failed',
-                    'agent_init', 'agent_complete', 'turn_start', 'turn_complete',
-                    'status_update', 'internal', 'debug'
-                  ];
-                  return !technicalTypes.includes(update.update_type);
-                })
-                .map((update, index) => (
-                <div key={index} className="border rounded-lg p-3 bg-white shadow-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs text-gray-500">
-                          {formatTimestamp(update.timestamp)}
-                        </span>
-                      </div>
-
-                      {update.message && (
-                        <p className="text-sm mb-2 text-gray-800">{update.message}</p>
-                      )}
-
-                      {update.metadata && Object.keys(update.metadata).length > 0 && (
-                        <div className="text-xs text-gray-600">
-                          <details>
-                            <summary className="cursor-pointer hover:text-gray-800">Metadata</summary>
-                            <pre className="mt-1 p-2 bg-gray-50 rounded text-xs overflow-x-auto">
-                              {JSON.stringify(update.metadata, null, 2)}
-                            </pre>
-                          </details>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
         </div>
+      )}
 
-        {taskResult && (
-          <div className="border-t border-gray-200 p-4">
-            <div className="space-y-2">
-              <h4 className="font-semibold text-sm text-gray-900">Task Result:</h4>
-              <pre className="text-xs bg-gray-50 p-3 rounded overflow-x-auto text-gray-800">
-                {JSON.stringify(taskResult, null, 2)}
-              </pre>
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="space-y-4">
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={`flex ${message.role === 'user' ? 'justify-end' : message.role === 'status' ? 'justify-center' : 'justify-start'}`}
+            >
+              <div
+                className={`${message.role === 'status' ? 'max-w-full' : 'max-w-[80%]'} p-3 rounded-redis-md ${
+                  message.role === 'user'
+                    ? 'bg-redis-blue-03 text-white'
+                    : message.role === 'status'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-center text-sm italic'
+                    : 'bg-redis-dusk-09 text-foreground'
+                }`}
+              >
+                {message.role === 'assistant' ? (
+                  <div className="prose prose-sm max-w-none text-redis-sm markdown-content">
+                    <ReactMarkdown
+                      components={{
+                        h1: ({children}) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0">{children}</h1>,
+                        h2: ({children}) => <h2 className="text-base font-semibold mb-2 mt-3">{children}</h2>,
+                        h3: ({children}) => <h3 className="text-sm font-medium mb-2 mt-3">{children}</h3>,
+                        p: ({children}) => <p className="mb-3 leading-relaxed">{children}</p>,
+                        ul: ({children}) => <ul className="mb-3 ml-4 space-y-1 list-disc list-outside">{children}</ul>,
+                        ol: ({children}) => <ol className="mb-3 ml-4 space-y-1 list-decimal list-outside">{children}</ol>,
+                        li: ({children}) => <li className="leading-relaxed ml-1">{children}</li>,
+                        code: ({children, ...props}) => {
+                          const isInline = !props.className?.includes('language-');
+                          return isInline ?
+                            <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">{children}</code> :
+                            <code className="block bg-redis-dusk-08 text-foreground p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3">{children}</code>;
+                        },
+                        pre: ({children}) => <pre className="bg-redis-dusk-08 text-foreground p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3 overflow-x-auto">{children}</pre>,
+                        strong: ({children}) => <strong className="font-semibold text-foreground">{children}</strong>,
+                        blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 mb-3 italic">{children}</blockquote>,
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : message.role === 'status' ? (
+                  <div className="text-redis-sm">{message.content}</div>
+                ) : (
+                  <div className="text-redis-sm whitespace-pre-wrap">{message.content}</div>
+                )}
+                {message.timestamp && message.role !== 'status' && (
+                  <div
+                    className={`text-redis-xs mt-1 ${
+                      message.role === 'user' ? 'text-blue-100' : 'text-redis-dusk-04'
+                    }`}
+                  >
+                    {formatTimestamp(message.timestamp)}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          ))}
+
+          {/* Thinking Indicator */}
+          {isThinking && (
+            <div className="flex justify-start">
+              <div className="max-w-[80%] p-3 rounded-redis-md bg-redis-dusk-09 text-foreground">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  </div>
+                  <span className="text-redis-sm text-redis-dusk-04">Thinking...</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
       </div>
     </div>
   );

@@ -358,6 +358,7 @@ async def run_multi_tool_evaluation() -> List[Dict[str, Any]]:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_multi_tool_evaluation():
     """Test multi-tool agent evaluation."""
     # Skip if OpenAI API key is not available

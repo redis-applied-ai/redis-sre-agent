@@ -8,14 +8,12 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Redis key for storing instances
-INSTANCES_KEY = "sre:instances"
 
 
 class RedisInstance(BaseModel):
@@ -137,7 +135,7 @@ async def get_instances_from_redis() -> List[RedisInstance]:
     """Get all instances from Redis storage."""
     try:
         redis_client = get_redis_client()
-        instances_data = await redis_client.get(INSTANCES_KEY)
+        instances_data = await redis_client.get(RedisKeys.instances_set())
 
         if not instances_data:
             return []
@@ -154,7 +152,7 @@ async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
     try:
         redis_client = get_redis_client()
         instances_data = json.dumps([instance.model_dump() for instance in instances])
-        await redis_client.set(INSTANCES_KEY, instances_data)
+        await redis_client.set(RedisKeys.instances_set(), instances_data)
         return True
     except Exception as e:
         logger.error(f"Failed to save instances to Redis: {e}")

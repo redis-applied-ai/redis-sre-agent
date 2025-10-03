@@ -630,6 +630,7 @@ async def run_diagnostic_context_evaluation() -> List[Dict[str, Any]]:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_diagnostic_context_evaluation():
     """Test diagnostic context evaluation with real data."""
     # Skip if OpenAI API key is not available
@@ -650,9 +651,9 @@ async def test_diagnostic_context_evaluation():
     # Check diagnostic data capture
     for result in successful_results:
         baseline_diagnostics = result["baseline_diagnostics"]
-        assert (
-            baseline_diagnostics["capture_status"] == "success"
-        ), "Should capture baseline diagnostics successfully"
+        assert baseline_diagnostics["capture_status"] == "success", (
+            "Should capture baseline diagnostics successfully"
+        )
         assert "diagnostics" in baseline_diagnostics, "Should have diagnostic data"
 
     # Check analytical capabilities
@@ -660,16 +661,16 @@ async def test_diagnostic_context_evaluation():
         analytical_analysis = result["analytical_analysis"]
         assert "analytical_score" in analytical_analysis, "Should evaluate analytical capabilities"
         # More lenient check - agent should at least attempt analysis
-        assert (
-            analytical_analysis["analytical_score"] >= 0
-        ), "Should have analytical score (even if no specific calculations detected)"
+        assert analytical_analysis["analytical_score"] >= 0, (
+            "Should have analytical score (even if no specific calculations detected)"
+        )
 
     # Check overall assessment quality
     for result in successful_results:
         assessment = result["overall_assessment"]
-        assert (
-            assessment["evaluation_focus"] == "diagnostic_analysis_with_raw_data"
-        ), "Should focus on diagnostic analysis"
+        assert assessment["evaluation_focus"] == "diagnostic_analysis_with_raw_data", (
+            "Should focus on diagnostic analysis"
+        )
         assert 0 <= assessment["composite_score"] <= 5, "Score should be in valid range"
 
 

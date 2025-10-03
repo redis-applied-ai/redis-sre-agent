@@ -267,9 +267,9 @@ Would you like me to help you run specific diagnostic commands or analyze your c
                             "diagnostic",
                         ]
                     )
-                    assert (
-                        memory_related
-                    ), f"Response doesn't seem memory-related: {response[:100]}..."
+                    assert memory_related, (
+                        f"Response doesn't seem memory-related: {response[:100]}..."
+                    )
                     assert "CONFIG GET maxmemory" in response
                     assert "MEMORY USAGE" in response
 

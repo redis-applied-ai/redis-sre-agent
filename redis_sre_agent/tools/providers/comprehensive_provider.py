@@ -19,7 +19,7 @@ from .cloudwatch_logs import CloudWatchLogsProvider
 from .github_repos import GitHubReposProvider
 from .github_tickets import GitHubTicketsProvider
 from .prometheus_metrics import PrometheusMetricsProvider
-from .redis_cli_metrics import RedisCLIMetricsProvider
+from .redis_command_metrics import RedisCommandMetricsProvider
 from .xray_traces import XRayTracesProvider
 
 logger = logging.getLogger(__name__)
@@ -225,7 +225,7 @@ class RedisProvider:
         self.redis_url = redis_url
         self.prometheus_url = prometheus_url
 
-        self._redis_metrics_provider: Optional[RedisCLIMetricsProvider] = None
+        self._redis_metrics_provider: Optional[RedisCommandMetricsProvider] = None
         self._prometheus_metrics_provider: Optional[PrometheusMetricsProvider] = None
 
     @property
@@ -243,7 +243,7 @@ class RedisProvider:
             return self._prometheus_metrics_provider
 
         if self._redis_metrics_provider is None:
-            self._redis_metrics_provider = RedisCLIMetricsProvider(self.redis_url)
+            self._redis_metrics_provider = RedisCommandMetricsProvider(self.redis_url)
         return self._redis_metrics_provider
 
     async def get_logs_provider(self) -> Optional[LogsProvider]:

@@ -8,9 +8,11 @@ from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 from ulid import ULID
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -75,26 +77,19 @@ class ThreadState(BaseModel):
 class ThreadManager:
     """Manages thread state in Redis."""
 
-    def __init__(self):
-        self.redis_client = None
+    def __init__(self, redis_url: Optional[str] = None, redis_client: Optional[Redis] = None):
+        self._redis_url = redis_url
+        self._redis_client = redis_client
 
-    async def _get_client(self):
+    async def _get_client(self) -> Redis:
         """Get Redis client (lazy initialization)."""
-        if self.redis_client is None:
-            self.redis_client = get_redis_client()
-        return self.redis_client
+        if self._redis_client is None:
+            self._redis_client = get_redis_client(self._redis_url)
+        return self._redis_client
 
     def _get_thread_keys(self, thread_id: str) -> Dict[str, str]:
         """Get all Redis keys for a thread."""
-        return {
-            "status": f"sre:thread:{thread_id}:status",
-            "updates": f"sre:thread:{thread_id}:updates",
-            "context": f"sre:thread:{thread_id}:context",
-            "action_items": f"sre:thread:{thread_id}:action_items",
-            "metadata": f"sre:thread:{thread_id}:metadata",
-            "result": f"sre:thread:{thread_id}:result",
-            "error": f"sre:thread:{thread_id}:error",
-        }
+        return RedisKeys.all_thread_keys(thread_id)
 
     async def _generate_thread_subject(self, original_message: str) -> str:
         """Generate a concise subject for the thread based on the original message."""
@@ -192,16 +187,16 @@ Subject:"""
             timestamp = datetime.now(timezone.utc).timestamp()
 
             # Add to global thread index (sorted by creation time)
-            await client.zadd("sre:threads:index", {thread_id: timestamp})
+            await client.zadd(RedisKeys.threads_index(), {thread_id: timestamp})
 
             # Add to user-specific index if user_id provided
             if user_id:
-                await client.zadd(f"sre:threads:user:{user_id}", {thread_id: timestamp})
+                await client.zadd(RedisKeys.threads_user_index(user_id), {thread_id: timestamp})
 
             # Set TTL for indices (30 days)
-            await client.expire("sre:threads:index", 2592000)
+            await client.expire(RedisKeys.threads_index(), 2592000)
             if user_id:
-                await client.expire(f"sre:threads:user:{user_id}", 2592000)
+                await client.expire(RedisKeys.threads_user_index(user_id), 2592000)
 
             return True
 
@@ -217,11 +212,11 @@ Subject:"""
             client = await self._get_client()
 
             # Remove from global index
-            await client.zrem("sre:threads:index", thread_id)
+            await client.zrem(RedisKeys.threads_index(), thread_id)
 
             # Remove from user index if user_id provided
             if user_id:
-                await client.zrem(f"sre:threads:user:{user_id}", thread_id)
+                await client.zrem(RedisKeys.threads_user_index(user_id), thread_id)
 
             return True
 
@@ -241,7 +236,9 @@ Subject:"""
             client = await self._get_client()
 
             # Choose index based on user_id
-            index_key = f"sre:threads:user:{user_id}" if user_id else "sre:threads:index"
+            index_key = (
+                RedisKeys.threads_user_index(user_id) if user_id else RedisKeys.threads_index()
+            )
 
             # Get thread IDs from index (most recent first)
             thread_ids = await client.zrevrange(
@@ -580,58 +577,61 @@ Subject:"""
             client = await self._get_client()
             keys = self._get_thread_keys(thread_state.thread_id)
 
-            # Use pipeline for atomic operations
-            pipe = client.pipeline()
+            async with client.pipeline(transaction=True) as pipe:
+                # Set basic fields
+                pipe.set(keys["status"], thread_state.status.value)
 
-            # Set basic fields
-            pipe.set(keys["status"], thread_state.status.value)
+                # Set context as hash
+                if thread_state.context:
+                    # Filter out None values and serialize complex objects as JSON
+                    clean_context = {}
+                    for k, v in thread_state.context.items():
+                        if v is None:
+                            clean_context[k] = ""
+                        elif isinstance(v, (dict, list)):
+                            # Serialize complex objects as JSON
+                            clean_context[k] = json.dumps(v)
+                        else:
+                            # Keep simple types as strings
+                            clean_context[k] = str(v)
 
-            # Set context as hash
-            if thread_state.context:
-                # Filter out None values and serialize complex objects as JSON
-                clean_context = {}
-                for k, v in thread_state.context.items():
-                    if v is None:
-                        clean_context[k] = ""
-                    elif isinstance(v, (dict, list)):
-                        # Serialize complex objects as JSON
-                        clean_context[k] = json.dumps(v)
-                    else:
-                        # Keep simple types as strings
-                        clean_context[k] = str(v)
+                    if clean_context:
+                        pipe.hset(keys["context"], mapping=clean_context)
 
-                if clean_context:
-                    pipe.hset(keys["context"], mapping=clean_context)
+                # Set metadata as hash
+                metadata_dict = thread_state.metadata.model_dump()
+                metadata_dict["tags"] = json.dumps(metadata_dict["tags"])
+                # Ensure all metadata values are strings and not None
+                clean_metadata = {
+                    k: str(v) if v is not None else "" for k, v in metadata_dict.items()
+                }
+                pipe.hset(keys["metadata"], mapping=clean_metadata)
 
-            # Set metadata as hash
-            metadata_dict = thread_state.metadata.model_dump()
-            metadata_dict["tags"] = json.dumps(metadata_dict["tags"])
-            # Ensure all metadata values are strings and not None
-            clean_metadata = {k: str(v) if v is not None else "" for k, v in metadata_dict.items()}
-            pipe.hset(keys["metadata"], mapping=clean_metadata)
+                # Set action items as JSON
+                if thread_state.action_items:
+                    items_json = json.dumps(
+                        [item.model_dump() for item in thread_state.action_items]
+                    )
+                    pipe.set(keys["action_items"], items_json)
 
-            # Set action items as JSON
-            if thread_state.action_items:
-                items_json = json.dumps([item.model_dump() for item in thread_state.action_items])
-                pipe.set(keys["action_items"], items_json)
+                # Set result if exists
+                if thread_state.result:
+                    pipe.set(keys["result"], json.dumps(thread_state.result))
 
-            # Set result if exists
-            if thread_state.result:
-                pipe.set(keys["result"], json.dumps(thread_state.result))
+                # Set error if exists
+                if thread_state.error_message:
+                    pipe.set(keys["error"], thread_state.error_message)
 
-            # Set error if exists
-            if thread_state.error_message:
-                pipe.set(keys["error"], thread_state.error_message)
+                # Add updates
+                for update in thread_state.updates:
+                    pipe.lpush(keys["updates"], update.model_dump_json())
 
-            # Add updates
-            for update in thread_state.updates:
-                pipe.lpush(keys["updates"], update.model_dump_json())
+                # Set TTL (24 hours for thread data)
+                for key in keys.values():
+                    pipe.expire(key, 86400)
 
-            # Set TTL (24 hours for thread data)
-            for key in keys.values():
-                pipe.expire(key, 86400)
-
-            await pipe.execute()
+                # Execute pipeline
+                await pipe.execute()
 
             logger.info(f"Saved thread state for {thread_state.thread_id}")
             return True
@@ -665,15 +665,3 @@ Subject:"""
         except Exception as e:
             logger.error(f"Failed to delete thread {thread_id}: {e}")
             return False
-
-
-# Singleton instance
-_thread_manager = None
-
-
-def get_thread_manager() -> ThreadManager:
-    """Get the global thread manager instance."""
-    global _thread_manager
-    if _thread_manager is None:
-        _thread_manager = ThreadManager()
-    return _thread_manager

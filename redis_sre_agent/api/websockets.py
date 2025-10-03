@@ -9,8 +9,9 @@ from typing import Dict, Set
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from redis.asyncio import Redis
 
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.thread_state import get_thread_manager
+from redis_sre_agent.core.thread_state import ThreadManager
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class TaskStreamManager:
 
     def _get_stream_key(self, thread_id: str) -> str:
         """Get Redis stream key for a thread."""
-        return f"sre:stream:task:{thread_id}"
+        return RedisKeys.task_stream(thread_id)
 
     async def publish_task_update(self, thread_id: str, update_type: str, data: Dict) -> bool:
         """Publish a task update to Redis Stream."""
@@ -189,7 +190,8 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
 
     try:
         # Verify thread exists
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
         thread_state = await thread_manager.get_thread_state(thread_id)
         if not thread_state:
             await websocket.send_text(
@@ -263,7 +265,7 @@ async def get_task_stream_info(thread_id: str):
     """Get information about the task's stream status."""
     try:
         client = get_redis_client()
-        stream_key = f"sre:stream:task:{thread_id}"
+        stream_key = RedisKeys.task_stream(thread_id)
 
         # Get stream info
         try:

@@ -182,7 +182,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          <label className="block text-redis-sm font-medium mb-1">
             Instance Name *
           </label>
           <input
@@ -190,20 +190,20 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
             required
             value={formData.name}
             onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
             placeholder="e.g., Production Cache"
           />
         </div>
 
         <div>
-          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          <label className="block text-redis-sm font-medium mb-1">
             Environment *
           </label>
           <select
             required
             value={formData.environment}
             onChange={(e) => setFormData(prev => ({ ...prev, environment: e.target.value }))}
-            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           >
             <option value="development">Development</option>
             <option value="staging">Staging</option>
@@ -213,7 +213,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+        <label className="block text-redis-sm font-medium mb-1">
           Connection URL *
         </label>
         <input
@@ -221,7 +221,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           required
           value={formData.connectionUrl}
           onChange={(e) => setFormData(prev => ({ ...prev, connectionUrl: e.target.value }))}
-          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           placeholder="redis://localhost:6379 or redis://user:pass@host:port/db"
         />
         <p className="text-redis-xs text-redis-dusk-04 mt-1">
@@ -230,14 +230,14 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+        <label className="block text-redis-sm font-medium mb-1">
           Usage Type *
         </label>
         <select
           required
           value={formData.usage}
           onChange={(e) => setFormData(prev => ({ ...prev, usage: e.target.value }))}
-          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
         >
           <option value="cache">Cache</option>
           <option value="analytics">Analytics</option>
@@ -253,7 +253,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
               required
               value={formData.customUsage}
               onChange={(e) => setFormData(prev => ({ ...prev, customUsage: e.target.value }))}
-              className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+              className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
               placeholder="Enter custom usage type (e.g., 'pub/sub', 'timeseries', 'search')"
             />
           </div>
@@ -261,13 +261,13 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+        <label className="block text-redis-sm font-medium mb-1">
           Instance Type
         </label>
         <select
           value={formData.instanceType}
           onChange={(e) => setFormData(prev => ({ ...prev, instanceType: e.target.value }))}
-          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
         >
           <option value="unknown">Unknown / Auto-detect</option>
           <option value="oss_single">Redis OSS (Single Node)</option>
@@ -281,42 +281,42 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+        <label className="block text-redis-sm font-medium text-foreground mb-1">
           Description *
         </label>
         <textarea
           required
           value={formData.description}
           onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           rows={3}
           placeholder="Describe what this Redis instance is used for..."
         />
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+        <label className="block text-redis-sm font-medium text-foreground mb-1">
           Repository URL (optional)
         </label>
         <input
           type="url"
           value={formData.repoUrl}
           onChange={(e) => setFormData(prev => ({ ...prev, repoUrl: e.target.value }))}
-          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           placeholder="https://github.com/company/redis-config"
         />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          <label className="block text-redis-sm font-medium text-foreground mb-1">
             Monitoring Identifier (optional)
           </label>
           <input
             type="text"
             value={formData.monitoringIdentifier}
             onChange={(e) => setFormData(prev => ({ ...prev, monitoringIdentifier: e.target.value }))}
-            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
             placeholder="e.g., prod-cache-01"
           />
           <p className="text-redis-xs text-redis-dusk-04 mt-1">
@@ -325,14 +325,14 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         </div>
 
         <div>
-          <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+          <label className="block text-redis-sm font-medium text-foreground mb-1">
             Logging Identifier (optional)
           </label>
           <input
             type="text"
             value={formData.loggingIdentifier}
             onChange={(e) => setFormData(prev => ({ ...prev, loggingIdentifier: e.target.value }))}
-            className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
             placeholder="e.g., redis-prod-cache"
           />
           <p className="text-redis-xs text-redis-dusk-04 mt-1">
@@ -342,22 +342,22 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-1">
+        <label className="block text-redis-sm font-medium text-foreground mb-1">
           Notes (optional)
         </label>
         <textarea
           value={formData.notes}
           onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           rows={2}
           placeholder="Any additional notes about this instance..."
         />
       </div>
 
       {/* Connection Test */}
-      <div className="border-t border-redis-dusk-06 pt-4">
+      <div className="border-t pt-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-redis-sm font-medium text-redis-dusk-01">Test Connection</span>
+          <span className="text-redis-sm font-medium text-foreground">Test Connection</span>
           <Button
             type="button"
             variant="outline"
@@ -393,7 +393,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       </div>
 
       {/* Form Actions */}
-      <div className="flex gap-3 pt-4 border-t border-redis-dusk-06">
+      <div className="flex gap-3 pt-4 border-t">
         <Button
           type="button"
           variant="outline"
@@ -556,7 +556,7 @@ const Instances = () => {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-redis-xl font-bold text-redis-dusk-01">Redis Instances</h1>
+          <h1 className="text-redis-xl font-bold text-foreground">Redis Instances</h1>
           <p className="text-redis-sm text-redis-dusk-04 mt-1">
             Manage and monitor Redis instances that the SRE agent can triage and analyze.
           </p>
@@ -598,7 +598,7 @@ const Instances = () => {
                 <select
                   value={selectedEnvironment}
                   onChange={(e) => setSelectedEnvironment(e.target.value)}
-                  className="px-3 py-1 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                  className="px-3 py-1 border rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                 >
                   <option value="all">All</option>
                   <option value="production">Production</option>
@@ -611,7 +611,7 @@ const Instances = () => {
                 <select
                   value={selectedUsage}
                   onChange={(e) => setSelectedUsage(e.target.value)}
-                  className="px-3 py-1 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                  className="px-3 py-1 border rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                 >
                   <option value="all">All</option>
                   <option value="cache">Cache</option>
@@ -660,7 +660,7 @@ const Instances = () => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
                       </svg>
                     </div>
-                    <h3 className="text-redis-xl font-semibold text-redis-dusk-01 mb-3">
+                    <h3 className="text-redis-xl font-semibold text-foreground mb-3">
                       No Redis instances configured
                     </h3>
                     <p className="text-redis-sm text-redis-dusk-04 mb-6">
@@ -703,7 +703,7 @@ const Instances = () => {
                             </span>
                           )}
                         </div>
-                        <h3 className="text-redis-lg font-semibold text-redis-dusk-01 mb-2">
+                        <h3 className="text-redis-lg font-semibold text-foreground mb-2">
                           {instance.name}
                         </h3>
                         <p className="text-redis-sm text-redis-dusk-04 mb-3">
@@ -734,7 +734,7 @@ const Instances = () => {
                         {instance.notes && (
                           <div className="mt-2 p-2 bg-redis-dusk-09 rounded-redis-sm">
                             <span className="text-redis-xs text-redis-dusk-04">Notes: </span>
-                            <span className="text-redis-xs text-redis-dusk-01">{instance.notes}</span>
+                            <span className="text-redis-xs text-foreground">{instance.notes}</span>
                           </div>
                         )}
                       </div>
@@ -768,9 +768,9 @@ const Instances = () => {
       {/* Add/Edit Instance Form Modal */}
       {(showAddForm || editingInstance) && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-redis-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="rounded-redis-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--card)', color: 'var(--card-foreground)' }}>
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-redis-xl font-bold text-redis-dusk-01">
+              <h2 className="text-redis-xl font-bold" style={{ color: 'var(--foreground)' }}>
                 {editingInstance ? 'Edit Redis Instance' : 'Add Redis Instance'}
               </h2>
               <Button

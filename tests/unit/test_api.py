@@ -89,13 +89,14 @@ class TestHealthEndpoints:
                 return_value=mock_infrastructure_status,
             ),
             patch("redis_sre_agent.api.health.test_task_system", return_value=False),
-            patch("docket.Docket") as mock_docket,
+            patch("redis_sre_agent.api.health.Docket") as mock_docket,
         ):
             # Mock no active workers
             mock_docket_instance = AsyncMock()
             mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
             mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_docket_instance.workers.return_value = []  # No workers
+            # workers() is an async method, so it needs to return a coroutine
+            mock_docket_instance.workers = AsyncMock(return_value=[])  # No workers
             mock_docket.return_value = mock_docket_instance
 
             response = test_client.get("/health")

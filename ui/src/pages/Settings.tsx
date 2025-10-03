@@ -144,7 +144,7 @@ const KnowledgeSettingsSection = () => {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Ingestion Settings</h3>
+            <h3 className="text-redis-lg font-semibold text-foreground">Ingestion Settings</h3>
             <Button variant="outline" onClick={resetToDefaults} disabled={isSaving}>
               Reset to Defaults
             </Button>
@@ -168,7 +168,7 @@ const KnowledgeSettingsSection = () => {
           }}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                <label className="block text-redis-sm font-medium text-foreground mb-2">
                   Chunk Size
                 </label>
                 <input
@@ -185,7 +185,7 @@ const KnowledgeSettingsSection = () => {
               </div>
 
               <div>
-                <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                <label className="block text-redis-sm font-medium text-foreground mb-2">
                   Chunk Overlap
                 </label>
                 <input
@@ -202,7 +202,7 @@ const KnowledgeSettingsSection = () => {
               </div>
 
               <div>
-                <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                <label className="block text-redis-sm font-medium text-foreground mb-2">
                   Splitting Strategy
                 </label>
                 <select
@@ -220,7 +220,7 @@ const KnowledgeSettingsSection = () => {
               </div>
 
               <div>
-                <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                <label className="block text-redis-sm font-medium text-foreground mb-2">
                   Max Documents per Batch
                 </label>
                 <input
@@ -237,7 +237,7 @@ const KnowledgeSettingsSection = () => {
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                <label className="block text-redis-sm font-medium text-foreground mb-2">
                   Embedding Model
                 </label>
                 <input
@@ -252,7 +252,7 @@ const KnowledgeSettingsSection = () => {
               </div>
 
               <div>
-                <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                <label className="block text-redis-sm font-medium text-foreground mb-2">
                   Similarity Threshold
                 </label>
                 <input
@@ -278,7 +278,7 @@ const KnowledgeSettingsSection = () => {
                     defaultChecked={settings.enable_metadata_extraction}
                     className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border-redis-dusk-06 rounded"
                   />
-                  <label htmlFor="enable_metadata_extraction" className="ml-2 text-redis-sm text-redis-dusk-01">
+                  <label htmlFor="enable_metadata_extraction" className="ml-2 text-redis-sm text-foreground">
                     Enable metadata extraction from documents
                   </label>
                 </div>
@@ -291,7 +291,7 @@ const KnowledgeSettingsSection = () => {
                     defaultChecked={settings.enable_semantic_chunking}
                     className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border-redis-dusk-06 rounded"
                   />
-                  <label htmlFor="enable_semantic_chunking" className="ml-2 text-redis-sm text-redis-dusk-01">
+                  <label htmlFor="enable_semantic_chunking" className="ml-2 text-redis-sm text-foreground">
                     Use semantic chunking instead of fixed-size chunks
                   </label>
                 </div>
@@ -310,8 +310,8 @@ const KnowledgeSettingsSection = () => {
       {/* Confirmation Dialog */}
       {showConfirmDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-redis-dusk-01 mb-4">
+          <div className="bg-card rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
               Confirm Settings Update
             </h3>
             <p className="text-redis-sm text-redis-dusk-04 mb-6">
@@ -368,7 +368,7 @@ const Settings = () => {
     <div className="space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-redis-xl font-bold text-redis-dusk-01">Settings</h1>
+        <h1 className="text-redis-xl font-bold text-foreground">Settings</h1>
         <p className="text-redis-sm text-redis-dusk-04 mt-1">
           Configure your Redis SRE Agent preferences and system settings.
         </p>
@@ -390,7 +390,7 @@ const Settings = () => {
                     className={`w-full flex items-center px-4 py-3 text-left text-sm font-medium rounded-none first:rounded-t-lg last:rounded-b-lg transition-colors ${
                       activeSection === section.id
                         ? 'bg-redis-blue-03 text-white'
-                        : 'text-redis-dusk-01 hover:bg-redis-dusk-09'
+                        : 'text-foreground hover:bg-redis-dusk-09'
                     }`}
                   >
                     {section.label}
@@ -407,12 +407,12 @@ const Settings = () => {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Agent Configuration</h3>
+                  <h3 className="text-redis-lg font-semibold text-foreground">Agent Configuration</h3>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     <div>
-                      <label className="text-redis-sm text-redis-dusk-01 font-medium block mb-2">
+                      <label className="text-redis-sm text-foreground font-medium block mb-2">
                         API Endpoint
                       </label>
                       <input
@@ -422,7 +422,7 @@ const Settings = () => {
                       />
                     </div>
                     <div>
-                      <label className="text-redis-sm text-redis-dusk-01 font-medium block mb-2">
+                      <label className="text-redis-sm text-foreground font-medium block mb-2">
                         Response Timeout (seconds)
                       </label>
                       <input
@@ -446,20 +446,20 @@ const Settings = () => {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Notification Preferences</h3>
+                  <h3 className="text-redis-lg font-semibold text-foreground">Notification Preferences</h3>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-redis-dusk-01">Email Notifications</span>
+                      <span className="text-redis-sm text-foreground">Email Notifications</span>
                       <Button variant="outline" size="sm">Configure</Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-redis-dusk-01">Slack Integration</span>
+                      <span className="text-redis-sm text-foreground">Slack Integration</span>
                       <Button variant="outline" size="sm">Setup</Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-redis-dusk-01">Alert Thresholds</span>
+                      <span className="text-redis-sm text-foreground">Alert Thresholds</span>
                       <Button variant="outline" size="sm">Manage</Button>
                     </div>
                   </div>
@@ -472,20 +472,20 @@ const Settings = () => {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Security Settings</h3>
+                  <h3 className="text-redis-lg font-semibold text-foreground">Security Settings</h3>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-redis-dusk-01">API Authentication</span>
+                      <span className="text-redis-sm text-foreground">API Authentication</span>
                       <Button variant="outline" size="sm">Configure</Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-redis-dusk-01">Access Control</span>
+                      <span className="text-redis-sm text-foreground">Access Control</span>
                       <Button variant="outline" size="sm">Manage</Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-redis-dusk-01">Audit Logs</span>
+                      <span className="text-redis-sm text-foreground">Audit Logs</span>
                       <Button variant="outline" size="sm">View</Button>
                     </div>
                   </div>

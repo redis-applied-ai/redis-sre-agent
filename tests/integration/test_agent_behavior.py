@@ -210,9 +210,9 @@ class TestSREAgentBehavior:
             )
 
             # Check that we got a meaningful response
-            assert (
-                len(response) > 50
-            ), f"Response too short for {test_case['expected_tool']}: {response}"
+            assert len(response) > 50, (
+                f"Response too short for {test_case['expected_tool']}: {response}"
+            )
 
             # Log the response for manual verification
             logger.info(

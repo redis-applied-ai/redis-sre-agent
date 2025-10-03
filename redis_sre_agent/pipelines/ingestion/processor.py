@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ...core.keys import RedisKeys
 from ...core.redis import get_knowledge_index, get_vectorizer
 from ...pipelines.scraper.base import (
     ArtifactStorage,
@@ -543,7 +544,7 @@ class IngestionPipeline:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 indexed_chunks.append(chunk_with_embedding)
-                keys.append(f"sre_knowledge:{chunk['id']}")
+                keys.append(RedisKeys.knowledge_document(chunk["id"]))
 
             # Load chunks into index with expected parameters
             await index.load(id_field="id", keys=keys, data=indexed_chunks)

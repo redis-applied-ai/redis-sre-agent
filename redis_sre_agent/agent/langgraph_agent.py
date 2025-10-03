@@ -20,6 +20,11 @@ from pydantic import BaseModel, Field
 from ..api.instances import get_instances_from_redis
 from ..core.config import settings
 from ..tools.protocol_agent_tools import PROTOCOL_TOOL_FUNCTIONS, get_protocol_based_tools
+from ..tools.redis_enterprise_tools import (
+    get_redis_enterprise_cluster_status,
+    get_redis_enterprise_database_status,
+    get_redis_enterprise_node_status,
+)
 from ..tools.registry import auto_register_default_providers
 from ..tools.sre_functions import (
     get_all_document_fragments,
@@ -395,8 +400,71 @@ class SRELangGraphAgent:
             },
         ]
 
-        # Combine protocol tools with knowledge tools
-        all_tools = protocol_tools + knowledge_tools
+        # Add Redis Enterprise tools
+        redis_enterprise_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_redis_enterprise_cluster_status",
+                    "description": "Get Redis Enterprise cluster status using rladmin. Returns comprehensive cluster information including nodes, databases, and shards. Use this to check cluster health, node status, and overall cluster state.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "container_name": {
+                                "type": "string",
+                                "description": "Docker container name for Redis Enterprise node",
+                                "default": "redis-enterprise-node1",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_redis_enterprise_node_status",
+                    "description": "Get Redis Enterprise node status using rladmin. Returns detailed node information including maintenance mode status, shard distribution, and node health. Use this to check if nodes are in maintenance mode or to investigate node-specific issues.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "container_name": {
+                                "type": "string",
+                                "description": "Docker container name for Redis Enterprise node",
+                                "default": "redis-enterprise-node1",
+                            },
+                            "node_id": {
+                                "type": "integer",
+                                "description": "Optional specific node ID to get detailed info for",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_redis_enterprise_database_status",
+                    "description": "Get Redis Enterprise database status using rladmin. Returns database information including endpoints, memory usage, and replication status. Use this to check database health and configuration.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "container_name": {
+                                "type": "string",
+                                "description": "Docker container name for Redis Enterprise node",
+                                "default": "redis-enterprise-node1",
+                            },
+                            "database_name": {
+                                "type": "string",
+                                "description": "Optional specific database name to get detailed info for",
+                            },
+                        },
+                    },
+                },
+            },
+        ]
+
+        # Combine protocol tools with knowledge tools and Redis Enterprise tools
+        all_tools = protocol_tools + knowledge_tools + redis_enterprise_tools
 
         # Bind all tools to the LLM
         self.llm_with_tools = self.llm.bind_tools(all_tools)
@@ -406,32 +474,44 @@ class SRELangGraphAgent:
         # Note: We'll create a new MemorySaver for each query to ensure proper isolation
         # This prevents cross-contamination between different tasks/threads
 
-        # SRE tool mapping - combine protocol-based tools with knowledge base tools
+        # SRE tool mapping - combine protocol-based tools with knowledge base tools and Redis Enterprise tools
         self.sre_tools = {
             **PROTOCOL_TOOL_FUNCTIONS,  # Protocol-based tools
             "search_knowledge_base": search_knowledge_base,  # Knowledge base tools
             "ingest_sre_document": ingest_sre_document,
             "get_all_document_fragments": get_all_document_fragments,  # Fragment retrieval tools
             "get_related_document_fragments": get_related_document_fragments,
+            "get_redis_enterprise_cluster_status": get_redis_enterprise_cluster_status,  # Redis Enterprise tools
+            "get_redis_enterprise_node_status": get_redis_enterprise_node_status,
+            "get_redis_enterprise_database_status": get_redis_enterprise_database_status,
         }
 
         logger.info("SRE LangGraph agent initialized with tool bindings")
 
-    async def _resolve_instance_redis_url(self, instance_id: str) -> str:
-        """Resolve instance ID to Redis URL using connection_url from instance data."""
+    async def _resolve_instance_redis_url(self, instance_id: str) -> Optional[str]:
+        """Resolve instance ID to Redis URL using connection_url from instance data.
+
+        IMPORTANT: This method returns None if the instance cannot be found.
+        It NEVER falls back to settings.redis_url (the application database).
+        Tools must handle None and fail gracefully rather than connecting to the wrong database.
+        """
         try:
             instances = await get_instances_from_redis()
             for instance in instances:
                 if instance.id == instance_id:
                     return instance.connection_url
 
-            logger.error(f"Instance {instance_id} not found, falling back to default Redis URL")
-            return settings.redis_url
+            logger.error(
+                f"Instance {instance_id} not found. "
+                "NOT falling back to application database - tools must fail gracefully."
+            )
+            return None
         except Exception as e:
             logger.error(
-                f"Failed to resolve instance {instance_id}: {e}, falling back to default Redis URL"
+                f"Failed to resolve instance {instance_id}: {e}. "
+                "NOT falling back to application database - tools must fail gracefully."
             )
-            return settings.redis_url
+            return None
 
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow for SRE operations."""
@@ -510,45 +590,11 @@ class SRELangGraphAgent:
                 try:
                     # Execute the SRE tool (async call)
                     if tool_name in self.sre_tools:
-                        # Get instance context from state if available
-                        instance_context = state.get("instance_context")
-                        target_instance = None
-
-                        if instance_context and instance_context.get("instance_id"):
-                            # Resolve instance details for tool execution
-                            try:
-                                instances = await get_instances_from_redis()
-                                for instance in instances:
-                                    if instance.id == instance_context["instance_id"]:
-                                        target_instance = instance
-                                        break
-                            except Exception as e:
-                                logger.error(f"Failed to resolve instance context: {e}")
-
-                        # Modify tool arguments based on instance context
+                        # With functools.partial, bound parameters are already in the function
+                        # Just pass the args the LLM provided
                         modified_args = tool_args.copy()
 
-                        if target_instance:
-                            # For Redis diagnostic tools, use the instance's connection details
-                            if tool_name == "get_detailed_redis_diagnostics":
-                                if (
-                                    "redis_url" not in modified_args
-                                    or modified_args["redis_url"] == "redis://localhost:6379"
-                                ):
-                                    modified_args["redis_url"] = target_instance.connection_url
-                                    logger.info(
-                                        f"Using instance Redis URL: {modified_args['redis_url']}"
-                                    )
-
-                            # For metrics tools, use the instance's host for Prometheus queries
-                            elif tool_name == "analyze_system_metrics":
-                                # Add instance host context for Prometheus queries
-                                if "instance_host" not in modified_args:
-                                    host, _ = _parse_redis_connection_url(
-                                        target_instance.connection_url
-                                    )
-                                    modified_args["instance_host"] = host
-                                    logger.info(f"Using instance host for metrics: {host}")
+                        logger.info(f"Executing tool {tool_name} with args: {modified_args}")
 
                         # Call the async SRE function
                         result = await self.sre_tools[tool_name](**modified_args)
@@ -800,6 +846,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         max_iterations: int = 10,
         context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+        conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """Process a single SRE query through the LangGraph workflow.
 
@@ -837,6 +884,56 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                 if target_instance:
                     host, port = _parse_redis_connection_url(target_instance.connection_url)
                     redis_url = target_instance.connection_url
+
+                    # CRITICAL: Rebind tools with instance-specific versions
+                    # This changes the tool schema so LLM knows to use this instance
+                    logger.info(
+                        f"Rebinding tools for instance: {target_instance.name} ({redis_url})"
+                    )
+                    from redis_sre_agent.tools.instance_bound_tools import get_tools_for_instance
+
+                    # Get instance-bound tool definitions (these have modified schemas)
+                    instance_tools = get_tools_for_instance(target_instance)
+
+                    # Get knowledge tools (these don't need instance binding)
+                    knowledge_tools = [
+                        tool
+                        for tool in self.llm_with_tools.kwargs.get("tools", [])
+                        if tool["function"]["name"]
+                        in [
+                            "search_knowledge_base",
+                            "ingest_sre_document",
+                            "get_all_document_fragments",
+                            "get_related_document_fragments",
+                        ]
+                    ]
+
+                    # Get other protocol tools (logs, tickets, etc - not metrics)
+                    from redis_sre_agent.tools.protocol_agent_tools import get_protocol_based_tools
+
+                    protocol_tools = get_protocol_based_tools()
+                    non_metrics_tools = [
+                        tool
+                        for tool in protocol_tools
+                        if tool["function"]["name"] != "query_instance_metrics"
+                    ]
+
+                    # Combine: instance-bound metrics + other protocol tools + knowledge tools
+                    all_tools = instance_tools + non_metrics_tools + knowledge_tools
+
+                    # Rebind LLM with new tool set
+                    self.llm_with_tools = self.llm.bind_tools(all_tools)
+                    logger.info(
+                        f"Tools rebound: {len(instance_tools)} instance-specific, "
+                        f"{len(non_metrics_tools)} protocol, {len(knowledge_tools)} knowledge"
+                    )
+
+                    # CRITICAL: Rebuild workflow with new tools
+                    # The workflow was built in __init__ with old tools
+                    # We need to rebuild it with the instance-bound tools
+                    logger.info("Rebuilding workflow with instance-bound tools")
+                    self.workflow = self._build_workflow()
+
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
 
@@ -848,7 +945,7 @@ IMPORTANT CONTEXT: This query is specifically about Redis instance:
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
 
-When using Redis diagnostic tools, use this Redis URL: {redis_url}
+Your diagnostic tools are PRE-CONFIGURED for this instance. You do NOT need to specify redis_url or instance details - they are already set. Just call the tools directly.
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this specific Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations.
 
@@ -921,9 +1018,19 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
             except Exception as e:
                 logger.error(f"Failed to check available instances: {e}")
 
-        # Create initial state
+        # Create initial state with conversation history
+        # If conversation_history is provided, include it before the new query
+        initial_messages = []
+        if conversation_history:
+            initial_messages = list(conversation_history)
+            logger.info(f"Including {len(conversation_history)} messages from conversation history")
+            for i, msg in enumerate(conversation_history):
+                logger.info(f"  History[{i}]: {type(msg).__name__} - {str(msg.content)[:100]}")
+        initial_messages.append(HumanMessage(content=enhanced_query))
+        logger.info(f"Total messages in initial_state: {len(initial_messages)}")
+
         initial_state: AgentState = {
-            "messages": [HumanMessage(content=enhanced_query)],
+            "messages": initial_messages,
             "session_id": session_id,
             "user_id": user_id,
             "current_tool_calls": [],
@@ -935,11 +1042,10 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
         if context and context.get("instance_id"):
             initial_state["instance_context"] = context
 
-        # Create MemorySaver for conversation state
-        # NOTE: Using MemorySaver instead of RedisSaver because langgraph-checkpoint-redis
-        # doesn't fully support async operations (aget_tuple raises NotImplementedError).
-        # Each task gets its own isolated MemorySaver instance to prevent cross-contamination.
-        # TODO: Switch to RedisSaver when async support is available for true persistence.
+        # Create MemorySaver for this query
+        # NOTE: RedisSaver doesn't support async (aget_tuple raises NotImplementedError)
+        # Conversation history is managed by our ThreadManager in Redis
+        # and passed via initial_state when needed
         checkpointer = MemorySaver()
         self.app = self.workflow.compile(checkpointer=checkpointer)
 

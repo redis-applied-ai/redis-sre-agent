@@ -59,8 +59,12 @@ class TestAnalyzeSystemMetrics:
         assert "findings" in result
 
         # Verify Redis operations
+        from redis_sre_agent.core.keys import RedisKeys
+
         mock_redis_client.hset.assert_called_once()
-        mock_redis_client.expire.assert_called_once_with(f"sre:metrics:{result['task_id']}", 3600)
+        mock_redis_client.expire.assert_called_once_with(
+            RedisKeys.metrics_result(result["task_id"]), 3600
+        )
 
     @pytest.mark.asyncio
     async def test_analyze_metrics_with_retry(self, mock_redis_client):
@@ -271,7 +275,11 @@ class TestIngestSREDocument:
     async def test_ingest_document_success(self, mock_search_index, mock_vectorizer):
         """Test successful document ingestion."""
         # Mock embedding generation
-        mock_vectorizer.embed_many = AsyncMock(return_value=[[0.1] * 1536])
+        import numpy as np
+
+        mock_inner = Mock()
+        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
+        mock_vectorizer._inner = mock_inner
 
         # Mock index loading
         mock_search_index.load.return_value = None
@@ -296,7 +304,9 @@ class TestIngestSREDocument:
         assert "task_id" in result
 
         # Verify embedding generation
-        mock_vectorizer.embed_many.assert_called_once_with(["This is test content for the runbook"])
+        mock_inner.embed.assert_called_once_with(
+            "This is test content for the runbook", as_buffer=True
+        )
 
         # Verify document loading
         mock_search_index.load.assert_called_once()
@@ -332,7 +342,9 @@ class TestIngestSREDocument:
     @pytest.mark.asyncio
     async def test_ingest_document_embedding_failure(self, mock_vectorizer):
         """Test document ingestion with embedding failure."""
-        mock_vectorizer.embed_many.side_effect = Exception("Embedding failed")
+        mock_inner = Mock()
+        mock_inner.embed.side_effect = Exception("Embedding failed")
+        mock_vectorizer._inner = mock_inner
 
         with patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer):
             with pytest.raises(Exception, match="Embedding failed"):

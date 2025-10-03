@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client, test_redis_connection
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ async def get_application_metrics() -> Dict[str, Any]:
     try:
         redis_client = get_redis_client()
         # Count documents in the knowledge base
-        doc_count = await redis_client.hlen("sre_knowledge:documents")
+        doc_count = await redis_client.hlen(RedisKeys.knowledge_documents())
         metrics["sre_agent_knowledge_documents_total"] = {
             "value": doc_count,
             "help": "Total number of documents in knowledge base",

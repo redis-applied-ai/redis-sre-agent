@@ -42,7 +42,10 @@ async def detailed_health_check():
             workers = await docket.workers()
             workers_available = len(workers) > 0
             if not workers_available:
-                logger.info("No workers currently available - this is normal in development")
+                logger.warning(
+                    "No workers currently available - background tasks will not be processed. "
+                    "Start workers with: docker-compose up -d sre-worker"
+                )
     except Exception as e:
         logger.warning(f"Worker status check failed: {e}")
         workers_available = False
@@ -60,14 +63,22 @@ async def detailed_health_check():
     }
 
     # Determine overall status
-    # Consider the system healthy if core components are available
-    # Workers are optional in development environments, but docket connection is required
+    # All components should be available for the system to be fully healthy
+    all_healthy = all(status == "available" for status in components.values())
+
+    # System is degraded if workers are missing but core components work
     core_components = {k: v for k, v in components.items() if k not in ["workers"]}
     core_healthy = all(status == "available" for status in core_components.values())
 
-    # System is healthy if core components work, including docket connection
-    status = "healthy" if core_healthy else "unhealthy"
-    status_code = 200 if core_healthy else 503
+    if all_healthy:
+        status = "healthy"
+        status_code = 200
+    elif core_healthy:
+        status = "degraded"  # Core works but workers missing
+        status_code = 200  # Still return 200 but indicate degraded state
+    else:
+        status = "unhealthy"
+        status_code = 503
 
     response_data = {
         "status": status,

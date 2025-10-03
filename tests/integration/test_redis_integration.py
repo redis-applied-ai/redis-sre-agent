@@ -1,13 +1,12 @@
 """Integration tests for Redis infrastructure with real Redis instance."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from redis_sre_agent.core.redis import (
     cleanup_redis_connections,
     create_indices,
-    get_redis_client,
     initialize_redis_infrastructure,
     test_vector_search,
 )
@@ -83,18 +82,19 @@ class TestRedisIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        import numpy as np
+
         from redis_sre_agent.core.tasks import ingest_sre_document
 
-        redis._document_index = None
-        redis._vectorizer = None
-
         # Mock vectorizer for embedding generation
-        with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer:
-            mock_vectorizer_instance = mock_vectorizer.return_value
-            mock_vectorizer_instance.embed_many.return_value = [[0.1] * 1536]
+        # Create a mock that returns bytes (as_buffer=True behavior)
+        mock_inner = AsyncMock()
+        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
 
+        mock_vectorizer = AsyncMock()
+        mock_vectorizer._inner = mock_inner
+
+        with patch("redis_sre_agent.core.redis.get_vectorizer", return_value=mock_vectorizer):
             # Ensure index is created first
             await create_indices()
 
@@ -117,18 +117,19 @@ class TestRedisIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        import numpy as np
+
         from redis_sre_agent.core.tasks import ingest_sre_document, search_knowledge_base
 
-        redis._document_index = None
-        redis._vectorizer = None
-
         # Mock vectorizer
-        with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer:
-            mock_vectorizer_instance = mock_vectorizer.return_value
-            mock_vectorizer_instance.embed_many.return_value = [[0.1] * 1536]
+        mock_inner = AsyncMock()
+        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
 
+        mock_vectorizer = AsyncMock()
+        mock_vectorizer._inner = mock_inner
+        mock_vectorizer.embed_many.return_value = [[0.1] * 1536]  # For search
+
+        with patch("redis_sre_agent.core.redis.get_vectorizer", return_value=mock_vectorizer):
             # Create index and ingest a document
             await create_indices()
             await ingest_sre_document(
@@ -150,14 +151,11 @@ class TestRedisIntegration:
             # but the operation should complete without error
 
     @pytest.mark.asyncio
-    async def test_cleanup_real(self, redis_container):
+    async def test_cleanup_real(self, async_redis_client):
         """Test cleanup with real Redis."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
-
-        # Initialize connections
-        client = get_redis_client()
-        assert client is not None
+        # Verify client is connected
+        assert async_redis_client is not None
+        await async_redis_client.ping()
 
         # Test cleanup
         await cleanup_redis_connections()
