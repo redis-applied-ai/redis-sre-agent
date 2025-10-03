@@ -11,16 +11,14 @@ Tests the complete flow:
 
 import pytest
 
-from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import process_agent_turn
 from redis_sre_agent.core.thread_state import ThreadManager
 
 
 @pytest.fixture
-async def thread_manager(redis_container):
-    """Get the thread manager for testing (depends on redis_container to ensure URL is set)."""
-    redis_client = get_redis_client()
-    manager = ThreadManager(redis_client=redis_client)
+async def thread_manager(async_redis_client):
+    """Get the thread manager for testing."""
+    manager = ThreadManager(redis_client=async_redis_client)
     yield manager
 
 

@@ -7,7 +7,6 @@ import pytest
 from redis_sre_agent.core.redis import (
     cleanup_redis_connections,
     create_indices,
-    get_redis_client,
     initialize_redis_infrastructure,
     test_vector_search,
 )
@@ -140,14 +139,11 @@ class TestRedisIntegration:
             # but the operation should complete without error
 
     @pytest.mark.asyncio
-    async def test_cleanup_real(self, redis_container):
+    async def test_cleanup_real(self, async_redis_client):
         """Test cleanup with real Redis."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
-
-        # Initialize connections
-        client = get_redis_client()
-        assert client is not None
+        # Verify client is connected
+        assert async_redis_client is not None
+        await async_redis_client.ping()
 
         # Test cleanup
         await cleanup_redis_connections()

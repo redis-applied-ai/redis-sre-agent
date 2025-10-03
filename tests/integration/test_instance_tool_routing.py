@@ -12,7 +12,6 @@ from redis_sre_agent.api.instances import (
     save_instances_to_redis,
 )
 from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import process_agent_turn
 from redis_sre_agent.core.thread_state import ThreadManager
 
@@ -184,7 +183,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_instance_context_passed_to_agent(thread_manager):
+async def test_instance_context_passed_to_agent(thread_manager, async_redis_client):
     """Test that instance context is properly passed through the agent workflow."""
 
     # Register instance
@@ -197,10 +196,8 @@ async def test_instance_context_passed_to_agent(thread_manager):
         description="Test instance for context passing",
     )
 
-    redis_client = get_redis_client()
-
     instance_key = RedisKeys.instance(test_instance.id)
-    await redis_client.hset(
+    await async_redis_client.hset(
         instance_key,
         mapping={
             "id": test_instance.id,
@@ -211,7 +208,7 @@ async def test_instance_context_passed_to_agent(thread_manager):
             "description": test_instance.description,
         },
     )
-    await redis_client.sadd(RedisKeys.instances_set(), test_instance.id)
+    await async_redis_client.sadd(RedisKeys.instances_set(), test_instance.id)
 
     # Create thread WITH instance context
     thread_id = await thread_manager.create_thread(
@@ -232,8 +229,8 @@ async def test_instance_context_passed_to_agent(thread_manager):
     print(f"   Instance ID: {thread_state.context.get('instance_id')}")
 
     # Cleanup
-    await redis_client.delete(instance_key)
-    await redis_client.srem(RedisKeys.instances_set(), test_instance.id)
+    await async_redis_client.delete(instance_key)
+    await async_redis_client.srem(RedisKeys.instances_set(), test_instance.id)
     await thread_manager.delete_thread(thread_id)
 
 

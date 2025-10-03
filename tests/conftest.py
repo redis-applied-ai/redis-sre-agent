@@ -298,7 +298,35 @@ def redis_container(worker_id):
     )
     compose.start()
 
+    # Get the Redis URL and set it in environment
+    host, port = compose.get_service_host_and_port("redis", 6379)
+    url = f"redis://{host}:{port}"
+
+    # Set REDIS_URL environment variable so get_redis_client() uses testcontainers
+    old_redis_url = os.environ.get("REDIS_URL")
+    os.environ["REDIS_URL"] = url
+
+    # Reload settings to pick up the new REDIS_URL
+    import redis_sre_agent.core.config as config_module
+    from redis_sre_agent.core.config import Settings
+
+    config_module.settings = Settings()
+
+    # Also clear any Redis connection pools that might be cached
+    # Force reload of the redis module to pick up new settings
+    import importlib
+
+    from redis_sre_agent.core import redis as redis_module
+
+    importlib.reload(redis_module)
+
     yield compose
+
+    # Restore original REDIS_URL
+    if old_redis_url:
+        os.environ["REDIS_URL"] = old_redis_url
+    else:
+        os.environ.pop("REDIS_URL", None)
 
     compose.stop()
 
