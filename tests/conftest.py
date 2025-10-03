@@ -313,12 +313,14 @@ def redis_container(worker_id):
     config_module.settings = Settings()
 
     # Also clear any Redis connection pools that might be cached
-    # Force reload of the redis module to pick up new settings
+    # Force reload of modules to pick up new settings
     import importlib
 
     from redis_sre_agent.core import redis as redis_module
+    from redis_sre_agent.core import tasks as tasks_module
 
     importlib.reload(redis_module)
+    importlib.reload(tasks_module)
 
     yield compose
 

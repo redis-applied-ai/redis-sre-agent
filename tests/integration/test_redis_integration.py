@@ -1,6 +1,6 @@
 """Integration tests for Redis infrastructure with real Redis instance."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -82,13 +82,19 @@ class TestRedisIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
+        import numpy as np
+
         from redis_sre_agent.core.tasks import ingest_sre_document
 
         # Mock vectorizer for embedding generation
-        with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer:
-            mock_vectorizer_instance = mock_vectorizer.return_value
-            mock_vectorizer_instance.embed_many.return_value = [[0.1] * 1536]
+        # Create a mock that returns bytes (as_buffer=True behavior)
+        mock_inner = AsyncMock()
+        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
 
+        mock_vectorizer = AsyncMock()
+        mock_vectorizer._inner = mock_inner
+
+        with patch("redis_sre_agent.core.redis.get_vectorizer", return_value=mock_vectorizer):
             # Ensure index is created first
             await create_indices()
 
@@ -111,13 +117,19 @@ class TestRedisIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
+        import numpy as np
+
         from redis_sre_agent.core.tasks import ingest_sre_document, search_knowledge_base
 
         # Mock vectorizer
-        with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer:
-            mock_vectorizer_instance = mock_vectorizer.return_value
-            mock_vectorizer_instance.embed_many.return_value = [[0.1] * 1536]
+        mock_inner = AsyncMock()
+        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
 
+        mock_vectorizer = AsyncMock()
+        mock_vectorizer._inner = mock_inner
+        mock_vectorizer.embed_many.return_value = [[0.1] * 1536]  # For search
+
+        with patch("redis_sre_agent.core.redis.get_vectorizer", return_value=mock_vectorizer):
             # Create index and ingest a document
             await create_indices()
             await ingest_sre_document(

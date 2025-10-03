@@ -1,5 +1,6 @@
 """Docket task definitions for SRE operations."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -136,20 +137,26 @@ async def search_knowledge_base(
         vectorizer = get_vectorizer()
 
         # Create vector embedding for the query
-        # TODO: This shouldn't work, embed_many is not awaitable --
-        # so what's actually happening here?
-        query_vector = await vectorizer.embed_many([query])
+        query_vectors = await vectorizer.embed_many([query])
+        query_vector = query_vectors[0]
+
+        # Build vector query
+        from redisvl.query import VectorQuery
+
+        vector_query = VectorQuery(
+            vector=query_vector,
+            vector_field_name="vector",
+            return_fields=["title", "content", "source", "category", "severity"],
+            num_results=limit,
+        )
 
         # Build search filters
-        filters = []
         if category:
-            filters.append(f"@category:{category}")
+            vector_query.set_filter(f"@category:{{{category}}}")
 
         # Perform vector search
-        # Note: This is a simplified version - real implementation would be more complex
-        results = await index.query(
-            query_vector[0], num_results=limit, filters=filters if filters else None
-        )
+        async with index:
+            results = await index.query(vector_query)
 
         search_result = {
             "task_id": str(ULID()),
@@ -290,23 +297,25 @@ async def ingest_sre_document(
         index = get_knowledge_index()
         vectorizer = get_vectorizer()
 
-        # Create document embedding
-        content_vector = await vectorizer.embed_many([content])
+        # Create document embedding (use as_buffer=True for Redis storage)
+        # Note: vectorizer.embed returns bytes when as_buffer=True
+        content_vector = await asyncio.to_thread(vectorizer._inner.embed, content, as_buffer=True)
 
         # Prepare document data
         doc_id = str(ULID())
+        doc_key = RedisKeys.knowledge_document(doc_id)
         document = {
+            "id": doc_id,
             "title": title,
             "content": content,
             "source": source,
             "category": category,
             "severity": severity,
             "created_at": datetime.now(timezone.utc).timestamp(),
-            "vector": content_vector[0],
+            "vector": content_vector,
         }
 
         # Store in vector index
-        doc_key = RedisKeys.knowledge_document(doc_id)
         await index.load(data=[document], id_field="id", keys=[doc_key])
 
         result = {
