@@ -227,6 +227,222 @@ class TestInstancesAPI:
             assert "timeout" in data["message"]
 
 
+class TestInstancesAPIErrorHandling:
+    """Test error handling in instances API."""
+
+    def test_list_instances_redis_error(self, client):
+        """Test list instances when Redis fails."""
+        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get:
+            mock_get.side_effect = Exception("Redis connection failed")
+
+            response = client.get("/api/v1/instances")
+
+            assert response.status_code == 500
+            assert "Failed to retrieve instances" in response.json()["detail"]
+
+    def test_update_instance_redis_error(self, client):
+        """Test update instance when Redis fails."""
+        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get:
+            mock_get.side_effect = Exception("Redis error")
+
+            response = client.put(
+                "/api/v1/instances/test-id",
+                json={"name": "updated-name"},
+            )
+
+            assert response.status_code == 500
+            assert "Failed to update instance" in response.json()["detail"]
+
+    def test_delete_instance_redis_error(self, client):
+        """Test delete instance when Redis fails."""
+        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get:
+            mock_get.side_effect = Exception("Redis error")
+
+            response = client.delete("/api/v1/instances/test-id")
+
+            assert response.status_code == 500
+            assert "Failed to delete instance" in response.json()["detail"]
+
+    def test_get_instance_redis_error(self, client):
+        """Test get instance when Redis fails."""
+        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get:
+            mock_get.side_effect = Exception("Redis error")
+
+            response = client.get("/api/v1/instances/test-id")
+
+            assert response.status_code == 500
+            assert "Failed to retrieve instance" in response.json()["detail"]
+
+
+class TestConnectionTesting:
+    """Test connection testing endpoints."""
+
+    def test_test_connection_url_success(self, client):
+        """Test connection URL testing with valid URL."""
+
+        with patch("redis_sre_agent.core.redis.test_redis_connection") as mock_test:
+            mock_test.return_value = True
+
+            response = client.post(
+                "/api/v1/instances/test-connection-url",
+                json={"connection_url": "redis://localhost:6379"},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert "host" in data
+            assert "port" in data
+
+    def test_test_connection_url_failure(self, client):
+        """Test connection URL testing with invalid URL."""
+        with patch("redis_sre_agent.core.redis.test_redis_connection") as mock_test:
+            mock_test.return_value = False
+
+            response = client.post(
+                "/api/v1/instances/test-connection-url",
+                json={"connection_url": "redis://invalid:9999"},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is False
+            assert "message" in data
+
+    def test_test_instance_connection_success(self, client):
+        """Test instance connection testing with valid instance."""
+        from redis_sre_agent.api.instances import RedisInstance
+
+        mock_instance = RedisInstance(
+            id="test-id",
+            name="test-redis",
+            connection_url="redis://localhost:6379",
+            environment="testing",
+            usage="cache",
+            description="Test instance",
+            created_by="user",
+        )
+
+        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get:
+            mock_get.return_value = [mock_instance]
+
+            with patch("redis_sre_agent.core.redis.test_redis_connection") as mock_test:
+                mock_test.return_value = True
+
+                response = client.post("/api/v1/instances/test-id/test-connection")
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+                assert data["instance_id"] == "test-id"
+
+    def test_test_instance_connection_not_found(self, client):
+        """Test instance connection testing with non-existent instance."""
+        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get:
+            mock_get.return_value = []
+
+            response = client.post("/api/v1/instances/test-id/test-connection")
+
+            assert response.status_code == 404
+            assert "test-id" in response.json()["detail"]
+            assert "not found" in response.json()["detail"].lower()
+
+
+class TestRedisStorageHelpers:
+    """Test Redis storage helper functions."""
+
+    @pytest.mark.asyncio
+    async def test_get_instances_from_redis_empty(self):
+        """Test getting instances when Redis returns None."""
+        from redis_sre_agent.api.instances import get_instances_from_redis
+
+        with patch("redis_sre_agent.api.instances.get_redis_client") as mock_client:
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=None)
+            mock_client.return_value = mock_redis
+
+            result = await get_instances_from_redis()
+
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_instances_from_redis_error(self):
+        """Test getting instances when Redis raises an error."""
+        from redis_sre_agent.api.instances import get_instances_from_redis
+
+        with patch("redis_sre_agent.api.instances.get_redis_client") as mock_client:
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(side_effect=Exception("Redis error"))
+            mock_client.return_value = mock_redis
+
+            result = await get_instances_from_redis()
+
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_instances_from_redis_json_error(self):
+        """Test getting instances when JSON parsing fails."""
+        from redis_sre_agent.api.instances import get_instances_from_redis
+
+        with patch("redis_sre_agent.api.instances.get_redis_client") as mock_client:
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value="invalid json")
+            mock_client.return_value = mock_redis
+
+            result = await get_instances_from_redis()
+
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_save_instances_to_redis_success(self):
+        """Test saving instances successfully."""
+        from redis_sre_agent.api.instances import RedisInstance, save_instances_to_redis
+
+        instance = RedisInstance(
+            id="test-id",
+            name="test-redis",
+            connection_url="redis://localhost:6379",
+            environment="testing",
+            usage="cache",
+            description="Test instance",
+            created_by="user",
+        )
+
+        with patch("redis_sre_agent.api.instances.get_redis_client") as mock_client:
+            mock_redis = AsyncMock()
+            mock_redis.set = AsyncMock(return_value=True)
+            mock_client.return_value = mock_redis
+
+            result = await save_instances_to_redis([instance])
+
+            assert result is True
+            mock_redis.set.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_save_instances_to_redis_error(self):
+        """Test saving instances when Redis raises an error."""
+        from redis_sre_agent.api.instances import RedisInstance, save_instances_to_redis
+
+        instance = RedisInstance(
+            id="test-id",
+            name="test-redis",
+            connection_url="redis://localhost:6379",
+            environment="testing",
+            usage="cache",
+            description="Test instance",
+            created_by="user",
+        )
+
+        with patch("redis_sre_agent.api.instances.get_redis_client") as mock_client:
+            mock_redis = AsyncMock()
+            mock_redis.set = AsyncMock(side_effect=Exception("Redis error"))
+            mock_client.return_value = mock_redis
+
+            result = await save_instances_to_redis([instance])
+
+            assert result is False
+
+
 class TestInstanceValidation:
     """Test instance data validation."""
 
@@ -273,3 +489,51 @@ class TestInstanceValidation:
 
             # Should return validation error
             assert response.status_code == 422
+
+    def test_create_instance_with_created_by_agent(self, client):
+        """Test instance creation with created_by='agent'."""
+        create_data = {
+            "name": "Agent Created Instance",
+            "connection_url": "redis://dynamic:6379",
+            "environment": "production",
+            "usage": "cache",
+            "description": "Dynamically created by agent",
+            "created_by": "agent",
+        }
+
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save,
+        ):
+            mock_get.return_value = []
+            mock_save.return_value = True
+
+            response = client.post("/api/v1/instances", json=create_data)
+
+            assert response.status_code == 201
+            data = response.json()
+            assert data["created_by"] == "agent"
+
+    def test_create_instance_with_user_id(self, client):
+        """Test instance creation with user_id."""
+        create_data = {
+            "name": "User Instance",
+            "connection_url": "redis://user-redis:6379",
+            "environment": "production",
+            "usage": "cache",
+            "description": "User's Redis instance",
+            "user_id": "user-123",
+        }
+
+        with (
+            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
+            patch("redis_sre_agent.api.instances.save_instances_to_redis") as mock_save,
+        ):
+            mock_get.return_value = []
+            mock_save.return_value = True
+
+            response = client.post("/api/v1/instances", json=create_data)
+
+            assert response.status_code == 201
+            data = response.json()
+            assert data["user_id"] == "user-123"

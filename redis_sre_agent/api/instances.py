@@ -17,7 +17,11 @@ router = APIRouter()
 
 
 class RedisInstance(BaseModel):
-    """Redis instance configuration model."""
+    """Redis instance configuration model.
+
+    Represents a Redis database that the agent can monitor and diagnose.
+    Instances can be pre-configured by users or created dynamically by the agent.
+    """
 
     id: str
     name: str
@@ -47,6 +51,42 @@ class RedisInstance(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    # New fields for provider architecture
+    created_by: str = Field(
+        default="user",
+        description="Who created this instance: 'user' (pre-configured) or 'agent' (dynamically created)",
+    )
+    user_id: Optional[str] = Field(
+        default=None, description="User ID who owns this instance (for pre-configured instances)"
+    )
+
+    @field_validator("connection_url")
+    @classmethod
+    def validate_not_app_redis(cls, v: str) -> str:
+        """Ensure this is not the application's own Redis database."""
+        try:
+            from redis_sre_agent.core.config import settings
+
+            if v == settings.redis_url:
+                raise ValueError(
+                    "Cannot create instance for application's own Redis database. "
+                    f"The URL {v} is used by the SRE agent application itself "
+                    "and should not be diagnosed or monitored by the agent."
+                )
+        except (ImportError, AttributeError):
+            # Settings not available or redis_url not set - allow it
+            pass
+
+        return v
+
+    @field_validator("created_by")
+    @classmethod
+    def validate_created_by(cls, v: str) -> str:
+        """Validate created_by field."""
+        if v not in ["user", "agent"]:
+            raise ValueError(f"created_by must be 'user' or 'agent', got: {v}")
+        return v
+
 
 class CreateInstanceRequest(BaseModel):
     """Request model for creating a Redis instance."""
@@ -70,6 +110,10 @@ class CreateInstanceRequest(BaseModel):
         "unknown",
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
+    created_by: str = Field(
+        default="user", description="Who created this instance: 'user' or 'agent'"
+    )
+    user_id: Optional[str] = Field(default=None, description="User ID who owns this instance")
 
     @field_validator("connection_url")
     @classmethod
@@ -159,6 +203,106 @@ async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
         return False
 
 
+async def get_session_instances(thread_id: str) -> List[RedisInstance]:
+    """Get dynamically created instances for a session/thread.
+
+    These are instances created by the agent during a conversation,
+    stored in session memory with a TTL.
+    """
+    try:
+        redis_client = get_redis_client()
+        instances_key = RedisKeys.thread_instances(thread_id)
+        instances_json = await redis_client.get(instances_key)
+
+        if not instances_json:
+            return []
+
+        if isinstance(instances_json, bytes):
+            instances_json = instances_json.decode("utf-8")
+
+        instances_data = json.loads(instances_json)
+        return [RedisInstance(**instance) for instance in instances_data]
+
+    except Exception as e:
+        logger.error(f"Failed to get session instances for thread {thread_id}: {e}")
+        return []
+
+
+async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
+    """Add a dynamically created instance to session memory.
+
+    Args:
+        thread_id: Thread/conversation ID
+        instance: RedisInstance to add
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        redis_client = get_redis_client()
+
+        # Get existing session instances
+        instances = await get_session_instances(thread_id)
+
+        # Check if instance already exists (by name or URL)
+        for existing in instances:
+            if existing.name == instance.name or existing.connection_url == instance.connection_url:
+                logger.info(f"Instance {instance.name} already exists in session {thread_id}")
+                return True
+
+        # Add new instance
+        instances.append(instance)
+
+        # Serialize and save with TTL (1 hour)
+        instances_json = json.dumps([inst.model_dump() for inst in instances])
+        instances_key = RedisKeys.thread_instances(thread_id)
+        await redis_client.set(instances_key, instances_json, ex=3600)
+
+        logger.info(f"Added session instance {instance.name} to thread {thread_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to add session instance {instance.name} to thread {thread_id}: {e}")
+        return False
+
+
+async def get_all_instances(
+    user_id: Optional[str] = None, thread_id: Optional[str] = None
+) -> List[RedisInstance]:
+    """Get all instances: configured + session instances.
+
+    Args:
+        user_id: Optional user ID to filter configured instances
+        thread_id: Optional thread ID to include session instances
+
+    Returns:
+        Combined list of configured and session instances
+    """
+    # Get configured instances
+    configured = await get_instances_from_redis()
+
+    # Filter by user if specified
+    if user_id:
+        configured = [
+            inst for inst in configured if inst.user_id == user_id or inst.user_id is None
+        ]
+
+    # Get session instances if thread_id provided
+    session_instances = []
+    if thread_id:
+        session_instances = await get_session_instances(thread_id)
+
+    # Combine, avoiding duplicates (prefer configured over session)
+    all_instances = list(configured)
+    configured_urls = {inst.connection_url for inst in configured}
+
+    for session_inst in session_instances:
+        if session_inst.connection_url not in configured_urls:
+            all_instances.append(session_inst)
+
+    return all_instances
+
+
 @router.get("/instances", response_model=List[RedisInstance])
 async def list_instances():
     """List all Redis instances."""
@@ -197,6 +341,8 @@ async def create_instance(request: CreateInstanceRequest):
             monitoring_identifier=request.monitoring_identifier,
             logging_identifier=request.logging_identifier,
             instance_type=request.instance_type,
+            created_by=request.created_by,
+            user_id=request.user_id,
         )
 
         # Add to instances list

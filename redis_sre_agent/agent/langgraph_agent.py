@@ -19,19 +19,9 @@ from pydantic import BaseModel, Field
 
 from ..api.instances import get_instances_from_redis
 from ..core.config import settings
-from ..tools.protocol_agent_tools import PROTOCOL_TOOL_FUNCTIONS, get_protocol_based_tools
-from ..tools.redis_enterprise_tools import (
-    get_redis_enterprise_cluster_status,
-    get_redis_enterprise_database_status,
-    get_redis_enterprise_node_status,
-)
-from ..tools.registry import auto_register_default_providers
-from ..tools.sre_functions import (
-    get_all_document_fragments,
-    get_related_document_fragments,
-    ingest_sre_document,
-    search_knowledge_base,
-)  # Keep knowledge base functions
+from ..models.provider_config import DeploymentProvidersConfig
+from ..tools.deployment_providers import DeploymentProviders
+from ..tools.knowledge_tools import get_knowledge_tools
 
 logger = logging.getLogger(__name__)
 
@@ -264,229 +254,32 @@ class SRELangGraphAgent:
             openai_api_key=self.settings.openai_api_key,
         )
 
-        # Auto-register default providers based on configuration
-        config = {
-            "redis_url": settings.redis_url,
-            "prometheus_url": getattr(settings, "prometheus_url", None),
-            "grafana_url": getattr(settings, "grafana_url", None),
-            "grafana_api_key": getattr(settings, "grafana_api_key", None),
-        }
-        auto_register_default_providers(config)
+        # Initialize DeploymentProviders from configuration
+        provider_config = DeploymentProvidersConfig.from_env()
+        self.deployment_providers = DeploymentProviders(provider_config)
+        logger.info(
+            f"Initialized deployment providers: {list(self.deployment_providers.provider_types.keys())}"
+        )
 
-        # Get protocol-based tool definitions
-        protocol_tools = get_protocol_based_tools()
+        # Get knowledge base tools
+        self.knowledge_tools = get_knowledge_tools()
+        logger.info(f"Loaded {len(self.knowledge_tools)} knowledge base tools")
 
-        # Add knowledge base tools that aren't part of the protocol system yet
-        knowledge_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_knowledge_base",
-                    "description": "Search comprehensive knowledge base including SRE runbooks, Redis documentation, troubleshooting guides, and operational procedures. Use this for finding both Redis-specific documentation (commands, configuration, concepts) and SRE procedures.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query - can include Redis commands (e.g. 'MEMORY USAGE'), configuration options (e.g. 'maxmemory-policy'), concepts (e.g. 'eviction policies'), or SRE procedures (e.g. 'connection limit troubleshooting')",
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Optional category to focus search on",
-                                "enum": [
-                                    "incident_response",
-                                    "monitoring",
-                                    "performance",
-                                    "troubleshooting",
-                                    "maintenance",
-                                    "redis_commands",
-                                    "redis_config",
-                                    "redis_concepts",
-                                ],
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "ingest_sre_document",
-                    "description": "Add new SRE documentation, runbooks, or procedures to knowledge base",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string", "description": "Title of the document"},
-                            "content": {
-                                "type": "string",
-                                "description": "Content of the SRE document",
-                            },
-                            "source": {
-                                "type": "string",
-                                "description": "Source system or file for the document",
-                                "default": "agent_ingestion",
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Document category",
-                                "enum": [
-                                    "runbook",
-                                    "procedure",
-                                    "troubleshooting",
-                                    "best_practice",
-                                    "incident_report",
-                                ],
-                                "default": "procedure",
-                            },
-                            "severity": {
-                                "type": "string",
-                                "description": "Severity or priority level",
-                                "enum": ["info", "warning", "critical"],
-                                "default": "info",
-                            },
-                        },
-                        "required": ["title", "content"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_all_document_fragments",
-                    "description": "Retrieve ALL fragments/chunks of a specific document when you find a relevant piece and need the complete context. Use the document_hash from search results to get the full document content. This is essential when a search result fragment looks relevant but you need the complete information to provide a comprehensive answer.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "document_hash": {
-                                "type": "string",
-                                "description": "The document hash from search results (e.g., from search_knowledge_base results)",
-                            },
-                            "include_metadata": {
-                                "type": "boolean",
-                                "description": "Whether to include document metadata",
-                                "default": True,
-                            },
-                        },
-                        "required": ["document_hash"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_related_document_fragments",
-                    "description": "Get related fragments around a specific chunk for additional context without retrieving the entire document. Use this when you want surrounding context for a specific fragment you found in search results. Provide the document_hash and chunk_index from search results.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "document_hash": {
-                                "type": "string",
-                                "description": "The document hash from search results",
-                            },
-                            "current_chunk_index": {
-                                "type": "integer",
-                                "description": "The chunk index from search results to get context around",
-                            },
-                            "context_window": {
-                                "type": "integer",
-                                "description": "Number of chunks before and after to include (default: 2)",
-                                "default": 2,
-                            },
-                        },
-                        "required": ["document_hash", "current_chunk_index"],
-                    },
-                },
-            },
-        ]
+        # Start with just knowledge tools (instance-specific tools added per conversation)
+        self.current_tools = self.knowledge_tools.copy()
 
-        # Add Redis Enterprise tools
-        redis_enterprise_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_redis_enterprise_cluster_status",
-                    "description": "Get Redis Enterprise cluster status using rladmin. Returns comprehensive cluster information including nodes, databases, and shards. Use this to check cluster health, node status, and overall cluster state.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "container_name": {
-                                "type": "string",
-                                "description": "Docker container name for Redis Enterprise node",
-                                "default": "redis-enterprise-node1",
-                            },
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_redis_enterprise_node_status",
-                    "description": "Get Redis Enterprise node status using rladmin. Returns detailed node information including maintenance mode status, shard distribution, and node health. Use this to check if nodes are in maintenance mode or to investigate node-specific issues.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "container_name": {
-                                "type": "string",
-                                "description": "Docker container name for Redis Enterprise node",
-                                "default": "redis-enterprise-node1",
-                            },
-                            "node_id": {
-                                "type": "integer",
-                                "description": "Optional specific node ID to get detailed info for",
-                            },
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_redis_enterprise_database_status",
-                    "description": "Get Redis Enterprise database status using rladmin. Returns database information including endpoints, memory usage, and replication status. Use this to check database health and configuration.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "container_name": {
-                                "type": "string",
-                                "description": "Docker container name for Redis Enterprise node",
-                                "default": "redis-enterprise-node1",
-                            },
-                            "database_name": {
-                                "type": "string",
-                                "description": "Optional specific database name to get detailed info for",
-                            },
-                        },
-                    },
-                },
-            },
-        ]
+        # Get tool schemas for LLM binding
+        tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
 
-        # Combine protocol tools with knowledge tools and Redis Enterprise tools
-        all_tools = protocol_tools + knowledge_tools + redis_enterprise_tools
-
-        # Bind all tools to the LLM
-        self.llm_with_tools = self.llm.bind_tools(all_tools)
+        # Bind tools to the LLM
+        self.llm_with_tools = self.llm.bind_tools(tool_schemas)
 
         # Build the LangGraph workflow
         self.workflow = self._build_workflow()
         # Note: We'll create a new MemorySaver for each query to ensure proper isolation
         # This prevents cross-contamination between different tasks/threads
 
-        # SRE tool mapping - combine protocol-based tools with knowledge base tools and Redis Enterprise tools
-        self.sre_tools = {
-            **PROTOCOL_TOOL_FUNCTIONS,  # Protocol-based tools
-            "search_knowledge_base": search_knowledge_base,  # Knowledge base tools
-            "ingest_sre_document": ingest_sre_document,
-            "get_all_document_fragments": get_all_document_fragments,  # Fragment retrieval tools
-            "get_related_document_fragments": get_related_document_fragments,
-            "get_redis_enterprise_cluster_status": get_redis_enterprise_cluster_status,  # Redis Enterprise tools
-            "get_redis_enterprise_node_status": get_redis_enterprise_node_status,
-            "get_redis_enterprise_database_status": get_redis_enterprise_database_status,
-        }
-
-        logger.info("SRE LangGraph agent initialized with tool bindings")
+        logger.info(f"SRE LangGraph agent initialized with {len(self.current_tools)} tools")
 
     async def _resolve_instance_redis_url(self, instance_id: str) -> Optional[str]:
         """Resolve instance ID to Redis URL using connection_url from instance data.
@@ -588,16 +381,14 @@ class SRELangGraphAgent:
                     await self.progress_callback(reflection, "agent_reflection")
 
                 try:
-                    # Execute the SRE tool (async call)
-                    if tool_name in self.sre_tools:
-                        # With functools.partial, bound parameters are already in the function
-                        # Just pass the args the LLM provided
-                        modified_args = tool_args.copy()
+                    # Find the tool in current_tools
+                    tool = next((t for t in self.current_tools if t.name == tool_name), None)
 
-                        logger.info(f"Executing tool {tool_name} with args: {modified_args}")
+                    if tool:
+                        logger.info(f"Executing tool {tool_name} with args: {tool_args}")
 
-                        # Call the async SRE function
-                        result = await self.sre_tools[tool_name](**modified_args)
+                        # Call the tool function
+                        result = await tool.function(**tool_args)
 
                         # Send completion reflection
                         if self.progress_callback:
@@ -882,50 +673,26 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                         break
 
                 if target_instance:
-                    host, port = _parse_redis_connection_url(target_instance.connection_url)
-                    redis_url = target_instance.connection_url
-
-                    # CRITICAL: Rebind tools with instance-specific versions
-                    # This changes the tool schema so LLM knows to use this instance
                     logger.info(
-                        f"Rebinding tools for instance: {target_instance.name} ({redis_url})"
+                        f"Creating instance-specific tools for: {target_instance.name} ({target_instance.connection_url})"
                     )
-                    from redis_sre_agent.tools.instance_bound_tools import get_tools_for_instance
 
-                    # Get instance-bound tool definitions (these have modified schemas)
-                    instance_tools = get_tools_for_instance(target_instance)
+                    # Create tools for this specific instance using DeploymentProviders
+                    instance_tools = self.deployment_providers.create_tools_for_instance(
+                        target_instance
+                    )
 
-                    # Get knowledge tools (these don't need instance binding)
-                    knowledge_tools = [
-                        tool
-                        for tool in self.llm_with_tools.kwargs.get("tools", [])
-                        if tool["function"]["name"]
-                        in [
-                            "search_knowledge_base",
-                            "ingest_sre_document",
-                            "get_all_document_fragments",
-                            "get_related_document_fragments",
-                        ]
-                    ]
+                    # Combine knowledge tools + instance-specific tools
+                    self.current_tools = self.knowledge_tools + instance_tools
 
-                    # Get other protocol tools (logs, tickets, etc - not metrics)
-                    from redis_sre_agent.tools.protocol_agent_tools import get_protocol_based_tools
+                    # Get tool schemas and rebind LLM
+                    tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
+                    self.llm_with_tools = self.llm.bind_tools(tool_schemas)
 
-                    protocol_tools = get_protocol_based_tools()
-                    non_metrics_tools = [
-                        tool
-                        for tool in protocol_tools
-                        if tool["function"]["name"] != "query_instance_metrics"
-                    ]
-
-                    # Combine: instance-bound metrics + other protocol tools + knowledge tools
-                    all_tools = instance_tools + non_metrics_tools + knowledge_tools
-
-                    # Rebind LLM with new tool set
-                    self.llm_with_tools = self.llm.bind_tools(all_tools)
                     logger.info(
                         f"Tools rebound: {len(instance_tools)} instance-specific, "
-                        f"{len(non_metrics_tools)} protocol, {len(knowledge_tools)} knowledge"
+                        f"{len(self.knowledge_tools)} knowledge, "
+                        f"{len(self.current_tools)} total"
                     )
 
                     # CRITICAL: Rebuild workflow with new tools
@@ -940,8 +707,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
 IMPORTANT CONTEXT: This query is specifically about Redis instance:
 - Instance ID: {instance_id}
 - Instance Name: {target_instance.name}
-- Host: {host}
-- Port: {port}
+- Connection URL: {target_instance.connection_url}
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
 

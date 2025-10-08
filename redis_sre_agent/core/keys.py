@@ -61,6 +61,20 @@ class RedisKeys:
         """Key for user-specific threads index (sorted set by timestamp)."""
         return f"sre:threads:user:{user_id}"
 
+    @staticmethod
+    def thread_instances(thread_id: str) -> str:
+        """Key for dynamically created instances in a thread/session."""
+        return f"sre:thread:{thread_id}:instances"
+
+    # ============================================================================
+    # Instance-related keys
+    # ============================================================================
+
+    @staticmethod
+    def user_instances(user_id: str) -> str:
+        """Key for user's configured instances (set of instance IDs)."""
+        return f"sre:user:{user_id}:instances"
+
     # ============================================================================
     # Knowledge base keys
     # ============================================================================

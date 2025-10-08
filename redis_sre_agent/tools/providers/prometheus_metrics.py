@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 
-from ..protocols import MetricDefinition, MetricValue, TimeRange
+from ..protocols import MetricDefinition, MetricValue, TimeRange, ToolCapability
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,11 @@ class PrometheusMetricsProvider:
     @property
     def provider_name(self) -> str:
         return f"Prometheus ({self.prometheus_url})"
+
+    @property
+    def capabilities(self) -> List[ToolCapability]:
+        """Return list of capabilities this provider supports."""
+        return [ToolCapability.METRICS]
 
     @property
     def supports_time_queries(self) -> bool:

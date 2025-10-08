@@ -1,9 +1,12 @@
 """Configuration management using Pydantic Settings."""
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from redis_sre_agent.models.provider_config import DeploymentProvidersConfig
 
 # Load environment variables from .env file
 try:
@@ -18,6 +21,22 @@ class Settings(BaseSettings):
     """Application configuration."""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # ============================================================================
+    # Provider Configuration (NEW)
+    # ============================================================================
+    # Providers are now configured via DeploymentProvidersConfig
+    # This will be initialized from environment variables
+    _providers: Optional["DeploymentProvidersConfig"] = None
+
+    @property
+    def providers(self) -> "DeploymentProvidersConfig":
+        """Get provider configuration (lazy-loaded from environment)."""
+        if self._providers is None:
+            from ..models.provider_config import DeploymentProvidersConfig
+
+            self._providers = DeploymentProvidersConfig.from_env()
+        return self._providers
 
     # Application
     app_name: str = "Redis SRE Agent"
@@ -49,7 +68,9 @@ class Settings(BaseSettings):
     task_timeout: int = Field(default=300, description="Task timeout in seconds")
 
     # Agent
-    max_iterations: int = Field(default=10, description="Maximum agent iterations")
+    max_iterations: int = Field(
+        default=25, description="Maximum agent iterations (increased for complex investigations)"
+    )
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
 
     # LLM Retry Configuration

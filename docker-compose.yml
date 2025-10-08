@@ -33,7 +33,7 @@ services:
 
   # Redis Enterprise Software - Multi-node cluster for testing enterprise runbooks
   redis-enterprise-node1:
-    image: redislabs/redis:latest
+    image: kurtfm/rs:latest
     container_name: redis-enterprise-node1
     hostname: redis-enterprise-node1
     ports:
@@ -65,7 +65,7 @@ services:
         ipv4_address: 172.28.0.10
 
   redis-enterprise-node2:
-    image: redislabs/redis:latest
+    image: kurtfm/rs:latest
     container_name: redis-enterprise-node2
     hostname: redis-enterprise-node2
     ports:
@@ -97,7 +97,7 @@ services:
       - redis-enterprise-node1
 
   redis-enterprise-node3:
-    image: redislabs/redis:latest
+    image: kurtfm/rs:latest
     container_name: redis-enterprise-node3
     hostname: redis-enterprise-node3
     ports:
@@ -130,7 +130,7 @@ services:
 
   # Alias for backward compatibility
   redis-enterprise:
-    image: redislabs/redis:latest
+    image: kurtfm/rs:latest
     container_name: redis-enterprise
     network_mode: "service:redis-enterprise-node1"
     depends_on:

@@ -338,13 +338,18 @@ async def ingest_sre_document(
 
 @sre_task
 async def scheduler_task(
-    global_limit: str = "scheduler",
-    perpetual: Perpetual = Perpetual(every=timedelta(seconds=30)),
-    concurrency: ConcurrencyLimit = ConcurrencyLimit("global_limit", max_concurrent=1),
+    perpetual: Perpetual = Perpetual(every=timedelta(seconds=30), automatic=True),
+    concurrency: ConcurrencyLimit = ConcurrencyLimit("scheduler_task", max_concurrent=1),
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """
-    Scheduler task that runs every 30 seconds using Perpetual.
+    Scheduler task that runs every 30 seconds using Perpetual with automatic=True.
+
+    With automatic=True, Docket automatically starts and reschedules this task when
+    a worker is running. No manual startup or rescheduling is needed.
+
+    The ConcurrencyLimit ensures only ONE instance of this task runs at a time,
+    preventing multiple workers or rapid rescheduling from creating duplicates.
 
     This task:
     1. Queries Redis for schedules that need to run based on current time
@@ -482,25 +487,8 @@ async def scheduler_task(
             f"Scheduler task completed: processed {len(schedules_needing_runs)} schedules, submitted {submitted_tasks} tasks"
         )
 
-        # Schedule the next run of this task (Perpetual behavior)
-        try:
-            next_run_time = datetime.now(timezone.utc) + timedelta(seconds=30)
-            async with Docket(url=await get_redis_url(), name="sre_docket") as next_docket:
-                # Use a deduplication key based on the scheduled time to prevent multiple scheduler tasks
-                scheduler_key = f"scheduler_task_{next_run_time.strftime('%Y%m%d_%H%M%S')}"
-                task_func = next_docket.add(scheduler_task, when=next_run_time, key=scheduler_key)
-                await task_func()
-                logger.debug(
-                    f"Scheduled next scheduler task run at {next_run_time} with key {scheduler_key}"
-                )
-        except Exception as e:
-            # If the task was already scheduled (duplicate key), this is expected and not an error
-            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                logger.debug(
-                    f"Scheduler task already scheduled for {next_run_time} - this is expected"
-                )
-            else:
-                logger.error(f"Failed to schedule next scheduler task run: {e}")
+        # Note: With automatic=True, Docket will automatically reschedule this task
+        # No manual rescheduling needed
 
         return result
 
@@ -526,40 +514,6 @@ async def register_sre_tasks() -> None:
     except Exception as e:
         logger.error(f"Failed to register SRE tasks: {e}")
         raise
-
-
-async def start_scheduler_task() -> None:
-    """Start the scheduler task as a Perpetual task."""
-    try:
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            # Submit the scheduler task with deduplication to prevent multiple instances
-            logger.info("Attempting to start scheduler task...")
-
-            # Use a fixed key to ensure only one scheduler task runs at startup
-            current_time = datetime.now(timezone.utc)
-            scheduler_key = f"scheduler_task_startup_{current_time.strftime('%Y%m%d_%H%M')}"
-
-            try:
-                # Submit an immediate scheduler task with deduplication key
-                task_func = docket.add(scheduler_task, key=scheduler_key)
-                task_id = await task_func()
-                logger.info(f"Started scheduler task with ID: {task_id} and key: {scheduler_key}")
-            except Exception as e:
-                # If the task was already submitted (duplicate key), this is expected and not an error
-                if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                    logger.info(
-                        f"Scheduler task already running with key {scheduler_key} - this is expected"
-                    )
-                else:
-                    logger.error(f"Failed to start scheduler task: {e}")
-                    raise
-
-    except Exception as e:
-        logger.error(f"Failed to start scheduler task: {e}")
-        # Don't raise - let the app continue
-        import traceback
-
-        logger.error(f"Scheduler task error traceback: {traceback.format_exc()}")
 
 
 @sre_task

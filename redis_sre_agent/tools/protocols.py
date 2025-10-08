@@ -19,6 +19,7 @@ class ToolCapability(Enum):
     TICKETS = "tickets"
     REPOS = "repos"
     TRACES = "traces"
+    DIAGNOSTICS = "diagnostics"  # For deep instance diagnostics (Redis INFO, key sampling, etc.)
 
 
 class MetricValue:
@@ -535,6 +536,96 @@ class SREToolProvider(Protocol):
         ...
 
     @abstractmethod
+    async def get_diagnostics_provider(self) -> Optional["DiagnosticsProvider"]:
+        """Get the diagnostics provider if supported."""
+        ...
+
+    @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
         """Overall health check for the provider."""
+        ...
+
+
+class DiagnosticsProvider(Protocol):
+    """Protocol for deep instance diagnostics providers.
+
+    This protocol is for tools that provide deep diagnostic capabilities
+    beyond simple metrics - things like Redis INFO sections, key sampling,
+    configuration analysis, slow query logs, etc.
+
+    Implementations can include:
+    - Redis direct connection (INFO, SCAN, SLOWLOG, CONFIG GET)
+    - SSH-based diagnostics (filesystem, logs, process info)
+    - Container exec diagnostics (docker exec, kubectl exec)
+    - Cloud provider APIs (AWS RDS diagnostics, Azure Redis insights)
+    """
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Human-readable name of the diagnostics provider."""
+        ...
+
+    @abstractmethod
+    async def get_diagnostics(
+        self,
+        sections: Optional[List[str]] = None,
+        include_raw_data: bool = True,
+    ) -> Dict[str, Any]:
+        """Get comprehensive diagnostic information.
+
+        Args:
+            sections: Optional list of diagnostic sections to capture.
+                     Common sections: memory, performance, clients, slowlog,
+                     configuration, keyspace, replication, persistence, cpu
+            include_raw_data: Whether to include raw diagnostic output
+
+        Returns:
+            Dictionary with diagnostic data organized by section
+        """
+        ...
+
+    @abstractmethod
+    async def sample_keys(
+        self,
+        pattern: str = "*",
+        count: int = 100,
+        database: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Sample keys from the instance.
+
+        Args:
+            pattern: Key pattern to match (e.g., 'user:*', 'session:*')
+            count: Maximum number of keys to sample
+            database: Optional database number (for multi-database systems)
+
+        Returns:
+            Dictionary with sampled keys and pattern analysis
+        """
+        ...
+
+    @abstractmethod
+    async def get_configuration(self) -> Dict[str, Any]:
+        """Get instance configuration.
+
+        Returns:
+            Dictionary with configuration parameters
+        """
+        ...
+
+    @abstractmethod
+    async def get_slow_queries(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get slow query log entries.
+
+        Args:
+            limit: Maximum number of slow queries to return
+
+        Returns:
+            List of slow query entries with timing and command info
+        """
+        ...
+
+    @abstractmethod
+    async def health_check(self) -> Dict[str, Any]:
+        """Check if the diagnostics provider is healthy and accessible."""
         ...
