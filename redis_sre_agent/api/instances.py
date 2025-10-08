@@ -464,41 +464,20 @@ async def test_connection_url(request: TestConnectionRequest):
         # Parse connection URL to extract host and port
         from urllib.parse import urlparse
 
+        from redis_sre_agent.core.redis import test_redis_connection
+
         try:
             parsed_url = urlparse(request.connection_url)
             host = parsed_url.hostname or "unknown"
             port = parsed_url.port or 6379
 
-            # Implement actual Redis connection test
-            import asyncio
+            # Test connection using the core redis function
+            success = await test_redis_connection(url=request.connection_url)
 
-            import redis.asyncio as redis
-
-            try:
-                # Create Redis client from connection URL
-                redis_client = redis.from_url(request.connection_url)
-
-                # Test connection with a simple ping
-                await asyncio.wait_for(redis_client.ping(), timeout=5.0)
-                await redis_client.aclose()
-
-                success = True
+            if success:
                 message = f"Successfully connected to Redis at {host}:{port}"
-
-            except asyncio.TimeoutError:
-                success = False
-                message = f"Connection timeout to Redis at {host}:{port}. Please check if Redis is running and accessible."
-            except redis.ConnectionError as conn_error:
-                success = False
-                message = f"Failed to connect to Redis at {host}:{port}: {str(conn_error)}"
-            except redis.AuthenticationError:
-                success = False
-                message = (
-                    f"Authentication failed for Redis at {host}:{port}. Please check credentials."
-                )
-            except Exception as test_error:
-                success = False
-                message = f"Connection test failed for Redis at {host}:{port}: {str(test_error)}"
+            else:
+                message = f"Failed to connect to Redis at {host}:{port}"
 
             result = {
                 "success": success,
@@ -532,6 +511,8 @@ async def test_connection_url(request: TestConnectionRequest):
 async def test_instance_connection(instance_id: str):
     """Test connection to a Redis instance."""
     try:
+        from redis_sre_agent.core.redis import test_redis_connection
+
         instances = await get_instances_from_redis()
 
         # Find the instance
@@ -546,62 +527,20 @@ async def test_instance_connection(instance_id: str):
                 status_code=404, detail=f"Instance with ID '{instance_id}' not found"
             )
 
-        # Parse connection URL to extract host and port
-        from urllib.parse import urlparse
+        # Test connection using the core redis function
+        success = await test_redis_connection(url=target_instance.connection_url)
 
-        try:
-            parsed_url = urlparse(target_instance.connection_url)
-            host = parsed_url.hostname or "unknown"
-            port = parsed_url.port or 6379
+        if success:
+            message = f"Successfully connected to instance {target_instance.name}"
+        else:
+            message = f"Failed to connect to instance {target_instance.name}"
 
-            # Implement actual Redis connection test
-            import asyncio
-
-            import redis.asyncio as redis
-
-            try:
-                # Create Redis client from connection URL
-                redis_client = redis.from_url(target_instance.connection_url)
-
-                # Test connection with a simple ping
-                await asyncio.wait_for(redis_client.ping(), timeout=5.0)
-                await redis_client.aclose()
-
-                success = True
-                message = f"Successfully connected to Redis at {host}:{port}"
-
-            except asyncio.TimeoutError:
-                success = False
-                message = f"Connection timeout to Redis at {host}:{port}. Please check if Redis is running and accessible."
-            except redis.ConnectionError as conn_error:
-                success = False
-                message = f"Failed to connect to Redis at {host}:{port}: {str(conn_error)}"
-            except redis.AuthenticationError:
-                success = False
-                message = (
-                    f"Authentication failed for Redis at {host}:{port}. Please check credentials."
-                )
-            except Exception as test_error:
-                success = False
-                message = f"Connection test failed for Redis at {host}:{port}: {str(test_error)}"
-
-            result = {
-                "success": success,
-                "message": message,
-                "instance_id": instance_id,
-                "tested_at": datetime.now(timezone.utc).isoformat(),
-            }
-
-        except Exception as parse_error:
-            logger.error(
-                f"Failed to parse connection URL {target_instance.connection_url}: {parse_error}"
-            )
-            result = {
-                "success": False,
-                "message": f"Invalid connection URL format: {target_instance.connection_url}",
-                "instance_id": instance_id,
-                "tested_at": datetime.now(timezone.utc).isoformat(),
-            }
+        result = {
+            "success": success,
+            "message": message,
+            "instance_id": instance_id,
+            "tested_at": datetime.now(timezone.utc).isoformat(),
+        }
 
         logger.info(f"Connection test for {instance_id}: {'SUCCESS' if success else 'FAILED'}")
         return result

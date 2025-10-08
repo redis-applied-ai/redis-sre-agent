@@ -195,11 +195,19 @@ def get_schedules_index() -> AsyncSearchIndex:
     return AsyncSearchIndex.from_dict(SRE_SCHEDULES_SCHEMA, redis_url=settings.redis_url)
 
 
-async def test_redis_connection() -> bool:
-    """Test Redis connection health."""
+async def test_redis_connection(url: Optional[str] = None) -> bool:
+    """Test Redis connection health.
+
+    Args:
+        url: Optional Redis URL to test. If not provided, uses default from settings.
+
+    Returns:
+        True if connection successful, False otherwise.
+    """
     try:
-        client = get_redis_client()
+        client = get_redis_client(url=url)
         await client.ping()
+        await client.aclose()
         return True
     except Exception as e:
         logger.error(f"Redis connection test failed: {e}")

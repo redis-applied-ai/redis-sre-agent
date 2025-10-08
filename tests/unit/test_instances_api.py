@@ -206,25 +206,30 @@ class TestInstancesAPI:
             assert "Successfully connected" in data["message"]
 
     @pytest.mark.asyncio
-    async def test_test_connection_failure(self, client, sample_instance):
-        """Test connection test failure."""
-        with (
-            patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
-            patch("redis.asyncio.from_url") as mock_redis,
-        ):
-            mock_get.return_value = [sample_instance]
+    async def test_test_connection_failure(self, client):
+        """Test connection test failure with bad URL."""
+        from redis_sre_agent.api.instances import RedisInstance
 
-            # Mock Redis client that fails to connect
-            mock_client = AsyncMock()
-            mock_client.ping.side_effect = Exception("Connection timeout")
-            mock_redis.return_value = mock_client
+        # Create instance with invalid connection URL
+        bad_instance = RedisInstance(
+            id="test-instance-123",
+            name="bad-redis",
+            connection_url="redis://invalid-host:9999",  # Invalid host
+            environment="testing",
+            usage="cache",
+            description="Test instance with bad URL",
+            created_by="user",
+        )
+
+        with patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get:
+            mock_get.return_value = [bad_instance]
 
             response = client.post("/api/v1/instances/test-instance-123/test-connection")
 
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is False
-            assert "timeout" in data["message"]
+            assert "Failed to connect" in data["message"]
 
 
 class TestInstancesAPIErrorHandling:
