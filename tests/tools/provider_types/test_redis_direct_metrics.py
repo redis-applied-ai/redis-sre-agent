@@ -57,13 +57,13 @@ def test_create_tools_scoped_to_instance(redis_config, redis_instance):
 
     # Check tool names
     tool_names = [tool.name for tool in tools]
-    assert "redis_metrics_test_redis_1_list_metrics" in tool_names
-    assert "redis_metrics_test_redis_1_query_metrics" in tool_names
-    assert "redis_metrics_test_redis_1_get_summary" in tool_names
+    assert "redis_metrics_test-redis-1_list_metrics" in tool_names
+    assert "redis_metrics_test-redis-1_query_metrics" in tool_names
+    assert "redis_metrics_test-redis-1_get_summary" in tool_names
 
 
 def test_tool_names_sanitize_hyphens(redis_config):
-    """Test that tool names sanitize hyphens in instance names."""
+    """Test that tool names preserve hyphens in instance names."""
     instance = RedisInstance(
         id="test-instance-2",
         name="prod-redis-cluster-1",  # Has hyphens
@@ -76,10 +76,9 @@ def test_tool_names_sanitize_hyphens(redis_config):
     provider = RedisDirectMetricsProviderType(redis_config)
     tools = provider.create_tools_scoped_to_instance(instance)
 
-    # Tool names should have underscores instead of hyphens
+    # Tool names should preserve hyphens from instance names
     tool_names = [tool.name for tool in tools]
-    assert "redis_metrics_prod_redis_cluster_1_list_metrics" in tool_names
-    assert all("-" not in name for name in tool_names)
+    assert "redis_metrics_prod-redis-cluster-1_list_metrics" in tool_names
 
 
 def test_list_metrics_tool_structure(redis_config, redis_instance):
@@ -90,7 +89,7 @@ def test_list_metrics_tool_structure(redis_config, redis_instance):
     list_metrics_tool = next(t for t in tools if "list_metrics" in t.name)
 
     # Check tool structure
-    assert list_metrics_tool.name == "redis_metrics_test_redis_1_list_metrics"
+    assert list_metrics_tool.name == "redis_metrics_test-redis-1_list_metrics"
     assert "test-redis-1" in list_metrics_tool.description
     assert "redis://test:6379" in list_metrics_tool.description
     assert "testing" in list_metrics_tool.description
@@ -107,7 +106,7 @@ def test_query_metrics_tool_structure(redis_config, redis_instance):
     query_metrics_tool = next(t for t in tools if "query_metrics" in t.name)
 
     # Check tool structure
-    assert query_metrics_tool.name == "redis_metrics_test_redis_1_query_metrics"
+    assert query_metrics_tool.name == "redis_metrics_test-redis-1_query_metrics"
     assert "test-redis-1" in query_metrics_tool.description
     assert "metric_names" in query_metrics_tool.parameters["properties"]
     assert query_metrics_tool.parameters["required"] == ["metric_names"]
@@ -122,7 +121,7 @@ def test_get_summary_tool_structure(redis_config, redis_instance):
     get_summary_tool = next(t for t in tools if "get_summary" in t.name)
 
     # Check tool structure
-    assert get_summary_tool.name == "redis_metrics_test_redis_1_get_summary"
+    assert get_summary_tool.name == "redis_metrics_test-redis-1_get_summary"
     assert "test-redis-1" in get_summary_tool.description
     assert "sections" in get_summary_tool.parameters["properties"]
     assert get_summary_tool.parameters["required"] == ["sections"]
@@ -201,8 +200,8 @@ def test_multiple_instances_create_different_tools(redis_config):
     assert names1 != names2
 
     # Check specific names
-    assert "redis_metrics_redis_1_list_metrics" in names1
-    assert "redis_metrics_redis_2_list_metrics" in names2
+    assert "redis_metrics_redis-1_list_metrics" in names1
+    assert "redis_metrics_redis-2_list_metrics" in names2
 
 
 def test_provider_str_repr(redis_config):

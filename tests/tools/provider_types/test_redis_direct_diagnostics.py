@@ -57,14 +57,14 @@ def test_create_tools_scoped_to_instance(diagnostics_config, redis_instance):
 
     # Check tool names
     tool_names = [tool.name for tool in tools]
-    assert "redis_diagnostics_test_redis_1_capture_diagnostics" in tool_names
-    assert "redis_diagnostics_test_redis_1_capture_sections" in tool_names
-    assert "redis_diagnostics_test_redis_1_sample_keys" in tool_names
-    assert "redis_diagnostics_test_redis_1_analyze_keys" in tool_names
+    assert "redis_diagnostics_test-redis-1_capture_diagnostics" in tool_names
+    assert "redis_diagnostics_test-redis-1_capture_sections" in tool_names
+    assert "redis_diagnostics_test-redis-1_sample_keys" in tool_names
+    assert "redis_diagnostics_test-redis-1_analyze_keys" in tool_names
 
 
 def test_tool_names_sanitize_hyphens(diagnostics_config):
-    """Test that tool names sanitize hyphens in instance names."""
+    """Test that tool names preserve hyphens in instance names."""
     instance = RedisInstance(
         id="test-instance-2",
         name="prod-redis-cluster-1",  # Has hyphens
@@ -77,11 +77,10 @@ def test_tool_names_sanitize_hyphens(diagnostics_config):
     provider = RedisDirectDiagnosticsProviderType(diagnostics_config)
     tools = provider.create_tools_scoped_to_instance(instance)
 
-    # Tool names should have underscores instead of hyphens
+    # Tool names should preserve hyphens from instance names
     tool_names = [tool.name for tool in tools]
-    assert "redis_diagnostics_prod_redis_cluster_1_capture_diagnostics" in tool_names
-    assert "redis_diagnostics_prod_redis_cluster_1_analyze_keys" in tool_names
-    assert all("-" not in name for name in tool_names)
+    assert "redis_diagnostics_prod-redis-cluster-1_capture_diagnostics" in tool_names
+    assert "redis_diagnostics_prod-redis-cluster-1_analyze_keys" in tool_names
 
 
 def test_capture_diagnostics_tool_structure(diagnostics_config, redis_instance):
@@ -92,7 +91,7 @@ def test_capture_diagnostics_tool_structure(diagnostics_config, redis_instance):
     capture_tool = next(t for t in tools if "capture_diagnostics" in t.name)
 
     # Check tool structure
-    assert capture_tool.name == "redis_diagnostics_test_redis_1_capture_diagnostics"
+    assert capture_tool.name == "redis_diagnostics_test-redis-1_capture_diagnostics"
     assert "test-redis-1" in capture_tool.description
     assert "COMPREHENSIVE" in capture_tool.description
     assert capture_tool.parameters["type"] == "object"
@@ -108,7 +107,7 @@ def test_capture_sections_tool_structure(diagnostics_config, redis_instance):
     sections_tool = next(t for t in tools if "capture_sections" in t.name)
 
     # Check tool structure
-    assert sections_tool.name == "redis_diagnostics_test_redis_1_capture_sections"
+    assert sections_tool.name == "redis_diagnostics_test-redis-1_capture_sections"
     assert "test-redis-1" in sections_tool.description
     assert "SPECIFIC" in sections_tool.description
     assert "sections" in sections_tool.parameters["properties"]
@@ -131,7 +130,7 @@ def test_sample_keys_tool_structure(diagnostics_config, redis_instance):
     sample_tool = next(t for t in tools if "sample_keys" in t.name)
 
     # Check tool structure
-    assert sample_tool.name == "redis_diagnostics_test_redis_1_sample_keys"
+    assert sample_tool.name == "redis_diagnostics_test-redis-1_sample_keys"
     assert "test-redis-1" in sample_tool.description
     assert "SCAN" in sample_tool.description
     assert "pattern" in sample_tool.parameters["properties"]
@@ -149,7 +148,7 @@ def test_analyze_keys_tool_structure(diagnostics_config, redis_instance):
     analyze_tool = next(t for t in tools if "analyze_keys" in t.name)
 
     # Check tool structure
-    assert analyze_tool.name == "redis_diagnostics_test_redis_1_analyze_keys"
+    assert analyze_tool.name == "redis_diagnostics_test-redis-1_analyze_keys"
     assert "test-redis-1" in analyze_tool.description
     assert "TTL" in analyze_tool.description
     assert "memory" in analyze_tool.description.lower()
@@ -233,8 +232,8 @@ def test_multiple_instances_create_different_tools(diagnostics_config):
     assert names1 != names2
 
     # Check specific names
-    assert "redis_diagnostics_redis_1_capture_diagnostics" in names1
-    assert "redis_diagnostics_redis_2_capture_diagnostics" in names2
+    assert "redis_diagnostics_redis-1_capture_diagnostics" in names1
+    assert "redis_diagnostics_redis-2_capture_diagnostics" in names2
 
 
 def test_provider_str_repr(diagnostics_config):

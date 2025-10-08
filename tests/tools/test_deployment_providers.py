@@ -108,9 +108,9 @@ def test_create_tools_for_instance(minimal_config, redis_instance):
 
     # Check tool names
     tool_names = [tool.name for tool in tools]
-    assert "redis_metrics_test_redis_list_metrics" in tool_names
-    assert "redis_metrics_test_redis_query_metrics" in tool_names
-    assert "redis_metrics_test_redis_get_summary" in tool_names
+    assert "redis_metrics_test-redis_list_metrics" in tool_names
+    assert "redis_metrics_test-redis_query_metrics" in tool_names
+    assert "redis_metrics_test-redis_get_summary" in tool_names
 
 
 def test_create_tools_for_multiple_instances(minimal_config, multiple_instances):
@@ -124,9 +124,9 @@ def test_create_tools_for_multiple_instances(minimal_config, multiple_instances)
 
     # Check that tools for each instance exist
     tool_names = [tool.name for tool in tools]
-    assert "redis_metrics_prod_redis_1_list_metrics" in tool_names
-    assert "redis_metrics_prod_redis_2_list_metrics" in tool_names
-    assert "redis_metrics_staging_redis_list_metrics" in tool_names
+    assert "redis_metrics_prod-redis-1_list_metrics" in tool_names
+    assert "redis_metrics_prod-redis-2_list_metrics" in tool_names
+    assert "redis_metrics_staging-redis_list_metrics" in tool_names
 
 
 def test_tools_have_unique_names(minimal_config, multiple_instances):
