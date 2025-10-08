@@ -124,11 +124,22 @@ class ProviderType(ABC):
         # Remove any leading/trailing underscores or hyphens
         safe_instance_name = safe_instance_name.strip("_-")
 
+        # Collapse multiple consecutive underscores or hyphens into single ones
+        safe_instance_name = re.sub(r"[-_]{2,}", "_", safe_instance_name)
+
         # Ensure it's not empty
         if not safe_instance_name:
             safe_instance_name = "instance"
 
-        return f"{self.provider_type_name}_{safe_instance_name}_{operation}"
+        tool_name = f"{self.provider_type_name}_{safe_instance_name}_{operation}"
+
+        # Validate the final tool name matches OpenAI's pattern
+        if not re.match(r"^[a-zA-Z0-9_-]+$", tool_name):
+            raise ValueError(
+                f"Generated tool name '{tool_name}' does not match OpenAI pattern ^[a-zA-Z0-9_-]+$"
+            )
+
+        return tool_name
 
     def _create_tool_description_prefix(self, instance: RedisInstance) -> str:
         """Helper to create a consistent tool description prefix.

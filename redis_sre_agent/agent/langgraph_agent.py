@@ -271,6 +271,21 @@ class SRELangGraphAgent:
         # Get tool schemas for LLM binding
         tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
 
+        # Validate all tool names match OpenAI pattern before binding
+        import re
+
+        for i, schema in enumerate(tool_schemas):
+            tool_name = schema["function"]["name"]
+            if not re.match(r"^[a-zA-Z0-9_-]+$", tool_name):
+                logger.error(
+                    f"Tool {i} has invalid name '{tool_name}' - "
+                    f"does not match pattern ^[a-zA-Z0-9_-]+$"
+                )
+                raise ValueError(
+                    f"Tool name '{tool_name}' contains invalid characters. "
+                    f"Only alphanumeric, underscore, and hyphen are allowed."
+                )
+
         # Bind tools to the LLM
         self.llm_with_tools = self.llm.bind_tools(tool_schemas)
 
@@ -736,6 +751,22 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
 
                     # Get tool schemas and rebind LLM
                     tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
+
+                    # Validate all tool names match OpenAI pattern before binding
+                    import re
+
+                    for i, schema in enumerate(tool_schemas):
+                        tool_name = schema["function"]["name"]
+                        if not re.match(r"^[a-zA-Z0-9_-]+$", tool_name):
+                            logger.error(
+                                f"Tool {i} has invalid name '{tool_name}' - "
+                                f"does not match pattern ^[a-zA-Z0-9_-]+$"
+                            )
+                            raise ValueError(
+                                f"Tool name '{tool_name}' contains invalid characters. "
+                                f"Only alphanumeric, underscore, and hyphen are allowed."
+                            )
+
                     self.llm_with_tools = self.llm.bind_tools(tool_schemas)
 
                     logger.info(
