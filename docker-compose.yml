@@ -63,6 +63,8 @@ services:
     networks:
       sre-network:
         ipv4_address: 172.28.0.10
+        aliases:
+          - redis-enterprise  # Add alias for backward compatibility
 
   redis-enterprise-node2:
     image: kurtfm/rs:latest
@@ -245,6 +247,9 @@ services:
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
     command: uv run python -m redis_sre_agent.worker
+    # Disable healthcheck for worker (it doesn't run a web server)
+    healthcheck:
+      disable: true
     networks:
       - sre-network
 

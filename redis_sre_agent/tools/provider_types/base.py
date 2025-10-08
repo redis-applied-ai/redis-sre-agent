@@ -113,10 +113,21 @@ class ProviderType(ABC):
             operation: The operation name (e.g., 'query_metrics', 'sample_keys')
 
         Returns:
-            Formatted tool name
+            Formatted tool name that matches OpenAI's pattern ^[a-zA-Z0-9_-]+$
         """
-        # Sanitize instance name (replace hyphens with underscores for valid Python identifiers)
-        safe_instance_name = instance.name.replace("-", "_")
+        import re
+
+        # Sanitize instance name to match OpenAI's pattern: ^[a-zA-Z0-9_-]+$
+        # Replace any character that's not alphanumeric, underscore, or hyphen with underscore
+        safe_instance_name = re.sub(r"[^a-zA-Z0-9_-]", "_", instance.name)
+
+        # Remove any leading/trailing underscores or hyphens
+        safe_instance_name = safe_instance_name.strip("_-")
+
+        # Ensure it's not empty
+        if not safe_instance_name:
+            safe_instance_name = "instance"
+
         return f"{self.provider_type_name}_{safe_instance_name}_{operation}"
 
     def _create_tool_description_prefix(self, instance: RedisInstance) -> str:

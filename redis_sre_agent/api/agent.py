@@ -236,6 +236,20 @@ async def get_agent_status() -> Dict[str, Any]:
         # Check if the agent can be initialized
         agent = get_sre_agent()
 
+        # Check worker availability (required for agent to process tasks)
+        workers_available = False
+        try:
+            from docket.docket import Docket
+
+            from redis_sre_agent.core.config import settings
+
+            async with Docket(url=settings.redis_url, name="sre_docket") as docket:
+                workers = await docket.workers()
+                workers_available = len(workers) > 0
+        except Exception as e:
+            logger.warning(f"Worker status check failed: {e}")
+            workers_available = False
+
         # Get system health status (avoid circular import)
         try:
             from . import app
@@ -250,13 +264,23 @@ async def get_agent_status() -> Dict[str, Any]:
         except (ImportError, AttributeError):
             system_health = {"status": "unknown"}
 
+        # Agent is only available if workers are running
+        agent_available = workers_available
+
+        # Get tool information from the agent
+        tool_count = len(agent.current_tools) if hasattr(agent, "current_tools") else 0
+        tool_names = (
+            [tool.name for tool in agent.current_tools] if hasattr(agent, "current_tools") else []
+        )
+
         return {
-            "agent_available": True,
-            "tools_registered": len(agent.sre_tools),
-            "tool_names": list(agent.sre_tools.keys()),
+            "agent_available": agent_available,
+            "tools_registered": tool_count,
+            "tool_names": tool_names,
             "system_health": system_health,
+            "workers_available": workers_available,
             "model": "gpt-4o-mini",
-            "status": "operational",
+            "status": "operational" if agent_available else "degraded",
         }
 
     except Exception as e:

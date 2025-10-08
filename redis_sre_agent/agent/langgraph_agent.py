@@ -436,27 +436,76 @@ class SRELangGraphAgent:
                     "🛡️ Performing safety checks on recommendations...", "safety_check"
                 )
 
-            # Create a focused prompt for the reasoning model
-            conversation_context = []
+            # Build conversation history with clear turn structure
+            conversation_turns = []
+            tool_results = []
+            current_turn_user_msg = None
+            current_turn_assistant_msg = None
+            turn_number = 0
 
-            # Add the original query
             for msg in messages:
                 if isinstance(msg, HumanMessage):
-                    conversation_context.append(f"User Query: {msg.content}")
+                    # If we have a previous turn, save it
+                    if current_turn_user_msg:
+                        turn_number += 1
+                        turn_text = f"**Turn {turn_number}:**\nUser: {current_turn_user_msg}"
+                        if current_turn_assistant_msg:
+                            turn_text += f"\nAssistant: {current_turn_assistant_msg}"
+                        conversation_turns.append(turn_text)
+
+                    # Start new turn
+                    current_turn_user_msg = msg.content
+                    current_turn_assistant_msg = None
+
+                elif isinstance(msg, AIMessage):
+                    # Skip system messages (they start with "You are")
+                    if not msg.content.startswith("You are"):
+                        current_turn_assistant_msg = msg.content
+
                 elif isinstance(msg, ToolMessage):
-                    conversation_context.append(f"Tool Data: {msg.content}")
+                    tool_results.append(f"Tool Data: {msg.content}")
+
+            # Add the final turn (current question)
+            if current_turn_user_msg:
+                turn_number += 1
+                turn_text = f"**Turn {turn_number} (Current):**\nUser: {current_turn_user_msg}"
+                if current_turn_assistant_msg:
+                    turn_text += f"\nAssistant: {current_turn_assistant_msg}"
+                conversation_turns.append(turn_text)
+
+            # Build the prompt with clear structure
+            conversation_history = (
+                "\n\n".join(conversation_turns)
+                if conversation_turns
+                else "No previous conversation."
+            )
+            tool_data = "\n\n".join(tool_results) if tool_results else "No tool data available."
+
+            # Determine if this is a follow-up question
+            is_followup = turn_number > 1
+            task_description = (
+                "The user has asked a follow-up question. Based on the conversation history and tool results, "
+                "provide a clear, direct answer to their latest question. Reference previous context when relevant."
+                if is_followup
+                else "You've been investigating a Redis issue. Based on your diagnostic work and tool results, "
+                "write up your findings and recommendations like you're updating a colleague."
+            )
 
             reasoning_prompt = f"""{SRE_SYSTEM_PROMPT}
 
+## Conversation History
+
+{conversation_history}
+
+## Tool Results from Investigation
+
+{tool_data}
+
 ## Your Task
 
-You've been investigating a Redis issue. Based on your diagnostic work and tool results below, write up your findings and recommendations like you're updating a colleague.
+{task_description}
 
-## Investigation Results
-
-{chr(10).join(conversation_context)}
-
-## Write Your Triage Notes
+## Response Guidelines
 
 Write a natural, conversational response using proper markdown formatting. Include:
 
