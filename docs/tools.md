@@ -1,70 +1,233 @@
-# ABC-Based Tool Provider System
+# Tool Provider System
 
-The Redis SRE Agent uses an **ABC-based tool provider system** that allows extensible tool integration while maintaining clean separation between tool logic and agent execution.
+The Redis SRE Agent uses a flexible tool provider system that allows you to extend the agent with custom capabilities. Tools are automatically discovered and made available to the LLM based on your configuration.
 
-## Overview
+## Quick Start
 
-The tool system is built on three core concepts:
+### Using Built-in Tools
 
-1. **Tool Providers** - ABC classes that implement specific capabilities (knowledge base, metrics, diagnostics, etc.)
-2. **Tool Manager** - Centralized lifecycle management and routing for all providers
-3. **Tool Definitions** - Pure schema models for OpenAI function calling
+The agent comes with a knowledge base tool enabled by default. To use it, simply start the agent:
 
-### Key Features
-
-- **ABC-based architecture** - Clear contracts with default implementations
-- **Instance scoping** - Tools can be scoped to specific Redis instances
-- **Per-query lifecycle** - Tools loaded dynamically based on context
-- **Centralized routing** - ToolManager routes calls to appropriate providers
-- **No function storage** - Execution via routing, not stored closures
-- **Async context managers** - Proper resource lifecycle management
-
-## Architecture
-
+```bash
+# The knowledge base tool is automatically available
+python -m redis_sre_agent.api.main
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      LangGraph Agent                        │
-│                                                             │
-│  process_query(query, redis_instance)                      │
-│    │                                                        │
-│    ├─► Create ToolManager(redis_instance)                  │
-│    ├─► Get tool schemas: mgr.get_tools()                   │
-│    ├─► Build workflow with tools                           │
-│    └─► Execute: mgr.resolve_tool_call(name, args)          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       Tool Manager                          │
-│                                                             │
-│  - Load providers (knowledge base, metrics, etc.)          │
-│  - Build routing table: {tool_name: provider_instance}     │
-│  - Async context manager for lifecycle                     │
-│  - Route tool calls to correct provider                    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Tool Providers (ABC)                     │
-│                                                             │
-│  ┌──────────────────┐  ┌──────────────────┐               │
-│  │ Knowledge Base   │  │ Redis Metrics    │               │
-│  │ Provider         │  │ Provider         │  ...          │
-│  │                  │  │                  │               │
-│  │ - search         │  │ - get_info       │               │
-│  │ - ingest         │  │ - get_slowlog    │               │
-│  └──────────────────┘  └──────────────────┘               │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Helper Functions                         │
-│                                                             │
-│  Core business logic (core/knowledge_helpers.py, etc.)     │
-│  - Called by both tasks (background) and tools (LLM)       │
-│  - Single source of truth for implementation               │
-└─────────────────────────────────────────────────────────────┘
+
+When you provide a `RedisInstance` in your query, instance-specific tools will also be loaded automatically.
+
+### Configuring Custom Tools
+
+Add custom tool providers in `redis_sre_agent/config.py`:
+
+```python
+class Settings(BaseSettings):
+    # ... other settings ...
+
+    # Add your custom tool providers (dotted import paths)
+    custom_tool_providers: List[str] = [
+        "my_company.sre_tools.PrometheusMetricsProvider",
+        "my_company.sre_tools.DatadogLogsProvider",
+    ]
 ```
+
+**Important:** Your custom tool providers must be installed in the same Python environment as the SRE agent.
+
+## Creating Custom Tools
+
+### Example: Custom Metrics Provider
+
+Let's create a Prometheus metrics provider that the agent can use to query metrics.
+
+**Step 1: Create your provider class**
+
+Create a file `my_company/sre_tools/prometheus.py`:
+
+```python
+from typing import Any, Dict, List, Optional
+from redis_sre_agent.tools.protocols import ToolProvider
+from redis_sre_agent.tools.tool_definition import ToolDefinition
+
+class PrometheusMetricsProvider(ToolProvider):
+    """Provides Prometheus metrics querying capabilities."""
+
+    provider_name = "prometheus"
+
+    def __init__(self, redis_instance: Optional[RedisInstance] = None):
+        super().__init__(redis_instance)
+        # Initialize your Prometheus client
+        self.prometheus_url = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+        self.client = PrometheusConnect(url=self.prometheus_url)
+
+    def create_tool_schemas(self) -> List[ToolDefinition]:
+        """Define the tools this provider offers."""
+        return [
+            ToolDefinition(
+                name=self._make_tool_name("query_metric"),
+                description=(
+                    "Query Prometheus metrics for the Redis instance. "
+                    "Use this to get current metric values, time-series data, "
+                    "or analyze trends. Supports PromQL queries."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "PromQL query (e.g., 'redis_memory_used_bytes')"
+                        },
+                        "time_range": {
+                            "type": "string",
+                            "description": "Time range like '1h', '24h', '7d'",
+                            "default": "1h"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            )
+        ]
+
+    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
+        """Execute the tool call."""
+        # Parse operation from tool_name
+        operation = self._parse_operation(tool_name)
+
+        if operation == "query_metric":
+            return await self.query_metric(**args)
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+
+    async def query_metric(self, query: str, time_range: str = "1h") -> Dict[str, Any]:
+        """Query Prometheus for metrics."""
+        try:
+            # Your implementation here
+            result = self.client.custom_query(query)
+
+            return {
+                "status": "success",
+                "query": query,
+                "time_range": time_range,
+                "data": result,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "query": query
+            }
+```
+
+**Step 2: Install your package**
+
+```bash
+# Install your custom tools package in the same environment
+pip install -e /path/to/my_company/sre_tools
+```
+
+**Step 3: Configure the agent**
+
+Add to `config.py`:
+
+```python
+custom_tool_providers: List[str] = [
+    "my_company.sre_tools.prometheus.PrometheusMetricsProvider",
+]
+```
+
+**Step 4: Set environment variables**
+
+```bash
+export PROMETHEUS_URL=http://prometheus.mycompany.com:9090
+```
+
+That's it! The agent will now automatically discover and use your Prometheus metrics tool.
+
+### Example: Custom Logs Provider
+
+Here's another example for a logs provider:
+
+```python
+from redis_sre_agent.tools.protocols import ToolProvider
+from redis_sre_agent.tools.tool_definition import ToolDefinition
+
+class DatadogLogsProvider(ToolProvider):
+    """Provides Datadog log search capabilities."""
+
+    provider_name = "datadog_logs"
+
+    def __init__(self, redis_instance: Optional[RedisInstance] = None):
+        super().__init__(redis_instance)
+        self.api_key = os.getenv("DATADOG_API_KEY")
+        self.app_key = os.getenv("DATADOG_APP_KEY")
+        # Initialize Datadog client
+
+    def create_tool_schemas(self) -> List[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name=self._make_tool_name("search_logs"),
+                description=(
+                    "Search Datadog logs for the Redis instance. "
+                    "Use this to find errors, warnings, or specific events. "
+                    "Supports Datadog log query syntax."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Datadog log query (e.g., 'service:redis status:error')"
+                        },
+                        "time_range": {
+                            "type": "string",
+                            "description": "Time range like '1h', '24h'",
+                            "default": "1h"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of log entries to return",
+                            "default": 100
+                        }
+                    },
+                    "required": ["query"]
+                }
+            )
+        ]
+
+    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
+        operation = self._parse_operation(tool_name)
+
+        if operation == "search_logs":
+            return await self.search_logs(**args)
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+
+    async def search_logs(
+        self,
+        query: str,
+        time_range: str = "1h",
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """Search Datadog logs."""
+        # Your implementation using Datadog API
+        # ...
+
+        return {
+            "status": "success",
+            "query": query,
+            "logs": logs_data,
+            "total_count": len(logs_data)
+        }
+```
+
+### Key Points for Custom Tools
+
+1. **Inherit from `ToolProvider`** - This gives you the base functionality
+2. **Set `provider_name`** - A unique identifier for your provider
+3. **Implement `create_tool_schemas()`** - Define what tools you offer
+4. **Implement `resolve_tool_call()`** - Handle tool execution
+5. **Use `_make_tool_name()`** - Creates unique tool names scoped to instances
+6. **Write good descriptions** - The LLM uses these to decide when to call your tool
+7. **Return structured data** - Use dictionaries with clear status/error fields
 
 ## Core Components
 
