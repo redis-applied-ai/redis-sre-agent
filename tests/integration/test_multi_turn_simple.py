@@ -34,7 +34,6 @@ MULTI_TOOL_SCENARIOS = [
         "expected_tools": [
             "search_knowledge_base",
             "check_service_health",
-            "analyze_system_metrics",
         ],
         "expected_content": ["memory", "diagnostic", "immediate actions", "monitoring"],
     },
@@ -52,7 +51,6 @@ MULTI_TOOL_SCENARIOS = [
         "expected_tools": [
             "search_knowledge_base",
             "check_service_health",
-            "analyze_system_metrics",
         ],
         "expected_content": ["latency", "performance", "investigation", "diagnostic"],
     },

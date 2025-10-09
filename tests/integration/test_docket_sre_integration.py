@@ -11,7 +11,6 @@ from redis_sre_agent.core.redis import (
     create_indices,
 )
 from redis_sre_agent.core.tasks import (
-    analyze_system_metrics,
     check_service_health,
     ingest_sre_document,
     register_sre_tasks,
@@ -46,38 +45,6 @@ class TestDocketSREIntegration:
 
             # Should complete without errors
             assert True
-
-        finally:
-            await cleanup_redis_connections()
-
-    @pytest.mark.asyncio
-    async def test_analyze_metrics_task_real_execution(self, redis_container):
-        """Test analyze_system_metrics task with real Redis storage."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
-
-        try:
-            # Execute the task
-            result = await analyze_system_metrics(
-                metric_query="cpu_usage{instance='server1'} > 80", time_range="30m", threshold=85.0
-            )
-
-            # Validate result structure
-            assert result["metric_query"] == "cpu_usage{instance='server1'} > 80"
-            assert result["time_range"] == "30m"
-            assert result["status"] == "analyzed"
-            assert "task_id" in result
-            assert "timestamp" in result
-            assert "findings" in result
-
-            # Validate findings structure
-            findings = result["findings"]
-            assert "anomalies_detected" in findings
-            assert "current_value" in findings
-            assert "threshold_breached" in findings
-
-            # Task ID should be a valid ULID
-            assert len(result["task_id"]) == 26  # ULID length
 
         finally:
             await cleanup_redis_connections()
@@ -223,8 +190,6 @@ class TestDocketSREIntegration:
 
                 # Execute multiple tasks concurrently
                 tasks = [
-                    analyze_system_metrics("cpu_usage", "1h", 80.0),
-                    analyze_system_metrics("memory_usage", "30m", 90.0),
                     check_service_health("redis_cluster", ["redis:6379"], 30),
                     check_service_health("web_servers", ["web1:80", "web2:80"], 30),
                 ]
@@ -233,23 +198,18 @@ class TestDocketSREIntegration:
                 results = await asyncio.gather(*tasks)
 
                 # Validate all tasks completed
-                assert len(results) == 4
+                assert len(results) == 2
 
                 # Validate each result has expected structure
-                for i, result in enumerate(results):
+                for result in results:
                     assert "task_id" in result
                     assert "timestamp" in result
-
-                    if i < 2:  # Metrics tasks
-                        assert result["status"] == "analyzed"
-                        assert "findings" in result
-                    else:  # Health check tasks
-                        assert "overall_status" in result
-                        assert "health_checks" in result
+                    assert "overall_status" in result
+                    assert "health_checks" in result
 
                 # Verify all task IDs are unique
                 task_ids = [result["task_id"] for result in results]
-                assert len(set(task_ids)) == 4  # All unique
+                assert len(set(task_ids)) == 2  # All unique
 
         finally:
             await cleanup_redis_connections()
@@ -277,12 +237,12 @@ class TestDocketSREIntegration:
                 mock_client.expire.return_value = True
 
                 # This should succeed after retries
-                result = await analyze_system_metrics(
-                    metric_query="test_retry_metric", time_range="5m"
+                result = await check_service_health(
+                    service_name="test_retry_service", endpoints=["http://test:8000/health"]
                 )
 
                 # Should eventually succeed
-                assert result["status"] == "analyzed"
+                assert "overall_status" in result
                 assert call_count == 3  # Failed twice, succeeded on 3rd
 
         finally:
@@ -340,7 +300,6 @@ class TestDocketWorkerIntegration:
 
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
-            "analyze_system_metrics",
             "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",
@@ -389,7 +348,9 @@ class TestDocketErrorHandling:
 
                 # Task should raise the exception
                 with pytest.raises(Exception, match="Redis operation failed"):
-                    await analyze_system_metrics(metric_query="error_test_metric", time_range="1m")
+                    await check_service_health(
+                        service_name="error_test_service", endpoints=["http://test:8000/health"]
+                    )
 
         finally:
             await cleanup_redis_connections()

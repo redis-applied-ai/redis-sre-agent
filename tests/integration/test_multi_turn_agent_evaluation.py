@@ -39,7 +39,7 @@ MULTI_TURN_SCENARIOS = [
         "required_tools": [
             "search_knowledge_base",  # Must search for memory troubleshooting guidance
             "check_service_health",  # Must check Redis diagnostics and current state
-            "analyze_system_metrics",  # Must analyze memory usage patterns
+            "check_service_health",  # Must check service health
         ],
         "success_criteria": {
             "must_search_memory_topics": True,
@@ -63,7 +63,7 @@ MULTI_TURN_SCENARIOS = [
         "required_tools": [
             "search_knowledge_base",  # Connection troubleshooting procedures
             "check_service_health",  # Connection diagnostics
-            "analyze_system_metrics",  # Connection growth patterns
+            "check_service_health",  # Connection health checks
         ],
         "success_criteria": {
             "must_search_connection_topics": True,
@@ -87,7 +87,7 @@ MULTI_TURN_SCENARIOS = [
         "required_tools": [
             "search_knowledge_base",  # Performance troubleshooting methodologies
             "check_service_health",  # Comprehensive Redis diagnostics
-            "analyze_system_metrics",  # Latency and performance metrics
+            "check_service_health",  # Service health checks
         ],
         "success_criteria": {
             "must_search_performance_topics": True,
@@ -111,7 +111,7 @@ MULTI_TURN_SCENARIOS = [
         "required_tools": [
             "search_knowledge_base",  # Cluster troubleshooting procedures
             "check_service_health",  # Cluster state diagnostics
-            "analyze_system_metrics",  # Cluster performance metrics
+            "check_service_health",  # Cluster health checks
         ],
         "success_criteria": {
             "must_search_cluster_topics": True,
@@ -135,7 +135,7 @@ MULTI_TURN_SCENARIOS = [
         "required_tools": [
             "search_knowledge_base",  # Security incident response procedures
             "check_service_health",  # Security diagnostics and access logs
-            "analyze_system_metrics",  # Access pattern analysis
+            "check_service_health",  # Service health analysis
         ],
         "success_criteria": {
             "must_search_security_topics": True,
@@ -444,19 +444,19 @@ Format your response as JSON:
             results["must_check_access_patterns"] = "check_service_health" in tools_used
 
         if "must_analyze_metrics" in criteria:
-            results["must_analyze_metrics"] = "analyze_system_metrics" in tools_used
+            results["must_analyze_metrics"] = "check_service_health" in tools_used
 
         if "must_analyze_connection_growth" in criteria:
-            results["must_analyze_connection_growth"] = "analyze_system_metrics" in tools_used
+            results["must_analyze_connection_growth"] = "check_service_health" in tools_used
 
         if "must_analyze_latency_metrics" in criteria:
-            results["must_analyze_latency_metrics"] = "analyze_system_metrics" in tools_used
+            results["must_analyze_latency_metrics"] = "check_service_health" in tools_used
 
         if "must_analyze_migration_metrics" in criteria:
-            results["must_analyze_migration_metrics"] = "analyze_system_metrics" in tools_used
+            results["must_analyze_migration_metrics"] = "check_service_health" in tools_used
 
         if "must_analyze_security_metrics" in criteria:
-            results["must_analyze_security_metrics"] = "analyze_system_metrics" in tools_used
+            results["must_analyze_security_metrics"] = "check_service_health" in tools_used
 
         return results
 

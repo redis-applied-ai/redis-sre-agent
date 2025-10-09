@@ -40,10 +40,6 @@ STRUCTURED_EVALUATION_SCENARIOS = [
                 "min_calls": 1,
                 "expected_findings": ["memory", "connections"],
             },
-            "analyze_system_metrics": {
-                "min_calls": 1,
-                "expected_metrics": ["memory", "performance"],
-            },
         },
         "expected_knowledge_sources": [
             "memory troubleshooting",
@@ -70,10 +66,6 @@ STRUCTURED_EVALUATION_SCENARIOS = [
             "check_service_health": {
                 "min_calls": 1,
                 "expected_findings": ["connections", "clients"],
-            },
-            "analyze_system_metrics": {
-                "min_calls": 1,
-                "expected_metrics": ["connection", "growth"],
             },
         },
         "expected_knowledge_sources": [
@@ -106,10 +98,6 @@ STRUCTURED_EVALUATION_SCENARIOS = [
                 "min_calls": 1,
                 "expected_findings": ["performance", "diagnostics"],
             },
-            "analyze_system_metrics": {
-                "min_calls": 2,
-                "expected_metrics": ["latency", "performance", "trends"],
-            },
         },
         "expected_knowledge_sources": [
             "performance troubleshooting",
@@ -140,10 +128,6 @@ STRUCTURED_EVALUATION_SCENARIOS = [
             "check_service_health": {
                 "min_calls": 1,
                 "expected_findings": ["cluster", "migration", "slots"],
-            },
-            "analyze_system_metrics": {
-                "min_calls": 1,
-                "expected_metrics": ["cluster", "migration"],
             },
         },
         "expected_knowledge_sources": [
@@ -409,7 +393,7 @@ class StructuredToolEvaluator:
             total_requirements += 1
 
         # Check metrics analysis compliance
-        if "analyze_system_metrics" in required_tools:
+        if "check_service_health" in required_tools:
             metrics = tools_used.get("metrics_analysis", [])
             has_metrics = len(metrics) > 0
 

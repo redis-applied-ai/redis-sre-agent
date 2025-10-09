@@ -195,7 +195,7 @@ class TestSREAgentBehavior:
             },
             {
                 "query": "Analyze system metrics for CPU and memory usage over the last hour",
-                "expected_tool": "analyze_system_metrics",
+                "expected_tool": "check_service_health",
                 "session_id": "tool-test-metrics",
             },
         ]
