@@ -810,3 +810,87 @@ Planned providers following this pattern:
 - **Redis Enterprise** - Cluster management APIs
 
 Each will follow the same ABC-based pattern established here.
+
+---
+
+## Architecture Reference
+
+### System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      LangGraph Agent                        │
+│                                                             │
+│  process_query(query, redis_instance)                      │
+│    │                                                        │
+│    ├─► Create ToolManager(redis_instance)                  │
+│    ├─► Get tool schemas: mgr.get_tools()                   │
+│    ├─► Build workflow with tools                           │
+│    └─► Execute: mgr.resolve_tool_call(name, args)          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       Tool Manager                          │
+│                                                             │
+│  - Load providers (knowledge base, metrics, etc.)          │
+│  - Build routing table: {tool_name: provider_instance}     │
+│  - Async context manager for lifecycle                     │
+│  - Route tool calls to correct provider                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Tool Providers (ABC)                     │
+│                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐               │
+│  │ Knowledge Base   │  │ Redis Metrics    │               │
+│  │ Provider         │  │ Provider         │  ...          │
+│  │                  │  │                  │               │
+│  │ - search         │  │ - get_info       │               │
+│  │ - ingest         │  │ - get_slowlog    │               │
+│  └──────────────────┘  └──────────────────┘               │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Helper Functions                         │
+│                                                             │
+│  Core business logic (core/knowledge_helpers.py, etc.)     │
+│  - Called by both tasks (background) and tools (LLM)       │
+│  - Single source of truth for implementation               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Principles
+
+1. **ABC-based Architecture**
+   - Clear contracts with type safety
+   - Default implementations reduce boilerplate
+   - Easy to understand and extend
+
+2. **Instance Scoping**
+   - Tools can be scoped to specific Redis instances
+   - Unique tool names prevent collisions
+   - Format: `{provider}_{instance_hash}_{operation}`
+
+3. **Per-Query Lifecycle**
+   - Tools loaded dynamically based on context
+   - Proper resource management via async context managers
+   - No global state
+
+4. **Centralized Routing**
+   - ToolManager handles all tool execution
+   - Single point for logging, monitoring, error handling
+   - Easy to add middleware (auth, rate limiting, etc.)
+
+5. **No Function Storage**
+   - Tool definitions are pure schemas
+   - Execution via routing, not stored closures
+   - Easier to serialize, cache, and inspect
+
+6. **Clean Separation**
+   - Helpers: business logic
+   - Tasks: background execution with retry
+   - Tools: LLM interface with enhanced docs
+   - No duplication of implementation
