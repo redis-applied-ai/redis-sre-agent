@@ -19,14 +19,9 @@ from pydantic import BaseModel, Field
 
 from ..api.instances import get_instances_from_redis
 from ..core.config import settings
-from ..tools.protocol_agent_tools import PROTOCOL_TOOL_FUNCTIONS, get_protocol_based_tools
-from ..tools.registry import auto_register_default_providers
-from ..tools.sre_functions import (
-    get_all_document_fragments,
-    get_related_document_fragments,
-    ingest_sre_document,
-    search_knowledge_base,
-)  # Keep knowledge base functions
+from ..models.provider_config import DeploymentProvidersConfig
+from ..tools.deployment_providers import DeploymentProviders
+from ..tools.knowledge_tools import get_knowledge_tools
 
 logger = logging.getLogger(__name__)
 
@@ -259,179 +254,72 @@ class SRELangGraphAgent:
             openai_api_key=self.settings.openai_api_key,
         )
 
-        # Auto-register default providers based on configuration
-        config = {
-            "redis_url": settings.redis_url,
-            "prometheus_url": getattr(settings, "prometheus_url", None),
-            "grafana_url": getattr(settings, "grafana_url", None),
-            "grafana_api_key": getattr(settings, "grafana_api_key", None),
-        }
-        auto_register_default_providers(config)
+        # Initialize DeploymentProviders from configuration
+        provider_config = DeploymentProvidersConfig.from_env()
+        self.deployment_providers = DeploymentProviders(provider_config)
+        logger.info(
+            f"Initialized deployment providers: {list(self.deployment_providers.provider_types.keys())}"
+        )
 
-        # Get protocol-based tool definitions
-        protocol_tools = get_protocol_based_tools()
+        # Get knowledge base tools
+        self.knowledge_tools = get_knowledge_tools()
+        logger.info(f"Loaded {len(self.knowledge_tools)} knowledge base tools")
 
-        # Add knowledge base tools that aren't part of the protocol system yet
-        knowledge_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_knowledge_base",
-                    "description": "Search comprehensive knowledge base including SRE runbooks, Redis documentation, troubleshooting guides, and operational procedures. Use this for finding both Redis-specific documentation (commands, configuration, concepts) and SRE procedures.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query - can include Redis commands (e.g. 'MEMORY USAGE'), configuration options (e.g. 'maxmemory-policy'), concepts (e.g. 'eviction policies'), or SRE procedures (e.g. 'connection limit troubleshooting')",
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Optional category to focus search on",
-                                "enum": [
-                                    "incident_response",
-                                    "monitoring",
-                                    "performance",
-                                    "troubleshooting",
-                                    "maintenance",
-                                    "redis_commands",
-                                    "redis_config",
-                                    "redis_concepts",
-                                ],
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "ingest_sre_document",
-                    "description": "Add new SRE documentation, runbooks, or procedures to knowledge base",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string", "description": "Title of the document"},
-                            "content": {
-                                "type": "string",
-                                "description": "Content of the SRE document",
-                            },
-                            "source": {
-                                "type": "string",
-                                "description": "Source system or file for the document",
-                                "default": "agent_ingestion",
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Document category",
-                                "enum": [
-                                    "runbook",
-                                    "procedure",
-                                    "troubleshooting",
-                                    "best_practice",
-                                    "incident_report",
-                                ],
-                                "default": "procedure",
-                            },
-                            "severity": {
-                                "type": "string",
-                                "description": "Severity or priority level",
-                                "enum": ["info", "warning", "critical"],
-                                "default": "info",
-                            },
-                        },
-                        "required": ["title", "content"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_all_document_fragments",
-                    "description": "Retrieve ALL fragments/chunks of a specific document when you find a relevant piece and need the complete context. Use the document_hash from search results to get the full document content. This is essential when a search result fragment looks relevant but you need the complete information to provide a comprehensive answer.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "document_hash": {
-                                "type": "string",
-                                "description": "The document hash from search results (e.g., from search_knowledge_base results)",
-                            },
-                            "include_metadata": {
-                                "type": "boolean",
-                                "description": "Whether to include document metadata",
-                                "default": True,
-                            },
-                        },
-                        "required": ["document_hash"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_related_document_fragments",
-                    "description": "Get related fragments around a specific chunk for additional context without retrieving the entire document. Use this when you want surrounding context for a specific fragment you found in search results. Provide the document_hash and chunk_index from search results.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "document_hash": {
-                                "type": "string",
-                                "description": "The document hash from search results",
-                            },
-                            "current_chunk_index": {
-                                "type": "integer",
-                                "description": "The chunk index from search results to get context around",
-                            },
-                            "context_window": {
-                                "type": "integer",
-                                "description": "Number of chunks before and after to include (default: 2)",
-                                "default": 2,
-                            },
-                        },
-                        "required": ["document_hash", "current_chunk_index"],
-                    },
-                },
-            },
-        ]
+        # Start with just knowledge tools (instance-specific tools added per conversation)
+        self.current_tools = self.knowledge_tools.copy()
 
-        # Combine protocol tools with knowledge tools
-        all_tools = protocol_tools + knowledge_tools
+        # Get tool schemas for LLM binding
+        tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
 
-        # Bind all tools to the LLM
-        self.llm_with_tools = self.llm.bind_tools(all_tools)
+        # Validate all tool names match OpenAI pattern before binding
+        import re
+
+        for i, schema in enumerate(tool_schemas):
+            tool_name = schema["function"]["name"]
+            if not re.match(r"^[a-zA-Z0-9_-]+$", tool_name):
+                logger.error(
+                    f"Tool {i} has invalid name '{tool_name}' - "
+                    f"does not match pattern ^[a-zA-Z0-9_-]+$"
+                )
+                raise ValueError(
+                    f"Tool name '{tool_name}' contains invalid characters. "
+                    f"Only alphanumeric, underscore, and hyphen are allowed."
+                )
+
+        # Bind tools to the LLM
+        self.llm_with_tools = self.llm.bind_tools(tool_schemas)
 
         # Build the LangGraph workflow
         self.workflow = self._build_workflow()
         # Note: We'll create a new MemorySaver for each query to ensure proper isolation
         # This prevents cross-contamination between different tasks/threads
 
-        # SRE tool mapping - combine protocol-based tools with knowledge base tools
-        self.sre_tools = {
-            **PROTOCOL_TOOL_FUNCTIONS,  # Protocol-based tools
-            "search_knowledge_base": search_knowledge_base,  # Knowledge base tools
-            "ingest_sre_document": ingest_sre_document,
-            "get_all_document_fragments": get_all_document_fragments,  # Fragment retrieval tools
-            "get_related_document_fragments": get_related_document_fragments,
-        }
+        logger.info(f"SRE LangGraph agent initialized with {len(self.current_tools)} tools")
 
-        logger.info("SRE LangGraph agent initialized with tool bindings")
+    async def _resolve_instance_redis_url(self, instance_id: str) -> Optional[str]:
+        """Resolve instance ID to Redis URL using connection_url from instance data.
 
-    async def _resolve_instance_redis_url(self, instance_id: str) -> str:
-        """Resolve instance ID to Redis URL using connection_url from instance data."""
+        IMPORTANT: This method returns None if the instance cannot be found.
+        It NEVER falls back to settings.redis_url (the application database).
+        Tools must handle None and fail gracefully rather than connecting to the wrong database.
+        """
         try:
             instances = await get_instances_from_redis()
             for instance in instances:
                 if instance.id == instance_id:
                     return instance.connection_url
 
-            logger.error(f"Instance {instance_id} not found, falling back to default Redis URL")
-            return settings.redis_url
+            logger.error(
+                f"Instance {instance_id} not found. "
+                "NOT falling back to application database - tools must fail gracefully."
+            )
+            return None
         except Exception as e:
             logger.error(
-                f"Failed to resolve instance {instance_id}: {e}, falling back to default Redis URL"
+                f"Failed to resolve instance {instance_id}: {e}. "
+                "NOT falling back to application database - tools must fail gracefully."
             )
-            return settings.redis_url
+            return None
 
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow for SRE operations."""
@@ -508,50 +396,14 @@ class SRELangGraphAgent:
                     await self.progress_callback(reflection, "agent_reflection")
 
                 try:
-                    # Execute the SRE tool (async call)
-                    if tool_name in self.sre_tools:
-                        # Get instance context from state if available
-                        instance_context = state.get("instance_context")
-                        target_instance = None
+                    # Find the tool in current_tools
+                    tool = next((t for t in self.current_tools if t.name == tool_name), None)
 
-                        if instance_context and instance_context.get("instance_id"):
-                            # Resolve instance details for tool execution
-                            try:
-                                instances = await get_instances_from_redis()
-                                for instance in instances:
-                                    if instance.id == instance_context["instance_id"]:
-                                        target_instance = instance
-                                        break
-                            except Exception as e:
-                                logger.error(f"Failed to resolve instance context: {e}")
+                    if tool:
+                        logger.info(f"Executing tool {tool_name} with args: {tool_args}")
 
-                        # Modify tool arguments based on instance context
-                        modified_args = tool_args.copy()
-
-                        if target_instance:
-                            # For Redis diagnostic tools, use the instance's connection details
-                            if tool_name == "get_detailed_redis_diagnostics":
-                                if (
-                                    "redis_url" not in modified_args
-                                    or modified_args["redis_url"] == "redis://localhost:6379"
-                                ):
-                                    modified_args["redis_url"] = target_instance.connection_url
-                                    logger.info(
-                                        f"Using instance Redis URL: {modified_args['redis_url']}"
-                                    )
-
-                            # For metrics tools, use the instance's host for Prometheus queries
-                            elif tool_name == "analyze_system_metrics":
-                                # Add instance host context for Prometheus queries
-                                if "instance_host" not in modified_args:
-                                    host, _ = _parse_redis_connection_url(
-                                        target_instance.connection_url
-                                    )
-                                    modified_args["instance_host"] = host
-                                    logger.info(f"Using instance host for metrics: {host}")
-
-                        # Call the async SRE function
-                        result = await self.sre_tools[tool_name](**modified_args)
+                        # Call the tool function
+                        result = await tool.function(**tool_args)
 
                         # Send completion reflection
                         if self.progress_callback:
@@ -599,27 +451,76 @@ class SRELangGraphAgent:
                     "🛡️ Performing safety checks on recommendations...", "safety_check"
                 )
 
-            # Create a focused prompt for the reasoning model
-            conversation_context = []
+            # Build conversation history with clear turn structure
+            conversation_turns = []
+            tool_results = []
+            current_turn_user_msg = None
+            current_turn_assistant_msg = None
+            turn_number = 0
 
-            # Add the original query
             for msg in messages:
                 if isinstance(msg, HumanMessage):
-                    conversation_context.append(f"User Query: {msg.content}")
+                    # If we have a previous turn, save it
+                    if current_turn_user_msg:
+                        turn_number += 1
+                        turn_text = f"**Turn {turn_number}:**\nUser: {current_turn_user_msg}"
+                        if current_turn_assistant_msg:
+                            turn_text += f"\nAssistant: {current_turn_assistant_msg}"
+                        conversation_turns.append(turn_text)
+
+                    # Start new turn
+                    current_turn_user_msg = msg.content
+                    current_turn_assistant_msg = None
+
+                elif isinstance(msg, AIMessage):
+                    # Skip system messages (they start with "You are")
+                    if not msg.content.startswith("You are"):
+                        current_turn_assistant_msg = msg.content
+
                 elif isinstance(msg, ToolMessage):
-                    conversation_context.append(f"Tool Data: {msg.content}")
+                    tool_results.append(f"Tool Data: {msg.content}")
+
+            # Add the final turn (current question)
+            if current_turn_user_msg:
+                turn_number += 1
+                turn_text = f"**Turn {turn_number} (Current):**\nUser: {current_turn_user_msg}"
+                if current_turn_assistant_msg:
+                    turn_text += f"\nAssistant: {current_turn_assistant_msg}"
+                conversation_turns.append(turn_text)
+
+            # Build the prompt with clear structure
+            conversation_history = (
+                "\n\n".join(conversation_turns)
+                if conversation_turns
+                else "No previous conversation."
+            )
+            tool_data = "\n\n".join(tool_results) if tool_results else "No tool data available."
+
+            # Determine if this is a follow-up question
+            is_followup = turn_number > 1
+            task_description = (
+                "The user has asked a follow-up question. Based on the conversation history and tool results, "
+                "provide a clear, direct answer to their latest question. Reference previous context when relevant."
+                if is_followup
+                else "You've been investigating a Redis issue. Based on your diagnostic work and tool results, "
+                "write up your findings and recommendations like you're updating a colleague."
+            )
 
             reasoning_prompt = f"""{SRE_SYSTEM_PROMPT}
 
+## Conversation History
+
+{conversation_history}
+
+## Tool Results from Investigation
+
+{tool_data}
+
 ## Your Task
 
-You've been investigating a Redis issue. Based on your diagnostic work and tool results below, write up your findings and recommendations like you're updating a colleague.
+{task_description}
 
-## Investigation Results
-
-{chr(10).join(conversation_context)}
-
-## Write Your Triage Notes
+## Response Guidelines
 
 Write a natural, conversational response using proper markdown formatting. Include:
 
@@ -800,6 +701,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         max_iterations: int = 10,
         context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+        conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """Process a single SRE query through the LangGraph workflow.
 
@@ -835,20 +737,61 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                         break
 
                 if target_instance:
-                    host, port = _parse_redis_connection_url(target_instance.connection_url)
-                    redis_url = target_instance.connection_url
+                    logger.info(
+                        f"Creating instance-specific tools for: {target_instance.name} ({target_instance.connection_url})"
+                    )
+
+                    # Create tools for this specific instance using DeploymentProviders
+                    instance_tools = self.deployment_providers.create_tools_for_instance(
+                        target_instance
+                    )
+
+                    # Combine knowledge tools + instance-specific tools
+                    self.current_tools = self.knowledge_tools + instance_tools
+
+                    # Get tool schemas and rebind LLM
+                    tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
+
+                    # Validate all tool names match OpenAI pattern before binding
+                    import re
+
+                    for i, schema in enumerate(tool_schemas):
+                        tool_name = schema["function"]["name"]
+                        if not re.match(r"^[a-zA-Z0-9_-]+$", tool_name):
+                            logger.error(
+                                f"Tool {i} has invalid name '{tool_name}' - "
+                                f"does not match pattern ^[a-zA-Z0-9_-]+$"
+                            )
+                            raise ValueError(
+                                f"Tool name '{tool_name}' contains invalid characters. "
+                                f"Only alphanumeric, underscore, and hyphen are allowed."
+                            )
+
+                    self.llm_with_tools = self.llm.bind_tools(tool_schemas)
+
+                    logger.info(
+                        f"Tools rebound: {len(instance_tools)} instance-specific, "
+                        f"{len(self.knowledge_tools)} knowledge, "
+                        f"{len(self.current_tools)} total"
+                    )
+
+                    # CRITICAL: Rebuild workflow with new tools
+                    # The workflow was built in __init__ with old tools
+                    # We need to rebuild it with the instance-bound tools
+                    logger.info("Rebuilding workflow with instance-bound tools")
+                    self.workflow = self._build_workflow()
+
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
 
 IMPORTANT CONTEXT: This query is specifically about Redis instance:
 - Instance ID: {instance_id}
 - Instance Name: {target_instance.name}
-- Host: {host}
-- Port: {port}
+- Connection URL: {target_instance.connection_url}
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
 
-When using Redis diagnostic tools, use this Redis URL: {redis_url}
+Your diagnostic tools are PRE-CONFIGURED for this instance. You do NOT need to specify redis_url or instance details - they are already set. Just call the tools directly.
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this specific Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations.
 
@@ -921,9 +864,19 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
             except Exception as e:
                 logger.error(f"Failed to check available instances: {e}")
 
-        # Create initial state
+        # Create initial state with conversation history
+        # If conversation_history is provided, include it before the new query
+        initial_messages = []
+        if conversation_history:
+            initial_messages = list(conversation_history)
+            logger.info(f"Including {len(conversation_history)} messages from conversation history")
+            for i, msg in enumerate(conversation_history):
+                logger.info(f"  History[{i}]: {type(msg).__name__} - {str(msg.content)[:100]}")
+        initial_messages.append(HumanMessage(content=enhanced_query))
+        logger.info(f"Total messages in initial_state: {len(initial_messages)}")
+
         initial_state: AgentState = {
-            "messages": [HumanMessage(content=enhanced_query)],
+            "messages": initial_messages,
             "session_id": session_id,
             "user_id": user_id,
             "current_tool_calls": [],
@@ -935,11 +888,10 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
         if context and context.get("instance_id"):
             initial_state["instance_context"] = context
 
-        # Create MemorySaver for conversation state
-        # NOTE: Using MemorySaver instead of RedisSaver because langgraph-checkpoint-redis
-        # doesn't fully support async operations (aget_tuple raises NotImplementedError).
-        # Each task gets its own isolated MemorySaver instance to prevent cross-contamination.
-        # TODO: Switch to RedisSaver when async support is available for true persistence.
+        # Create MemorySaver for this query
+        # NOTE: RedisSaver doesn't support async (aget_tuple raises NotImplementedError)
+        # Conversation history is managed by our ThreadManager in Redis
+        # and passed via initial_state when needed
         checkpointer = MemorySaver()
         self.app = self.workflow.compile(checkpointer=checkpointer)
 

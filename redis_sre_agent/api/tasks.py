@@ -7,10 +7,11 @@ from docket import Docket
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.thread_state import (
+    ThreadManager,
     ThreadStatus,
-    get_thread_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,8 @@ async def triage_issue(request: TriageRequest) -> TriageResponse:
         logger.info(f"Triaging issue for user {request.user_id}: {request.query[:100]}...")
 
         # Create thread
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
 
         # Prepare initial context
         initial_context = {
@@ -143,7 +145,8 @@ async def get_task_status(thread_id: str) -> TaskStatusResponse:
     Clients should poll this endpoint to track progress.
     """
     try:
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
 
         # Get thread state
         thread_state = await thread_manager.get_thread_state(thread_id)
@@ -223,7 +226,8 @@ async def continue_conversation(thread_id: str, request: TriageRequest) -> Triag
     Adds a new message to the thread and queues another agent processing turn.
     """
     try:
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
 
         # Check if thread exists
         thread_state = await thread_manager.get_thread_state(thread_id)
@@ -290,7 +294,8 @@ async def cancel_task(thread_id: str, delete: bool = False):
     Otherwise, marks the thread as cancelled and attempts to stop processing.
     """
     try:
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
 
         # Check if thread exists
         thread_state = await thread_manager.get_thread_state(thread_id)
@@ -354,7 +359,8 @@ async def list_tasks(
             f"List tasks requested (user_id={user_id}, status={status_filter}, limit={limit})"
         )
 
-        thread_manager = get_thread_manager()
+        redis_client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=redis_client)
 
         # Get thread summaries
         thread_summaries = await thread_manager.list_threads(

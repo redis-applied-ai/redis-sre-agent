@@ -2,6 +2,9 @@
 
 These tools replace the hardcoded tool implementations and dynamically
 discover and use registered providers based on their capabilities.
+
+NOTE: This module is being phased out in favor of the new DeploymentProviders
+and ToolRegistry system. It's kept temporarily for compatibility.
 """
 
 import logging
@@ -9,33 +12,310 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from .protocols import TimeRange
-from .registry import get_global_registry
 
 logger = logging.getLogger(__name__)
 
 
+# Stub for old registry - being replaced by new system
+def get_global_registry():
+    """Stub for old registry system - returns None.
+
+    This is being replaced by the new DeploymentProviders and ToolRegistry system.
+    """
+    logger.warning("get_global_registry() is deprecated and returns None")
+    return None
+
+
+# Redis Enterprise Tools
+
+
+async def query_redis_enterprise_cluster(
+    container_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Query Redis Enterprise cluster status.
+
+    Creates a temporary Redis Enterprise provider and queries cluster status.
+
+    Args:
+        container_name: Docker container name (default: redis-enterprise-node1)
+
+    Returns:
+        Cluster status information
+    """
+    try:
+        from .providers import create_redis_enterprise_provider
+
+        # Create temporary provider
+        provider = create_redis_enterprise_provider(
+            container_name=container_name or "redis-enterprise-node1"
+        )
+
+        # Get cluster status
+        result = await provider.get_cluster_status()
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error querying Redis Enterprise cluster: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def query_redis_enterprise_nodes(
+    container_name: Optional[str] = None,
+    node_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Query Redis Enterprise node status.
+
+    Creates a temporary Redis Enterprise provider and queries node status.
+
+    Args:
+        container_name: Docker container name (default: redis-enterprise-node1)
+        node_id: Optional specific node ID to query
+
+    Returns:
+        Node status information
+    """
+    try:
+        from .providers import create_redis_enterprise_provider
+
+        # Create temporary provider
+        provider = create_redis_enterprise_provider(
+            container_name=container_name or "redis-enterprise-node1"
+        )
+
+        # Get node status
+        result = await provider.get_node_status(node_id)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error querying Redis Enterprise nodes: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def query_redis_enterprise_databases(
+    container_name: Optional[str] = None,
+    database_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Query Redis Enterprise database status.
+
+    Creates a temporary Redis Enterprise provider and queries database status.
+
+    Args:
+        container_name: Docker container name (default: redis-enterprise-node1)
+        database_name: Optional specific database name to query
+
+    Returns:
+        Database status information
+    """
+    try:
+        from .providers import create_redis_enterprise_provider
+
+        # Create temporary provider
+        provider = create_redis_enterprise_provider(
+            container_name=container_name or "redis-enterprise-node1"
+        )
+
+        # Get database status
+        result = await provider.get_database_status(database_name)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error querying Redis Enterprise databases: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def get_redis_diagnostics(
+    redis_url: str,
+    sections: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get detailed Redis diagnostics by connecting directly to the instance.
+
+    This tool connects directly to a Redis instance via the Redis protocol
+    and gathers comprehensive diagnostic information including memory usage,
+    performance metrics, client connections, slow queries, configuration,
+    and more. Use this when you need detailed instance-level information
+    that may not be available in Prometheus or other monitoring systems.
+
+    Args:
+        redis_url: Redis connection URL (e.g., 'redis://localhost:6379', 'redis://localhost:12000')
+        sections: Comma-separated list of sections to capture, or 'all' for everything.
+                 Options: memory, performance, clients, slowlog, configuration,
+                 keyspace, replication, persistence, cpu
+
+    Returns:
+        Comprehensive diagnostic data from the Redis instance
+    """
+    try:
+        from .redis_diagnostics import capture_redis_diagnostics
+
+        # Parse sections if provided
+        sections_list = None
+        if sections and sections != "all":
+            sections_list = [s.strip() for s in sections.split(",") if s.strip()]
+
+        result = await capture_redis_diagnostics(
+            redis_url=redis_url,
+            sections=sections_list,
+            include_raw_data=True,
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error getting Redis diagnostics: {e}")
+        return {"capture_status": "failed", "error": str(e)}
+
+
+async def sample_redis_keys(
+    redis_url: str,
+    pattern: str = "*",
+    count: int = 100,
+    database: int = 0,
+) -> Dict[str, Any]:
+    """Sample keys from a Redis instance using SCAN command.
+
+    This tool connects directly to Redis and samples keys matching a pattern.
+    Use this to understand what types of keys exist, identify key patterns,
+    or investigate specific key namespaces. IMPORTANT: Use this instead of
+    telling the user to connect and check keys - you can do it yourself!
+
+    Args:
+        redis_url: Redis connection URL (e.g., 'redis://localhost:6379')
+        pattern: Key pattern to match (default: '*' for all keys).
+                Examples: 'user:*', 'session:*', 'cache:*'
+        count: Maximum number of keys to sample (default: 100)
+        database: Database number to select (default: 0)
+
+    Returns:
+        Dictionary with sampled keys and statistics
+    """
+    try:
+        import redis.asyncio as redis
+
+        # Connect to Redis
+        client = redis.from_url(
+            redis_url, decode_responses=True, socket_timeout=10, socket_connect_timeout=5
+        )
+
+        try:
+            # Select database if not 0
+            if database != 0:
+                await client.select(database)
+
+            # Sample keys using SCAN
+            sampled_keys = []
+            cursor = 0
+            scan_count = min(count, 1000)  # Scan in batches
+
+            while len(sampled_keys) < count:
+                cursor, keys = await client.scan(cursor, match=pattern, count=scan_count)
+                sampled_keys.extend(keys)
+
+                if cursor == 0:  # Scan complete
+                    break
+
+            # Limit to requested count
+            sampled_keys = sampled_keys[:count]
+
+            # Analyze key patterns
+            key_patterns = {}
+            for key in sampled_keys:
+                # Extract pattern (first part before colon)
+                if ":" in key:
+                    prefix = key.split(":")[0]
+                    key_patterns[prefix] = key_patterns.get(prefix, 0) + 1
+                else:
+                    key_patterns["<no_prefix>"] = key_patterns.get("<no_prefix>", 0) + 1
+
+            # Get total key count for this database
+            info = await client.info("keyspace")
+            db_key = f"db{database}"
+            total_keys = 0
+            if db_key in info:
+                db_info = info[db_key]
+                if isinstance(db_info, dict):
+                    total_keys = db_info.get("keys", 0)
+                else:
+                    # Parse string format
+                    for stat in db_info.split(","):
+                        if stat.startswith("keys="):
+                            total_keys = int(stat.split("=")[1])
+
+            return {
+                "success": True,
+                "redis_url": redis_url,
+                "database": database,
+                "pattern": pattern,
+                "total_keys_in_db": total_keys,
+                "sampled_count": len(sampled_keys),
+                "sampled_keys": sampled_keys,
+                "key_patterns": key_patterns,
+                "pattern_summary": [
+                    {"prefix": prefix, "count": count}
+                    for prefix, count in sorted(
+                        key_patterns.items(), key=lambda x: x[1], reverse=True
+                    )
+                ],
+            }
+
+        finally:
+            await client.aclose()
+
+    except Exception as e:
+        logger.error(f"Error sampling Redis keys: {e}")
+        return {"success": False, "error": str(e)}
+
+
 async def query_instance_metrics(
-    metric_name: str,
+    metric_name: Optional[str] = None,
+    metric_names: Optional[List[str]] = None,
     provider_name: Optional[str] = None,
     labels: Optional[Dict[str, str]] = None,
     time_range_hours: Optional[float] = None,
+    redis_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Query instance metrics from available providers.
 
+    Supports both single metric queries and batch queries for multiple metrics.
+
     Args:
-        metric_name: Name of the metric to query
+        metric_name: Name of a single metric to query (deprecated, use metric_names)
+        metric_names: List of metric names to query in batch
         provider_name: Optional specific provider to use
         labels: Optional label filters
         time_range_hours: Optional time range in hours for historical data
+        redis_url: Optional Redis URL for instance-specific queries
 
     Returns:
         Metric query results
     """
+    # Handle both single and batch queries
+    if metric_names:
+        metrics_to_query = metric_names
+    elif metric_name:
+        metrics_to_query = [metric_name]
+    else:
+        return {"error": "Either metric_name or metric_names must be provided"}
     try:
         registry = get_global_registry()
 
+        # If redis_url is provided, create a temporary Redis provider for this query
+        temp_provider = None
+        if redis_url:
+            logger.info(f"Creating temporary Redis provider for {redis_url}")
+            from .providers import RedisCommandMetricsProvider
+
+            temp_provider = RedisCommandMetricsProvider(redis_url)
+            provider_name = "temp_redis"  # Use temp provider
+
         # Get metrics providers
-        if provider_name:
+        if temp_provider:
+            # Use the temporary provider created for this specific redis_url
+            providers = [temp_provider]
+            logger.info(f"Using temporary Redis provider: {temp_provider.provider_name}")
+        elif provider_name:
             provider_instance = registry.get_provider(provider_name)
             if not provider_instance:
                 return {"error": f"Provider '{provider_name}' not found"}
@@ -53,61 +333,75 @@ async def query_instance_metrics(
 
         results = []
 
-        for provider in providers:
-            try:
-                if time_range_hours and provider.supports_time_queries:
-                    # Query time range
-                    end_time = datetime.now()
-                    start_time = end_time - timedelta(hours=time_range_hours)
-                    time_range = TimeRange(start_time, end_time)
+        # Query each metric
+        for metric in metrics_to_query:
+            for provider in providers:
+                try:
+                    if time_range_hours and provider.supports_time_queries:
+                        # Query time range
+                        end_time = datetime.now()
+                        start_time = end_time - timedelta(hours=time_range_hours)
+                        time_range = TimeRange(start_time, end_time)
 
-                    values = await provider.query_time_range(metric_name, time_range, labels)
+                        values = await provider.query_time_range(metric, time_range, labels)
 
-                    result = {
-                        "provider": provider.provider_name,
-                        "metric_name": metric_name,
-                        "time_range_hours": time_range_hours,
-                        "values_count": len(values),
-                        "values": [
-                            {
-                                "timestamp": value.timestamp.isoformat(),
-                                "value": value.value,
-                                "labels": value.labels,
-                            }
-                            for value in values
-                        ],
-                    }
-                else:
-                    # Query current value
-                    value = await provider.get_current_value(metric_name, labels)
-
-                    if value:
                         result = {
                             "provider": provider.provider_name,
-                            "metric_name": metric_name,
-                            "current_value": value.value,
-                            "timestamp": value.timestamp.isoformat(),
-                            "labels": value.labels,
+                            "metric_name": metric,
+                            "time_range_hours": time_range_hours,
+                            "values_count": len(values),
+                            "values": [
+                                {
+                                    "timestamp": value.timestamp.isoformat(),
+                                    "value": value.value,
+                                    "labels": value.labels,
+                                }
+                                for value in values
+                            ],
                         }
                     else:
-                        result = {
+                        # Query current value
+                        value = await provider.get_current_value(metric, labels)
+
+                        if value:
+                            result = {
+                                "provider": provider.provider_name,
+                                "metric_name": metric,
+                                "current_value": value.value,
+                                "timestamp": value.timestamp.isoformat(),
+                                "labels": value.labels,
+                            }
+                        else:
+                            result = {
+                                "provider": provider.provider_name,
+                                "metric_name": metric,
+                                "error": "Metric not found",
+                            }
+
+                    results.append(result)
+
+                except Exception as e:
+                    results.append(
+                        {
                             "provider": provider.provider_name,
-                            "metric_name": metric_name,
-                            "error": "Metric not found",
+                            "metric_name": metric,
+                            "error": str(e),
                         }
+                    )
 
-                results.append(result)
-
-            except Exception as e:
-                results.append(
-                    {
-                        "provider": provider.provider_name,
-                        "metric_name": metric_name,
-                        "error": str(e),
-                    }
-                )
-
-        return {"metric_name": metric_name, "providers_queried": len(results), "results": results}
+        # Return format depends on whether it was a batch query
+        if len(metrics_to_query) == 1:
+            return {
+                "metric_name": metrics_to_query[0],
+                "providers_queried": len(providers),
+                "results": results,
+            }
+        else:
+            return {
+                "metrics_queried": metrics_to_query,
+                "providers_queried": len(providers),
+                "results": results,
+            }
 
     except Exception as e:
         logger.error(f"Error querying metrics: {e}")

@@ -6,17 +6,34 @@ from typing import Any, Dict, List, Optional, Union
 
 import redis.asyncio as redis
 
-from ..core.config import settings
-
 logger = logging.getLogger(__name__)
 
 
 class RedisDiagnostics:
-    """Direct Redis diagnostic and management tool for SRE operations."""
+    """Direct Redis diagnostic and management tool for SRE operations.
 
-    def __init__(self, redis_url: Optional[str] = None):
-        """Initialize Redis diagnostics with connection details."""
-        self.redis_url = redis_url or settings.redis_url
+    IMPORTANT: This class is for diagnosing TARGET Redis instances, not the application's
+    own Redis database. The redis_url parameter is REQUIRED and must be explicitly provided.
+    Never use settings.redis_url as a default - that's the application's database!
+    """
+
+    def __init__(self, redis_url: str):
+        """Initialize Redis diagnostics with connection details.
+
+        Args:
+            redis_url: Redis connection URL for the TARGET instance to diagnose.
+                      This must be explicitly provided - no defaults allowed.
+
+        Raises:
+            ValueError: If redis_url is not provided
+        """
+        if not redis_url:
+            raise ValueError(
+                "redis_url is required for RedisDiagnostics. "
+                "This tool is for diagnosing target instances, not the application database. "
+                "Never use settings.redis_url as a default."
+            )
+        self.redis_url = redis_url
         self._client: Optional[redis.Redis] = None
 
     async def get_client(self) -> redis.Redis:

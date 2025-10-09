@@ -577,6 +577,7 @@ async def run_multi_turn_evaluation() -> List[Dict[str, Any]]:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.slow
 async def test_multi_turn_agent_evaluation():
     """Test comprehensive multi-turn agent evaluation."""
     # Skip if OpenAI API key is not available
@@ -603,9 +604,9 @@ async def test_multi_turn_agent_evaluation():
     scenarios_with_required_tools = sum(
         1 for r in successful_results if r["tool_usage_analysis"]["required_coverage"] > 0
     )
-    assert (
-        scenarios_with_required_tools > 0
-    ), "Agent should use required tools in at least some scenarios"
+    assert scenarios_with_required_tools > 0, (
+        "Agent should use required tools in at least some scenarios"
+    )
 
     # Check evaluation quality
     for result in successful_results:

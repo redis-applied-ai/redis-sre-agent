@@ -15,6 +15,76 @@ main > div {
   padding-top: 1rem !important; /* Override the default pt-6 (24px) with pt-4 (16px) */
 }
 
+/* Form input dark mode support */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="url"],
+select,
+textarea {
+  background-color: var(--input);
+  color: var(--input-foreground);
+  border-color: var(--border);
+}
+
+input[type="text"]::placeholder,
+input[type="email"]::placeholder,
+input[type="password"]::placeholder,
+input[type="url"]::placeholder,
+textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* Form label dark mode support */
+label {
+  color: var(--foreground);
+}
+
+/* Helper text dark mode support */
+.text-redis-dusk-04 {
+  color: var(--muted-foreground) !important;
+}
+
+/* Foreground text color */
+.text-foreground {
+  color: var(--foreground) !important;
+}
+
+/* Border color support */
+.border {
+  border-color: var(--border) !important;
+}
+
+.border-t {
+  border-color: var(--border) !important;
+}
+
+/* Ensure select options inherit background in dark mode */
+select option {
+  background-color: var(--input);
+  color: var(--input-foreground);
+}
+
+/* Card background support */
+.bg-card {
+  background-color: var(--card) !important;
+  color: var(--card-foreground) !important;
+}
+
+/* Text color support */
+.text-foreground {
+  color: var(--foreground) !important;
+}
+
+.text-muted-foreground {
+  color: var(--muted-foreground) !important;
+}
+
+/* Border support */
+.border {
+  border-color: var(--border) !important;
+}
+
 /* Enhanced markdown content spacing for agent responses */
 .markdown-content {
   line-height: 1.6;
@@ -80,7 +150,7 @@ main > div {
 .markdown-content pre {
   margin-bottom: 0.75rem;
   padding: 0.75rem;
-  background-color: #f5f5f5;
+  background-color: var(--muted);
   border-radius: 0.375rem;
   overflow-x: auto;
   font-size: 0.75rem;
@@ -93,18 +163,19 @@ main > div {
 }
 
 .markdown-content p code {
-  background-color: #f5f5f5;
+  background-color: var(--muted);
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
 }
 
 .markdown-content strong {
   font-weight: 600;
+  color: var(--foreground);
 }
 
 .markdown-content blockquote {
   margin-bottom: 0.75rem;
   padding-left: 1rem;
-  border-left: 4px solid #d1d5db;
+  border-left: 4px solid var(--border);
   font-style: italic;
 }

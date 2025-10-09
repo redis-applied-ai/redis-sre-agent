@@ -220,7 +220,7 @@ const Schedules = () => {
       case 'running': return 'text-redis-blue-03';
       case 'completed': return 'text-redis-green';
       case 'failed': return 'text-redis-red';
-      default: return 'text-redis-dusk-04';
+      default: return 'text-muted-foreground';
     }
   };
 
@@ -236,8 +236,8 @@ const Schedules = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-redis-xl font-bold text-redis-dusk-01">Schedules</h1>
-          <p className="text-redis-sm text-redis-dusk-04 mt-1">
+          <h1 className="text-redis-xl font-bold text-foreground">Schedules</h1>
+          <p className="text-redis-sm text-muted-foreground mt-1">
             Manage automated agent runs and monitoring schedules
           </p>
         </div>
@@ -258,7 +258,7 @@ const Schedules = () => {
         {schedules.length === 0 ? (
           <Card>
             <CardContent>
-              <div className="text-center py-8 text-redis-dusk-04">
+              <div className="text-center py-8 text-muted-foreground">
                 <div className="text-lg mb-2">📅</div>
                 <div className="text-sm mb-3">No schedules configured</div>
                 <Button
@@ -276,11 +276,11 @@ const Schedules = () => {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <h3 className="text-redis-lg font-semibold text-redis-dusk-01">
+                    <h3 className="text-redis-lg font-semibold text-foreground">
                       {schedule.name}
                     </h3>
                     <span className={`text-redis-xs px-2 py-1 rounded ${
-                      schedule.enabled ? 'bg-redis-green text-white' : 'bg-redis-dusk-06 text-redis-dusk-04'
+                      schedule.enabled ? 'bg-redis-green text-white' : 'bg-redis-dusk-06 text-muted-foreground'
                     }`}>
                       {schedule.enabled ? 'Enabled' : 'Disabled'}
                     </span>
@@ -309,20 +309,20 @@ const Schedules = () => {
               <CardContent>
                 <div className="space-y-3">
                   {schedule.description && (
-                    <p className="text-redis-sm text-redis-dusk-04">{schedule.description}</p>
+                    <p className="text-redis-sm text-muted-foreground">{schedule.description}</p>
                   )}
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-redis-sm">
                     <div>
-                      <div className="font-medium text-redis-dusk-01">Interval</div>
-                      <div className="text-redis-dusk-04">
+                      <div className="font-medium text-foreground">Interval</div>
+                      <div className="text-muted-foreground">
                         {formatInterval(schedule.interval_type, schedule.interval_value)}
                       </div>
                     </div>
 
                     <div>
-                      <div className="font-medium text-redis-dusk-01">Redis Instance</div>
-                      <div className="text-redis-dusk-04">
+                      <div className="font-medium text-foreground">Redis Instance</div>
+                      <div className="text-muted-foreground">
                         {schedule.redis_instance_id
                           ? instances.find(i => i.id === schedule.redis_instance_id)?.name || 'Unknown'
                           : 'Any/Knowledge-only'
@@ -331,23 +331,23 @@ const Schedules = () => {
                     </div>
 
                     <div>
-                      <div className="font-medium text-redis-dusk-01">Last Run</div>
-                      <div className="text-redis-dusk-04">
+                      <div className="font-medium text-foreground">Last Run</div>
+                      <div className="text-muted-foreground">
                         {schedule.last_run_at ? formatTimestamp(schedule.last_run_at) : 'Never'}
                       </div>
                     </div>
 
                     <div>
-                      <div className="font-medium text-redis-dusk-01">Next Run</div>
-                      <div className="text-redis-dusk-04">
+                      <div className="font-medium text-foreground">Next Run</div>
+                      <div className="text-muted-foreground">
                         {schedule.next_run_at ? formatTimestamp(schedule.next_run_at) : 'Not scheduled'}
                       </div>
                     </div>
                   </div>
 
                   <div>
-                    <div className="font-medium text-redis-dusk-01 text-redis-sm mb-1">Instructions</div>
-                    <div className="text-redis-sm text-redis-dusk-04 bg-redis-dusk-09 p-3 rounded">
+                    <div className="font-medium text-foreground text-redis-sm mb-1">Instructions</div>
+                    <div className="text-redis-sm text-muted-foreground bg-redis-dusk-09 p-3 rounded">
                       {schedule.instructions}
                     </div>
                   </div>
@@ -361,8 +361,8 @@ const Schedules = () => {
       {/* Create Schedule Modal */}
       {showCreateForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold text-redis-dusk-01 mb-4">
+          <div className="rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--card)', color: 'var(--card-foreground)' }}>
+            <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--foreground)' }}>
               Create New Schedule
             </h3>
             <form onSubmit={(e) => {
@@ -372,39 +372,40 @@ const Schedules = () => {
             }}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
                     Schedule Name *
                   </label>
                   <input
                     type="text"
                     name="name"
                     required
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    style={{ backgroundColor: 'var(--input)', color: 'var(--input-foreground)', borderColor: 'var(--border)' }}
                     placeholder="e.g., Daily Health Check"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium text-foreground mb-2">
                     Description
                   </label>
                   <input
                     type="text"
                     name="description"
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                     placeholder="Optional description"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                    <label className="block text-redis-sm font-medium text-foreground mb-2">
                       Interval Type *
                     </label>
                     <select
                       name="interval_type"
                       required
-                      className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                      className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                     >
                       <option value="minutes">Minutes</option>
                       <option value="hours">Hours</option>
@@ -414,7 +415,7 @@ const Schedules = () => {
                   </div>
 
                   <div>
-                    <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                    <label className="block text-redis-sm font-medium text-foreground mb-2">
                       Interval Value *
                     </label>
                     <input
@@ -422,19 +423,19 @@ const Schedules = () => {
                       name="interval_value"
                       min="1"
                       required
-                      className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                      className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                       placeholder="e.g., 30"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium text-foreground mb-2">
                     Redis Instance
                   </label>
                   <select
                     name="redis_instance_id"
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                   >
                     <option value="">Any/Knowledge-only queries</option>
                     {instances.map((instance) => (
@@ -443,23 +444,23 @@ const Schedules = () => {
                       </option>
                     ))}
                   </select>
-                  <p className="text-redis-xs text-redis-dusk-04 mt-1">
+                  <p className="text-redis-xs text-muted-foreground mt-1">
                     Leave empty to allow knowledge-only queries without a specific Redis instance
                   </p>
                 </div>
 
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium text-foreground mb-2">
                     Instructions *
                   </label>
                   <textarea
                     name="instructions"
                     required
                     rows={4}
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                     placeholder="Instructions for the agent to execute..."
                   />
-                  <p className="text-redis-xs text-redis-dusk-04 mt-1">
+                  <p className="text-redis-xs text-muted-foreground mt-1">
                     Describe what the agent should do when this schedule runs
                   </p>
                 </div>
@@ -470,9 +471,9 @@ const Schedules = () => {
                     name="enabled"
                     id="create_enabled"
                     defaultChecked
-                    className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border-redis-dusk-06 rounded"
+                    className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border rounded"
                   />
-                  <label htmlFor="create_enabled" className="ml-2 text-redis-sm text-redis-dusk-01">
+                  <label htmlFor="create_enabled" className="ml-2 text-redis-sm text-foreground">
                     Enable schedule immediately
                   </label>
                 </div>
@@ -498,8 +499,8 @@ const Schedules = () => {
       {/* Edit Schedule Modal */}
       {editingSchedule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold text-redis-dusk-01 mb-4">
+          <div className="bg-card rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
               Edit Schedule: {editingSchedule.name}
             </h3>
             <form onSubmit={(e) => {
@@ -509,7 +510,7 @@ const Schedules = () => {
             }}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium text-foreground mb-2">
                     Schedule Name *
                   </label>
                   <input
@@ -517,32 +518,32 @@ const Schedules = () => {
                     name="name"
                     required
                     defaultValue={editingSchedule.name}
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium text-foreground mb-2">
                     Description
                   </label>
                   <input
                     type="text"
                     name="description"
                     defaultValue={editingSchedule.description || ''}
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                    <label className="block text-redis-sm font-medium text-foreground mb-2">
                       Interval Type *
                     </label>
                     <select
                       name="interval_type"
                       required
                       defaultValue={editingSchedule.interval_type}
-                      className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                      className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                     >
                       <option value="minutes">Minutes</option>
                       <option value="hours">Hours</option>
@@ -552,7 +553,7 @@ const Schedules = () => {
                   </div>
 
                   <div>
-                    <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                    <label className="block text-redis-sm font-medium text-foreground mb-2">
                       Interval Value *
                     </label>
                     <input
@@ -561,19 +562,19 @@ const Schedules = () => {
                       min="1"
                       required
                       defaultValue={editingSchedule.interval_value}
-                      className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                      className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium text-foreground mb-2">
                     Redis Instance
                   </label>
                   <select
                     name="redis_instance_id"
                     defaultValue={editingSchedule.redis_instance_id || ''}
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                   >
                     <option value="">Any/Knowledge-only queries</option>
                     {instances.map((instance) => (
@@ -585,7 +586,7 @@ const Schedules = () => {
                 </div>
 
                 <div>
-                  <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                  <label className="block text-redis-sm font-medium text-foreground mb-2">
                     Instructions *
                   </label>
                   <textarea
@@ -593,7 +594,7 @@ const Schedules = () => {
                     required
                     rows={4}
                     defaultValue={editingSchedule.instructions}
-                    className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                   />
                 </div>
 
@@ -603,9 +604,9 @@ const Schedules = () => {
                     name="enabled"
                     id="edit_enabled"
                     defaultChecked={editingSchedule.enabled}
-                    className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border-redis-dusk-06 rounded"
+                    className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border rounded"
                   />
-                  <label htmlFor="edit_enabled" className="ml-2 text-redis-sm text-redis-dusk-01">
+                  <label htmlFor="edit_enabled" className="ml-2 text-redis-sm text-foreground">
                     Schedule enabled
                   </label>
                 </div>
@@ -631,9 +632,9 @@ const Schedules = () => {
       {/* Schedule Runs Modal */}
       {showRunsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-card rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-redis-dusk-01">
+              <h3 className="text-lg font-semibold text-foreground">
                 Schedule Runs
               </h3>
               <Button
@@ -645,20 +646,20 @@ const Schedules = () => {
             </div>
 
             {selectedScheduleRuns.length === 0 ? (
-              <div className="text-center py-8 text-redis-dusk-04">
+              <div className="text-center py-8 text-muted-foreground">
                 <div className="text-lg mb-2">📋</div>
                 <div className="text-sm">No runs found for this schedule</div>
               </div>
             ) : (
               <div className="space-y-3">
                 {selectedScheduleRuns.map((run) => (
-                  <div key={run.id} className="p-4 border border-redis-dusk-06 rounded-redis-sm">
+                  <div key={run.id} className="p-4 border border rounded-redis-sm">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-3">
                         <span className={`text-redis-sm font-medium ${getStatusColor(run.status)}`}>
                           {run.status.toUpperCase()}
                         </span>
-                        <span className="text-redis-sm text-redis-dusk-04">
+                        <span className="text-redis-sm text-muted-foreground">
                           Scheduled: {formatTimestamp(run.scheduled_at)}
                         </span>
                       </div>
@@ -676,15 +677,15 @@ const Schedules = () => {
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-redis-sm">
                       {run.started_at && (
                         <div>
-                          <div className="font-medium text-redis-dusk-01">Started</div>
-                          <div className="text-redis-dusk-04">{formatTimestamp(run.started_at)}</div>
+                          <div className="font-medium text-foreground">Started</div>
+                          <div className="text-muted-foreground">{formatTimestamp(run.started_at)}</div>
                         </div>
                       )}
 
                       {run.completed_at && (
                         <div>
-                          <div className="font-medium text-redis-dusk-01">Completed</div>
-                          <div className="text-redis-dusk-04">{formatTimestamp(run.completed_at)}</div>
+                          <div className="font-medium text-foreground">Completed</div>
+                          <div className="text-muted-foreground">{formatTimestamp(run.completed_at)}</div>
                         </div>
                       )}
 

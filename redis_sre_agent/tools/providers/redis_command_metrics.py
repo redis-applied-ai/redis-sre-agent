@@ -1,8 +1,9 @@
-"""Redis CLI metrics provider implementation.
+"""Redis command-based metrics provider implementation.
 
-This provider connects directly to Redis instances using redis-cli commands
-to gather metrics. It has limited capabilities compared to time-series systems
-but provides direct access to Redis INFO data.
+This provider connects directly to Redis instances using the Redis Python client
+to gather metrics via Redis commands (INFO, CONFIG GET, etc.). It has limited
+capabilities compared to time-series systems but provides direct access to
+current Redis state and metrics.
 """
 
 import logging
@@ -16,11 +17,12 @@ from ..protocols import MetricDefinition, MetricValue, TimeRange
 logger = logging.getLogger(__name__)
 
 
-class RedisCLIMetricsProvider:
-    """Redis CLI-based metrics provider.
+class RedisCommandMetricsProvider:
+    """Redis command-based metrics provider.
 
-    This provider connects directly to Redis instances and extracts metrics
-    from INFO commands. It only supports current values, not time-series queries.
+    This provider connects directly to Redis instances using the Redis Python client
+    and extracts metrics from Redis commands (INFO, CONFIG GET, etc.).
+    It only supports current values, not time-series queries.
     """
 
     def __init__(self, redis_url: str):
@@ -30,7 +32,7 @@ class RedisCLIMetricsProvider:
 
     @property
     def provider_name(self) -> str:
-        return f"Redis CLI ({self.redis_url})"
+        return f"Redis Commands ({self.redis_url})"
 
     @property
     def supports_time_queries(self) -> bool:
@@ -206,6 +208,6 @@ class RedisCLIMetricsProvider:
 
 
 # Helper function to create instances
-def create_redis_cli_provider(redis_url: str) -> RedisCLIMetricsProvider:
-    """Create a Redis CLI metrics provider instance."""
-    return RedisCLIMetricsProvider(redis_url)
+def create_redis_command_provider(redis_url: str) -> RedisCommandMetricsProvider:
+    """Create a Redis command-based metrics provider instance."""
+    return RedisCommandMetricsProvider(redis_url)

@@ -1,6 +1,6 @@
 """Unit tests for Redis infrastructure components."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -24,8 +24,10 @@ class TestRedisInfrastructure:
         """Test SRE knowledge schema definition."""
         schema = SRE_KNOWLEDGE_SCHEMA
 
+        from redis_sre_agent.core.keys import RedisKeys
+
         assert schema["index"]["name"] == "sre_knowledge"
-        assert schema["index"]["prefix"] == "sre_knowledge:"
+        assert schema["index"]["prefix"] == RedisKeys.PREFIX_KNOWLEDGE + ":"
         assert schema["index"]["storage_type"] == "hash"
 
         # Check required fields
@@ -49,7 +51,7 @@ class TestRedisInfrastructure:
 
     @patch("redis_sre_agent.core.redis.Redis")
     def test_get_redis_client(self, mock_redis):
-        """Test Redis client singleton."""
+        """Test Redis client creation (no caching - creates fresh each time)."""
         mock_client = Mock()
         mock_redis.from_url.return_value = mock_client
 
@@ -58,17 +60,16 @@ class TestRedisInfrastructure:
         assert client1 == mock_client
         mock_redis.from_url.assert_called_once()
 
-        # Second call returns same instance
+        # Second call creates NEW client (no caching to avoid event loop issues)
         client2 = get_redis_client()
         assert client2 == mock_client
-        assert client1 is client2
-        # from_url should still only be called once
-        assert mock_redis.from_url.call_count == 1
+        # from_url should be called TWICE (no caching)
+        assert mock_redis.from_url.call_count == 2
 
     @patch("redis_sre_agent.core.redis.EmbeddingsCache")
     @patch("redis_sre_agent.core.redis.OpenAITextVectorizer")
     def test_get_vectorizer(self, mock_vectorizer, mock_cache):
-        """Test vectorizer singleton creation."""
+        """Test vectorizer creation (no caching - creates fresh each time)."""
         mock_cache_instance = Mock()
         mock_cache.return_value = mock_cache_instance
 
@@ -81,28 +82,33 @@ class TestRedisInfrastructure:
         mock_cache.assert_called_once()
         mock_vectorizer.assert_called_once()
 
-        # Second call returns same instance
+        # Second call creates NEW instance (no caching to avoid event loop issues)
         vectorizer2 = get_vectorizer()
         assert vectorizer2 == mock_vectorizer_instance
-        assert vectorizer1 is vectorizer2
+        # Should be called TWICE (no caching)
+        assert mock_cache.call_count == 2
+        assert mock_vectorizer.call_count == 2
 
     @patch("redis_sre_agent.core.redis.AsyncSearchIndex")
     def test_get_knowledge_index(self, mock_index):
-        """Test knowledge index singleton creation."""
+        """Test knowledge index creation (no caching - creates fresh each time)."""
+        from unittest.mock import ANY
+
         mock_index_instance = Mock()
         mock_index.from_dict.return_value = mock_index_instance
 
         # First call creates index
         index1 = get_knowledge_index()
         assert index1 == mock_index_instance
-        mock_index.from_dict.assert_called_once_with(
-            SRE_KNOWLEDGE_SCHEMA, redis_url="redis://localhost:6379/0"
-        )
 
-        # Second call returns same instance
+        # Should be called with schema and some redis_url (don't care which one)
+        mock_index.from_dict.assert_called_once_with(SRE_KNOWLEDGE_SCHEMA, redis_url=ANY)
+
+        # Second call creates NEW instance (no caching to avoid event loop issues)
         index2 = get_knowledge_index()
         assert index2 == mock_index_instance
-        assert index1 is index2
+        # Should be called TWICE (no caching)
+        assert mock_index.from_dict.call_count == 2
 
     @pytest.mark.asyncio
     async def test_redis_connection_success(self, mock_redis_client):
@@ -247,24 +253,7 @@ class TestRedisInfrastructure:
 
     @pytest.mark.asyncio
     async def test_cleanup_redis_connections(self, mock_redis_client):
-        """Test Redis connection cleanup."""
-        mock_redis_client.aclose = AsyncMock()
-
-        with patch("redis_sre_agent.core.redis._redis_client", mock_redis_client):
-            await cleanup_redis_connections()
-
-        mock_redis_client.aclose.assert_called_once()
-
-
-class TestRedisSingletons:
-    """Test singleton behavior reset between tests."""
-
-    def test_singleton_reset(self):
-        """Test that singletons are properly reset between tests."""
-        # This test verifies that our fixtures properly reset global state
-        from redis_sre_agent.core import redis
-
-        # All singletons should be None at start of test
-        assert redis._redis_client is None
-        assert redis._vectorizer is None
-        assert redis._document_index is None
+        """Test Redis connection cleanup (no-op since we removed caching)."""
+        # Cleanup function still exists but does nothing since we removed caching
+        await cleanup_redis_connections()
+        # No assertions needed - just verify it doesn't crash

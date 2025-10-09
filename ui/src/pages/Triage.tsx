@@ -63,7 +63,7 @@ const Triage = () => {
   const [threadToDelete, setThreadToDelete] = useState<string | null>(null);
   const [instances, setInstances] = useState<RedisInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
-  const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingIntervalRef = useRef<number | null>(null);
 
@@ -574,7 +574,9 @@ const Triage = () => {
         // Update the active thread ID
         setActiveThreadId(threadId);
         setShowNewConversation(false);
-        setShowWebSocketMonitor(true); // Show WebSocket monitor for new tasks
+
+        // Store the initial query for WebSocket display
+        sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
 
         // Add new thread to the list
         const newThread: ChatThread = {
@@ -593,10 +595,8 @@ const Triage = () => {
         await sreAgentApi.continueConversation(threadId!, messageContent, userId);
       }
 
-      // Start polling for updates
-      if (threadId) {
-        startPolling(threadId);
-      }
+      // WebSocket will handle updates - reset loading state after API call succeeds
+      setIsLoading(false);
 
     } catch (err) {
       setError(`Failed to send message: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -660,14 +660,40 @@ const Triage = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-120px)] flex gap-4 bg-redis-dusk-01">
-      {/* Thread Sidebar - Responsive visibility */}
-      <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-full`}>
-        <Card className="flex-1 flex flex-col" padding="none">
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {/* Mobile sidebar toggle */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="md:hidden"
+            onClick={() => setShowSidebar(!showSidebar)}
+          >
+            ☰
+          </Button>
+          <div>
+            <h1 className="text-redis-xl font-bold text-foreground">SRE Agent Triage</h1>
+            <p className="text-redis-sm text-redis-dusk-04 mt-1">
+              {activeThreadId
+                ? 'Chat with the Redis SRE Agent for troubleshooting and support'
+                : 'Describe your Redis issue or ask a question to get started'
+              }
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex gap-4 h-[calc(100vh-200px)]">
+        {/* Thread Sidebar - Responsive visibility */}
+        <div className={`${showSidebar ? 'flex' : 'hidden'} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-full`}>
+          <Card className="flex-1 flex flex-col h-full" padding="none">
           <CardHeader className="flex-shrink-0 p-4 pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <h3 className="text-redis-lg font-semibold text-redis-dusk-01">Conversations</h3>
+                <h3 className="text-redis-lg font-semibold text-foreground">Conversations</h3>
                 {/* Mobile close sidebar button */}
                 <Button
                   variant="outline"
@@ -726,7 +752,7 @@ const Triage = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <div className={`font-medium text-redis-sm truncate ${
-                        activeThreadId === thread.id ? 'text-white' : 'text-redis-dusk-01'
+                        activeThreadId === thread.id ? 'text-white' : 'text-foreground'
                       }`}>
                         {thread.name}
                       </div>
@@ -780,159 +806,65 @@ const Triage = () => {
         </Card>
       </div>
 
-      {/* Chat Area */}
-      <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col`}>
-        <Card className="flex-1 flex flex-col">
-          <CardHeader className="flex-shrink-0">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {/* Mobile sidebar toggle */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="md:hidden"
-                  onClick={() => setShowSidebar(!showSidebar)}
-                >
-                  ☰
-                </Button>
-                <div>
-                  <h1 className="text-redis-xl font-bold text-redis-dusk-01">SRE Agent Triage</h1>
-                <p className="text-redis-sm text-redis-dusk-04 mt-1">
-                  {activeThreadId
-                    ? 'Chat with the Redis SRE Agent for troubleshooting and support'
-                    : 'Describe your Redis issue or ask a question to get started'
-                  }
-                </p>
+        {/* Chat Area */}
+        <div className={`${showSidebar && !activeThreadId && !showNewConversation ? 'hidden' : 'flex'} md:flex flex-1 flex-col h-full`}>
+          <Card className="flex-1 flex flex-col h-full">
+            {activeThreadId ? (
+            <>
+              {/* WebSocket Chat Interface */}
+              <CardContent className="flex-1 overflow-hidden">
+                <TaskMonitor
+                  threadId={activeThreadId}
+                  initialQuery={sessionStorage.getItem(`thread-${activeThreadId}-query`) || undefined}
+                />
+              </CardContent>
 
+              {/* Input Area for Follow-up Messages */}
+              <div className="p-4 border-t border-redis-dusk-08">
+                <div className="flex gap-2">
+                  <textarea
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder="Continue the conversation..."
+                    className="flex-1 p-3 border border-redis-dusk-06 rounded-redis-sm resize-none focus:outline-none focus:ring-2 focus:ring-redis-blue-03 focus:border-transparent min-h-[60px]"
+                    rows={2}
+                    disabled={isLoading || agentStatus !== 'available'}
+                  />
+                  <Button
+                    variant="primary"
+                    onClick={sendMessage}
+                    disabled={!inputMessage.trim() || isLoading || agentStatus !== 'available'}
+                    className="self-end"
+                  >
+                    {isLoading ? <Loader size="sm" /> : 'Send'}
+                  </Button>
+                </div>
+                <div className="text-redis-xs text-redis-dusk-04 mt-2">
+                  {agentStatus === 'available'
+                    ? 'Press Enter to send, Shift+Enter for new line'
+                    : 'Agent is currently unavailable'}
                 </div>
               </div>
-
-            </div>
-          </CardHeader>
-
-          {showWebSocketMonitor && activeThreadId ? (
-            /* WebSocket Real-time Monitor */
-            <CardContent className="flex-1 overflow-hidden p-4">
-              <TaskMonitor
-                threadId={activeThreadId}
-                onClose={handleWebSocketMonitorClose}
-              />
-            </CardContent>
+            </>
           ) : (
             <>
-              {/* Traditional Messages Area */}
+              {/* Empty State - No Active Thread */}
               <CardContent className="flex-1 overflow-y-auto p-4">
-                <div className="space-y-4">
-                  {messages.length === 0 && activeThreadId ? (
-                    <div className="flex items-center justify-center h-full text-center">
-                      <div className="text-redis-dusk-04">
-                        <div className="text-lg mb-2">📄</div>
-                        <div className="text-sm">Loading conversation...</div>
-                      </div>
-                    </div>
-                  ) : messages.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-center">
-                      <div className="text-redis-dusk-04">
-                        <div className="text-lg mb-2">💬</div>
-                        <div className="text-sm">Select a conversation or start a new one</div>
-                      </div>
-                    </div>
-                  ) : null}
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div
-                        className={`max-w-[80%] p-3 rounded-redis-md ${
-                          message.role === 'user'
-                            ? 'bg-redis-blue-03 text-white'
-                            : message.role === 'tool'
-                            ? 'bg-orange-100 text-orange-800 border border-orange-200'
-                            : message.role === 'system'
-                            ? 'bg-blue-50 text-blue-700 border border-blue-200 text-sm'
-                            : 'bg-redis-dusk-09 text-redis-dusk-01'
-                        }`}
-                      >
-                        {message.role === 'tool' ? (
-                          <div>
-                            <div className="flex items-center gap-2 mb-2">
-                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-                              </svg>
-                              <span className="font-medium text-sm">Agent is making a tool call</span>
-                            </div>
-                            <div className="text-sm">
-                              <strong>{message.toolCall?.name}</strong>
-                              {message.toolCall?.args && Object.keys(message.toolCall.args).length > 0 && (
-                                <div className="mt-1 text-xs opacity-75 bg-white bg-opacity-50 p-2 rounded">
-                                  <pre className="whitespace-pre-wrap">{JSON.stringify(message.toolCall.args, null, 2)}</pre>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : message.role === 'assistant' ? (
-                          <div className="prose prose-sm max-w-none text-redis-sm markdown-content">
-                            <ReactMarkdown
-                              components={{
-                                h1: ({children}) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0">{children}</h1>,
-                                h2: ({children}) => <h2 className="text-base font-semibold mb-2 mt-3">{children}</h2>,
-                                h3: ({children}) => <h3 className="text-sm font-medium mb-2 mt-3">{children}</h3>,
-                                p: ({children}) => <p className="mb-3 leading-relaxed">{children}</p>,
-                                ul: ({children}) => <ul className="mb-3 ml-4 space-y-1 list-disc list-outside">{children}</ul>,
-                                ol: ({children}) => <ol className="mb-3 ml-4 space-y-1 list-decimal list-outside">{children}</ol>,
-                                li: ({children}) => <li className="leading-relaxed ml-1">{children}</li>,
-                                code: ({children, ...props}) => {
-                                  const isInline = !props.className?.includes('language-');
-                                  return isInline ?
-                                    <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code> :
-                                    <code className="block bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3">{children}</code>;
-                                },
-                                pre: ({children}) => <pre className="bg-gray-100 p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3 overflow-x-auto">{children}</pre>,
-                                strong: ({children}) => <strong className="font-semibold text-redis-dusk-01">{children}</strong>,
-                                blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 mb-3 italic">{children}</blockquote>,
-                              }}
-                            >
-                              {message.content}
-                            </ReactMarkdown>
-                          </div>
-                        ) : (
-                          <div className="text-redis-sm whitespace-pre-wrap">{message.content}</div>
-                        )}
-                        {message.timestamp && (
-                          <div
-                            className={`text-redis-xs mt-1 ${
-                              message.role === 'user'
-                                ? 'text-blue-100'
-                                : message.role === 'system'
-                                ? 'text-blue-500'
-                                : 'text-redis-dusk-04'
-                            }`}
-                          >
-                            {formatTimestamp(message.timestamp)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-
-                  <div ref={messagesEndRef} />
+                <div className="flex items-center justify-center h-full text-center">
+                  <div className="text-redis-dusk-04">
+                    <div className="text-lg mb-2">💬</div>
+                    <div className="text-sm">Select a conversation or start a new one</div>
+                  </div>
                 </div>
               </CardContent>
 
-              {/* Error Message */}
-              {error && (
-                <div className="px-4">
-                  <ErrorMessage message={error} />
-                </div>
-              )}
-
-              {/* Input Area - Only show when not using WebSocket monitor */}
+              {/* Input Area */}
               <div className="p-4 border-t border-redis-dusk-08">
                 {/* Instance Selection */}
                 {instances.length > 0 && (
                   <div className="mb-3">
-                    <label className="block text-redis-sm font-medium text-redis-dusk-01 mb-2">
+                    <label className="block text-redis-sm font-medium text-foreground mb-2">
                       Redis Instance (optional)
                     </label>
                     <select
@@ -984,7 +916,8 @@ const Triage = () => {
               </div>
             </>
           )}
-        </Card>
+          </Card>
+        </div>
       </div>
 
       {/* Delete Confirmation Dialog */}

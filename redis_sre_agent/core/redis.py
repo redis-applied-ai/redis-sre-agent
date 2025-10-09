@@ -1,4 +1,4 @@
-"""Redis connection management with singleton pattern."""
+"""Redis connection management - no caching to avoid event loop issues."""
 
 import asyncio
 import logging
@@ -12,11 +12,6 @@ from redisvl.utils.vectorize import OpenAITextVectorizer
 from redis_sre_agent.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Global singleton instances
-_redis_client: Optional[Redis] = None
-_vectorizer: Optional[Any] = None
-_document_index: Optional[AsyncSearchIndex] = None
 
 # Index names
 SRE_KNOWLEDGE_INDEX = "sre_knowledge"
@@ -139,16 +134,13 @@ SRE_SCHEDULES_SCHEMA = {
 }
 
 
-def get_redis_client() -> Redis:
-    """Get Redis client singleton."""
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = Redis.from_url(
-            url=settings.redis_url,
-            password=settings.redis_password,
-            decode_responses=False,  # Keep as bytes for RedisVL compatibility
-        )
-    return _redis_client
+def get_redis_client(url: Optional[str] = None) -> Redis:
+    """Get Redis client (creates fresh client to avoid event loop issues)."""
+    return Redis.from_url(
+        url=url or settings.redis_url,
+        password=settings.redis_password,
+        decode_responses=False,  # Keep as bytes for RedisVL compatibility
+    )
 
 
 class _AsyncVectorizerProxy:
@@ -176,41 +168,26 @@ class _AsyncVectorizerProxy:
         return other is self._inner or other == self._inner
 
 
-# TODO: This should be using a RedisVL vectorizer
 def get_vectorizer() -> OpenAITextVectorizer:
-    """Get OpenAI vectorizer singleton with Redis caching.
+    """Get OpenAI vectorizer with Redis caching (creates fresh to avoid event loop issues).
 
     Additionally, make ``embed_many`` awaitable on the instance so callers can
     use ``await vectorizer.embed_many([...])``. This preserves backward
     compatibility for unit tests that expect the raw OpenAITextVectorizer
     instance while enabling async integration tests to ``await`` the call.
     """
-    global _vectorizer
-    if _vectorizer is None:
-        cache = EmbeddingsCache(redis_url=settings.redis_url)
-        inner = OpenAITextVectorizer(
-            model=settings.embedding_model,
-            cache=cache,
-            api_config={"api_key": settings.openai_api_key},
-        )
-        _vectorizer = _AsyncVectorizerProxy(inner)
-    else:
-        # If a raw vectorizer instance exists without awaitable embed_many, wrap it
-        embed_many = getattr(_vectorizer, "embed_many", None)
-        if not (callable(embed_many) and asyncio.iscoroutinefunction(embed_many)):
-            _vectorizer = _AsyncVectorizerProxy(_vectorizer)
-
-    return _vectorizer
+    cache = EmbeddingsCache(redis_url=settings.redis_url)
+    inner = OpenAITextVectorizer(
+        model=settings.embedding_model,
+        cache=cache,
+        api_config={"api_key": settings.openai_api_key},
+    )
+    return _AsyncVectorizerProxy(inner)
 
 
 def get_knowledge_index() -> AsyncSearchIndex:
-    """Get SRE knowledge base index singleton."""
-    global _document_index
-    if _document_index is None:
-        _document_index = AsyncSearchIndex.from_dict(
-            SRE_KNOWLEDGE_SCHEMA, redis_url=settings.redis_url
-        )
-    return _document_index
+    """Get SRE knowledge base index (creates fresh to avoid event loop issues)."""
+    return AsyncSearchIndex.from_dict(SRE_KNOWLEDGE_SCHEMA, redis_url=settings.redis_url)
 
 
 def get_schedules_index() -> AsyncSearchIndex:
@@ -218,11 +195,19 @@ def get_schedules_index() -> AsyncSearchIndex:
     return AsyncSearchIndex.from_dict(SRE_SCHEDULES_SCHEMA, redis_url=settings.redis_url)
 
 
-async def test_redis_connection() -> bool:
-    """Test Redis connection health."""
+async def test_redis_connection(url: Optional[str] = None) -> bool:
+    """Test Redis connection health.
+
+    Args:
+        url: Optional Redis URL to test. If not provided, uses default from settings.
+
+    Returns:
+        True if connection successful, False otherwise.
+    """
     try:
-        client = get_redis_client()
+        client = get_redis_client(url=url)
         await client.ping()
+        await client.aclose()
         return True
     except Exception as e:
         logger.error(f"Redis connection test failed: {e}")
@@ -317,9 +302,9 @@ async def initialize_docket_infrastructure() -> bool:
 
         # Test Docket connection and ensure infrastructure is ready
         async with Docket(url=settings.redis_url, name="sre_docket") as docket:
-            # Test basic Docket functionality
+            # Test basic Docket functionality by checking for workers
             # This will create necessary Redis structures if they don't exist
-            await docket.ping()
+            await docket.workers()
             logger.info("Docket infrastructure initialized successfully")
             return True
 
@@ -332,9 +317,6 @@ async def initialize_docket_infrastructure() -> bool:
 
 
 async def cleanup_redis_connections():
-    """Cleanup Redis connections on shutdown."""
-    global _redis_client
-    if _redis_client:
-        await _redis_client.aclose()
-        _redis_client = None
-    logger.info("Redis connections cleaned up")
+    """Cleanup Redis connections on shutdown (no-op since we removed caching)."""
+    # No cleanup needed since we don't cache connections anymore
+    logger.info("Redis connections cleanup called (no-op)")

@@ -13,7 +13,6 @@ from redis_sre_agent.core.thread_state import (
     ThreadState,
     ThreadStatus,
     ThreadUpdate,
-    get_thread_manager,
 )
 
 
@@ -50,7 +49,7 @@ class TestThreadManager:
     def thread_manager(self, mock_redis_client):
         """Create thread manager with mocked Redis."""
         manager = ThreadManager()
-        manager.redis_client = mock_redis_client
+        manager._redis_client = mock_redis_client
         return manager
 
     @pytest.mark.asyncio
@@ -72,7 +71,7 @@ class TestThreadManager:
     @pytest.mark.asyncio
     async def test_get_thread_state_not_found(self, thread_manager):
         """Test getting non-existent thread state."""
-        thread_manager.redis_client.exists.return_value = False
+        thread_manager._redis_client.exists.return_value = False
 
         state = await thread_manager.get_thread_state("nonexistent")
         assert state is None
@@ -81,14 +80,14 @@ class TestThreadManager:
     async def test_get_thread_state_success(self, thread_manager):
         """Test successful thread state retrieval."""
         # Mock Redis data
-        thread_manager.redis_client.exists.return_value = True
-        thread_manager.redis_client.get.side_effect = [
+        thread_manager._redis_client.exists.return_value = True
+        thread_manager._redis_client.get.side_effect = [
             b"in_progress",  # status
             None,  # action_items
             None,  # result
             None,  # error
         ]
-        thread_manager.redis_client.lrange.return_value = [
+        thread_manager._redis_client.lrange.return_value = [
             json.dumps(
                 {
                     "timestamp": "2023-01-01T00:00:00Z",
@@ -98,7 +97,7 @@ class TestThreadManager:
                 }
             )
         ]
-        thread_manager.redis_client.hgetall.side_effect = [
+        thread_manager._redis_client.hgetall.side_effect = [
             {b"test_key": b"test_value"},  # context
             {  # metadata
                 b"created_at": b"2023-01-01T00:00:00Z",
@@ -124,8 +123,8 @@ class TestThreadManager:
         result = await thread_manager.update_thread_status("test_thread", ThreadStatus.DONE)
 
         assert result is True
-        thread_manager.redis_client.set.assert_called()
-        thread_manager.redis_client.hset.assert_called()
+        thread_manager._redis_client.set.assert_called()
+        thread_manager._redis_client.hset.assert_called()
 
     @pytest.mark.asyncio
     async def test_add_thread_update(self, thread_manager):
@@ -135,8 +134,8 @@ class TestThreadManager:
         )
 
         assert result is True
-        thread_manager.redis_client.lpush.assert_called()
-        thread_manager.redis_client.ltrim.assert_called()
+        thread_manager._redis_client.lpush.assert_called()
+        thread_manager._redis_client.ltrim.assert_called()
 
     @pytest.mark.asyncio
     async def test_set_thread_result(self, thread_manager):
@@ -146,7 +145,7 @@ class TestThreadManager:
         result = await thread_manager.set_thread_result("test_thread", result_data)
 
         assert result is True
-        thread_manager.redis_client.set.assert_called()
+        thread_manager._redis_client.set.assert_called()
 
     @pytest.mark.asyncio
     async def test_add_action_items(self, thread_manager):
@@ -161,12 +160,12 @@ class TestThreadManager:
         ]
 
         # Mock existing action items
-        thread_manager.redis_client.get.return_value = None
+        thread_manager._redis_client.get.return_value = None
 
         result = await thread_manager.add_action_items("test_thread", action_items)
 
         assert result is True
-        thread_manager.redis_client.set.assert_called()
+        thread_manager._redis_client.set.assert_called()
 
     @pytest.mark.asyncio
     async def test_set_thread_error(self, thread_manager):
@@ -177,7 +176,7 @@ class TestThreadManager:
             result = await thread_manager.set_thread_error("test_thread", "Test error")
 
             assert result is True
-            thread_manager.redis_client.set.assert_called()
+            thread_manager._redis_client.set.assert_called()
             mock_update.assert_called_with("test_thread", ThreadStatus.FAILED)
 
     @pytest.mark.asyncio
@@ -186,7 +185,7 @@ class TestThreadManager:
         result = await thread_manager.delete_thread("test_thread")
 
         assert result is True
-        thread_manager.redis_client.delete.assert_called()
+        thread_manager._redis_client.delete.assert_called()
 
 
 class TestProcessAgentTurn:
@@ -196,7 +195,8 @@ class TestProcessAgentTurn:
     async def test_process_agent_turn_success(self):
         """Test successful agent turn processing."""
         with (
-            patch("redis_sre_agent.core.tasks.get_thread_manager") as mock_get_manager,
+            patch("redis_sre_agent.core.tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.tasks.ThreadManager") as mock_manager_class,
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
             patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
             patch(
@@ -204,8 +204,13 @@ class TestProcessAgentTurn:
             ) as mock_get_knowledge_agent,
             patch("redis_sre_agent.agent.router.route_to_appropriate_agent") as mock_route,
         ):
+            # Mock Redis client
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
             # Mock thread manager
             mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
             mock_manager.get_thread_state.return_value = ThreadState(
                 thread_id="test_thread",
                 status=ThreadStatus.QUEUED,
@@ -216,7 +221,6 @@ class TestProcessAgentTurn:
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_result.return_value = True
             mock_manager.add_action_items.return_value = True
-            mock_get_manager.return_value = mock_manager
 
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
@@ -257,13 +261,19 @@ class TestProcessAgentTurn:
     @pytest.mark.asyncio
     async def test_process_agent_turn_thread_not_found(self):
         """Test agent turn processing with non-existent thread."""
-        with patch("redis_sre_agent.core.tasks.get_thread_manager") as mock_get_manager:
+        with (
+            patch("redis_sre_agent.core.tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.tasks.ThreadManager") as mock_manager_class,
+        ):
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
             mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
             mock_manager.get_thread_state.return_value = None
             mock_manager.update_thread_status.return_value = True
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_error.return_value = True
-            mock_get_manager.return_value = mock_manager
 
             with pytest.raises(ValueError, match="Thread test_thread not found"):
                 await process_agent_turn(thread_id="test_thread", message="Test message")
@@ -272,7 +282,7 @@ class TestProcessAgentTurn:
     async def test_process_agent_turn_agent_error(self):
         """Test agent turn processing with agent error."""
         with (
-            patch("redis_sre_agent.core.tasks.get_thread_manager") as mock_get_manager,
+            patch("redis_sre_agent.core.tasks.ThreadManager") as mock_thread_manager_class,
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
             patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
             patch(
@@ -291,7 +301,7 @@ class TestProcessAgentTurn:
             mock_manager.update_thread_status.return_value = True
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_error.return_value = True
-            mock_get_manager.return_value = mock_manager
+            mock_thread_manager_class.return_value = mock_manager
 
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
@@ -442,10 +452,13 @@ class TestThreadStateModels:
 class TestThreadManagerSingleton:
     """Test thread manager singleton functionality."""
 
-    def test_get_thread_manager_singleton(self):
-        """Test that get_thread_manager returns the same instance."""
-        manager1 = get_thread_manager()
-        manager2 = get_thread_manager()
+    def test_thread_manager_instantiation(self):
+        """Test that ThreadManager can be instantiated with a Redis client."""
+        from unittest.mock import MagicMock
 
-        assert manager1 is manager2
-        assert isinstance(manager1, ThreadManager)
+        mock_redis = MagicMock()
+        manager = ThreadManager(redis_client=mock_redis)
+
+        assert manager is not None
+        assert isinstance(manager, ThreadManager)
+        assert manager._redis_client == mock_redis

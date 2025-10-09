@@ -13,7 +13,7 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis as AsyncRedis
-from testcontainers.redis import RedisContainer
+from testcontainers.compose import DockerCompose
 
 # Load environment variables from .env file
 try:
@@ -84,13 +84,21 @@ def pytest_collection_modifyitems(config, items):
         ) and not config.getoption("--run-api-tests"):
             item.add_marker(skip_api)
 
+        # Integration tests need the redis_container fixture
+        if "integration" in item.keywords:
+            # Add redis_container as a fixture dependency
+            item.fixturenames.append("redis_container")
+
 
 # Test environment variables - only set if not already present
 test_env = {
-    "REDIS_URL": "redis://localhost:6379/0",
     "APP_NAME": "Redis SRE Agent Test",
     "DEBUG": "true",
 }
+
+# Set default REDIS_URL for unit tests (will be overridden by redis_container for integration tests)
+if not os.environ.get("REDIS_URL"):
+    test_env["REDIS_URL"] = "redis://localhost:6379/0"
 
 # Only set test API key if no real key is present
 if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "":
@@ -256,55 +264,95 @@ def sample_task_result():
     }
 
 
+@pytest.fixture(scope="session")
+def worker_id(request):
+    """
+    Get the worker ID for the current test.
+
+    In pytest-xdist, the config has "workerid" in workerinput.
+    This fixture abstracts that logic to provide a consistent worker_id
+    across all tests.
+    """
+    workerinput = getattr(request.config, "workerinput", {})
+    return workerinput.get("workerid", "master")
+
+
 @pytest.fixture(scope="session", autouse=True)
-def redis_container(request):
+def redis_container(worker_id):
     """
-    Redis container for integration tests.
-    Only created if INTEGRATION_TESTS environment variable is set.
+    If using xdist, create a unique Compose project for each xdist worker by
+    setting COMPOSE_PROJECT_NAME. That prevents collisions on container/volume
+    names.
+
+    Uses docker-compose.integration.yml which only includes Redis service
+    (no app services that need building).
     """
-    if not os.environ.get("INTEGRATION_TESTS"):
-        yield None
-        return
+    # Set the Compose project name so containers do not clash across workers
+    os.environ["COMPOSE_PROJECT_NAME"] = f"redis_test_{worker_id}"
+    os.environ.setdefault("REDIS_IMAGE", "redis/redis-stack-server:latest")
 
-    container = RedisContainer("redis:8-alpine")
-    container.start()
+    compose = DockerCompose(
+        context="./",
+        compose_file_name="docker-compose.integration.yml",
+        pull=True,
+    )
+    compose.start()
 
-    # Update Redis URL for integration tests
-    try:
-        redis_url = container.get_connection_url()
-    except AttributeError:
-        # Try alternative method names
-        redis_url = f"redis://localhost:{container.get_exposed_port(6379)}/0"
+    # Get the Redis URL and set it in environment
+    host, port = compose.get_service_host_and_port("redis", 6379)
+    url = f"redis://{host}:{port}"
 
-    os.environ["REDIS_URL"] = redis_url
-    # Also expose Prometheus URL default for tests when docker-compose is used
-    os.environ.setdefault("PROMETHEUS_URL", "http://localhost:9090")
+    # Set REDIS_URL environment variable so get_redis_client() uses testcontainers
+    old_redis_url = os.environ.get("REDIS_URL")
+    os.environ["REDIS_URL"] = url
 
-    yield container
+    # Reload settings to pick up the new REDIS_URL
+    import redis_sre_agent.core.config as config_module
+    from redis_sre_agent.core.config import Settings
 
-    container.stop()
+    config_module.settings = Settings()
+
+    # Also clear any Redis connection pools that might be cached
+    # Force reload of modules to pick up new settings
+    import importlib
+
+    from redis_sre_agent.core import redis as redis_module
+    from redis_sre_agent.core import tasks as tasks_module
+
+    importlib.reload(redis_module)
+    importlib.reload(tasks_module)
+
+    yield compose
+
+    # Restore original REDIS_URL
+    if old_redis_url:
+        os.environ["REDIS_URL"] = old_redis_url
+    else:
+        os.environ.pop("REDIS_URL", None)
+
+    compose.stop()
+
+
+@pytest.fixture(scope="session")
+def redis_url(redis_container):
+    """
+    Use the `DockerCompose` fixture to get host/port of the 'redis' service
+    on container port 6379 (mapped to an ephemeral port on the host).
+    """
+    host, port = redis_container.get_service_host_and_port("redis", 6379)
+    return f"redis://{host}:{port}"
 
 
 @pytest_asyncio.fixture()
-async def async_redis_client(redis_container):
-    """
-    Real Redis client for integration tests.
-    Only available when redis_container is active.
-    """
-    if not redis_container:
-        pytest.skip("Integration tests not enabled")
+async def async_redis_client(redis_url):
+    client = AsyncRedis.from_url(redis_url, decode_responses=False)
 
-    # Prefer the REDIS_URL set by the redis_container fixture; fall back to exposed port
-    try:
-        redis_url = os.environ.get("REDIS_URL")
-        if not redis_url:
-            # Fallback for older testcontainers APIs without get_connection_url
-            redis_url = f"redis://localhost:{redis_container.get_exposed_port(6379)}/0"
-    except AttributeError:
-        redis_url = f"redis://localhost:{redis_container.get_exposed_port(6379)}/0"
+    # Flush database to ensure clean state for this test
+    await client.flushdb()
 
-    client = AsyncRedis.from_url(redis_url)
     yield client
+
+    # Cleanup
     await client.aclose()
 
 
@@ -344,21 +392,3 @@ def mock_health_check_response():
             "timestamp": "2025-08-19T21:00:00+00:00",
         },
     ]
-
-
-@pytest.fixture(autouse=True)
-def reset_singletons():
-    """Reset global singletons between tests."""
-    # Import and reset Redis singletons
-    from redis_sre_agent.core import redis
-
-    redis._redis_client = None
-    redis._vectorizer = None
-    redis._document_index = None
-
-    yield
-
-    # Clean up after test
-    redis._redis_client = None
-    redis._vectorizer = None
-    redis._document_index = None

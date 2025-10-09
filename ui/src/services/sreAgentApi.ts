@@ -116,6 +116,7 @@ export interface TestConnectionUrlRequest {
 
 export interface AgentStatus {
   agent_available: boolean;
+  workers_available?: boolean;
   system_health: {
     redis_connection: boolean;
     vectorizer: boolean;
@@ -124,6 +125,7 @@ export interface AgentStatus {
   };
   tools_available: string[];
   version: string;
+  status?: string;
 }
 
 class SREAgentAPI {

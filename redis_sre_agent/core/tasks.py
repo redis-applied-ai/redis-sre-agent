@@ -1,5 +1,6 @@
 """Docket task definitions for SRE operations."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -8,12 +9,13 @@ from docket import ConcurrencyLimit, Docket, Perpetual, Retry
 from ulid import ULID
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import (
     get_knowledge_index,
     get_redis_client,
     get_vectorizer,
 )
-from redis_sre_agent.core.thread_state import ThreadStatus, get_thread_manager
+from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +101,7 @@ async def analyze_system_metrics(
         import json
 
         client = get_redis_client()
-        result_key = f"sre:metrics:{result['task_id']}"
+        result_key = RedisKeys.metrics_result(result["task_id"])
         await client.hset(result_key, mapping={"data": json.dumps(result)})
         await client.expire(result_key, 3600)  # 1 hour TTL
 
@@ -135,20 +137,26 @@ async def search_knowledge_base(
         vectorizer = get_vectorizer()
 
         # Create vector embedding for the query
-        # TODO: This shouldn't work, embed_many is not awaitable --
-        # so what's actually happening here?
-        query_vector = await vectorizer.embed_many([query])
+        query_vectors = await vectorizer.embed_many([query])
+        query_vector = query_vectors[0]
+
+        # Build vector query
+        from redisvl.query import VectorQuery
+
+        vector_query = VectorQuery(
+            vector=query_vector,
+            vector_field_name="vector",
+            return_fields=["title", "content", "source", "category", "severity"],
+            num_results=limit,
+        )
 
         # Build search filters
-        filters = []
         if category:
-            filters.append(f"@category:{category}")
+            vector_query.set_filter(f"@category:{{{category}}}")
 
         # Perform vector search
-        # Note: This is a simplified version - real implementation would be more complex
-        results = await index.query(
-            query_vector[0], num_results=limit, filters=filters if filters else None
-        )
+        async with index:
+            results = await index.query(vector_query)
 
         search_result = {
             "task_id": str(ULID()),
@@ -196,64 +204,40 @@ async def check_service_health(
     try:
         logger.info(f"Checking health for service: {service_name}")
 
-        # Check if this is Redis service - use direct diagnostics
-        if service_name.lower() in ["redis", "redis-server", "redis-cluster"]:
-            from ..tools.redis_diagnostics import get_redis_diagnostics
+        # Perform HTTP health checks
+        # NOTE: For Redis-specific diagnostics, use get_detailed_redis_diagnostics()
+        # with an explicit redis_url parameter instead of this generic health check.
+        import aiohttp
 
-            redis_diag = get_redis_diagnostics()
-            diagnostic_results = await redis_diag.run_diagnostic_suite()
+        health_results = []
 
-            # Convert diagnostics to health check format
-            health_results = [
-                {
-                    "endpoint": "redis_diagnostics",
-                    "status": (
-                        "healthy"
-                        if diagnostic_results["overall_status"] in ["healthy", "warning"]
-                        else "unhealthy"
-                    ),
-                    "response_time_ms": None,
-                    "diagnostic_data": diagnostic_results,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-            ]
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            for endpoint in endpoints:
+                start_time = datetime.now()
 
-            await redis_diag.close()
-        else:
-            # For other services, perform HTTP health checks
-            import aiohttp
+                try:
+                    async with session.get(endpoint) as response:
+                        response_time = (datetime.now() - start_time).total_seconds() * 1000
 
-            health_results = []
-
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=timeout)
-            ) as session:
-                for endpoint in endpoints:
-                    start_time = datetime.now()
-
-                    try:
-                        async with session.get(endpoint) as response:
-                            response_time = (datetime.now() - start_time).total_seconds() * 1000
-
-                            health_check = {
-                                "endpoint": endpoint,
-                                "status": "healthy" if response.status < 400 else "unhealthy",
-                                "response_time_ms": round(response_time, 2),
-                                "status_code": response.status,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            }
-
-                    except Exception as e:
                         health_check = {
                             "endpoint": endpoint,
-                            "status": "unhealthy",
-                            "response_time_ms": None,
-                            "status_code": None,
-                            "error": str(e),
+                            "status": "healthy" if response.status < 400 else "unhealthy",
+                            "response_time_ms": round(response_time, 2),
+                            "status_code": response.status,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         }
 
-                    health_results.append(health_check)
+                except Exception as e:
+                    health_check = {
+                        "endpoint": endpoint,
+                        "status": "unhealthy",
+                        "response_time_ms": None,
+                        "status_code": None,
+                        "error": str(e),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+
+                health_results.append(health_check)
 
         overall_status = (
             "healthy"
@@ -274,7 +258,7 @@ async def check_service_health(
         import json
 
         client = get_redis_client()
-        result_key = f"sre:health:{result['task_id']}"
+        result_key = RedisKeys.health_result(result["task_id"])
         await client.set(result_key, json.dumps(result))
         await client.expire(result_key, 1800)  # 30 minutes TTL
 
@@ -313,23 +297,25 @@ async def ingest_sre_document(
         index = get_knowledge_index()
         vectorizer = get_vectorizer()
 
-        # Create document embedding
-        content_vector = await vectorizer.embed_many([content])
+        # Create document embedding (use as_buffer=True for Redis storage)
+        # Note: vectorizer.embed returns bytes when as_buffer=True
+        content_vector = await asyncio.to_thread(vectorizer._inner.embed, content, as_buffer=True)
 
         # Prepare document data
         doc_id = str(ULID())
+        doc_key = RedisKeys.knowledge_document(doc_id)
         document = {
+            "id": doc_id,
             "title": title,
             "content": content,
             "source": source,
             "category": category,
             "severity": severity,
             "created_at": datetime.now(timezone.utc).timestamp(),
-            "vector": content_vector[0],
+            "vector": content_vector,
         }
 
         # Store in vector index
-        doc_key = f"sre_knowledge:{doc_id}"
         await index.load(data=[document], id_field="id", keys=[doc_key])
 
         result = {
@@ -352,13 +338,18 @@ async def ingest_sre_document(
 
 @sre_task
 async def scheduler_task(
-    global_limit: str = "scheduler",
-    perpetual: Perpetual = Perpetual(every=timedelta(seconds=30)),
-    concurrency: ConcurrencyLimit = ConcurrencyLimit("global_limit", max_concurrent=1),
+    perpetual: Perpetual = Perpetual(every=timedelta(seconds=30), automatic=True),
+    concurrency: ConcurrencyLimit = ConcurrencyLimit("scheduler_task", max_concurrent=1),
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """
-    Scheduler task that runs every 30 seconds using Perpetual.
+    Scheduler task that runs every 30 seconds using Perpetual with automatic=True.
+
+    With automatic=True, Docket automatically starts and reschedules this task when
+    a worker is running. No manual startup or rescheduling is needed.
+
+    The ConcurrencyLimit ensures only ONE instance of this task runs at a time,
+    preventing multiple workers or rapid rescheduling from creating duplicates.
 
     This task:
     1. Queries Redis for schedules that need to run based on current time
@@ -408,9 +399,8 @@ async def scheduler_task(
                         scheduled_time = current_time
 
                     # Create a thread for this scheduled task
-                    from ..core.thread_state import get_thread_manager
-
-                    thread_manager = get_thread_manager()
+                    redis_client = get_redis_client()
+                    thread_manager = ThreadManager(redis_client=redis_client)
 
                     # Prepare context for the scheduled run
                     run_context = {
@@ -497,25 +487,8 @@ async def scheduler_task(
             f"Scheduler task completed: processed {len(schedules_needing_runs)} schedules, submitted {submitted_tasks} tasks"
         )
 
-        # Schedule the next run of this task (Perpetual behavior)
-        try:
-            next_run_time = datetime.now(timezone.utc) + timedelta(seconds=30)
-            async with Docket(url=await get_redis_url(), name="sre_docket") as next_docket:
-                # Use a deduplication key based on the scheduled time to prevent multiple scheduler tasks
-                scheduler_key = f"scheduler_task_{next_run_time.strftime('%Y%m%d_%H%M%S')}"
-                task_func = next_docket.add(scheduler_task, when=next_run_time, key=scheduler_key)
-                await task_func()
-                logger.debug(
-                    f"Scheduled next scheduler task run at {next_run_time} with key {scheduler_key}"
-                )
-        except Exception as e:
-            # If the task was already scheduled (duplicate key), this is expected and not an error
-            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                logger.debug(
-                    f"Scheduler task already scheduled for {next_run_time} - this is expected"
-                )
-            else:
-                logger.error(f"Failed to schedule next scheduler task run: {e}")
+        # Note: With automatic=True, Docket will automatically reschedule this task
+        # No manual rescheduling needed
 
         return result
 
@@ -543,40 +516,6 @@ async def register_sre_tasks() -> None:
         raise
 
 
-async def start_scheduler_task() -> None:
-    """Start the scheduler task as a Perpetual task."""
-    try:
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            # Submit the scheduler task with deduplication to prevent multiple instances
-            logger.info("Attempting to start scheduler task...")
-
-            # Use a fixed key to ensure only one scheduler task runs at startup
-            current_time = datetime.now(timezone.utc)
-            scheduler_key = f"scheduler_task_startup_{current_time.strftime('%Y%m%d_%H%M')}"
-
-            try:
-                # Submit an immediate scheduler task with deduplication key
-                task_func = docket.add(scheduler_task, key=scheduler_key)
-                task_id = await task_func()
-                logger.info(f"Started scheduler task with ID: {task_id} and key: {scheduler_key}")
-            except Exception as e:
-                # If the task was already submitted (duplicate key), this is expected and not an error
-                if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                    logger.info(
-                        f"Scheduler task already running with key {scheduler_key} - this is expected"
-                    )
-                else:
-                    logger.error(f"Failed to start scheduler task: {e}")
-                    raise
-
-    except Exception as e:
-        logger.error(f"Failed to start scheduler task: {e}")
-        # Don't raise - let the app continue
-        import traceback
-
-        logger.error(f"Scheduler task error traceback: {traceback.format_exc()}")
-
-
 @sre_task
 async def process_agent_turn(
     thread_id: str,
@@ -596,7 +535,8 @@ async def process_agent_turn(
         context: Additional context for the turn
         retry: Retry configuration
     """
-    thread_manager = get_thread_manager()
+    redis_client = get_redis_client()
+    thread_manager = ThreadManager(redis_client=redis_client)
 
     try:
         logger.info(f"Processing agent turn for thread {thread_id}")
@@ -655,7 +595,7 @@ async def process_agent_turn(
 
         # Prepare the conversation state with thread context
         messages = thread_state.context.get("messages", [])
-        logger.info(f"DEBUG: messages type: {type(messages)}, value: {messages}")
+        logger.info(f"DEBUG: Loaded {len(messages)} messages from thread context")
 
         conversation_state = {
             "messages": messages,
@@ -694,11 +634,22 @@ async def process_agent_turn(
                 thread_id, "Processing query with knowledge-only agent", "agent_processing"
             )
 
+            # Convert conversation history to LangChain messages for knowledge agent
+            from langchain_core.messages import AIMessage, HumanMessage
+
+            lc_history = []
+            for msg in conversation_state["messages"][:-1]:  # Exclude the latest message
+                if msg["role"] == "user":
+                    lc_history.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    lc_history.append(AIMessage(content=msg["content"]))
+
             response_text = await agent.process_query(
                 query=message,
                 user_id=thread_state.metadata.user_id or "unknown",
                 session_id=thread_state.metadata.session_id or thread_id,
                 progress_callback=progress_callback,
+                conversation_history=lc_history if lc_history else None,
             )
 
             agent_response = {
@@ -723,8 +674,21 @@ async def process_agent_turn(
         )
 
         # Update thread context with new conversation state
-        thread_state.context["messages"] = conversation_state["messages"]
+        # Only save user/assistant messages - tool messages are internal to LangGraph
+        # and shouldn't be persisted across turns
+        clean_messages = [
+            msg
+            for msg in conversation_state["messages"]
+            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
+        ]
+        thread_state.context["messages"] = clean_messages
         thread_state.context["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+        # Save the updated context to Redis
+        await thread_manager._save_thread_state(thread_state)
+        logger.info(
+            f"Saved conversation history: {len(clean_messages)} user/assistant messages (filtered from {len(conversation_state['messages'])} total)"
+        )
 
         # Extract action items if present
         action_items = agent_response.get("action_items", [])
@@ -801,6 +765,7 @@ async def run_agent_with_progress(
         progress_agent = SRELangGraphAgent(progress_callback=progress_callback)
 
         # Convert conversation messages to LangChain format
+        # We only store user/assistant messages, tool messages are internal to LangGraph
         from langchain_core.messages import AIMessage, HumanMessage
 
         lc_messages = []
@@ -839,7 +804,8 @@ async def run_agent_with_progress(
         if not latest_user_message:
             raise ValueError("No user message found in conversation")
 
-        # Use the process_query method to handle context properly
+        # Pass conversation history to the agent
+        # MemorySaver is created fresh each time, so we need to provide history
         response = await progress_agent.process_query(
             query=latest_user_message,
             session_id=thread_id,
@@ -847,6 +813,9 @@ async def run_agent_with_progress(
             max_iterations=10,
             context=agent_context,
             progress_callback=progress_callback,
+            conversation_history=lc_messages[:-1]
+            if lc_messages
+            else None,  # Exclude the latest message (it's added in process_query)
         )
 
         # Create a mock final state for compatibility

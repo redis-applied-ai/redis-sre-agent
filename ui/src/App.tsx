@@ -25,7 +25,7 @@ function App() {
               <div className="h-8 w-8 rounded bg-redis-blue-03 flex items-center justify-center text-white font-bold text-sm">
                 R
               </div>
-              <span className="text-redis-dusk-01 font-semibold">
+              <span className="text-foreground font-semibold">
                 Redis SRE Agent
               </span>
             </div>

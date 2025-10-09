@@ -26,12 +26,18 @@ def mock_agent():
         ]
     )
     mock_agent.clear_conversation = MagicMock(return_value=True)
-    mock_agent.sre_tools = {
-        "analyze_system_metrics": MagicMock(),
-        "search_knowledge_base": MagicMock(),
-        "check_service_health": MagicMock(),
-        "ingest_sre_document": MagicMock(),
-    }
+
+    # Mock current_tools as a list of tool objects
+    mock_tool_1 = MagicMock()
+    mock_tool_1.name = "analyze_system_metrics"
+    mock_tool_2 = MagicMock()
+    mock_tool_2.name = "search_knowledge_base"
+    mock_tool_3 = MagicMock()
+    mock_tool_3.name = "check_service_health"
+    mock_tool_4 = MagicMock()
+    mock_tool_4.name = "ingest_sre_document"
+
+    mock_agent.current_tools = [mock_tool_1, mock_tool_2, mock_tool_3, mock_tool_4]
 
     return mock_agent
 
@@ -277,10 +283,18 @@ class TestClearConversationEndpoint:
 class TestAgentStatusEndpoint:
     """Test /api/v1/agent/status endpoint."""
 
+    @patch("docket.docket.Docket")
     @patch("redis_sre_agent.api.agent.get_sre_agent")
-    def test_status_success(self, mock_get_agent, client, mock_agent):
-        """Test successful agent status check."""
+    def test_status_success(self, mock_get_agent, mock_docket, client, mock_agent):
+        """Test successful agent status check with workers available."""
         mock_get_agent.return_value = mock_agent
+
+        # Mock Docket to return active workers
+        mock_docket_instance = AsyncMock()
+        mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
+        mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_docket_instance.workers = AsyncMock(return_value=["worker1", "worker2"])
+        mock_docket.return_value = mock_docket_instance
 
         response = client.get("/api/v1/agent/status")
 
@@ -288,6 +302,7 @@ class TestAgentStatusEndpoint:
         data = response.json()
 
         assert data["agent_available"] is True
+        assert data["workers_available"] is True
         assert data["tools_registered"] == 4
         assert set(data["tool_names"]) == {
             "analyze_system_metrics",
@@ -297,6 +312,29 @@ class TestAgentStatusEndpoint:
         }
         assert data["model"] == "gpt-4o-mini"
         assert data["status"] == "operational"
+        assert "system_health" in data
+
+    @patch("docket.docket.Docket")
+    @patch("redis_sre_agent.api.agent.get_sre_agent")
+    def test_status_no_workers(self, mock_get_agent, mock_docket, client, mock_agent):
+        """Test status when no workers are available."""
+        mock_get_agent.return_value = mock_agent
+
+        # Mock Docket to return no workers
+        mock_docket_instance = AsyncMock()
+        mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
+        mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_docket_instance.workers = AsyncMock(return_value=[])
+        mock_docket.return_value = mock_docket_instance
+
+        response = client.get("/api/v1/agent/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["agent_available"] is False
+        assert data["workers_available"] is False
+        assert data["status"] == "degraded"
         assert "system_health" in data
 
     @patch("redis_sre_agent.api.agent.get_sre_agent")

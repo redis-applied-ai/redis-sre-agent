@@ -6,7 +6,7 @@ focusing on general SRE guidance, best practices, and knowledge base search.
 """
 
 import logging
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -152,6 +152,34 @@ class KnowledgeOnlyAgent:
                 state["current_tool_calls"] = []
                 return state
 
+        async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
+            """Execute tools with error handling to prevent malformed messages."""
+            messages = state["messages"]
+            last_message = messages[-1] if messages else None
+
+            # Verify we have tool calls to execute
+            if not (hasattr(last_message, "tool_calls") and last_message.tool_calls):
+                logger.warning("safe_tool_node called without tool_calls in last message")
+                return state
+
+            try:
+                # Execute tools using ToolNode
+                tool_node = ToolNode(self.knowledge_tools)
+                result_state = await tool_node.ainvoke(state)
+                return result_state
+            except Exception as e:
+                logger.error(f"Tool execution failed: {e}")
+                # Instead of adding a tool message (which would be malformed),
+                # add an AI message explaining the error
+                error_message = AIMessage(
+                    content=f"I encountered an error while searching the knowledge base: {str(e)}. "
+                    "This may be because Redis is not available. Please ensure Redis is running, "
+                    "or ask me a general question that doesn't require knowledge base access."
+                )
+                state["messages"] = messages + [error_message]
+                state["current_tool_calls"] = []
+                return state
+
         def should_continue(state: KnowledgeAgentState) -> str:
             """Determine if we should continue with tool calls or end."""
             messages = state["messages"]
@@ -176,7 +204,7 @@ class KnowledgeOnlyAgent:
 
         # Add nodes
         workflow.add_node("agent", agent_node)
-        workflow.add_node("tools", ToolNode(self.knowledge_tools))
+        workflow.add_node("tools", safe_tool_node)
 
         # Set entry point
         workflow.set_entry_point("agent")
@@ -194,6 +222,7 @@ class KnowledgeOnlyAgent:
         session_id: str = "knowledge-session",
         max_iterations: int = 5,
         progress_callback=None,
+        conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """
         Process a knowledge-only query.
@@ -204,6 +233,7 @@ class KnowledgeOnlyAgent:
             session_id: Session identifier
             max_iterations: Maximum number of agent iterations
             progress_callback: Optional callback for progress updates
+            conversation_history: Optional list of previous messages for context
 
         Returns:
             Agent's response as a string
@@ -214,9 +244,15 @@ class KnowledgeOnlyAgent:
         if progress_callback:
             self.progress_callback = progress_callback
 
-        # Create initial state
+        # Create initial state with conversation history
+        initial_messages = []
+        if conversation_history:
+            initial_messages = list(conversation_history)
+            logger.info(f"Including {len(conversation_history)} messages from conversation history")
+        initial_messages.append(HumanMessage(content=query))
+
         initial_state: KnowledgeAgentState = {
-            "messages": [HumanMessage(content=query)],
+            "messages": initial_messages,
             "session_id": session_id,
             "user_id": user_id,
             "current_tool_calls": [],
@@ -224,7 +260,8 @@ class KnowledgeOnlyAgent:
             "max_iterations": max_iterations,
         }
 
-        # Create isolated memory for this query
+        # Create MemorySaver for this query
+        # Conversation history is managed by ThreadManager and passed via messages
         checkpointer = MemorySaver()
         app = self.workflow.compile(checkpointer=checkpointer)
 

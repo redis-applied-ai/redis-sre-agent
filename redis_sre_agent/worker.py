@@ -35,6 +35,9 @@ async def main():
         await register_sre_tasks()
         logger.info("✅ SRE tasks registered with Docket")
 
+        # Note: scheduler_task has automatic=True, so it will start automatically
+        # when the worker picks it up. No manual startup needed.
+
         # Start the worker
         logger.info("✅ Worker started, waiting for SRE tasks...")
         logger.info("Press Ctrl+C to stop")

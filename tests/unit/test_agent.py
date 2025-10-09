@@ -70,34 +70,35 @@ class TestSRELangGraphAgent:
         assert agent.settings == mock_settings
         assert agent.llm is not None
         assert agent.llm_with_tools is not None
-        assert len(agent.sre_tools) == 10  # Protocol tools + knowledge tools
-        assert "query_instance_metrics" in agent.sre_tools
-        assert "list_available_metrics" in agent.sre_tools
-        assert "search_logs" in agent.sre_tools
-        assert "create_incident_ticket" in agent.sre_tools
-        assert "search_related_repositories" in agent.sre_tools
-        assert "get_provider_status" in agent.sre_tools
-        assert "search_knowledge_base" in agent.sre_tools
-        assert "ingest_sre_document" in agent.sre_tools
+        # New architecture: agent has current_tools list and deployment_providers
+        assert len(agent.current_tools) == 4  # Knowledge tools only at initialization
+        assert agent.deployment_providers is not None
+        # Check knowledge tools are present
+        tool_names = [tool.name for tool in agent.current_tools]
+        assert "search_knowledge_base" in tool_names
+        assert "ingest_sre_document" in tool_names
+        assert "get_all_document_fragments" in tool_names
+        assert "get_related_document_fragments" in tool_names
 
     def test_tool_mapping(self, mock_settings, mock_llm):
         """Test that SRE tools are properly mapped."""
         agent = SRELangGraphAgent()
 
-        expected_tools = [
-            "query_instance_metrics",
-            "list_available_metrics",
-            "search_logs",
-            "create_incident_ticket",
-            "search_related_repositories",
-            "get_provider_status",
+        # New architecture: agent starts with knowledge tools only
+        expected_knowledge_tools = [
             "search_knowledge_base",
             "ingest_sre_document",
             "get_all_document_fragments",
             "get_related_document_fragments",
         ]
 
-        assert set(agent.sre_tools.keys()) == set(expected_tools)
+        tool_names = [tool.name for tool in agent.current_tools]
+        assert set(tool_names) == set(expected_knowledge_tools)
+
+        # Deployment providers should be initialized
+        assert agent.deployment_providers is not None
+        assert "redis_direct_metrics" in agent.deployment_providers.provider_types
+        assert "redis_direct_diagnostics" in agent.deployment_providers.provider_types
 
     @pytest.mark.asyncio
     async def test_process_query_simple(self, mock_settings, mock_llm):
@@ -224,17 +225,12 @@ class TestAgentToolBindings:
         # Get the tool definitions that were passed
         tool_definitions = mock_llm.bind_tools.call_args[0][0]
 
-        assert len(tool_definitions) == 10
+        # New architecture: agent starts with knowledge tools only (4 tools)
+        assert len(tool_definitions) == 4
 
-        # Check that all expected tools are defined
+        # Check that all expected knowledge tools are defined
         tool_names = [tool["function"]["name"] for tool in tool_definitions]
         expected_names = [
-            "query_instance_metrics",
-            "list_available_metrics",
-            "search_logs",
-            "create_incident_ticket",
-            "search_related_repositories",
-            "get_provider_status",
             "search_knowledge_base",
             "ingest_sre_document",
             "get_all_document_fragments",

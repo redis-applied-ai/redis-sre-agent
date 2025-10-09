@@ -46,20 +46,14 @@ async def lifespan(app: FastAPI):
         logger.info(f"Redis infrastructure status: {redis_status}")
 
         # Register SRE tasks with Docket
+        # Note: The scheduler task is started by the worker, not the API
         try:
-            from redis_sre_agent.core.tasks import register_sre_tasks, start_scheduler_task
+            from redis_sre_agent.core.tasks import register_sre_tasks
 
             await register_sre_tasks()
             logger.info("✅ SRE tasks registered with Docket")
         except Exception as e:
             logger.warning(f"Failed to register SRE tasks: {e}")
-
-        # Start the scheduler task
-        try:
-            await start_scheduler_task()
-            logger.info("✅ Scheduler task started")
-        except Exception as e:
-            logger.warning(f"Failed to start scheduler task: {e}")
 
         # Store startup state for agent status checks
         _app_startup_state = redis_status

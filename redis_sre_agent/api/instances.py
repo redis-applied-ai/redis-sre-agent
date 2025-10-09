@@ -8,18 +8,20 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Redis key for storing instances
-INSTANCES_KEY = "sre:instances"
-
 
 class RedisInstance(BaseModel):
-    """Redis instance configuration model."""
+    """Redis instance configuration model.
+
+    Represents a Redis database that the agent can monitor and diagnose.
+    Instances can be pre-configured by users or created dynamically by the agent.
+    """
 
     id: str
     name: str
@@ -49,6 +51,42 @@ class RedisInstance(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    # New fields for provider architecture
+    created_by: str = Field(
+        default="user",
+        description="Who created this instance: 'user' (pre-configured) or 'agent' (dynamically created)",
+    )
+    user_id: Optional[str] = Field(
+        default=None, description="User ID who owns this instance (for pre-configured instances)"
+    )
+
+    @field_validator("connection_url")
+    @classmethod
+    def validate_not_app_redis(cls, v: str) -> str:
+        """Ensure this is not the application's own Redis database."""
+        try:
+            from redis_sre_agent.core.config import settings
+
+            if v == settings.redis_url:
+                raise ValueError(
+                    "Cannot create instance for application's own Redis database. "
+                    f"The URL {v} is used by the SRE agent application itself "
+                    "and should not be diagnosed or monitored by the agent."
+                )
+        except (ImportError, AttributeError):
+            # Settings not available or redis_url not set - allow it
+            pass
+
+        return v
+
+    @field_validator("created_by")
+    @classmethod
+    def validate_created_by(cls, v: str) -> str:
+        """Validate created_by field."""
+        if v not in ["user", "agent"]:
+            raise ValueError(f"created_by must be 'user' or 'agent', got: {v}")
+        return v
+
 
 class CreateInstanceRequest(BaseModel):
     """Request model for creating a Redis instance."""
@@ -72,6 +110,10 @@ class CreateInstanceRequest(BaseModel):
         "unknown",
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
+    created_by: str = Field(
+        default="user", description="Who created this instance: 'user' or 'agent'"
+    )
+    user_id: Optional[str] = Field(default=None, description="User ID who owns this instance")
 
     @field_validator("connection_url")
     @classmethod
@@ -137,7 +179,7 @@ async def get_instances_from_redis() -> List[RedisInstance]:
     """Get all instances from Redis storage."""
     try:
         redis_client = get_redis_client()
-        instances_data = await redis_client.get(INSTANCES_KEY)
+        instances_data = await redis_client.get(RedisKeys.instances_set())
 
         if not instances_data:
             return []
@@ -154,11 +196,111 @@ async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
     try:
         redis_client = get_redis_client()
         instances_data = json.dumps([instance.model_dump() for instance in instances])
-        await redis_client.set(INSTANCES_KEY, instances_data)
+        await redis_client.set(RedisKeys.instances_set(), instances_data)
         return True
     except Exception as e:
         logger.error(f"Failed to save instances to Redis: {e}")
         return False
+
+
+async def get_session_instances(thread_id: str) -> List[RedisInstance]:
+    """Get dynamically created instances for a session/thread.
+
+    These are instances created by the agent during a conversation,
+    stored in session memory with a TTL.
+    """
+    try:
+        redis_client = get_redis_client()
+        instances_key = RedisKeys.thread_instances(thread_id)
+        instances_json = await redis_client.get(instances_key)
+
+        if not instances_json:
+            return []
+
+        if isinstance(instances_json, bytes):
+            instances_json = instances_json.decode("utf-8")
+
+        instances_data = json.loads(instances_json)
+        return [RedisInstance(**instance) for instance in instances_data]
+
+    except Exception as e:
+        logger.error(f"Failed to get session instances for thread {thread_id}: {e}")
+        return []
+
+
+async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
+    """Add a dynamically created instance to session memory.
+
+    Args:
+        thread_id: Thread/conversation ID
+        instance: RedisInstance to add
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        redis_client = get_redis_client()
+
+        # Get existing session instances
+        instances = await get_session_instances(thread_id)
+
+        # Check if instance already exists (by name or URL)
+        for existing in instances:
+            if existing.name == instance.name or existing.connection_url == instance.connection_url:
+                logger.info(f"Instance {instance.name} already exists in session {thread_id}")
+                return True
+
+        # Add new instance
+        instances.append(instance)
+
+        # Serialize and save with TTL (1 hour)
+        instances_json = json.dumps([inst.model_dump() for inst in instances])
+        instances_key = RedisKeys.thread_instances(thread_id)
+        await redis_client.set(instances_key, instances_json, ex=3600)
+
+        logger.info(f"Added session instance {instance.name} to thread {thread_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to add session instance {instance.name} to thread {thread_id}: {e}")
+        return False
+
+
+async def get_all_instances(
+    user_id: Optional[str] = None, thread_id: Optional[str] = None
+) -> List[RedisInstance]:
+    """Get all instances: configured + session instances.
+
+    Args:
+        user_id: Optional user ID to filter configured instances
+        thread_id: Optional thread ID to include session instances
+
+    Returns:
+        Combined list of configured and session instances
+    """
+    # Get configured instances
+    configured = await get_instances_from_redis()
+
+    # Filter by user if specified
+    if user_id:
+        configured = [
+            inst for inst in configured if inst.user_id == user_id or inst.user_id is None
+        ]
+
+    # Get session instances if thread_id provided
+    session_instances = []
+    if thread_id:
+        session_instances = await get_session_instances(thread_id)
+
+    # Combine, avoiding duplicates (prefer configured over session)
+    all_instances = list(configured)
+    configured_urls = {inst.connection_url for inst in configured}
+
+    for session_inst in session_instances:
+        if session_inst.connection_url not in configured_urls:
+            all_instances.append(session_inst)
+
+    return all_instances
 
 
 @router.get("/instances", response_model=List[RedisInstance])
@@ -199,6 +341,8 @@ async def create_instance(request: CreateInstanceRequest):
             monitoring_identifier=request.monitoring_identifier,
             logging_identifier=request.logging_identifier,
             instance_type=request.instance_type,
+            created_by=request.created_by,
+            user_id=request.user_id,
         )
 
         # Add to instances list
@@ -320,41 +464,20 @@ async def test_connection_url(request: TestConnectionRequest):
         # Parse connection URL to extract host and port
         from urllib.parse import urlparse
 
+        from redis_sre_agent.core.redis import test_redis_connection
+
         try:
             parsed_url = urlparse(request.connection_url)
             host = parsed_url.hostname or "unknown"
             port = parsed_url.port or 6379
 
-            # Implement actual Redis connection test
-            import asyncio
+            # Test connection using the core redis function
+            success = await test_redis_connection(url=request.connection_url)
 
-            import redis.asyncio as redis
-
-            try:
-                # Create Redis client from connection URL
-                redis_client = redis.from_url(request.connection_url)
-
-                # Test connection with a simple ping
-                await asyncio.wait_for(redis_client.ping(), timeout=5.0)
-                await redis_client.aclose()
-
-                success = True
+            if success:
                 message = f"Successfully connected to Redis at {host}:{port}"
-
-            except asyncio.TimeoutError:
-                success = False
-                message = f"Connection timeout to Redis at {host}:{port}. Please check if Redis is running and accessible."
-            except redis.ConnectionError as conn_error:
-                success = False
-                message = f"Failed to connect to Redis at {host}:{port}: {str(conn_error)}"
-            except redis.AuthenticationError:
-                success = False
-                message = (
-                    f"Authentication failed for Redis at {host}:{port}. Please check credentials."
-                )
-            except Exception as test_error:
-                success = False
-                message = f"Connection test failed for Redis at {host}:{port}: {str(test_error)}"
+            else:
+                message = f"Failed to connect to Redis at {host}:{port}"
 
             result = {
                 "success": success,
@@ -388,6 +511,8 @@ async def test_connection_url(request: TestConnectionRequest):
 async def test_instance_connection(instance_id: str):
     """Test connection to a Redis instance."""
     try:
+        from redis_sre_agent.core.redis import test_redis_connection
+
         instances = await get_instances_from_redis()
 
         # Find the instance
@@ -402,62 +527,20 @@ async def test_instance_connection(instance_id: str):
                 status_code=404, detail=f"Instance with ID '{instance_id}' not found"
             )
 
-        # Parse connection URL to extract host and port
-        from urllib.parse import urlparse
+        # Test connection using the core redis function
+        success = await test_redis_connection(url=target_instance.connection_url)
 
-        try:
-            parsed_url = urlparse(target_instance.connection_url)
-            host = parsed_url.hostname or "unknown"
-            port = parsed_url.port or 6379
+        if success:
+            message = f"Successfully connected to instance {target_instance.name}"
+        else:
+            message = f"Failed to connect to instance {target_instance.name}"
 
-            # Implement actual Redis connection test
-            import asyncio
-
-            import redis.asyncio as redis
-
-            try:
-                # Create Redis client from connection URL
-                redis_client = redis.from_url(target_instance.connection_url)
-
-                # Test connection with a simple ping
-                await asyncio.wait_for(redis_client.ping(), timeout=5.0)
-                await redis_client.aclose()
-
-                success = True
-                message = f"Successfully connected to Redis at {host}:{port}"
-
-            except asyncio.TimeoutError:
-                success = False
-                message = f"Connection timeout to Redis at {host}:{port}. Please check if Redis is running and accessible."
-            except redis.ConnectionError as conn_error:
-                success = False
-                message = f"Failed to connect to Redis at {host}:{port}: {str(conn_error)}"
-            except redis.AuthenticationError:
-                success = False
-                message = (
-                    f"Authentication failed for Redis at {host}:{port}. Please check credentials."
-                )
-            except Exception as test_error:
-                success = False
-                message = f"Connection test failed for Redis at {host}:{port}: {str(test_error)}"
-
-            result = {
-                "success": success,
-                "message": message,
-                "instance_id": instance_id,
-                "tested_at": datetime.now(timezone.utc).isoformat(),
-            }
-
-        except Exception as parse_error:
-            logger.error(
-                f"Failed to parse connection URL {target_instance.connection_url}: {parse_error}"
-            )
-            result = {
-                "success": False,
-                "message": f"Invalid connection URL format: {target_instance.connection_url}",
-                "instance_id": instance_id,
-                "tested_at": datetime.now(timezone.utc).isoformat(),
-            }
+        result = {
+            "success": success,
+            "message": message,
+            "instance_id": instance_id,
+            "tested_at": datetime.now(timezone.utc).isoformat(),
+        }
 
         logger.info(f"Connection test for {instance_id}: {'SUCCESS' if success else 'FAILED'}")
         return result

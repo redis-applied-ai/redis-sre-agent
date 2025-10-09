@@ -67,19 +67,25 @@ const Modal = ({
       />
 
       {/* Modal */}
-      <div className={`relative bg-white rounded-redis-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}>
+      <div
+        className={`relative rounded-redis-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}
+        style={{ backgroundColor: 'var(--card)', color: 'var(--card-foreground)' }}
+      >
         {/* Header */}
         {(title || showCloseButton) && (
-          <div className="flex items-center justify-between p-6 border-b border-redis-dusk-08">
+          <div className="flex items-center justify-between p-6 border-b" style={{ borderColor: 'var(--border)' }}>
             {title && (
-              <h2 className="text-redis-lg font-semibold text-redis-dusk-01">
+              <h2 className="text-redis-lg font-semibold" style={{ color: 'var(--foreground)' }}>
                 {title}
               </h2>
             )}
             {showCloseButton && (
               <button
                 onClick={onClose}
-                className="text-redis-dusk-04 hover:text-redis-dusk-01 transition-colors p-1"
+                className="transition-colors p-1"
+                style={{ color: 'var(--muted-foreground)' }}
+                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--foreground)'}
+                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--muted-foreground)'}
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -130,7 +136,7 @@ const ConfirmDialog = ({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm">
       <div className="space-y-4">
-        <p className="text-redis-sm text-redis-dusk-04">{message}</p>
+        <p className="text-redis-sm" style={{ color: 'var(--muted-foreground)' }}>{message}</p>
         <div className="flex gap-3 justify-end">
           <Button variant="outline" onClick={onClose}>
             {cancelText}
