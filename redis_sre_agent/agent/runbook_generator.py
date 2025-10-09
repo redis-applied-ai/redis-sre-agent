@@ -133,7 +133,7 @@ class RunbookGenerator:
         workflow = StateGraph(RunbookAgentState)
 
         # Add nodes
-        workflow.add_node("research", self._research_node)
+        workflow.add_node("research_phase", self._research_node)
         workflow.add_node("generate", self._generate_node)
         workflow.add_node("evaluate", self._evaluate_node)
         workflow.add_node("refine", self._refine_node)
@@ -142,8 +142,8 @@ class RunbookGenerator:
         workflow.add_node("complete", self._complete_node)
 
         # Add edges
-        workflow.set_entry_point("research")
-        workflow.add_edge("research", "generate")
+        workflow.set_entry_point("research_phase")
+        workflow.add_edge("research_phase", "generate")
         workflow.add_edge("generate", "evaluate")
         workflow.add_conditional_edges(
             "evaluate", self._should_refine, {"refine": "refine", "complete": "complete"}

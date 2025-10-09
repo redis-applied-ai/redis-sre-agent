@@ -15,7 +15,7 @@ class TestKnowledgeAgent:
 
         assert agent.llm is not None
         assert agent.knowledge_tools is not None
-        assert len(agent.knowledge_tools) == 4  # search, ingest, get_all, get_related
+        assert len(agent.knowledge_tools) == 2  # search, ingest
         assert agent.workflow is not None
 
     @pytest.mark.asyncio
@@ -28,4 +28,4 @@ class TestKnowledgeAgent:
         assert workflow is not None
 
         # Verify the agent has the expected tools
-        assert len(agent.knowledge_tools) == 4
+        assert len(agent.knowledge_tools) == 2

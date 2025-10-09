@@ -16,11 +16,61 @@ from langgraph.prebuilt import ToolNode
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.tasks import (
-    ingest_sre_document,
-    search_knowledge_base,
+    ingest_sre_document as _ingest_sre_document,
+)
+from redis_sre_agent.core.tasks import (
+    search_knowledge_base as _search_knowledge_base,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Wrapper functions to exclude retry parameter from tool schema
+async def search_knowledge_base(
+    query: str,
+    category: Optional[str] = None,
+    limit: int = 5,
+) -> Dict[str, Any]:
+    """Search the SRE knowledge base for relevant information.
+
+    Args:
+        query: Search query string
+        category: Optional category filter
+        limit: Maximum number of results to return
+
+    Returns:
+        Dictionary with search results
+    """
+    return await _search_knowledge_base(query=query, category=category, limit=limit)
+
+
+async def ingest_sre_document(
+    title: str,
+    content: str,
+    source: str,
+    category: str = "general",
+    severity: str = "info",
+) -> Dict[str, Any]:
+    """Ingest a document into the SRE knowledge base.
+
+    Args:
+        title: Document title
+        content: Document content
+        source: Source of the document
+        category: Document category
+        severity: Document severity level
+
+    Returns:
+        Dictionary with ingestion result
+    """
+    return await _ingest_sre_document(
+        title=title,
+        content=content,
+        source=source,
+        category=category,
+        severity=severity,
+    )
+
 
 # Knowledge-focused system prompt
 KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Engineering) Knowledge Assistant. Your primary role is to provide expert guidance on SRE practices, troubleshooting methodologies, and general system reliability principles.
