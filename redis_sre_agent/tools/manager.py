@@ -102,8 +102,8 @@ class ToolManager:
 
             logger.info(f"Loaded provider {provider.provider_name} with {len(tool_schemas)} tools")
 
-        except Exception as e:
-            logger.error(f"Failed to load provider {provider_path}: {e}")
+        except Exception:
+            logger.exception(f"Failed to load provider {provider_path}")
             # Don't fail entire manager if one provider fails
 
     @classmethod

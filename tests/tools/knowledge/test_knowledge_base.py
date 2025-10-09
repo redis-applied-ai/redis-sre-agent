@@ -92,7 +92,7 @@ async def test_knowledge_provider_resolve_unknown_tool():
     """Test that resolve_tool_call raises error for unknown tools."""
     provider = KnowledgeBaseToolProvider()
 
-    with pytest.raises(ValueError, match="Unknown tool"):
+    with pytest.raises(ValueError, match="Unknown operation"):
         await provider.resolve_tool_call("unknown_tool", {})
 
 

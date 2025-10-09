@@ -6,7 +6,7 @@ the settings it needs (API keys, URLs, etc.).
 
 from typing import Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, SecretStr, validator
 
 
 class PrometheusToolProviderSettings(BaseModel):
@@ -27,7 +27,7 @@ class PrometheusToolProviderSettings(BaseModel):
 class GitHubToolProviderSettings(BaseModel):
     """Configuration for GitHub tool provider."""
 
-    token: str = Field(..., description="GitHub personal access token")
+    token: SecretStr = Field(..., description="GitHub personal access token")
     organization: Optional[str] = Field(default=None)
     api_url: str = Field(default="https://api.github.com")
 
@@ -43,8 +43,8 @@ class CloudWatchToolProviderSettings(BaseModel):
 
     region: str = Field(..., description="AWS region (e.g., 'us-east-1')")
     log_group_prefix: Optional[str] = None
-    access_key_id: Optional[str] = None
-    secret_access_key: Optional[str] = None
+    access_key_id: Optional[SecretStr] = None
+    secret_access_key: Optional[SecretStr] = None
 
 
 class RedisEnterpriseToolProviderSettings(BaseModel):
@@ -53,7 +53,7 @@ class RedisEnterpriseToolProviderSettings(BaseModel):
     container_name: Optional[str] = Field(default="redis-enterprise-node1")
     api_url: Optional[str] = None
     api_username: Optional[str] = None
-    api_password: Optional[str] = None
+    api_password: Optional[SecretStr] = None
 
     @validator("api_url")
     def validate_api_url(cls, v):  # noqa: N805

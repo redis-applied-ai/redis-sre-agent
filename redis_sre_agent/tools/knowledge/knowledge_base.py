@@ -127,13 +127,25 @@ class KnowledgeBaseToolProvider(ToolProvider):
         ]
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Execute a knowledge base tool call."""
-        if "search" in tool_name:
+        """Execute a knowledge base tool call.
+
+        The tool_name includes the provider name and instance hash that we created,
+        so we just need to match the operation suffix.
+        """
+        # Remove the provider prefix and hash to get the operation name
+        # Format: knowledge_{hash}_search -> search
+        parts = tool_name.split("_")
+        if len(parts) >= 3:
+            operation = "_".join(parts[2:])  # Everything after provider_hash
+        else:
+            operation = tool_name
+
+        if operation == "search":
             return await self.search(**args)
-        elif "ingest" in tool_name:
+        elif operation == "ingest":
             return await self.ingest(**args)
         else:
-            raise ValueError(f"Unknown tool: {tool_name}")
+            raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
     async def search(
         self, query: str, category: Optional[str] = None, limit: int = 5
