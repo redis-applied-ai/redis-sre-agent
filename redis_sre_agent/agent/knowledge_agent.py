@@ -18,18 +18,15 @@ from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
-)
-from redis_sre_agent.core.tasks import (
-    ingest_sre_document as _ingest_sre_document,
-)
-from redis_sre_agent.core.tasks import (
-    search_knowledge_base as _search_knowledge_base,
+    ingest_sre_document_helper,
+    search_knowledge_base_helper,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# Wrapper functions to exclude retry parameter from tool schema
+# Tool wrappers with LLM-friendly docstrings
+# These call the helpers directly (not the tasks) to avoid retry parameter issues
 async def search_knowledge_base(
     query: str,
     category: Optional[str] = None,
@@ -37,15 +34,19 @@ async def search_knowledge_base(
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base for relevant information.
 
+    Use this tool to find solutions to problems, understand Redis features, or get
+    guidance on SRE best practices. The knowledge base contains runbooks, Redis
+    documentation, troubleshooting guides, and SRE procedures.
+
     Args:
-        query: Search query string
-        category: Optional category filter
-        limit: Maximum number of results to return
+        query: Search query string describing what you're looking for
+        category: Optional category filter (incident, maintenance, monitoring, etc.)
+        limit: Maximum number of results to return (default: 5)
 
     Returns:
-        Dictionary with search results
+        Dictionary with search results including titles, content snippets, and sources
     """
-    return await _search_knowledge_base(query=query, category=category, limit=limit)
+    return await search_knowledge_base_helper(query=query, category=category, limit=limit)
 
 
 async def ingest_sre_document(
@@ -57,17 +58,20 @@ async def ingest_sre_document(
 ) -> Dict[str, Any]:
     """Ingest a document into the SRE knowledge base.
 
+    Use this tool to add new runbooks, documentation, or troubleshooting guides
+    to the knowledge base so they can be searched and referenced later.
+
     Args:
-        title: Document title
-        content: Document content
-        source: Source of the document
-        category: Document category
-        severity: Document severity level
+        title: Document title (should be descriptive and searchable)
+        content: Full document content
+        source: Source of the document (e.g., "user-provided", "incident-123")
+        category: Document category (incident, runbook, monitoring, general, etc.)
+        severity: Document severity level (info, warning, critical)
 
     Returns:
-        Dictionary with ingestion result
+        Dictionary with ingestion result including document_id and status
     """
-    return await _ingest_sre_document(
+    return await ingest_sre_document_helper(
         title=title,
         content=content,
         source=source,

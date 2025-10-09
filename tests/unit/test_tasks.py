@@ -111,8 +111,14 @@ class TestSearchRunbookKnowledge:
         mock_search_index.query.return_value = mock_search_results
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await search_knowledge_base(
                 query="redis memory issues", category="monitoring", limit=3
@@ -136,8 +142,14 @@ class TestSearchRunbookKnowledge:
         mock_search_index.query.return_value = []
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await search_knowledge_base(query="general help", category=None)
 
@@ -150,7 +162,9 @@ class TestSearchRunbookKnowledge:
         """Test knowledge search with vectorizer failure."""
         mock_vectorizer.embed_many.side_effect = Exception("OpenAI API error")
 
-        with patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=mock_vectorizer
+        ):
             with pytest.raises(Exception, match="OpenAI API error"):
                 await search_knowledge_base("test query")
 
@@ -285,8 +299,14 @@ class TestIngestSREDocument:
         mock_search_index.load.return_value = None
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await ingest_sre_document(
                 title="Test Runbook",
@@ -319,12 +339,22 @@ class TestIngestSREDocument:
     @pytest.mark.asyncio
     async def test_ingest_document_with_defaults(self, mock_search_index, mock_vectorizer):
         """Test document ingestion with default values."""
-        mock_vectorizer.embed_many = AsyncMock(return_value=[[0.1] * 1536])
+        import numpy as np
+
+        mock_inner = Mock()
+        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
+        mock_vectorizer._inner = mock_inner
         mock_search_index.load.return_value = None
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await ingest_sre_document(
                 title="Default Doc",
@@ -346,7 +376,9 @@ class TestIngestSREDocument:
         mock_inner.embed.side_effect = Exception("Embedding failed")
         mock_vectorizer._inner = mock_inner
 
-        with patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=mock_vectorizer
+        ):
             with pytest.raises(Exception, match="Embedding failed"):
                 await ingest_sre_document(title="Test", content="Content", source="test.md")
 

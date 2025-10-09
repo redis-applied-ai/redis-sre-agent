@@ -1,11 +1,152 @@
-"""Helper functions for knowledge base operations."""
+"""Helper functions for knowledge base operations.
 
+These are the core implementation functions that do the actual work.
+They are called by:
+- Tasks (in core.tasks) for background execution via Docket
+- Tools (in agent.knowledge_agent) for LLM access with custom docstrings
+"""
+
+import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from redis_sre_agent.core.redis import get_knowledge_index
+from ulid import ULID
+
+from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.redis import get_knowledge_index, get_vectorizer
 
 logger = logging.getLogger(__name__)
+
+
+async def search_knowledge_base_helper(
+    query: str,
+    category: Optional[str] = None,
+    limit: int = 5,
+) -> Dict[str, Any]:
+    """Search the SRE knowledge base (core implementation).
+
+    This is the core helper function that performs the actual search.
+    Called by both the task (for background execution) and the tool (for LLM access).
+
+    Args:
+        query: Search query text
+        category: Optional category filter (incident, maintenance, monitoring, etc.)
+        limit: Maximum number of results
+
+    Returns:
+        Dictionary with search results including task_id, query, results, etc.
+    """
+    logger.info(f"Searching SRE knowledge: '{query}' in category '{category}'")
+
+    # Get vector search components
+    index = get_knowledge_index()
+    vectorizer = get_vectorizer()
+
+    # Create vector embedding for the query
+    query_vectors = await vectorizer.embed_many([query])
+    query_vector = query_vectors[0]
+
+    # Build vector query
+    from redisvl.query import VectorQuery
+
+    vector_query = VectorQuery(
+        vector=query_vector,
+        vector_field_name="vector",
+        return_fields=["title", "content", "source", "category", "severity"],
+        num_results=limit,
+    )
+
+    # Build search filters
+    if category:
+        vector_query.set_filter(f"@category:{{{category}}}")
+
+    # Perform vector search
+    async with index:
+        results = await index.query(vector_query)
+
+    search_result = {
+        "task_id": str(ULID()),
+        "query": query,
+        "category": category,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "results_count": len(results),
+        "results": [
+            {
+                "title": doc.get("title", ""),
+                "content": doc.get("content", "")[:500],  # Truncate for response
+                "source": doc.get("source", ""),
+                "score": doc.get("score", 0.0),
+            }
+            for doc in results
+        ],
+    }
+
+    logger.info(f"Knowledge search completed: {search_result['task_id']} ({len(results)} results)")
+    return search_result
+
+
+async def ingest_sre_document_helper(
+    title: str,
+    content: str,
+    source: str,
+    category: str = "general",
+    severity: str = "info",
+) -> Dict[str, Any]:
+    """Ingest a document into the SRE knowledge base (core implementation).
+
+    This is the core helper function that performs the actual ingestion.
+    Called by both the task (for background execution) and the tool (for LLM access).
+
+    Args:
+        title: Document title
+        content: Document content
+        source: Source system or file
+        category: Document category (incident, runbook, monitoring, etc.)
+        severity: Severity level (info, warning, critical)
+
+    Returns:
+        Dictionary with ingestion result including task_id, document_id, status, etc.
+    """
+    logger.info(f"Ingesting SRE document: {title} from {source}")
+
+    # Get components
+    index = get_knowledge_index()
+    vectorizer = get_vectorizer()
+
+    # Create document embedding (use as_buffer=True for Redis storage)
+    # Note: vectorizer.embed returns bytes when as_buffer=True
+    content_vector = await asyncio.to_thread(vectorizer._inner.embed, content, as_buffer=True)
+
+    # Prepare document data
+    doc_id = str(ULID())
+    doc_key = RedisKeys.knowledge_document(doc_id)
+    document = {
+        "id": doc_id,
+        "title": title,
+        "content": content,
+        "source": source,
+        "category": category,
+        "severity": severity,
+        "created_at": datetime.now(timezone.utc).timestamp(),
+        "vector": content_vector,
+    }
+
+    # Store in vector index
+    await index.load(data=[document], id_field="id", keys=[doc_key])
+
+    result = {
+        "task_id": str(ULID()),
+        "document_id": doc_id,
+        "title": title,
+        "source": source,
+        "category": category,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "ingested",
+    }
+
+    logger.info(f"Document ingested successfully: {doc_id}")
+    return result
 
 
 async def get_all_document_fragments(
