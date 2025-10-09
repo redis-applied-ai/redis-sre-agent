@@ -48,11 +48,10 @@ async def analyze_system_metrics(
     try:
         logger.info(f"Analyzing metrics: {metric_query} over {time_range}")
 
-        # Connect to Prometheus for real metrics
-        from ..tools.prometheus_client import get_prometheus_client
-
-        prometheus = get_prometheus_client()
-        metrics_data = await prometheus.query_range(query=metric_query, time_range=time_range)
+        # TODO: Prometheus integration will be added via ToolProvider
+        # For now, return a placeholder response
+        logger.warning("Prometheus integration not yet available - returning placeholder")
+        metrics_data = None
 
         # Analyze metrics for anomalies
         current_value = None

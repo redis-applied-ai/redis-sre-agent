@@ -58,7 +58,7 @@ def search(query: str, limit: int, category: str):
     """Search the knowledge base directly."""
 
     async def _search():
-        from redis_sre_agent.tools.sre_functions import search_knowledge_base
+        from redis_sre_agent.core.tasks import search_knowledge_base
 
         click.echo(f"🔍 Searching knowledge base for: {query}")
         if category:
@@ -101,7 +101,7 @@ def status(redis_url: str):
     """Show system status."""
 
     async def _status():
-        from redis_sre_agent.tools.sre_functions import check_service_health
+        from redis_sre_agent.core.tasks import check_service_health
 
         if not redis_url:
             click.echo("❌ Error: --redis-url is required for status checks")

@@ -15,9 +15,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.tools.sre_functions import (
-    get_all_document_fragments,
-    get_related_document_fragments,
+from redis_sre_agent.core.tasks import (
     ingest_sre_document,
     search_knowledge_base,
 )
@@ -86,8 +84,6 @@ class KnowledgeOnlyAgent:
         self.knowledge_tools = [
             search_knowledge_base,
             ingest_sre_document,
-            get_all_document_fragments,
-            get_related_document_fragments,
         ]
 
         # Bind tools to LLM

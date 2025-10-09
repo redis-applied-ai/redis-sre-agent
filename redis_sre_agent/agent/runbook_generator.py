@@ -15,7 +15,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.tools.sre_functions import search_knowledge_base
+from redis_sre_agent.core.tasks import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 
