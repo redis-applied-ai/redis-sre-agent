@@ -189,14 +189,10 @@ class TestInstancesAPI:
         """Test successful connection test."""
         with (
             patch("redis_sre_agent.api.instances.get_instances_from_redis") as mock_get,
-            patch("redis.asyncio.from_url") as mock_redis,
+            patch("redis_sre_agent.core.redis.test_redis_connection") as mock_test,
         ):
             mock_get.return_value = [sample_instance]
-
-            # Mock Redis client
-            mock_client = AsyncMock()
-            mock_client.ping.return_value = True
-            mock_redis.return_value = mock_client
+            mock_test.return_value = True
 
             response = client.post("/api/v1/instances/test-instance-123/test-connection")
 
