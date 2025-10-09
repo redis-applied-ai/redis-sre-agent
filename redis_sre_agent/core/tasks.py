@@ -1,6 +1,5 @@
 """Docket task definitions for SRE operations."""
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -10,10 +9,12 @@ from ulid import ULID
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.knowledge_helpers import (
+    ingest_sre_document_helper,
+    search_knowledge_base_helper,
+)
 from redis_sre_agent.core.redis import (
-    get_knowledge_index,
     get_redis_client,
-    get_vectorizer,
 )
 from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
 
@@ -29,88 +30,9 @@ def sre_task(func):
     return func
 
 
-@sre_task
-async def analyze_system_metrics(
-    metric_query: str,
-    time_range: str = "1h",
-    threshold: Optional[float] = None,
-    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
-) -> Dict[str, Any]:
-    """
-    Analyze system metrics and detect anomalies.
-
-    Args:
-        metric_query: Prometheus-style metric query
-        time_range: Time range for analysis (1h, 6h, 1d, etc.)
-        threshold: Alert threshold value
-        retry: Retry configuration
-    """
-    try:
-        logger.info(f"Analyzing metrics: {metric_query} over {time_range}")
-
-        # Connect to Prometheus for real metrics
-        from ..tools.prometheus_client import get_prometheus_client
-
-        prometheus = get_prometheus_client()
-        metrics_data = await prometheus.query_range(query=metric_query, time_range=time_range)
-
-        # Analyze metrics for anomalies
-        current_value = None
-        anomalies_detected = False
-        threshold_breached = False
-
-        if metrics_data and "values" in metrics_data:
-            values = [float(v[1]) for v in metrics_data["values"] if v[1] is not None]
-            if values:
-                current_value = values[-1]  # Latest value
-
-                # Check threshold if provided
-                if threshold is not None:
-                    threshold_breached = current_value > threshold
-
-                # Simple anomaly detection (check if current value is >2 std devs from mean)
-                if len(values) > 5:
-                    import statistics
-
-                    mean_val = statistics.mean(values[:-1])  # Exclude current value
-                    try:
-                        std_dev = statistics.stdev(values[:-1])
-                        if abs(current_value - mean_val) > 2 * std_dev:
-                            anomalies_detected = True
-                    except statistics.StatisticsError:
-                        pass  # Not enough data for stdev
-
-        result = {
-            "task_id": str(ULID()),
-            "metric_query": metric_query,
-            "time_range": time_range,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": "analyzed",
-            "findings": {
-                "anomalies_detected": anomalies_detected,
-                "current_value": current_value,
-                "threshold_breached": threshold_breached,
-                "data_points": len(metrics_data.get("values", [])) if metrics_data else 0,
-                "metrics_source": "prometheus",
-            },
-            "raw_metrics": metrics_data,
-        }
-
-        # Store result in Redis for retrieval (serialize to a single field to avoid
-        # passing complex types directly to HSET)
-        import json
-
-        client = get_redis_client()
-        result_key = RedisKeys.metrics_result(result["task_id"])
-        await client.hset(result_key, mapping={"data": json.dumps(result)})
-        await client.expire(result_key, 3600)  # 1 hour TTL
-
-        logger.info(f"Metrics analysis completed: {result['task_id']}")
-        return result
-
-    except Exception as e:
-        logger.error(f"Metrics analysis failed (attempt {retry.attempt}): {e}")
-        raise
+# NOTE: analyze_system_metrics was removed as it was never actually provided
+# as a tool to the LLM. Metrics/diagnostics will be implemented via the
+# ToolProvider system in a future PR.
 
 
 @sre_task
@@ -121,65 +43,22 @@ async def search_knowledge_base(
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
     """
-    Search SRE knowledge base and runbooks.
+    Search SRE knowledge base and runbooks (background task wrapper).
+
+    This is a Docket task wrapper around the core helper function.
+    It adds retry logic and task tracking for background execution.
 
     Args:
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
         limit: Maximum number of results
         retry: Retry configuration
+
+    Returns:
+        Dictionary with search results
     """
     try:
-        logger.info(f"Searching SRE knowledge: '{query}' in category '{category}'")
-
-        # Get vector search components
-        index = get_knowledge_index()
-        vectorizer = get_vectorizer()
-
-        # Create vector embedding for the query
-        query_vectors = await vectorizer.embed_many([query])
-        query_vector = query_vectors[0]
-
-        # Build vector query
-        from redisvl.query import VectorQuery
-
-        vector_query = VectorQuery(
-            vector=query_vector,
-            vector_field_name="vector",
-            return_fields=["title", "content", "source", "category", "severity"],
-            num_results=limit,
-        )
-
-        # Build search filters
-        if category:
-            vector_query.set_filter(f"@category:{{{category}}}")
-
-        # Perform vector search
-        async with index:
-            results = await index.query(vector_query)
-
-        search_result = {
-            "task_id": str(ULID()),
-            "query": query,
-            "category": category,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "results_count": len(results),
-            "results": [
-                {
-                    "title": doc.get("title", ""),
-                    "content": doc.get("content", "")[:500],  # Truncate for response
-                    "source": doc.get("source", ""),
-                    "score": doc.get("score", 0.0),
-                }
-                for doc in results
-            ],
-        }
-
-        logger.info(
-            f"Knowledge search completed: {search_result['task_id']} ({len(results)} results)"
-        )
-        return search_result
-
+        return await search_knowledge_base_helper(query=query, category=category, limit=limit)
     except Exception as e:
         logger.error(f"Knowledge search failed (attempt {retry.attempt}): {e}")
         raise
@@ -280,7 +159,10 @@ async def ingest_sre_document(
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
     """
-    Ingest a document into the SRE knowledge base.
+    Ingest a document into the SRE knowledge base (background task wrapper).
+
+    This is a Docket task wrapper around the core helper function.
+    It adds retry logic and task tracking for background execution.
 
     Args:
         title: Document title
@@ -289,48 +171,18 @@ async def ingest_sre_document(
         category: Document category (incident, runbook, monitoring, etc.)
         severity: Severity level (info, warning, critical)
         retry: Retry configuration
+
+    Returns:
+        Dictionary with ingestion result
     """
     try:
-        logger.info(f"Ingesting SRE document: {title} from {source}")
-
-        # Get components
-        index = get_knowledge_index()
-        vectorizer = get_vectorizer()
-
-        # Create document embedding (use as_buffer=True for Redis storage)
-        # Note: vectorizer.embed returns bytes when as_buffer=True
-        content_vector = await asyncio.to_thread(vectorizer._inner.embed, content, as_buffer=True)
-
-        # Prepare document data
-        doc_id = str(ULID())
-        doc_key = RedisKeys.knowledge_document(doc_id)
-        document = {
-            "id": doc_id,
-            "title": title,
-            "content": content,
-            "source": source,
-            "category": category,
-            "severity": severity,
-            "created_at": datetime.now(timezone.utc).timestamp(),
-            "vector": content_vector,
-        }
-
-        # Store in vector index
-        await index.load(data=[document], id_field="id", keys=[doc_key])
-
-        result = {
-            "task_id": str(ULID()),
-            "document_id": doc_id,
-            "title": title,
-            "source": source,
-            "category": category,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": "ingested",
-        }
-
-        logger.info(f"Document ingested successfully: {doc_id}")
-        return result
-
+        return await ingest_sre_document_helper(
+            title=title,
+            content=content,
+            source=source,
+            category=category,
+            severity=severity,
+        )
     except Exception as e:
         logger.error(f"Document ingestion failed (attempt {retry.attempt}): {e}")
         raise

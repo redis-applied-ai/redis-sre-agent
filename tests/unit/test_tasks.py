@@ -1,14 +1,11 @@
 """Unit tests for Docket task system and SRE tasks."""
 
-from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from docket import Retry
 
 from redis_sre_agent.core.tasks import (
     SRE_TASK_COLLECTION,
-    analyze_system_metrics,
     check_service_health,
     ingest_sre_document,
     register_sre_tasks,
@@ -22,11 +19,10 @@ class TestSRETaskCollection:
 
     def test_sre_task_collection_populated(self):
         """Test that SRE task collection contains expected tasks."""
-        assert len(SRE_TASK_COLLECTION) == 6
+        assert len(SRE_TASK_COLLECTION) == 5
 
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
-            "analyze_system_metrics",
             "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",
@@ -35,59 +31,6 @@ class TestSRETaskCollection:
 
         for expected_task in expected_tasks:
             assert expected_task in task_names
-
-
-class TestAnalyzeSystemMetrics:
-    """Test analyze_system_metrics task."""
-
-    @pytest.mark.asyncio
-    async def test_analyze_metrics_success(self, mock_redis_client):
-        """Test successful metrics analysis."""
-        mock_redis_client.hset.return_value = 1
-        mock_redis_client.expire.return_value = True
-
-        with patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client):
-            result = await analyze_system_metrics(
-                metric_query="cpu_usage", time_range="1h", threshold=80.0
-            )
-
-        assert result["metric_query"] == "cpu_usage"
-        assert result["time_range"] == "1h"
-        assert result["status"] == "analyzed"
-        assert "task_id" in result
-        assert "timestamp" in result
-        assert "findings" in result
-
-        # Verify Redis operations
-        from redis_sre_agent.core.keys import RedisKeys
-
-        mock_redis_client.hset.assert_called_once()
-        mock_redis_client.expire.assert_called_once_with(
-            RedisKeys.metrics_result(result["task_id"]), 3600
-        )
-
-    @pytest.mark.asyncio
-    async def test_analyze_metrics_with_retry(self, mock_redis_client):
-        """Test metrics analysis with retry configuration."""
-        mock_redis_client.hset.return_value = 1
-        mock_redis_client.expire.return_value = True
-
-        retry_config = Retry(attempts=5, delay=timedelta(seconds=10))
-
-        with patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client):
-            result = await analyze_system_metrics(metric_query="memory_usage", retry=retry_config)
-
-        assert result["metric_query"] == "memory_usage"
-        assert result["status"] == "analyzed"
-
-    @pytest.mark.asyncio
-    async def test_analyze_metrics_redis_failure(self, mock_redis_client):
-        """Test metrics analysis with Redis failure."""
-        mock_redis_client.hset.side_effect = Exception("Redis connection failed")
-
-        with patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client):
-            with pytest.raises(Exception, match="Redis connection failed"):
-                await analyze_system_metrics("cpu_usage")
 
 
 class TestSearchRunbookKnowledge:
@@ -111,8 +54,14 @@ class TestSearchRunbookKnowledge:
         mock_search_index.query.return_value = mock_search_results
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await search_knowledge_base(
                 query="redis memory issues", category="monitoring", limit=3
@@ -136,8 +85,14 @@ class TestSearchRunbookKnowledge:
         mock_search_index.query.return_value = []
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await search_knowledge_base(query="general help", category=None)
 
@@ -150,7 +105,9 @@ class TestSearchRunbookKnowledge:
         """Test knowledge search with vectorizer failure."""
         mock_vectorizer.embed_many.side_effect = Exception("OpenAI API error")
 
-        with patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=mock_vectorizer
+        ):
             with pytest.raises(Exception, match="OpenAI API error"):
                 await search_knowledge_base("test query")
 
@@ -285,8 +242,14 @@ class TestIngestSREDocument:
         mock_search_index.load.return_value = None
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await ingest_sre_document(
                 title="Test Runbook",
@@ -319,12 +282,22 @@ class TestIngestSREDocument:
     @pytest.mark.asyncio
     async def test_ingest_document_with_defaults(self, mock_search_index, mock_vectorizer):
         """Test document ingestion with default values."""
-        mock_vectorizer.embed_many = AsyncMock(return_value=[[0.1] * 1536])
+        import numpy as np
+
+        mock_inner = Mock()
+        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
+        mock_vectorizer._inner = mock_inner
         mock_search_index.load.return_value = None
 
         with (
-            patch("redis_sre_agent.core.tasks.get_knowledge_index", return_value=mock_search_index),
-            patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                return_value=mock_search_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
         ):
             result = await ingest_sre_document(
                 title="Default Doc",
@@ -346,7 +319,9 @@ class TestIngestSREDocument:
         mock_inner.embed.side_effect = Exception("Embedding failed")
         mock_vectorizer._inner = mock_inner
 
-        with patch("redis_sre_agent.core.tasks.get_vectorizer", return_value=mock_vectorizer):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=mock_vectorizer
+        ):
             with pytest.raises(Exception, match="Embedding failed"):
                 await ingest_sre_document(title="Test", content="Content", source="test.md")
 

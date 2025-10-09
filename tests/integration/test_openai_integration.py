@@ -11,7 +11,7 @@ from redis_sre_agent.core.redis import (
     get_knowledge_index,
     get_vectorizer,
 )
-from redis_sre_agent.tools.sre_functions import (
+from redis_sre_agent.core.tasks import (
     ingest_sre_document,
     search_knowledge_base,
 )

@@ -19,9 +19,7 @@ from pydantic import BaseModel, Field
 
 from ..api.instances import get_instances_from_redis
 from ..core.config import settings
-from ..models.provider_config import DeploymentProvidersConfig
-from ..tools.deployment_providers import DeploymentProviders
-from ..tools.knowledge_tools import get_knowledge_tools
+from ..tools.manager import ToolManager
 
 logger = logging.getLogger(__name__)
 
@@ -254,47 +252,15 @@ class SRELangGraphAgent:
             openai_api_key=self.settings.openai_api_key,
         )
 
-        # Initialize DeploymentProviders from configuration
-        provider_config = DeploymentProvidersConfig.from_env()
-        self.deployment_providers = DeploymentProviders(provider_config)
-        logger.info(
-            f"Initialized deployment providers: {list(self.deployment_providers.provider_types.keys())}"
-        )
+        # Tools will be loaded per-query using ToolManager
+        # No tools bound at initialization - they're bound per conversation
+        self.llm_with_tools = self.llm  # Will be rebound with tools per query
 
-        # Get knowledge base tools
-        self.knowledge_tools = get_knowledge_tools()
-        logger.info(f"Loaded {len(self.knowledge_tools)} knowledge base tools")
-
-        # Start with just knowledge tools (instance-specific tools added per conversation)
-        self.current_tools = self.knowledge_tools.copy()
-
-        # Get tool schemas for LLM binding
-        tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
-
-        # Validate all tool names match OpenAI pattern before binding
-        import re
-
-        for i, schema in enumerate(tool_schemas):
-            tool_name = schema["function"]["name"]
-            if not re.match(r"^[a-zA-Z0-9_-]+$", tool_name):
-                logger.error(
-                    f"Tool {i} has invalid name '{tool_name}' - "
-                    f"does not match pattern ^[a-zA-Z0-9_-]+$"
-                )
-                raise ValueError(
-                    f"Tool name '{tool_name}' contains invalid characters. "
-                    f"Only alphanumeric, underscore, and hyphen are allowed."
-                )
-
-        # Bind tools to the LLM
-        self.llm_with_tools = self.llm.bind_tools(tool_schemas)
-
-        # Build the LangGraph workflow
-        self.workflow = self._build_workflow()
-        # Note: We'll create a new MemorySaver for each query to ensure proper isolation
+        # Workflow will be built per-query with the appropriate ToolManager
+        # Note: We create a new MemorySaver for each query to ensure proper isolation
         # This prevents cross-contamination between different tasks/threads
 
-        logger.info(f"SRE LangGraph agent initialized with {len(self.current_tools)} tools")
+        logger.info("SRE LangGraph agent initialized (tools loaded per-query)")
 
     async def _resolve_instance_redis_url(self, instance_id: str) -> Optional[str]:
         """Resolve instance ID to Redis URL using connection_url from instance data.
@@ -321,8 +287,12 @@ class SRELangGraphAgent:
             )
             return None
 
-    def _build_workflow(self) -> StateGraph:
-        """Build the LangGraph workflow for SRE operations."""
+    def _build_workflow(self, tool_mgr: ToolManager) -> StateGraph:
+        """Build the LangGraph workflow for SRE operations.
+
+        Args:
+            tool_mgr: ToolManager instance for resolving tool calls
+        """
 
         async def agent_node(state: AgentState) -> AgentState:
             """Main agent node that processes user input and decides on tool calls."""
@@ -396,36 +366,27 @@ class SRELangGraphAgent:
                     await self.progress_callback(reflection, "agent_reflection")
 
                 try:
-                    # Find the tool in current_tools
-                    tool = next((t for t in self.current_tools if t.name == tool_name), None)
+                    # Use ToolManager to resolve and execute the tool call
+                    logger.info(f"Executing tool {tool_name} with args: {tool_args}")
 
-                    if tool:
-                        logger.info(f"Executing tool {tool_name} with args: {tool_args}")
+                    result = await tool_mgr.resolve_tool_call(tool_name, tool_args)
 
-                        # Call the tool function
-                        result = await tool.function(**tool_args)
+                    # Send completion reflection
+                    if self.progress_callback:
+                        completion_reflection = self._generate_completion_reflection(
+                            tool_name, result
+                        )
+                        if completion_reflection:  # Only send if not empty
+                            await self.progress_callback(completion_reflection, "agent_reflection")
 
-                        # Send completion reflection
-                        if self.progress_callback:
-                            completion_reflection = self._generate_completion_reflection(
-                                tool_name, result
-                            )
-                            if completion_reflection:  # Only send if not empty
-                                await self.progress_callback(
-                                    completion_reflection, "agent_reflection"
-                                )
-
-                        # Format result as a readable string
-                        if isinstance(result, dict):
-                            formatted_result = json.dumps(result, indent=2, default=str)
-                            tool_content = f"Tool '{tool_name}' executed successfully.\n\nResult:\n{formatted_result}"
-                        else:
-                            tool_content = (
-                                f"Tool '{tool_name}' executed successfully.\nResult: {result}"
-                            )
+                    # Format result as a readable string
+                    if isinstance(result, dict):
+                        formatted_result = json.dumps(result, indent=2, default=str)
+                        tool_content = f"Tool '{tool_name}' executed successfully.\n\nResult:\n{formatted_result}"
                     else:
-                        tool_content = f"Error: Unknown SRE tool '{tool_name}'"
-                        logger.error(f"Unknown tool requested: {tool_name}")
+                        tool_content = (
+                            f"Tool '{tool_name}' executed successfully.\nResult: {result}"
+                        )
 
                 except Exception as e:
                     tool_content = f"Error executing tool '{tool_name}': {str(e)}"
@@ -632,8 +593,6 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                 return "📚 Finding connection troubleshooting guidance..."
             else:
                 return f"📚 Searching knowledge base for: {query}"
-        elif tool_name == "analyze_system_metrics":
-            return "📊 Examining system metrics and performance trends..."
         elif tool_name == "check_service_health":
             return "🏥 Performing service health checks..."
         else:
@@ -687,9 +646,6 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                     return f"🔍 No matching log entries found in {containers_searched} containers"
             else:
                 return "🔍 Docker log search completed"
-
-        elif tool_name == "analyze_system_metrics":
-            return "📊 System metrics analysis complete"
         else:
             return f"✅ {tool_name.replace('_', ' ')} completed"
 
@@ -721,8 +677,10 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         if progress_callback:
             self.progress_callback = progress_callback
 
-        # Enhance query with instance context if provided
+        # Determine target Redis instance from context
+        target_instance = None
         enhanced_query = query
+
         if context and context.get("instance_id"):
             instance_id = context["instance_id"]
             logger.info(f"Processing query with Redis instance context: {instance_id}")
@@ -730,7 +688,6 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
             # Resolve instance ID to get actual connection details
             try:
                 instances = await get_instances_from_redis()
-                target_instance = None
                 for instance in instances:
                     if instance.id == instance_id:
                         target_instance = instance
@@ -738,48 +695,8 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
 
                 if target_instance:
                     logger.info(
-                        f"Creating instance-specific tools for: {target_instance.name} ({target_instance.connection_url})"
+                        f"Found target instance: {target_instance.name} ({target_instance.connection_url})"
                     )
-
-                    # Create tools for this specific instance using DeploymentProviders
-                    instance_tools = self.deployment_providers.create_tools_for_instance(
-                        target_instance
-                    )
-
-                    # Combine knowledge tools + instance-specific tools
-                    self.current_tools = self.knowledge_tools + instance_tools
-
-                    # Get tool schemas and rebind LLM
-                    tool_schemas = [tool.to_openai_schema() for tool in self.current_tools]
-
-                    # Validate all tool names match OpenAI pattern before binding
-                    import re
-
-                    for i, schema in enumerate(tool_schemas):
-                        tool_name = schema["function"]["name"]
-                        if not re.match(r"^[a-zA-Z0-9_-]+$", tool_name):
-                            logger.error(
-                                f"Tool {i} has invalid name '{tool_name}' - "
-                                f"does not match pattern ^[a-zA-Z0-9_-]+$"
-                            )
-                            raise ValueError(
-                                f"Tool name '{tool_name}' contains invalid characters. "
-                                f"Only alphanumeric, underscore, and hyphen are allowed."
-                            )
-
-                    self.llm_with_tools = self.llm.bind_tools(tool_schemas)
-
-                    logger.info(
-                        f"Tools rebound: {len(instance_tools)} instance-specific, "
-                        f"{len(self.knowledge_tools)} knowledge, "
-                        f"{len(self.current_tools)} total"
-                    )
-
-                    # CRITICAL: Rebuild workflow with new tools
-                    # The workflow was built in __init__ with old tools
-                    # We need to rebuild it with the instance-bound tools
-                    logger.info("Rebuilding workflow with instance-bound tools")
-                    self.workflow = self._build_workflow()
 
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
@@ -888,27 +805,71 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
         if context and context.get("instance_id"):
             initial_state["instance_context"] = context
 
-        # Create MemorySaver for this query
-        # NOTE: RedisSaver doesn't support async (aget_tuple raises NotImplementedError)
-        # Conversation history is managed by our ThreadManager in Redis
-        # and passed via initial_state when needed
-        checkpointer = MemorySaver()
-        self.app = self.workflow.compile(checkpointer=checkpointer)
+        # Create ToolManager for this query with the target instance
+        async with ToolManager(redis_instance=target_instance) as tool_mgr:
+            # Get tools and bind to LLM
+            tools = tool_mgr.get_tools()
+            tool_schemas = [tool.to_openai_schema() for tool in tools]
 
-        # Configure thread for session persistence
-        thread_config = {"configurable": {"thread_id": session_id}}
+            logger.info(f"Loaded {len(tools)} tools for this query")
+            for tool in tools:
+                logger.debug(f"  - {tool.name}")
 
-        try:
-            # Run the workflow with isolated memory
-            final_state = await self.app.ainvoke(initial_state, config=thread_config)
+            # Rebind LLM with tools for this query
+            self.llm_with_tools = self.llm.bind_tools(tool_schemas)
 
-            # Extract the final response
-            messages = final_state["messages"]
-            if messages and isinstance(messages[-1], AIMessage):
-                response_content = messages[-1].content
-                logger.info(
-                    f"SRE agent completed processing with {final_state['iteration_count']} iterations"
-                )
+            # Rebuild workflow with the tool manager
+            self.workflow = self._build_workflow(tool_mgr)
+
+            # Create MemorySaver for this query
+            # NOTE: RedisSaver doesn't support async (aget_tuple raises NotImplementedError)
+            # Conversation history is managed by our ThreadManager in Redis
+            # and passed via initial_state when needed
+            checkpointer = MemorySaver()
+            self.app = self.workflow.compile(checkpointer=checkpointer)
+
+            # Configure thread for session persistence
+            thread_config = {"configurable": {"thread_id": session_id}}
+
+            try:
+                # Run the workflow with isolated memory
+                final_state = await self.app.ainvoke(initial_state, config=thread_config)
+
+                # Extract the final response
+                messages = final_state["messages"]
+                if messages and isinstance(messages[-1], AIMessage):
+                    response_content = messages[-1].content
+                    logger.info(
+                        f"SRE agent completed processing with {final_state['iteration_count']} iterations"
+                    )
+
+                    class AgentResponseStr(str):
+                        def get(self, key: str, default: Any = None):
+                            if key == "content":
+                                return str(self)
+                            return default
+
+                    return AgentResponseStr(response_content)
+                else:
+                    logger.warning("No valid response generated by SRE agent")
+
+                    class AgentResponseStr(str):
+                        def get(self, key: str, default: Any = None):
+                            if key == "content":
+                                return str(self)
+                            return default
+
+                    return AgentResponseStr(
+                        "I apologize, but I couldn't generate a proper response. Please try rephrasing your question."
+                    )
+
+            except Exception as e:
+                logger.error(f"Error processing SRE query: {str(e)}")
+                logger.error(f"Error type: {type(e)}")
+                logger.error(f"Error args: {e.args}")
+                import traceback
+
+                logger.error(f"Traceback: {traceback.format_exc()}")
 
                 class AgentResponseStr(str):
                     def get(self, key: str, default: Any = None):
@@ -916,38 +877,10 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
                             return str(self)
                         return default
 
-                return AgentResponseStr(response_content)
-            else:
-                logger.warning("No valid response generated by SRE agent")
-
-                class AgentResponseStr(str):
-                    def get(self, key: str, default: Any = None):
-                        if key == "content":
-                            return str(self)
-                        return default
-
+                error_msg = str(e) if str(e) else f"{type(e).__name__}: {e.args}"
                 return AgentResponseStr(
-                    "I apologize, but I couldn't generate a proper response. Please try rephrasing your question."
+                    f"I encountered an error while processing your request: {error_msg}. Please try again or contact support if the issue persists."
                 )
-
-        except Exception as e:
-            logger.error(f"Error processing SRE query: {str(e)}")
-            logger.error(f"Error type: {type(e)}")
-            logger.error(f"Error args: {e.args}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-
-            class AgentResponseStr(str):
-                def get(self, key: str, default: Any = None):
-                    if key == "content":
-                        return str(self)
-                    return default
-
-            error_msg = str(e) if str(e) else f"{type(e).__name__}: {e.args}"
-            return AgentResponseStr(
-                f"I encountered an error while processing your request: {error_msg}. Please try again or contact support if the issue persists."
-            )
 
     async def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
         """Get conversation history for a session.
@@ -1042,8 +975,8 @@ SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful dat
             if urls_in_response:
                 logger.info(f"Found {len(urls_in_response)} URLs to validate: {urls_in_response}")
 
-                # Import validation function from tools
-                from ..tools.sre_functions import validate_url
+                # Import validation function from core tasks
+                from ..core.tasks import validate_url
 
                 # Validate each URL (with shorter timeout for fact-checking)
                 for url in urls_in_response:

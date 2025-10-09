@@ -29,15 +29,13 @@ def mock_agent():
 
     # Mock current_tools as a list of tool objects
     mock_tool_1 = MagicMock()
-    mock_tool_1.name = "analyze_system_metrics"
+    mock_tool_1.name = "search_knowledge_base"
     mock_tool_2 = MagicMock()
-    mock_tool_2.name = "search_knowledge_base"
+    mock_tool_2.name = "check_service_health"
     mock_tool_3 = MagicMock()
-    mock_tool_3.name = "check_service_health"
-    mock_tool_4 = MagicMock()
-    mock_tool_4.name = "ingest_sre_document"
+    mock_tool_3.name = "ingest_sre_document"
 
-    mock_agent.current_tools = [mock_tool_1, mock_tool_2, mock_tool_3, mock_tool_4]
+    mock_agent.current_tools = [mock_tool_1, mock_tool_2, mock_tool_3]
 
     return mock_agent
 
@@ -303,9 +301,8 @@ class TestAgentStatusEndpoint:
 
         assert data["agent_available"] is True
         assert data["workers_available"] is True
-        assert data["tools_registered"] == 4
+        assert data["tools_registered"] == 3
         assert set(data["tool_names"]) == {
-            "analyze_system_metrics",
             "search_knowledge_base",
             "check_service_health",
             "ingest_sre_document",

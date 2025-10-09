@@ -1,10 +1,11 @@
 """Tool definition model for LLM-callable functions.
 
 This module defines the structure of tools that are exposed to the LLM.
-Each tool has a name, description, parameters schema, and an executable function.
+Each tool has a name, description, and parameters schema. Execution happens
+via ToolManager routing to the appropriate ToolProvider.
 """
 
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 from pydantic import BaseModel, Field
 
@@ -12,18 +13,35 @@ from pydantic import BaseModel, Field
 class ToolDefinition(BaseModel):
     """Definition of a tool that the LLM can call.
 
-    Tools are discrete, named functions with verbose descriptions that provide
-    context to the LLM about when and how to use them.
+    This is a pure schema object - it describes the tool to the LLM but
+    does not contain the execution logic. Execution happens via ToolManager
+    routing the tool call to the appropriate ToolProvider.
+
+    Example:
+        tool = ToolDefinition(
+            name="prometheus_a3f2b1_query_metrics",
+            description="Query Prometheus metrics for a specific metric name",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "metric_name": {
+                        "type": "string",
+                        "description": "Name of the metric to query"
+                    }
+                },
+                "required": ["metric_name"]
+            }
+        )
     """
 
     name: str = Field(
         ...,
-        description="Unique tool name. Should be descriptive and include instance identifier if scoped.",
+        description="Unique tool name with provider and instance hash",
     )
 
     description: str = Field(
         ...,
-        description="Verbose description with instructions for the LLM on when and how to use this tool.",
+        description="Verbose description for the LLM on when and how to use this tool",
     )
 
     parameters: Dict[str, Any] = Field(
@@ -31,15 +49,10 @@ class ToolDefinition(BaseModel):
         description="JSON schema for tool parameters (OpenAI function calling format)",
     )
 
-    function: Callable = Field(
-        ...,
-        description="The actual async function to call when the tool is invoked",
-    )
-
     class Config:
         """Pydantic configuration."""
 
-        arbitrary_types_allowed = True  # Allow Callable type
+        extra = "forbid"
 
     def to_openai_schema(self) -> Dict[str, Any]:
         """Convert to OpenAI function calling schema.
@@ -55,17 +68,6 @@ class ToolDefinition(BaseModel):
                 "parameters": self.parameters,
             },
         }
-
-    async def call(self, **kwargs) -> Any:
-        """Call the tool function with provided arguments.
-
-        Args:
-            **kwargs: Arguments to pass to the function
-
-        Returns:
-            Result from the function
-        """
-        return await self.function(**kwargs)
 
     def __str__(self) -> str:
         """String representation."""

@@ -1,6 +1,6 @@
 """Configuration management using Pydantic Settings."""
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     # Security
     api_key: Optional[str] = Field(default=None, description="API authentication key")
     allowed_hosts: list[str] = Field(default=["*"], description="Allowed hosts for CORS")
+
+    # Tool Provider Configuration
+    tool_providers: List[str] = Field(
+        default_factory=list,
+        description="Enabled tool providers (fully qualified class paths). "
+        "Example: redis_sre_agent.tools.metrics.prometheus.PrometheusToolProvider",
+    )
 
 
 # Global settings instance

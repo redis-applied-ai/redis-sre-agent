@@ -183,22 +183,6 @@ class TestTaskIntegration:
         await register_sre_tasks()
 
     @pytest.mark.asyncio
-    async def test_metrics_analysis_real(self, redis_container):
-        """Test metrics analysis task with real Redis."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
-
-        from redis_sre_agent.core.tasks import analyze_system_metrics
-
-        result = await analyze_system_metrics(
-            metric_query="cpu_usage{instance='server1'}", time_range="1h", threshold=80.0
-        )
-
-        assert result["metric_query"] == "cpu_usage{instance='server1'}"
-        assert result["status"] == "analyzed"
-        assert "task_id" in result
-
-    @pytest.mark.asyncio
     async def test_health_check_real(self, redis_container):
         """Test health check task with real Redis."""
         if not redis_container:
