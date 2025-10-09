@@ -30,12 +30,11 @@ async def run_retrieval_evaluation():
 
     # Check Redis connection
     try:
-        from redis_sre_agent.core.redis import test_redis_connection
+        from redis_sre_agent.core.redis import get_redis_client
 
-        redis_ok = await test_redis_connection()
-        if not redis_ok:
-            print("❌ Redis connection failed. Please ensure Redis is running.")
-            return
+        client = get_redis_client()
+        await client.ping()
+        print("✅ Redis connection successful.")
     except Exception as e:
         print(f"❌ Redis connection error: {e}")
         return

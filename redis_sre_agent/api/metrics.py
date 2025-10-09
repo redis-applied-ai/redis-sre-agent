@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.core.redis import get_redis_client, test_redis_connection
+from redis_sre_agent.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +51,10 @@ async def get_application_metrics() -> Dict[str, Any]:
 
     # Redis connection status
     try:
-        redis_ok = await test_redis_connection()
+        client = get_redis_client()
+        await client.ping()
         metrics["sre_agent_redis_connection_status"] = {
-            "value": 1 if redis_ok else 0,
+            "value": 1,
             "help": "Redis connection status (1=connected, 0=disconnected)",
         }
     except Exception as e:

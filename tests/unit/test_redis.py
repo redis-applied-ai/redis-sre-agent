@@ -12,7 +12,6 @@ from redis_sre_agent.core.redis import (
     get_redis_client,
     get_vectorizer,
     initialize_redis_infrastructure,
-    test_redis_connection,
     test_vector_search,
 )
 
@@ -105,28 +104,6 @@ class TestRedisInfrastructure:
         assert index1 is index2
 
     @pytest.mark.asyncio
-    async def test_redis_connection_success(self, mock_redis_client):
-        """Test successful Redis connection."""
-        mock_redis_client.ping.return_value = True
-
-        with patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis_client):
-            result = await test_redis_connection()
-
-        assert result is True
-        mock_redis_client.ping.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_redis_connection_failure(self, mock_redis_client):
-        """Test Redis connection failure."""
-        mock_redis_client.ping.side_effect = Exception("Connection failed")
-
-        with patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis_client):
-            result = await test_redis_connection()
-
-        assert result is False
-        mock_redis_client.ping.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_vector_search_success(self, mock_search_index):
         """Test successful vector search test."""
         mock_search_index.exists.return_value = True
@@ -198,10 +175,12 @@ class TestRedisInfrastructure:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_initialize_redis_infrastructure_success(self):
+    async def test_initialize_redis_infrastructure_success(self, mock_redis_client):
         """Test successful infrastructure initialization."""
+        mock_redis_client.ping.return_value = True
+
         with (
-            patch("redis_sre_agent.core.redis.test_redis_connection", return_value=True),
+            patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis_client),
             patch("redis_sre_agent.core.redis.get_vectorizer", return_value=Mock()),
             patch("redis_sre_agent.core.redis.create_indices", return_value=True),
             patch("redis_sre_agent.core.redis.test_vector_search", return_value=True),
@@ -219,10 +198,12 @@ class TestRedisInfrastructure:
         assert result == expected_status
 
     @pytest.mark.asyncio
-    async def test_initialize_redis_infrastructure_redis_failure(self):
+    async def test_initialize_redis_infrastructure_redis_failure(self, mock_redis_client):
         """Test infrastructure initialization with Redis failure."""
+        mock_redis_client.ping.side_effect = Exception("Connection failed")
+
         with (
-            patch("redis_sre_agent.core.redis.test_redis_connection", return_value=False),
+            patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis_client),
             patch("redis_sre_agent.core.redis.get_vectorizer", return_value=Mock()),
         ):
             result = await initialize_redis_infrastructure()
@@ -232,10 +213,12 @@ class TestRedisInfrastructure:
         assert result["vector_search"] == "unavailable"
 
     @pytest.mark.asyncio
-    async def test_initialize_redis_infrastructure_vectorizer_failure(self):
+    async def test_initialize_redis_infrastructure_vectorizer_failure(self, mock_redis_client):
         """Test infrastructure initialization with vectorizer failure."""
+        mock_redis_client.ping.return_value = True
+
         with (
-            patch("redis_sre_agent.core.redis.test_redis_connection", return_value=True),
+            patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis_client),
             patch(
                 "redis_sre_agent.core.redis.get_vectorizer", side_effect=Exception("API key error")
             ),

@@ -218,17 +218,6 @@ def get_schedules_index() -> AsyncSearchIndex:
     return AsyncSearchIndex.from_dict(SRE_SCHEDULES_SCHEMA, redis_url=settings.redis_url)
 
 
-async def test_redis_connection() -> bool:
-    """Test Redis connection health."""
-    try:
-        client = get_redis_client()
-        await client.ping()
-        return True
-    except Exception as e:
-        logger.error(f"Redis connection test failed: {e}")
-        return False
-
-
 async def test_vector_search() -> bool:
     """Test vector search index availability."""
     try:
@@ -274,8 +263,15 @@ async def initialize_redis_infrastructure() -> dict:
     status = {}
 
     # Test basic Redis connection
-    redis_ok = await test_redis_connection()
-    status["redis_connection"] = "available" if redis_ok else "unavailable"
+    try:
+        client = get_redis_client()
+        await client.ping()
+        redis_ok = True
+        status["redis_connection"] = "available"
+    except Exception as e:
+        logger.error(f"Redis connection test failed: {e}")
+        redis_ok = False
+        status["redis_connection"] = "unavailable"
 
     # Test vectorizer
     try:
