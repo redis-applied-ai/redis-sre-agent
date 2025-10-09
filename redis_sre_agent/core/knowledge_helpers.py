@@ -9,7 +9,7 @@ They are called by:
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ulid import ULID
 
@@ -92,6 +92,7 @@ async def ingest_sre_document_helper(
     source: str,
     category: str = "general",
     severity: str = "info",
+    product_labels: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Ingest a document into the SRE knowledge base (core implementation).
 
@@ -130,6 +131,7 @@ async def ingest_sre_document_helper(
         "severity": severity,
         "created_at": datetime.now(timezone.utc).timestamp(),
         "vector": content_vector,
+        "product_labels": product_labels or [],
     }
 
     # Store in vector index
@@ -186,6 +188,7 @@ async def get_all_document_fragments(
                 "document_hash",
                 "chunk_index",
                 "total_chunks",
+                "product_labels",
             ],
             num_results=1000,  # Set high limit to get all chunks
         )

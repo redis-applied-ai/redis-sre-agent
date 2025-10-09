@@ -156,6 +156,7 @@ async def ingest_sre_document(
     source: str,
     category: str = "general",
     severity: str = "info",
+    product_labels: Optional[List[str]] = None,
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
     """
@@ -170,6 +171,7 @@ async def ingest_sre_document(
         source: Source system or file
         category: Document category (incident, runbook, monitoring, etc.)
         severity: Severity level (info, warning, critical)
+        product_labels: Optional list of product labels
         retry: Retry configuration
 
     Returns:
@@ -182,6 +184,7 @@ async def ingest_sre_document(
             source=source,
             category=category,
             severity=severity,
+            product_labels=product_labels,
         )
     except Exception as e:
         logger.error(f"Document ingestion failed (attempt {retry.attempt}): {e}")
@@ -406,6 +409,99 @@ async def process_agent_turn(
         if not thread_state:
             raise ValueError(f"Thread {thread_id} not found")
 
+        # ============================================================================
+        # Instance ID Management Logic
+        # ============================================================================
+        # Determine the instance_id to use for this turn:
+        # 1. If client provides instance_id in context, use it and update thread
+        # 2. If no instance_id from client, check thread context for saved instance_id
+        # 3. If no instance_id anywhere, attempt to create one from user message
+        # 4. If still no instance_id, route to knowledge agent
+        # ============================================================================
+
+        instance_id_from_client = context.get("instance_id") if context else None
+        instance_id_from_thread = thread_state.context.get("instance_id")
+
+        # Determine which instance_id to use
+        active_instance_id = None
+
+        if instance_id_from_client:
+            # Client provided instance_id - use it and update thread
+            active_instance_id = instance_id_from_client
+            logger.info(
+                f"Using instance_id from client: {active_instance_id} (will update thread context)"
+            )
+
+            # Update thread context with new instance_id
+            await thread_manager.update_thread_context(
+                thread_id, {"instance_id": active_instance_id}, merge=True
+            )
+            await thread_manager.add_thread_update(
+                thread_id,
+                f"Using Redis instance: {active_instance_id}",
+                "instance_context",
+            )
+
+        elif instance_id_from_thread:
+            # No instance_id from client, but we have one saved in thread
+            active_instance_id = instance_id_from_thread
+            logger.info(f"Using instance_id from thread context: {active_instance_id}")
+            await thread_manager.add_thread_update(
+                thread_id,
+                f"Continuing with Redis instance: {active_instance_id}",
+                "instance_context",
+            )
+
+        else:
+            # No instance_id from client or thread - attempt to create one from message
+            logger.info("No instance_id found, attempting to extract from user message")
+
+            # Try to extract connection details from the message
+            from redis_sre_agent.agent.langgraph_agent import (
+                _extract_instance_details_from_message,
+            )
+            from redis_sre_agent.api.instances import create_instance_programmatically
+
+            instance_details = _extract_instance_details_from_message(message)
+
+            if instance_details:
+                # User provided connection details - create instance
+                try:
+                    logger.info("Creating instance from user-provided connection details")
+                    new_instance = await create_instance_programmatically(
+                        name=instance_details["name"],
+                        connection_url=instance_details["connection_url"],
+                        environment=instance_details["environment"],
+                        usage=instance_details["usage"],
+                        description=instance_details.get(
+                            "description", "Created by agent from user-provided details"
+                        ),
+                        created_by="agent",
+                        user_id=thread_state.metadata.user_id or "unknown",
+                    )
+
+                    active_instance_id = new_instance.id
+                    logger.info(f"Created new instance: {new_instance.name} ({active_instance_id})")
+
+                    # Save instance_id to thread context
+                    await thread_manager.update_thread_context(
+                        thread_id, {"instance_id": active_instance_id}, merge=True
+                    )
+                    await thread_manager.add_thread_update(
+                        thread_id,
+                        f"Created Redis instance: {new_instance.name} ({active_instance_id})",
+                        "instance_created",
+                    )
+
+                except Exception as e:
+                    logger.warning(f"Failed to create instance from user details: {e}")
+                    await thread_manager.add_thread_update(
+                        thread_id,
+                        f"Could not create instance from provided details: {str(e)}",
+                        "instance_error",
+                    )
+                    # Continue without instance_id - will route to knowledge agent
+
         # Route to appropriate agent based on query and context
         from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 
@@ -413,6 +509,10 @@ async def process_agent_turn(
         routing_context = thread_state.context.copy()
         if context:
             routing_context.update(context)
+
+        # Ensure active_instance_id is in routing context
+        if active_instance_id:
+            routing_context["instance_id"] = active_instance_id
 
         agent_type = route_to_appropriate_agent(
             query=message,

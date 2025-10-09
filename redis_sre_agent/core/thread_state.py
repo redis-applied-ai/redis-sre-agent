@@ -571,6 +571,74 @@ Subject:"""
             logger.error(f"Failed to set error for thread {thread_id}: {e}")
             return False
 
+    async def update_thread_context(
+        self, thread_id: str, context_updates: Dict[str, Any], merge: bool = True
+    ) -> bool:
+        """Update thread context with new values.
+
+        Args:
+            thread_id: Thread identifier
+            context_updates: Dictionary of context key-value pairs to update
+            merge: If True, merge with existing context. If False, replace entirely.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            client = await self._get_client()
+            keys = self._get_thread_keys(thread_id)
+
+            if merge:
+                # Get existing context and merge
+                existing_context = await client.hgetall(keys["context"])
+                merged_context = {}
+
+                # Decode existing context
+                for k, v in existing_context.items():
+                    key = k.decode() if isinstance(k, bytes) else k
+                    value = v.decode() if isinstance(v, bytes) else v
+                    merged_context[key] = value
+
+                # Apply updates
+                for k, v in context_updates.items():
+                    if v is None:
+                        merged_context[k] = ""
+                    elif isinstance(v, (dict, list)):
+                        merged_context[k] = json.dumps(v)
+                    else:
+                        merged_context[k] = str(v)
+
+                context_to_save = merged_context
+            else:
+                # Replace entirely
+                context_to_save = {}
+                for k, v in context_updates.items():
+                    if v is None:
+                        context_to_save[k] = ""
+                    elif isinstance(v, (dict, list)):
+                        context_to_save[k] = json.dumps(v)
+                    else:
+                        context_to_save[k] = str(v)
+
+            # Save updated context
+            if context_to_save:
+                # Clear existing context if not merging
+                if not merge:
+                    await client.delete(keys["context"])
+                await client.hset(keys["context"], mapping=context_to_save)
+
+            # Update metadata timestamp
+            await client.hset(
+                keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
+            )
+
+            logger.info(f"Updated context for thread {thread_id}: {list(context_updates.keys())}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update context for thread {thread_id}: {e}")
+            return False
+
     async def _save_thread_state(self, thread_state: ThreadState) -> bool:
         """Save complete thread state to Redis."""
         try:
