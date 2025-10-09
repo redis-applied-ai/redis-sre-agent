@@ -30,87 +30,9 @@ def sre_task(func):
     return func
 
 
-@sre_task
-async def analyze_system_metrics(
-    metric_query: str,
-    time_range: str = "1h",
-    threshold: Optional[float] = None,
-    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
-) -> Dict[str, Any]:
-    """
-    Analyze system metrics and detect anomalies.
-
-    Args:
-        metric_query: Prometheus-style metric query
-        time_range: Time range for analysis (1h, 6h, 1d, etc.)
-        threshold: Alert threshold value
-        retry: Retry configuration
-    """
-    try:
-        logger.info(f"Analyzing metrics: {metric_query} over {time_range}")
-
-        # TODO: Prometheus integration will be added via ToolProvider
-        # For now, return a placeholder response
-        logger.warning("Prometheus integration not yet available - returning placeholder")
-        metrics_data = None
-
-        # Analyze metrics for anomalies
-        current_value = None
-        anomalies_detected = False
-        threshold_breached = False
-
-        if metrics_data and "values" in metrics_data:
-            values = [float(v[1]) for v in metrics_data["values"] if v[1] is not None]
-            if values:
-                current_value = values[-1]  # Latest value
-
-                # Check threshold if provided
-                if threshold is not None:
-                    threshold_breached = current_value > threshold
-
-                # Simple anomaly detection (check if current value is >2 std devs from mean)
-                if len(values) > 5:
-                    import statistics
-
-                    mean_val = statistics.mean(values[:-1])  # Exclude current value
-                    try:
-                        std_dev = statistics.stdev(values[:-1])
-                        if abs(current_value - mean_val) > 2 * std_dev:
-                            anomalies_detected = True
-                    except statistics.StatisticsError:
-                        pass  # Not enough data for stdev
-
-        result = {
-            "task_id": str(ULID()),
-            "metric_query": metric_query,
-            "time_range": time_range,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": "analyzed",
-            "findings": {
-                "anomalies_detected": anomalies_detected,
-                "current_value": current_value,
-                "threshold_breached": threshold_breached,
-                "data_points": len(metrics_data.get("values", [])) if metrics_data else 0,
-                "metrics_source": "prometheus",
-            },
-            "raw_metrics": metrics_data,
-        }
-
-        # Store result in Redis for retrieval (serialize to a single field to avoid
-        # passing complex types directly to HSET)
-        import json
-
-        client = get_redis_client()
-        result_key = RedisKeys.metrics_result(result["task_id"])
-        await client.hset(result_key, mapping={"data": json.dumps(result)})
-        await client.expire(result_key, 3600)  # 1 hour TTL
-
-        logger.info(f"Metrics analysis completed: {result['task_id']}")
-        return result
-
-    except Exception as e:
-        logger.error(f"Metrics analysis failed (attempt {retry.attempt}): {e}")
-        raise
+# NOTE: analyze_system_metrics was removed as it was never actually provided
+# as a tool to the LLM. Metrics/diagnostics will be implemented via the
+# ToolProvider system in a future PR.
 
 
 @sre_task

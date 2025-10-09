@@ -593,8 +593,6 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                 return "📚 Finding connection troubleshooting guidance..."
             else:
                 return f"📚 Searching knowledge base for: {query}"
-        elif tool_name == "analyze_system_metrics":
-            return "📊 Examining system metrics and performance trends..."
         elif tool_name == "check_service_health":
             return "🏥 Performing service health checks..."
         else:
@@ -648,9 +646,6 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                     return f"🔍 No matching log entries found in {containers_searched} containers"
             else:
                 return "🔍 Docker log search completed"
-
-        elif tool_name == "analyze_system_metrics":
-            return "📊 System metrics analysis complete"
         else:
             return f"✅ {tool_name.replace('_', ' ')} completed"
 
