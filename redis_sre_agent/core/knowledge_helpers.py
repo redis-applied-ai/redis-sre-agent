@@ -3,8 +3,7 @@
 import logging
 from typing import Any, Dict, Optional
 
-from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.redis import get_knowledge_index, get_redis_client
+from redis_sre_agent.core.redis import get_knowledge_index
 
 logger = logging.getLogger(__name__)
 
@@ -30,55 +29,41 @@ async def get_all_document_fragments(
     try:
         # Get components
         index = get_knowledge_index()
-        redis_client = get_redis_client()
 
-        # Find all chunks for this document
-        pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
-        chunk_keys = []
+        # Use FT.SEARCH to find all chunks for this document
+        # document_hash is indexed as a TAG field, so we can filter on it
+        from redisvl.query import FilterQuery
 
-        async for key in redis_client.scan_iter(match=pattern):
-            if isinstance(key, bytes):
-                key = key.decode("utf-8")
-            chunk_keys.append(key)
+        filter_query = FilterQuery(
+            filter_expression=f"@document_hash:{{{document_hash}}}",
+            return_fields=[
+                "title",
+                "content",
+                "source",
+                "category",
+                "severity",
+                "document_hash",
+                "chunk_index",
+                "total_chunks",
+            ],
+            num_results=1000,  # Set high limit to get all chunks
+        )
 
-        if not chunk_keys:
+        # Execute search
+        async with index:
+            results = await index.query(filter_query)
+
+        if not results:
             return {
                 "document_hash": document_hash,
                 "error": "No fragments found for this document",
                 "fragments": [],
             }
 
-        # Sort chunk keys by chunk index to maintain order
-        chunk_keys.sort(key=lambda k: int(k.split(":")[-1]) if k.split(":")[-1].isdigit() else 0)
-
-        # Retrieve all chunks
-        fragments = []
-        for key in chunk_keys:
-            chunk_data = await redis_client.hgetall(key)
-            if chunk_data:
-                # Convert bytes to strings, but skip binary fields like vectors
-                fragment = {}
-                for k, v in chunk_data.items():
-                    # Decode key
-                    key_str = k.decode("utf-8") if isinstance(k, bytes) else k
-
-                    # Skip vector field (binary data) and other binary fields
-                    if key_str in ["vector"]:
-                        continue
-
-                    # Decode value safely
-                    if isinstance(v, bytes):
-                        try:
-                            value_str = v.decode("utf-8")
-                        except UnicodeDecodeError:
-                            # Skip fields that can't be decoded (likely binary)
-                            continue
-                    else:
-                        value_str = v
-
-                    fragment[key_str] = value_str
-
-                fragments.append(fragment)
+        # Sort fragments by chunk_index to maintain order
+        fragments = sorted(
+            results, key=lambda x: int(x.get("chunk_index", 0)) if x.get("chunk_index") else 0
+        )
 
         # Get document metadata if requested
         metadata = {}
