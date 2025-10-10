@@ -49,6 +49,27 @@ def check_redis_search_available() -> bool:
         return False
 
 
+def check_knowledge_index_exists() -> bool:
+    """Check if the sre_knowledge index exists and is populated."""
+    try:
+        r = redis.Redis.from_url(settings.redis_url)
+        # Try to get index info
+        try:
+            info = r.execute_command("FT.INFO", "sre_knowledge")
+            # Parse the info response to check if index has documents
+            # info is a list like [b'index_name', b'sre_knowledge', ..., b'num_docs', 234, ...]
+            for i, item in enumerate(info):
+                if item == b"num_docs" and i + 1 < len(info):
+                    num_docs = int(info[i + 1])
+                    return num_docs > 0
+            return False
+        except redis.ResponseError:
+            # Index doesn't exist
+            return False
+    except Exception:
+        return False
+
+
 redis_search_available = check_redis_search_available()
 redis_search_required = pytest.mark.skipif(
     not redis_search_available, reason="Redis 8+ or Redis Stack with search module required"
