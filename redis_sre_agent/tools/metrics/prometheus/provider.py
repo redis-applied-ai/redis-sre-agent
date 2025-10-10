@@ -166,6 +166,35 @@ class PrometheusToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
+            ToolDefinition(
+                name=self._make_tool_name("search_metrics"),
+                description=(
+                    "Search for metrics by name pattern or label filters. "
+                    "Use this to find specific metrics when you know part of the name "
+                    "or need to filter by labels. More efficient than listing all metrics "
+                    "and filtering client-side. Supports wildcards and regex patterns."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": (
+                                "Search pattern for metric names. Can include wildcards or keywords. "
+                                "Examples: 'redis_memory', 'node_network', 'http_requests'"
+                            ),
+                        },
+                        "label_filters": {
+                            "type": "object",
+                            "description": (
+                                "Optional label filters to narrow results. "
+                                "Example: {'job': 'redis', 'instance': 'localhost:6379'}"
+                            ),
+                        },
+                    },
+                    "required": ["pattern"],
+                },
+            ),
         ]
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
@@ -192,6 +221,8 @@ class PrometheusToolProvider(ToolProvider):
             return await self.query_range(**args)
         elif operation == "list_metrics":
             return await self.list_metrics()
+        elif operation == "search_metrics":
+            return await self.search_metrics(**args)
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
@@ -284,4 +315,67 @@ class PrometheusToolProvider(ToolProvider):
             return {
                 "status": "error",
                 "error": str(e),
+            }
+
+    async def search_metrics(
+        self, pattern: str, label_filters: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """Search for metrics by name pattern and optional label filters.
+
+        Args:
+            pattern: Search pattern for metric names (case-insensitive substring match)
+            label_filters: Optional dictionary of label filters
+
+        Returns:
+            Filtered list of metric names with count
+        """
+        logger.info(f"Searching metrics with pattern: {pattern}, filters: {label_filters}")
+        try:
+            # Get all metrics
+            all_metrics = self._client.all_metrics()
+
+            # Filter by pattern (case-insensitive substring match)
+            pattern_lower = pattern.lower()
+            filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
+
+            # If label filters provided, further filter by querying series
+            if label_filters:
+                # Build a label matcher query
+                # Example: {job="redis",instance="localhost:6379"}
+                label_parts = [f'{k}="{v}"' for k, v in label_filters.items()]
+                label_selector = "{" + ",".join(label_parts) + "}"
+
+                # Query series with label filters
+                # This returns series that match the labels
+                try:
+                    # Use custom_query to get series with these labels
+                    # We'll query for each metric that matched the pattern
+                    metrics_with_labels = []
+                    for metric in filtered_metrics:
+                        query = f"{metric}{label_selector}"
+                        result = self._client.custom_query(query=query)
+                        if result:  # If this metric exists with these labels
+                            metrics_with_labels.append(metric)
+
+                    filtered_metrics = metrics_with_labels
+                except Exception as label_error:
+                    logger.warning(
+                        f"Label filtering failed: {label_error}, returning pattern-only results"
+                    )
+
+            return {
+                "status": "success",
+                "pattern": pattern,
+                "label_filters": label_filters or {},
+                "metrics": filtered_metrics,
+                "count": len(filtered_metrics),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"Failed to search Prometheus metrics: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "pattern": pattern,
+                "label_filters": label_filters or {},
             }

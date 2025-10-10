@@ -77,13 +77,16 @@ async def test_create_tool_schemas(prometheus_config):
     async with PrometheusToolProvider(config=prometheus_config) as provider:
         schemas = provider.create_tool_schemas()
 
-        assert len(schemas) == 3
+        assert len(schemas) == 4  # query, query_range, list_metrics, search_metrics
 
         # Check tool names
         tool_names = [schema.name for schema in schemas]
-        assert any("query" in name and "range" not in name for name in tool_names)
+        assert any(
+            "query" in name and "range" not in name and "search" not in name for name in tool_names
+        )
         assert any("query_range" in name for name in tool_names)
         assert any("list_metrics" in name for name in tool_names)
+        assert any("search_metrics" in name for name in tool_names)
 
         # Check that all have proper structure
         for schema in schemas:
@@ -215,3 +218,34 @@ async def test_provider_with_redis_instance(prometheus_config):
         # Should still work
         result = await provider.query(query="up")
         assert result["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_search_metrics(prometheus_config):
+    """Test searching for metrics by pattern."""
+    async with PrometheusToolProvider(config=prometheus_config) as provider:
+        # Search for prometheus metrics
+        result = await provider.search_metrics(pattern="prometheus")
+
+        assert result["status"] == "success"
+        assert "metrics" in result
+        assert "count" in result
+        assert result["pattern"] == "prometheus"
+
+        # Should find some prometheus metrics
+        assert isinstance(result["metrics"], list)
+
+        # All results should contain the pattern
+        for metric in result["metrics"]:
+            assert "prometheus" in metric.lower()
+
+
+@pytest.mark.asyncio
+async def test_search_metrics_specific_pattern(prometheus_config):
+    """Test searching with a specific pattern."""
+    async with PrometheusToolProvider(config=prometheus_config) as provider:
+        # Search for 'up' metric
+        result = await provider.search_metrics(pattern="up")
+
+        assert result["status"] == "success"
+        assert "up" in result["metrics"]
