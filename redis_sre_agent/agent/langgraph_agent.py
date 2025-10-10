@@ -17,7 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
-from ..api.instances import get_instances_from_redis
+from ..api.instances import create_instance_programmatically, get_instances_from_redis
 from ..core.config import settings
 from ..tools.manager import ToolManager
 
@@ -34,6 +34,95 @@ def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
     except Exception as e:
         logger.warning(f"Failed to parse connection URL {connection_url}: {e}")
         return "localhost", 6379
+
+
+def _extract_instance_details_from_message(message: str) -> Optional[Dict[str, str]]:
+    """Extract Redis instance connection details from a user message.
+
+    Looks for patterns like:
+    - redis://hostname:port
+    - environment: production/staging/development
+    - usage: cache/analytics/session/queue/custom
+
+    Returns:
+        Dictionary with extracted details or None if not enough info found
+    """
+    import re
+
+    details = {}
+    message_lower = message.lower()
+
+    # Extract Redis URL (required)
+    url_pattern = r"redis://[^\s]+"
+    url_match = re.search(url_pattern, message, re.IGNORECASE)
+    if url_match:
+        details["connection_url"] = url_match.group(0)
+    else:
+        # No URL found - can't create instance
+        return None
+
+    # Extract environment (required)
+    env_patterns = [
+        (r"\benvironment[:\s]+(\w+)", 1),
+        (r"\benv[:\s]+(\w+)", 1),
+        (r"\b(production|staging|development|prod|stage|dev)\b", 0),
+    ]
+    for pattern, group in env_patterns:
+        match = re.search(pattern, message_lower)
+        if match:
+            env = match.group(group if group > 0 else 1).lower()
+            # Normalize environment names
+            if env in ["prod", "production"]:
+                details["environment"] = "production"
+            elif env in ["stage", "staging"]:
+                details["environment"] = "staging"
+            elif env in ["dev", "development"]:
+                details["environment"] = "development"
+            else:
+                details["environment"] = env
+            break
+
+    # Extract usage type (required)
+    usage_patterns = [
+        (r"\busage[:\s]+(\w+)", 1),
+        (r"\btype[:\s]+(\w+)", 1),
+        (r"\b(cache|analytics|session|queue|custom)\b", 0),
+    ]
+    for pattern, group in usage_patterns:
+        match = re.search(pattern, message_lower)
+        if match:
+            usage = match.group(group if group > 0 else 1).lower()
+            details["usage"] = usage
+            break
+
+    # Extract description (optional)
+    desc_patterns = [
+        r"description[:\s]+([^\n]+)",
+        r"desc[:\s]+([^\n]+)",
+    ]
+    for pattern in desc_patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            details["description"] = match.group(1).strip()
+            break
+
+    # Check if we have minimum required fields
+    if "connection_url" in details and "environment" in details and "usage" in details:
+        # Generate a name if not provided
+        if "name" not in details:
+            parsed = urlparse(details["connection_url"])
+            host = parsed.hostname or "redis"
+            details["name"] = f"{host}-{details['environment']}"
+
+        # Add default description if not provided
+        if "description" not in details:
+            details["description"] = (
+                "Redis instance created by agent from user-provided connection details"
+            )
+
+        return details
+
+    return None
 
 
 # SRE-focused system prompt
@@ -729,18 +818,72 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
         else:
             # No specific instance provided - check if we should auto-detect
             logger.info("No specific Redis instance provided, checking for available instances")
-            try:
-                instances = await get_instances_from_redis()
-                if len(instances) == 1:
-                    # Only one instance available - use it automatically
-                    target_instance = instances[0]
-                    host, port = _parse_redis_connection_url(target_instance.connection_url)
-                    redis_url = target_instance.connection_url
+
+            # First, check if the user is providing connection details in this message
+            instance_details = _extract_instance_details_from_message(query)
+            if instance_details:
+                logger.info(
+                    "Detected connection details in user message, attempting to create instance"
+                )
+                try:
+                    new_instance = await create_instance_programmatically(
+                        name=instance_details["name"],
+                        connection_url=instance_details["connection_url"],
+                        environment=instance_details["environment"],
+                        usage=instance_details["usage"],
+                        description=instance_details.get(
+                            "description", "Created by agent from user-provided details"
+                        ),
+                        created_by="agent",
+                        user_id=user_id,
+                    )
                     logger.info(
-                        f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})"
+                        f"Successfully created instance: {new_instance.name} ({new_instance.id})"
                     )
 
+                    # Use the newly created instance
+                    target_instance = new_instance
+                    host, port = _parse_redis_connection_url(target_instance.connection_url)
+                    redis_url = target_instance.connection_url
+
                     enhanced_query = f"""User Query: {query}
+
+INSTANCE CREATED: I've created a new Redis instance configuration based on the connection details you provided:
+- Instance Name: {target_instance.name}
+- Instance ID: {target_instance.id}
+- Host: {host}
+- Port: {port}
+- Environment: {target_instance.environment}
+- Usage: {target_instance.usage}
+
+When using Redis diagnostic tools, use this Redis URL: {redis_url}
+
+Now I'll analyze this instance to help with your original query. Let me gather some diagnostic information first.
+
+SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations."""
+
+                except ValueError as e:
+                    logger.warning(f"Failed to create instance from user details: {e}")
+                    enhanced_query = f"""User Query: {query}
+
+I detected connection details in your message, but I couldn't create the instance configuration: {str(e)}
+
+Please verify the details and try again, or let me know if you'd like help with general Redis knowledge instead."""
+
+            if not target_instance:
+                # No instance created from user input, check existing instances
+                try:
+                    instances = await get_instances_from_redis()
+                    if len(instances) == 1:
+                        # Only one instance available - use it automatically
+                        target_instance = instances[0]
+                        host, port = _parse_redis_connection_url(target_instance.connection_url)
+                        redis_url = target_instance.connection_url
+                        logger.info(
+                            f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})"
+                        )
+
+                        enhanced_query = f"""User Query: {query}
 
 AUTO-DETECTED CONTEXT: Since no specific Redis instance was mentioned, I am analyzing the available Redis instance:
 - Instance Name: {target_instance.name}
@@ -753,15 +896,15 @@ When using Redis diagnostic tools, use this Redis URL: {redis_url}
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations."""
 
-                elif len(instances) > 1:
-                    # Multiple instances - ask user to specify
-                    instance_list = "\n".join(
-                        [
-                            f"- {inst.name} ({inst.environment}): {inst.connection_url}"
-                            for inst in instances
-                        ]
-                    )
-                    enhanced_query = f"""User Query: {query}
+                    elif len(instances) > 1:
+                        # Multiple instances - ask user to specify
+                        instance_list = "\n".join(
+                            [
+                                f"- {inst.name} ({inst.environment}): {inst.connection_url}"
+                                for inst in instances
+                            ]
+                        )
+                        enhanced_query = f"""User Query: {query}
 
 MULTIPLE REDIS INSTANCES DETECTED: I found {len(instances)} Redis instances configured. Please specify which instance you want me to analyze:
 
@@ -769,17 +912,60 @@ MULTIPLE REDIS INSTANCES DETECTED: I found {len(instances)} Redis instances conf
 
 To get targeted analysis, please rephrase your query to specify which instance, or use the instance selector in the UI."""
 
-                else:
-                    # No instances configured - use default but warn
-                    logger.warning("No Redis instances configured, falling back to default")
-                    enhanced_query = f"""User Query: {query}
+                    else:
+                        # No instances configured - try to gather info or route to knowledge agent
+                        logger.warning("No Redis instances configured")
 
-WARNING: No Redis instances are configured in the system. I will attempt to analyze the default Redis connection, but this may not be the instance you intended to troubleshoot.
+                        # Check if this query seems to be about a specific Redis instance
+                        # or if it's more general knowledge-seeking
+                        from ..agent.router import AgentType, get_agent_router
 
-SAFETY REQUIREMENT: You MUST verify you can connect to and gather meaningful data before making any recommendations."""
+                        router = get_agent_router()
+                        suggested_agent = router.route_query(query, context)
 
-            except Exception as e:
-                logger.error(f"Failed to check available instances: {e}")
+                        if suggested_agent == AgentType.KNOWLEDGE_ONLY:
+                            # Route to knowledge agent for general queries
+                            logger.info(
+                                "No instances configured and query is general - suggesting knowledge agent"
+                            )
+                            enhanced_query = f"""User Query: {query}
+
+NO REDIS INSTANCES CONFIGURED: I cannot analyze specific Redis instances because none are configured in the system.
+
+However, your query appears to be seeking general Redis knowledge or best practices. I can help you with:
+- General Redis concepts and troubleshooting approaches
+- SRE best practices for Redis
+- Documentation and learning resources
+- Troubleshooting methodologies
+
+Would you like me to help with general Redis knowledge, or do you have a specific Redis instance you'd like me to analyze? If you have a specific instance, please provide:
+1. Redis connection URL (e.g., redis://hostname:6379)
+2. Environment (development, staging, production)
+3. Usage type (cache, analytics, session, queue, etc.)
+
+I can then create an instance configuration and help you troubleshoot it."""
+                        else:
+                            # Query seems Redis-specific - ask for connection details
+                            logger.info(
+                                "No instances configured but query seems Redis-specific - requesting connection details"
+                            )
+                            enhanced_query = f"""User Query: {query}
+
+NO REDIS INSTANCES CONFIGURED: I cannot analyze specific Redis instances because none are configured in the system.
+
+Your query appears to be about a specific Redis instance. To help you, I need to create an instance configuration. Please provide:
+
+1. **Redis Connection URL** (required): e.g., redis://hostname:6379 or redis://user:password@hostname:6379
+2. **Environment** (required): development, staging, or production
+3. **Usage Type** (required): cache, analytics, session, queue, or custom
+4. **Description** (optional): Brief description of this Redis instance
+
+Once you provide these details, I'll create an instance configuration and help you troubleshoot it.
+
+Alternatively, if you're looking for general Redis knowledge or best practices (not specific to an instance), let me know and I can help with that instead."""
+
+                except Exception as e:
+                    logger.error(f"Failed to check available instances: {e}")
 
         # Create initial state with conversation history
         # If conversation_history is provided, include it before the new query

@@ -27,7 +27,9 @@ class KnowledgeBaseToolProvider(ToolProvider):
     SRE procedures.
     """
 
-    provider_name = "knowledge"
+    @property
+    def provider_name(self) -> str:
+        return "knowledge"
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for knowledge base operations."""
@@ -186,11 +188,15 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Ingestion result with document hash and chunk count
         """
         logger.info(f"Ingesting document: {title} (category={category})")
-        return await _ingest_sre_document(
-            title=title,
-            content=content,
-            source=source,
-            category=category,
-            severity=severity,
-            product_labels=product_labels or [],
-        )
+        kwargs = {
+            "title": title,
+            "content": content,
+            "source": source,
+            "category": category,
+        }
+        if severity:
+            kwargs["severity"] = severity
+        if product_labels:
+            kwargs["product_labels"] = product_labels
+
+        return await _ingest_sre_document(**kwargs)

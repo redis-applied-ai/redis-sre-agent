@@ -191,6 +191,81 @@ async def get_instances_from_redis() -> List[RedisInstance]:
         return []
 
 
+async def create_instance_programmatically(
+    name: str,
+    connection_url: str,
+    environment: str,
+    usage: str,
+    description: str,
+    created_by: str = "agent",
+    user_id: Optional[str] = None,
+    repo_url: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> RedisInstance:
+    """Create a Redis instance programmatically (e.g., by the agent).
+
+    This is a helper function that can be called by the agent to create instances
+    on demand when the user provides connection details.
+
+    Args:
+        name: Instance name
+        connection_url: Redis connection URL
+        environment: Environment (development, staging, production)
+        usage: Usage type (cache, analytics, session, queue, custom)
+        description: Instance description
+        created_by: Who created this instance ('agent' or 'user')
+        user_id: Optional user ID who owns this instance
+        repo_url: Optional repository URL
+        notes: Optional notes
+
+    Returns:
+        The created RedisInstance
+
+    Raises:
+        ValueError: If instance with same name already exists or validation fails
+    """
+    try:
+        # Get existing instances
+        instances = await get_instances_from_redis()
+
+        # Check if instance with same name already exists
+        if any(inst.name == name for inst in instances):
+            raise ValueError(f"Instance with name '{name}' already exists")
+
+        # Create new instance
+        instance_id = f"redis-{environment}-{int(datetime.now().timestamp())}"
+        new_instance = RedisInstance(
+            id=instance_id,
+            name=name,
+            connection_url=connection_url,
+            environment=environment,
+            usage=usage,
+            description=description,
+            repo_url=repo_url,
+            notes=notes,
+            created_by=created_by,
+            user_id=user_id,
+        )
+
+        # Add to instances list
+        instances.append(new_instance)
+
+        # Save to Redis
+        if not await save_instances_to_redis(instances):
+            raise ValueError("Failed to save instance to storage")
+
+        logger.info(
+            f"Created Redis instance programmatically: {new_instance.name} ({new_instance.id})"
+        )
+        return new_instance
+
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create instance programmatically: {e}")
+        raise ValueError(f"Failed to create instance: {str(e)}")
+
+
 async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
     """Save instances to Redis storage."""
     try:

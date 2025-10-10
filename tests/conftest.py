@@ -322,6 +322,32 @@ def redis_container(worker_id):
     importlib.reload(redis_module)
     importlib.reload(tasks_module)
 
+    # Create indices in the test Redis container
+    import asyncio
+    from pathlib import Path
+
+    from redis_sre_agent.core.redis import create_indices
+    from redis_sre_agent.pipelines.ingestion.processor import IngestionPipeline
+    from redis_sre_agent.pipelines.scraper.base import ArtifactStorage
+
+    asyncio.run(create_indices())
+
+    # Ingest knowledge base artifacts if available
+    artifacts_path = Path("./artifacts")
+    if artifacts_path.exists():
+        # Find the most recent batch
+        batch_dirs = sorted([d for d in artifacts_path.iterdir() if d.is_dir()], reverse=True)
+        if batch_dirs:
+            latest_batch = batch_dirs[0].name
+            try:
+                storage = ArtifactStorage(str(artifacts_path))
+                pipeline = IngestionPipeline(storage)
+                asyncio.run(pipeline.ingest_batch(latest_batch))
+                print(f"✅ Ingested knowledge base batch: {latest_batch}")
+            except Exception as e:
+                print(f"⚠️  Failed to ingest knowledge base: {e}")
+                # Don't fail the fixture - tests can skip if knowledge base is needed
+
     yield compose
 
     # Restore original REDIS_URL
