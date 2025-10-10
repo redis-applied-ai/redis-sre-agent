@@ -77,8 +77,8 @@ async def test_prometheus_provider_loads_via_tool_manager(prometheus_env):
 
             # Check for Prometheus tools
             prometheus_tools = [n for n in tool_names if "prometheus" in n]
-            assert len(prometheus_tools) == 4, (
-                f"Expected 4 Prometheus tools, got {len(prometheus_tools)}"
+            assert len(prometheus_tools) == 3, (
+                f"Expected 3 Prometheus tools, got {len(prometheus_tools)}"
             )
 
             # Check for specific tools
@@ -86,7 +86,6 @@ async def test_prometheus_provider_loads_via_tool_manager(prometheus_env):
                 "query" in n and "range" not in n and "search" not in n for n in prometheus_tools
             )
             assert any("query_range" in n for n in prometheus_tools)
-            assert any("list_metrics" in n for n in prometheus_tools)
             assert any("search_metrics" in n for n in prometheus_tools)
     finally:
         config_module.settings = original_settings
@@ -167,7 +166,7 @@ async def test_prometheus_with_redis_instance(prometheus_env, monkeypatch):
 
             # Tools should be scoped to the Redis instance
             prometheus_tools = [t for t in tools if "prometheus" in t.name]
-            assert len(prometheus_tools) == 4
+            assert len(prometheus_tools) == 3
 
             # Tool names should include instance hash
             for tool in prometheus_tools:
@@ -215,7 +214,7 @@ async def test_multiple_providers_coexist(prometheus_env, monkeypatch):
             prometheus_tools = [t for t in tools if "prometheus" in t.name]
 
             assert len(knowledge_tools) > 0, "Knowledge base tools should be loaded"
-            assert len(prometheus_tools) == 4, "Prometheus tools should be loaded"
+            assert len(prometheus_tools) == 3, "Prometheus tools should be loaded"
 
             # All tools should be unique
             tool_names = [t.name for t in tools]

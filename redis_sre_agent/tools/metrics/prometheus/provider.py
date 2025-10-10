@@ -153,26 +153,13 @@ class PrometheusToolProvider(ToolProvider):
                 },
             ),
             ToolDefinition(
-                name=self._make_tool_name("list_metrics"),
-                description=(
-                    "List all available metric names in Prometheus. "
-                    "Use this to discover what metrics are available for monitoring "
-                    "and troubleshooting. Useful when you're not sure what metrics "
-                    "exist or need to explore available data sources."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-            ),
-            ToolDefinition(
                 name=self._make_tool_name("search_metrics"),
                 description=(
                     "Search for metrics by name pattern or label filters. "
                     "Use this to find specific metrics when you know part of the name "
-                    "or need to filter by labels. More efficient than listing all metrics "
-                    "and filtering client-side. Supports wildcards and regex patterns."
+                    "or need to filter by labels. Use an empty string pattern to list all metrics. "
+                    "Examples: 'redis_memory' finds Redis memory metrics, 'network' finds network metrics, "
+                    "'' (empty string) lists all available metrics."
                 ),
                 parameters={
                     "type": "object",
@@ -180,9 +167,10 @@ class PrometheusToolProvider(ToolProvider):
                         "pattern": {
                             "type": "string",
                             "description": (
-                                "Search pattern for metric names. Can include wildcards or keywords. "
-                                "Examples: 'redis_memory', 'node_network', 'http_requests'"
+                                "Search pattern for metric names. Can include keywords or be empty to list all. "
+                                "Examples: 'redis_memory', 'node_network', 'http_requests', '' (for all metrics)"
                             ),
+                            "default": "",
                         },
                         "label_filters": {
                             "type": "object",
@@ -192,7 +180,7 @@ class PrometheusToolProvider(ToolProvider):
                             ),
                         },
                     },
-                    "required": ["pattern"],
+                    "required": [],
                 },
             ),
         ]
@@ -219,8 +207,6 @@ class PrometheusToolProvider(ToolProvider):
             return await self.query(**args)
         elif operation == "query_range":
             return await self.query_range(**args)
-        elif operation == "list_metrics":
-            return await self.list_metrics()
         elif operation == "search_metrics":
             return await self.search_metrics(**args)
         else:
@@ -295,48 +281,31 @@ class PrometheusToolProvider(ToolProvider):
                 "end_time": end_time,
             }
 
-    async def list_metrics(self) -> Dict[str, Any]:
-        """List all available Prometheus metrics.
-
-        Returns:
-            List of metric names with count
-        """
-        logger.info("Listing all Prometheus metrics")
-        try:
-            metrics = self._client.all_metrics()
-            return {
-                "status": "success",
-                "metrics": metrics,
-                "count": len(metrics),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-        except Exception as e:
-            logger.error(f"Failed to list Prometheus metrics: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-            }
-
     async def search_metrics(
-        self, pattern: str, label_filters: Optional[Dict[str, str]] = None
+        self, pattern: str = "", label_filters: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """Search for metrics by name pattern and optional label filters.
 
         Args:
-            pattern: Search pattern for metric names (case-insensitive substring match)
+            pattern: Search pattern for metric names (case-insensitive substring match).
+                     Empty string returns all metrics.
             label_filters: Optional dictionary of label filters
 
         Returns:
             Filtered list of metric names with count
         """
-        logger.info(f"Searching metrics with pattern: {pattern}, filters: {label_filters}")
+        logger.info(f"Searching metrics with pattern: '{pattern}', filters: {label_filters}")
         try:
             # Get all metrics
             all_metrics = self._client.all_metrics()
 
             # Filter by pattern (case-insensitive substring match)
-            pattern_lower = pattern.lower()
-            filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
+            # Empty pattern returns all metrics
+            if pattern:
+                pattern_lower = pattern.lower()
+                filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
+            else:
+                filtered_metrics = all_metrics
 
             # If label filters provided, further filter by querying series
             if label_filters:

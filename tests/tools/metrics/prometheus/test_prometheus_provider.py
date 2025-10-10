@@ -77,7 +77,7 @@ async def test_create_tool_schemas(prometheus_config):
     async with PrometheusToolProvider(config=prometheus_config) as provider:
         schemas = provider.create_tool_schemas()
 
-        assert len(schemas) == 4  # query, query_range, list_metrics, search_metrics
+        assert len(schemas) == 3  # query, query_range, search_metrics
 
         # Check tool names
         tool_names = [schema.name for schema in schemas]
@@ -85,7 +85,6 @@ async def test_create_tool_schemas(prometheus_config):
             "query" in name and "range" not in name and "search" not in name for name in tool_names
         )
         assert any("query_range" in name for name in tool_names)
-        assert any("list_metrics" in name for name in tool_names)
         assert any("search_metrics" in name for name in tool_names)
 
         # Check that all have proper structure
@@ -128,15 +127,16 @@ async def test_query_range(prometheus_config):
 
 
 @pytest.mark.asyncio
-async def test_list_metrics(prometheus_config):
-    """Test listing all available metrics."""
+async def test_search_metrics_all(prometheus_config):
+    """Test listing all metrics with empty pattern."""
     async with PrometheusToolProvider(config=prometheus_config) as provider:
-        result = await provider.list_metrics()
+        result = await provider.search_metrics(pattern="")
 
         assert result["status"] == "success"
         assert "metrics" in result
         assert "count" in result
         assert "timestamp" in result
+        assert result["pattern"] == ""
 
         # Should return a list (might be empty if Prometheus just started)
         assert isinstance(result["metrics"], list)
@@ -156,12 +156,14 @@ async def test_resolve_tool_call_query(prometheus_config):
 
 
 @pytest.mark.asyncio
-async def test_resolve_tool_call_list_metrics(prometheus_config):
-    """Test resolving list_metrics tool call."""
+async def test_resolve_tool_call_search_metrics(prometheus_config):
+    """Test resolving search_metrics tool call."""
     async with PrometheusToolProvider(config=prometheus_config) as provider:
-        tool_name = provider._make_tool_name("list_metrics")
+        tool_name = provider._make_tool_name("search_metrics")
 
-        result = await provider.resolve_tool_call(tool_name=tool_name, args={})
+        result = await provider.resolve_tool_call(
+            tool_name=tool_name, args={"pattern": "prometheus"}
+        )
 
         assert result["status"] == "success"
         assert "metrics" in result
