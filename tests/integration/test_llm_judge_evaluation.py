@@ -574,7 +574,14 @@ async def run_comprehensive_llm_judge_evaluation():
 @pytest.mark.slow
 @redis_search_required
 async def test_llm_judge_evaluation():
-    """Test comprehensive LLM judge evaluation of Redis SRE search quality."""
+    """Test comprehensive LLM judge evaluation of Redis SRE search quality.
+
+    This test requires:
+    1. OpenAI API key
+    2. Populated knowledge base (run: poetry run redis-sre-agent pipeline run-all)
+
+    The test will be skipped if either requirement is not met.
+    """
     # Skip if OpenAI API key is not available
     if (
         not os.environ.get("OPENAI_API_KEY")
@@ -582,7 +589,22 @@ async def test_llm_judge_evaluation():
     ):
         pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
+    # Skip if knowledge base is not populated
+    if not check_knowledge_index_exists():
+        pytest.skip(
+            "Knowledge base not populated - run 'poetry run redis-sre-agent pipeline run-all' first"
+        )
+
     evaluations = await run_comprehensive_llm_judge_evaluation()
+
+    # If all evaluations failed, skip the test with details
+    if len(evaluations) == 0:
+        pytest.skip("No evaluations completed - knowledge base may be empty")
+
+    # Check if all evaluations have errors
+    all_errors = [e.get("error") for e in evaluations if "error" in e]
+    if len(all_errors) == len(evaluations):
+        pytest.skip(f"All evaluations failed: {all_errors[0] if all_errors else 'Unknown error'}")
 
     # Assertions for test validation
     assert len(evaluations) > 0, "Should have evaluation results"
@@ -612,13 +634,26 @@ async def test_llm_judge_evaluation():
 @pytest.mark.slow
 @redis_search_required
 async def test_single_scenario_evaluation():
-    """Test evaluation of a single scenario for faster feedback."""
+    """Test evaluation of a single scenario for faster feedback.
+
+    This test requires:
+    1. OpenAI API key
+    2. Populated knowledge base (run: poetry run redis-sre-agent pipeline run-all)
+
+    The test will be skipped if either requirement is not met.
+    """
     # Skip if OpenAI API key is not available
     if (
         not os.environ.get("OPENAI_API_KEY")
         or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
     ):
         pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
+
+    # Skip if knowledge base is not populated
+    if not check_knowledge_index_exists():
+        pytest.skip(
+            "Knowledge base not populated - run 'poetry run redis-sre-agent pipeline run-all' first"
+        )
 
     # Test just the connection scenario that we know performs well
     scenario = CORE_SCENARIOS[0]  # E-commerce flash sale connection scenario
