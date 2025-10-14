@@ -4,7 +4,7 @@ This guide explains how to search for and discover available metrics using the P
 
 ## Overview
 
-The Prometheus provider includes a `list_metrics` tool that returns all available metric names from Prometheus. This enables both programmatic searching and LLM-driven metric discovery.
+The Prometheus provider includes a `search_metrics` tool that searches for metrics by pattern. This enables both programmatic searching and LLM-driven metric discovery.
 
 ## Quick Start
 
@@ -19,16 +19,20 @@ from redis_sre_agent.tools.metrics.prometheus import (
 config = PrometheusConfig(url="http://localhost:9090")
 
 async with PrometheusToolProvider(config=config) as provider:
-    # Get all metrics
-    result = await provider.list_metrics()
+    # Search for Redis metrics
+    result = await provider.search_metrics(pattern="redis")
 
     if result["status"] == "success":
-        all_metrics = result["metrics"]
-        print(f"Found {result['count']} metrics")
+        print(f"Found {result['count']} Redis metrics")
+        print(result["metrics"][:10])  # First 10
 
-        # Search for Redis metrics
-        redis_metrics = [m for m in all_metrics if "redis" in m]
-        print(f"Redis metrics: {redis_metrics}")
+    # Search for memory metrics
+    result = await provider.search_metrics(pattern="memory")
+    print(f"Found {result['count']} memory metrics")
+
+    # List all metrics (empty pattern)
+    result = await provider.search_metrics(pattern="")
+    print(f"Total metrics: {result['count']}")
 ```
 
 ### Via ToolManager (How the LLM Uses It)
@@ -37,77 +41,62 @@ async with PrometheusToolProvider(config=config) as provider:
 from redis_sre_agent.tools.manager import ToolManager
 
 async with ToolManager() as manager:
-    # Find the list_metrics tool
+    # Find the search_metrics tool
     tools = manager.get_tools()
-    list_tool = next(t for t in tools if "list_metrics" in t.name)
+    search_tool = next(t for t in tools if "search_metrics" in t.name)
 
-    # Execute it
-    result = await manager.resolve_tool_call(list_tool.name, {})
+    # Search for Redis memory metrics
+    result = await manager.resolve_tool_call(
+        search_tool.name,
+        {"pattern": "redis_memory"}
+    )
 
-    # Filter results
-    all_metrics = result["metrics"]
-    memory_metrics = [m for m in all_metrics if "memory" in m]
+    print(f"Found {result['count']} metrics")
+    print(result["metrics"])
 ```
 
 ## Common Search Patterns
 
 ### 1. Search by Prefix
 
-Metrics are typically prefixed by their source:
-
 ```python
 # Redis metrics
-redis_metrics = [m for m in all_metrics if m.startswith("redis_")]
+result = await provider.search_metrics(pattern="redis_")
 
 # Node/system metrics
-node_metrics = [m for m in all_metrics if m.startswith("node_")]
+result = await provider.search_metrics(pattern="node_")
 
 # Prometheus internal metrics
-prom_metrics = [m for m in all_metrics if m.startswith("prometheus_")]
+result = await provider.search_metrics(pattern="prometheus_")
 ```
 
 ### 2. Search by Keyword
 
 ```python
 # Memory-related metrics
-memory_metrics = [m for m in all_metrics if "memory" in m.lower()]
+result = await provider.search_metrics(pattern="memory")
 
 # Network metrics
-network_metrics = [m for m in all_metrics if "network" in m.lower()]
+result = await provider.search_metrics(pattern="network")
 
 # Connection metrics
-connection_metrics = [m for m in all_metrics if "connection" in m or "client" in m]
+result = await provider.search_metrics(pattern="connected")
 ```
 
-### 3. Search by Suffix
-
-Prometheus has naming conventions:
+### 3. Search by Specific Metric
 
 ```python
-# Counter metrics (always increasing)
-counters = [m for m in all_metrics if m.endswith("_total")]
-
-# Gauge metrics (can go up or down)
-gauges = [m for m in all_metrics if m.endswith("_bytes") or m.endswith("_seconds")]
-
-# Histogram buckets
-histograms = [m for m in all_metrics if "_bucket" in m]
+# Very specific search
+result = await provider.search_metrics(pattern="redis_memory_used")
+# Returns: redis_memory_used_bytes, redis_memory_used_dataset_bytes, etc.
 ```
 
-### 4. Search by Category
+### 4. List All Metrics
 
 ```python
-# Group by prefix
-from collections import defaultdict
-
-categories = defaultdict(list)
-for metric in all_metrics:
-    prefix = metric.split("_")[0]
-    categories[prefix].append(metric)
-
-# Show categories
-for prefix, metrics in sorted(categories.items()):
-    print(f"{prefix}: {len(metrics)} metrics")
+# Empty pattern returns everything
+result = await provider.search_metrics(pattern="")
+# Returns: All 1,165+ metrics
 ```
 
 ## LLM Workflow
@@ -120,30 +109,19 @@ When an LLM uses the Prometheus provider, it follows this pattern:
 
 **LLM Action:**
 ```python
-# Call list_metrics to get all available metrics
-result = await manager.resolve_tool_call("prometheus_list_metrics", {})
-all_metrics = result["metrics"]  # Returns 1,165+ metrics
+# Search for Redis memory metrics
+result = await manager.resolve_tool_call(
+    "prometheus_search_metrics",
+    {"pattern": "redis_memory"}
+)
+# Returns: 14 metrics including redis_memory_used_bytes
 ```
 
-### Step 2: Filtering
-
-**LLM Thinking:** "I need Redis memory metrics..."
-
-```python
-# Filter for Redis + memory
-redis_memory = [m for m in all_metrics
-                if "redis" in m and "memory" in m]
-# Results: ['redis_memory_used_bytes', 'redis_memory_max_bytes', ...]
-
-# Pick the best match
-best_match = "redis_memory_used_bytes"
-```
-
-### Step 3: Querying
+### Step 2: Querying
 
 **LLM Action:**
 ```python
-# Query the metric
+# Query the specific metric
 result = await manager.resolve_tool_call(
     "prometheus_query",
     {"query": "redis_memory_used_bytes"}
@@ -153,7 +131,7 @@ value = int(result["data"][0]["value"][1])
 mb = value / (1024 * 1024)
 ```
 
-### Step 4: Response
+### Step 3: Response
 
 **LLM Response:** "Redis is using 24.28 MB of memory"
 
@@ -164,8 +142,8 @@ mb = value / (1024 * 1024)
 **User:** "How many clients are connected to Redis?"
 
 **LLM Workflow:**
-1. Search metrics for "redis" + "client" or "connection"
-2. Find `redis_connected_clients`
+1. Search: `search_metrics(pattern="redis_connected")`
+2. Find: `redis_connected_clients`
 3. Query: `prometheus_query(query="redis_connected_clients")`
 4. Response: "There are 1 clients connected"
 
@@ -174,8 +152,8 @@ mb = value / (1024 * 1024)
 **User:** "What's the Redis cache hit rate?"
 
 **LLM Workflow:**
-1. Search for "redis" + "keyspace"
-2. Find `redis_keyspace_hits_total` and `redis_keyspace_misses_total`
+1. Search: `search_metrics(pattern="redis_keyspace")`
+2. Find: `redis_keyspace_hits_total` and `redis_keyspace_misses_total`
 3. Query with PromQL calculation:
    ```promql
    rate(redis_keyspace_hits_total[1m]) /
@@ -188,8 +166,9 @@ mb = value / (1024 * 1024)
 **User:** "Show me memory usage over the last hour"
 
 **LLM Workflow:**
-1. Already knows `redis_memory_used_bytes` from previous search
-2. Use range query:
+1. Search: `search_metrics(pattern="redis_memory_used")`
+2. Find: `redis_memory_used_bytes`
+3. Use range query:
    ```python
    prometheus_query_range(
        query="redis_memory_used_bytes",
@@ -198,17 +177,17 @@ mb = value / (1024 * 1024)
        step="5m"
    )
    ```
-3. Response: "Memory usage has been stable around 25 MB for the past hour"
+4. Response: "Memory usage has been stable around 25 MB for the past hour"
 
 ### Scenario 4: Exploration
 
 **User:** "What Redis metrics are available?"
 
 **LLM Workflow:**
-1. Call `list_metrics()`
-2. Filter for `redis_*`
+1. Search: `search_metrics(pattern="redis")`
+2. Returns: 187 Redis metrics
 3. Group by category (memory, clients, keyspace, etc.)
-4. Response: "I found 185 Redis metrics including:
+4. Response: "I found 187 Redis metrics including:
    - Memory: redis_memory_used_bytes, redis_memory_max_bytes
    - Clients: redis_connected_clients, redis_blocked_clients
    - Keyspace: redis_keyspace_hits_total, redis_keyspace_misses_total
@@ -240,44 +219,29 @@ Understanding Prometheus naming helps with searching:
 - `*_connected_*` - Connection counts
 - `*_processed_*` - Processing counters
 
-## Performance Tips
+## Performance Benefits
 
-### 1. Cache the Metric List
+### Efficient Discovery
 
-The metric list doesn't change frequently:
-
-```python
-# Call once per conversation
-result = await provider.list_metrics()
-all_metrics = result["metrics"]
-
-# Reuse for multiple searches
-redis_metrics = [m for m in all_metrics if "redis" in m]
-memory_metrics = [m for m in all_metrics if "memory" in m]
-```
-
-### 2. Use Specific Searches
-
-Instead of listing all metrics every time:
+Instead of retrieving all 1,165+ metrics and filtering client-side:
 
 ```python
-# If you know what you're looking for
-if "redis_memory_used_bytes" in all_metrics:
-    # Query directly
-    result = await provider.query("redis_memory_used_bytes")
+# OLD WAY (if we had list_metrics):
+# 1. Get all metrics
+all_metrics = await provider.list_metrics()  # Returns 1,165+ metrics
+# 2. Filter in Python
+redis_metrics = [m for m in all_metrics["metrics"] if "redis" in m]
+
+# NEW WAY (with search_metrics):
+# 1. Search directly
+result = await provider.search_metrics(pattern="redis")  # Returns 187 metrics
 ```
 
-### 3. Combine Filters
-
-```python
-# Multiple criteria
-redis_memory_gauges = [
-    m for m in all_metrics
-    if m.startswith("redis_")
-    and "memory" in m
-    and not m.endswith("_total")
-]
-```
+**Benefits:**
+- Less data transferred
+- Faster response time
+- Simpler LLM workflow
+- Single tool call instead of two operations
 
 ## Example Scripts
 
@@ -285,30 +249,45 @@ See the `examples/` directory for complete working examples:
 
 - `examples/search_metrics.py` - Various search patterns
 - `examples/llm_metric_search_workflow.py` - Simulated LLM workflow
-- `examples/test_redis_metrics.py` - Redis-specific metric queries
+- `examples/test_metric_search.py` - Comparison tests
 
 ## API Reference
 
-### `list_metrics()`
+### `search_metrics(pattern="", label_filters=None)`
 
-Returns all available metric names from Prometheus.
+Search for metrics by name pattern.
 
-**Parameters:** None
+**Parameters:**
+- `pattern` (str, optional): Search pattern (case-insensitive substring match). Default: "" (all metrics)
+- `label_filters` (dict, optional): Label filters to narrow results
 
 **Returns:**
 ```python
 {
     "status": "success",
-    "metrics": ["metric1", "metric2", ...],
-    "count": 1165,
-    "timestamp": "2025-10-10T12:00:00Z"
+    "pattern": "redis",
+    "metrics": ["redis_memory_used_bytes", "redis_connected_clients", ...],
+    "count": 187,
+    "timestamp": "2025-10-14T12:00:00Z"
 }
 ```
 
-**Example:**
+**Examples:**
 ```python
-result = await provider.list_metrics()
-all_metrics = result["metrics"]
+# Search for Redis metrics
+result = await provider.search_metrics(pattern="redis")
+
+# Search for memory metrics
+result = await provider.search_metrics(pattern="memory")
+
+# List all metrics
+result = await provider.search_metrics(pattern="")
+
+# Search with label filters (advanced)
+result = await provider.search_metrics(
+    pattern="redis",
+    label_filters={"job": "redis", "instance": "localhost:6379"}
+)
 ```
 
 ## See Also

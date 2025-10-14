@@ -69,7 +69,8 @@ result = await provider.query_range(
 ### List Available Metrics
 
 ```python
-result = await provider.list_metrics()
+# Use search_metrics with empty pattern to list all metrics
+result = await provider.search_metrics(pattern="")
 print(f"Found {result['count']} metrics")
 print(result['metrics'])
 ```
@@ -134,11 +135,27 @@ Query Prometheus metrics over a time range.
 }
 ```
 
-### 3. `prometheus_{hash}_list_metrics`
+### 3. `prometheus_{hash}_search_metrics`
 
-List all available metric names in Prometheus.
+Search for metrics by name pattern.
 
-**Parameters:** None
+**Parameters:**
+- `pattern` (string, optional): Search pattern for metric names (default: "" for all metrics)
+- `label_filters` (object, optional): Label filters to narrow results
+
+**Example:**
+```python
+{
+    "pattern": "redis_memory"
+}
+```
+
+Or to list all metrics:
+```python
+{
+    "pattern": ""
+}
+```
 
 ## Response Format
 

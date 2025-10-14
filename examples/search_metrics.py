@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Examples of searching for available metrics in Prometheus."""
+"""
+Demonstrate metric search patterns with the Prometheus provider.
+
+This script shows various ways to search for metrics using the search_metrics tool.
+"""
 
 import asyncio
 
@@ -9,133 +13,90 @@ from redis_sre_agent.tools.metrics.prometheus import (
 )
 
 
-async def search_metrics_examples():
-    """Show different ways to search for metrics."""
+async def main():
+    """Demonstrate various metric search patterns."""
 
     config = PrometheusConfig(url="http://localhost:9090")
 
     async with PrometheusToolProvider(config=config) as provider:
         print("=" * 70)
-        print("Searching for Metrics in Prometheus")
+        print("Prometheus Metric Search Examples")
         print("=" * 70)
 
-        # 1. List ALL metrics
-        print("\n1. List all available metrics:")
-        result = await provider.list_metrics()
+        # Pattern 1: Search by prefix
+        print("\n1. Search by Prefix")
+        print("-" * 70)
 
-        if result["status"] == "success":
-            all_metrics = result["metrics"]
-            print(f"   Total metrics: {result['count']}")
-            print(f"   First 10: {all_metrics[:10]}")
+        result = await provider.search_metrics(pattern="redis_")
+        print(f"   redis_* metrics: {result['count']}")
+        print(f"   Examples: {result['metrics'][:5]}")
 
-        # 2. Search for Redis metrics
-        print("\n2. Search for Redis-specific metrics:")
-        if result["status"] == "success":
-            redis_metrics = [m for m in all_metrics if m.startswith("redis_")]
-            print(f"   Found {len(redis_metrics)} Redis metrics")
-            print("   Examples:")
-            for metric in redis_metrics[:10]:
-                print(f"     - {metric}")
+        result = await provider.search_metrics(pattern="node_")
+        print(f"   node_* metrics: {result['count']}")
+        print(f"   Examples: {result['metrics'][:5]}")
 
-        # 3. Search for memory-related metrics
-        print("\n3. Search for memory-related metrics:")
-        if result["status"] == "success":
-            memory_metrics = [m for m in all_metrics if "memory" in m.lower()]
-            print(f"   Found {len(memory_metrics)} memory metrics")
-            print("   Examples:")
-            for metric in memory_metrics[:10]:
-                print(f"     - {metric}")
+        # Pattern 2: Search by keyword
+        print("\n2. Search by Keyword")
+        print("-" * 70)
 
-        # 4. Search for network metrics
-        print("\n4. Search for network-related metrics:")
-        if result["status"] == "success":
-            network_metrics = [m for m in all_metrics if "network" in m.lower()]
-            print(f"   Found {len(network_metrics)} network metrics")
-            print("   Examples:")
-            for metric in network_metrics[:10]:
-                print(f"     - {metric}")
+        result = await provider.search_metrics(pattern="memory")
+        print(f"   'memory' metrics: {result['count']}")
+        print(f"   Examples: {result['metrics'][:5]}")
 
-        # 5. Search by category (node, redis, go, etc.)
-        print("\n5. Search by metric prefix:")
-        if result["status"] == "success":
-            prefixes = {}
-            for metric in all_metrics:
-                prefix = metric.split("_")[0]
-                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+        result = await provider.search_metrics(pattern="network")
+        print(f"   'network' metrics: {result['count']}")
+        print(f"   Examples: {result['metrics'][:5]}")
 
-            print("   Metric categories:")
-            for prefix, count in sorted(prefixes.items(), key=lambda x: x[1], reverse=True)[:10]:
-                print(f"     - {prefix}: {count} metrics")
+        # Pattern 3: Specific search
+        print("\n3. Specific Search")
+        print("-" * 70)
 
-        # 6. Search for specific patterns
-        print("\n6. Search for rate/counter metrics:")
-        if result["status"] == "success":
-            rate_metrics = [m for m in all_metrics if m.endswith("_total")]
-            print(f"   Found {len(rate_metrics)} counter metrics (ending in _total)")
-            print("   Examples:")
-            for metric in rate_metrics[:10]:
-                print(f"     - {metric}")
+        result = await provider.search_metrics(pattern="redis_memory")
+        print(f"   'redis_memory' metrics: {result['count']}")
+        print(f"   All: {result['metrics']}")
 
-        print("\n" + "=" * 70)
+        result = await provider.search_metrics(pattern="redis_connected")
+        print(f"   'redis_connected' metrics: {result['count']}")
+        print(f"   All: {result['metrics']}")
 
+        # Pattern 4: List all metrics
+        print("\n4. List All Metrics (empty pattern)")
+        print("-" * 70)
 
-async def search_via_tool_manager():
-    """Show how the LLM would search for metrics via ToolManager."""
+        result = await provider.search_metrics(pattern="")
+        print(f"   Total metrics: {result['count']}")
+        print(f"   First 10: {result['metrics'][:10]}")
 
-    from redis_sre_agent.core.config import Settings
-    from redis_sre_agent.tools.manager import ToolManager
+        # Pattern 5: Via ToolManager (how LLM uses it)
+        print("\n5. Via ToolManager (LLM Usage)")
+        print("-" * 70)
 
-    # Configure settings
-    settings = Settings()
-    settings.tool_providers = [
-        "redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider"
-    ]
-
-    # Patch global settings
-    import redis_sre_agent.core.config as config_module
-
-    original_settings = config_module.settings
-    config_module.settings = settings
-
-    try:
-        print("\n" + "=" * 70)
-        print("Searching via ToolManager (how the LLM does it)")
-        print("=" * 70)
+        from redis_sre_agent.tools.manager import ToolManager
 
         async with ToolManager() as manager:
-            # Find the list_metrics tool
+            # Find the search_metrics tool
             tools = manager.get_tools()
-            list_metrics_tool = next((t for t in tools if "list_metrics" in t.name), None)
+            search_tool = next((t for t in tools if "search_metrics" in t.name), None)
 
-            if list_metrics_tool:
-                print(f"\n1. Tool found: {list_metrics_tool.name}")
-                print(f"   Description: {list_metrics_tool.description[:80]}...")
+            if search_tool:
+                print(f"   Tool found: {search_tool.name}")
+                print(f"   Description: {search_tool.description[:80]}...")
 
-                # Execute the tool (this is what the LLM does)
-                print("\n2. Executing tool...")
+                # Execute search
                 result = await manager.resolve_tool_call(
-                    tool_name=list_metrics_tool.name,
-                    args={},  # No arguments needed
+                    tool_name=search_tool.name, args={"pattern": "redis_keyspace"}
                 )
 
-                if result["status"] == "success":
-                    print(f"   ✓ Success! Found {result['count']} metrics")
+                print(f"   Search 'redis_keyspace': {result['count']} metrics")
+                print(f"   Results: {result['metrics']}")
 
-                    # LLM can then filter the results
-                    all_metrics = result["metrics"]
-                    redis_metrics = [m for m in all_metrics if "redis" in m.lower()]
-                    print("\n3. LLM filters for 'redis' metrics:")
-                    print(f"   Found {len(redis_metrics)} Redis metrics")
-                    print(f"   Examples: {redis_metrics[:5]}")
-
-    finally:
-        config_module.settings = original_settings
-
-
-async def main():
-    """Run all examples."""
-    await search_metrics_examples()
-    await search_via_tool_manager()
+        print("\n" + "=" * 70)
+        print("Summary:")
+        print("  - search_metrics(pattern='') lists all metrics")
+        print("  - search_metrics(pattern='redis') finds Redis metrics")
+        print("  - search_metrics(pattern='redis_memory') is very specific")
+        print("  - More efficient than retrieving all metrics and filtering")
+        print("=" * 70)
 
 
 if __name__ == "__main__":
