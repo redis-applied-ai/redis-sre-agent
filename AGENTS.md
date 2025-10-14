@@ -1,4 +1,4 @@
-# Redis SRE Agent - Claude Configuration
+# Redis SRE Agent - Agents File
 
 ## Project Overview
 This is a production-ready Redis Site Reliability Engineering (SRE) agent built with LangGraph, FastAPI, and comprehensive monitoring tools. The agent provides automated Redis health monitoring, issue detection, and conversational troubleshooting.
