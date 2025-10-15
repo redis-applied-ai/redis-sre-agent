@@ -8,6 +8,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from pydantic_settings import SettingsConfigDict
 from redis.asyncio import Redis
 
 from redis_sre_agent.api.instances import RedisInstance
@@ -31,7 +32,7 @@ class RedisCliConfig(BaseModel):
 
     # TODO: Create a base ToolConfig class that automatically sets env_prefix
     # based on the tool name, unless overridden
-    model_config = {"env_prefix": "tools_redis_cli_"}
+    model_config = SettingsConfigDict(env_prefix="tools_redis_cli_")
 
     connection_url: str = Field(
         default="redis://localhost:6379", description="Redis connection URL"

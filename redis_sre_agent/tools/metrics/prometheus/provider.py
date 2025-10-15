@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from prometheus_api_client import PrometheusConnect
 from prometheus_api_client.utils import parse_datetime
 from pydantic import BaseModel, Field
+from pydantic_settings import SettingsConfigDict
 
 from redis_sre_agent.api.instances import RedisInstance
 from redis_sre_agent.tools.protocols import ToolProvider
@@ -35,7 +36,7 @@ class PrometheusConfig(BaseModel):
 
     # TODO: Create a base ToolConfig class that automatically sets env_prefix
     # based on the tool name, unless overridden
-    model_config = {"env_prefix": "tools_prometheus_"}
+    model_config = SettingsConfigDict(env_prefix="tools_prometheus_")
 
     url: str = Field(default="http://localhost:9090", description="Prometheus server URL")
     disable_ssl: bool = Field(default=False, description="Disable SSL certificate verification")
