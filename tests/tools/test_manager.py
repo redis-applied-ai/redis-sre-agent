@@ -33,16 +33,21 @@ async def test_tool_manager_knowledge_tools():
         tools = mgr.get_tools()
         tool_names = [t.name for t in tools]
 
-        # Should have search and ingest tools
-        search_tools = [n for n in tool_names if "search" in n]
-        ingest_tools = [n for n in tool_names if "ingest" in n]
+        # Should have knowledge, prometheus, and redis_cli tools (default providers)
+        knowledge_tools = [n for n in tool_names if "knowledge_" in n]
+        prometheus_tools = [n for n in tool_names if "prometheus_" in n]
+        redis_cli_tools = [n for n in tool_names if "redis_cli_" in n]
 
-        assert len(search_tools) == 1
-        assert len(ingest_tools) == 1
+        # Knowledge tools
+        assert len(knowledge_tools) == 2  # search and ingest
+        assert any("search" in n for n in knowledge_tools)
+        assert any("ingest" in n for n in knowledge_tools)
 
-        # Tool names should include provider name and hash
-        for name in tool_names:
-            assert "knowledge_" in name
+        # Prometheus tools (enabled by default)
+        assert len(prometheus_tools) == 3  # query, query_range, search_metrics
+
+        # Redis CLI tools (enabled by default)
+        assert len(redis_cli_tools) == 10  # All diagnostic tools
 
 
 @pytest.mark.asyncio
