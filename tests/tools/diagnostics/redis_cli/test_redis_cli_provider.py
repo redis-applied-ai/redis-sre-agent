@@ -1,31 +1,40 @@
 """Tests for Redis CLI diagnostics tool provider."""
 
 import pytest
+from testcontainers.redis import RedisContainer
 
 from redis_sre_agent.tools.diagnostics.redis_cli import (
-    RedisCliConfig,
     RedisCliToolProvider,
 )
 
 
+@pytest.fixture(scope="module")
+def redis_container():
+    """Start a Redis container for testing."""
+    with RedisContainer("redis:8.2.1") as redis:
+        yield redis
+
+
 @pytest.fixture
-def redis_cli_config():
-    """Create a test Redis CLI configuration."""
-    return RedisCliConfig(connection_url="redis://localhost:6379")
+def redis_url(redis_container):
+    """Get Redis connection URL from container."""
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    return f"redis://{host}:{port}"
 
 
 @pytest.mark.asyncio
-async def test_provider_initialization(redis_cli_config):
+async def test_provider_initialization(redis_url):
     """Test that provider initializes correctly."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         assert provider.provider_name == "redis_cli"
-        assert provider.config.connection_url == "redis://localhost:6379"
+        assert provider.connection_url == redis_url
 
 
 @pytest.mark.asyncio
-async def test_create_tool_schemas(redis_cli_config):
+async def test_create_tool_schemas(redis_url):
     """Test that tool schemas are created correctly."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
 
         assert len(schemas) == 10  # All 10 diagnostic tools
@@ -53,9 +62,9 @@ async def test_create_tool_schemas(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_info_command(redis_cli_config):
+async def test_info_command(redis_url):
     """Test INFO command execution."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         # Test without section
         result = await provider.info()
         assert result["status"] == "success"
@@ -69,9 +78,9 @@ async def test_info_command(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_slowlog_command(redis_cli_config):
+async def test_slowlog_command(redis_url):
     """Test SLOWLOG command execution."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         result = await provider.slowlog(count=5)
 
         assert result["status"] == "success"
@@ -81,9 +90,9 @@ async def test_slowlog_command(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_config_get_command(redis_cli_config):
+async def test_config_get_command(redis_url):
     """Test CONFIG GET command execution."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         result = await provider.config_get(pattern="maxmemory")
 
         assert result["status"] == "success"
@@ -92,9 +101,9 @@ async def test_config_get_command(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_client_list_command(redis_cli_config):
+async def test_client_list_command(redis_url):
     """Test CLIENT LIST command execution."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         result = await provider.client_list()
 
         assert result["status"] == "success"
@@ -104,9 +113,9 @@ async def test_client_list_command(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_memory_stats_command(redis_cli_config):
+async def test_memory_stats_command(redis_url):
     """Test MEMORY STATS command execution."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         result = await provider.memory_stats()
 
         assert result["status"] == "success"
@@ -114,9 +123,9 @@ async def test_memory_stats_command(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_replication_info_command(redis_cli_config):
+async def test_replication_info_command(redis_url):
     """Test replication info command execution."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         result = await provider.replication_info()
 
         assert result["status"] == "success"
@@ -125,9 +134,9 @@ async def test_replication_info_command(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_resolve_tool_call_info(redis_cli_config):
+async def test_resolve_tool_call_info(redis_url):
     """Test resolving info tool call."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         tool_name = provider._make_tool_name("info")
 
         result = await provider.resolve_tool_call(tool_name=tool_name, args={"section": "memory"})
@@ -137,9 +146,9 @@ async def test_resolve_tool_call_info(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_resolve_tool_call_slowlog(redis_cli_config):
+async def test_resolve_tool_call_slowlog(redis_url):
     """Test resolving slowlog tool call."""
-    async with RedisCliToolProvider(config=redis_cli_config) as provider:
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
         tool_name = provider._make_tool_name("slowlog")
 
         result = await provider.resolve_tool_call(tool_name=tool_name, args={"count": 10})
@@ -149,22 +158,20 @@ async def test_resolve_tool_call_slowlog(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_provider_with_redis_instance(redis_cli_config):
+async def test_provider_with_redis_instance(redis_url):
     """Test that provider works with a Redis instance context."""
     from redis_sre_agent.api.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
         name="Test Redis",
-        connection_url="redis://localhost:6379",
+        connection_url=redis_url,
         environment="test",
         usage="cache",
         description="Test instance",
     )
 
-    async with RedisCliToolProvider(
-        config=redis_cli_config, redis_instance=redis_instance
-    ) as provider:
+    async with RedisCliToolProvider(redis_instance=redis_instance) as provider:
         # Tool names should include instance hash
         schemas = provider.create_tool_schemas()
         tool_name = schemas[0].name
@@ -181,10 +188,9 @@ async def test_provider_with_redis_instance(redis_cli_config):
 
 
 @pytest.mark.asyncio
-async def test_load_config_from_env(monkeypatch):
-    """Test loading configuration from environment variables."""
-    monkeypatch.setenv("TOOLS_REDIS_CLI_CONNECTION_URL", "redis://test:6379")
-
-    config = RedisCliToolProvider._load_config_from_env()
-
-    assert config.connection_url == "redis://test:6379"
+async def test_provider_requires_connection_url_or_instance():
+    """Test that provider requires either connection_url or redis_instance."""
+    with pytest.raises(
+        ValueError, match="Either redis_instance or connection_url must be provided"
+    ):
+        RedisCliToolProvider()

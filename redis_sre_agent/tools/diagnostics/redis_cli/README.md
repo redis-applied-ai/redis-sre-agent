@@ -11,24 +11,11 @@ This provider executes read-only Redis diagnostic commands to help troubleshoot 
 ### Direct Configuration
 
 ```python
-from redis_sre_agent.tools.diagnostics.redis_cli import (
-    RedisCliConfig,
-    RedisCliToolProvider,
-)
+from redis_sre_agent.tools.diagnostics.redis_cli import RedisCliToolProvider
 
-config = RedisCliConfig(
-    connection_url="redis://localhost:6379"
-)
-
-async with RedisCliToolProvider(config=config) as provider:
+async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
     result = await provider.info(section="memory")
     print(result)
-```
-
-### Environment Variables
-
-```bash
-export TOOLS_REDIS_CLI_CONNECTION_URL=redis://localhost:6379
 ```
 
 ### With Redis Instance

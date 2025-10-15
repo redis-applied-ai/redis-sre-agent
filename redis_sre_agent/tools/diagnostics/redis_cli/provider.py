@@ -7,8 +7,7 @@ All commands are read-only for safety.
 import logging
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
-from pydantic_settings import SettingsConfigDict
+from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from redis_sre_agent.api.instances import RedisInstance
@@ -21,22 +20,11 @@ logger = logging.getLogger(__name__)
 class RedisCliConfig(BaseModel):
     """Configuration for Redis CLI diagnostics provider.
 
-    Environment variables use the prefix TOOLS_REDIS_CLI_:
-    - TOOLS_REDIS_CLI_CONNECTION_URL
-
-    Example:
-        config = RedisCliConfig(
-            connection_url="redis://localhost:6379"
-        )
+    Note: This provider does not use configuration. All tools require
+    a connection_url parameter to be passed at runtime.
     """
 
-    # TODO: Create a base ToolConfig class that automatically sets env_prefix
-    # based on the tool name, unless overridden
-    model_config = SettingsConfigDict(env_prefix="tools_redis_cli_")
-
-    connection_url: str = Field(
-        default="redis://localhost:6379", description="Redis connection URL"
-    )
+    pass
 
 
 class RedisCliToolProvider(ToolProvider):
@@ -54,48 +42,35 @@ class RedisCliToolProvider(ToolProvider):
     - Replication info (replication diagnostics)
     - MEMORY STATS (detailed memory breakdown)
 
-    Configuration is loaded from environment variables:
-    - TOOLS_REDIS_CLI_CONNECTION_URL: Redis connection URL (default: redis://localhost:6379)
+    The provider is initialized with a connection URL and manages the Redis client lifecycle.
     """
 
     def __init__(
         self,
         redis_instance: Optional[RedisInstance] = None,
+        connection_url: Optional[str] = None,
         config: Optional[RedisCliConfig] = None,
     ):
         """Initialize the Redis CLI diagnostics provider.
 
         Args:
-            redis_instance: Optional Redis instance for scoped diagnostics
-            config: Optional Redis CLI configuration (loaded from env if not provided)
+            redis_instance: Optional Redis instance for scoped diagnostics.
+                           If provided, uses its connection_url.
+            connection_url: Redis connection URL (e.g., redis://localhost:6379).
+                           Required if redis_instance is not provided.
+            config: Optional config (unused, kept for compatibility)
         """
         super().__init__(redis_instance)
 
-        # Load config from environment if not provided
-        if config is None:
-            config = self._load_config_from_env()
-
-        # If redis_instance provided, use its connection URL
+        # Get connection URL from redis_instance or parameter
         if redis_instance:
-            config.connection_url = redis_instance.connection_url
+            self.connection_url = redis_instance.connection_url
+        elif connection_url:
+            self.connection_url = connection_url
+        else:
+            raise ValueError("Either redis_instance or connection_url must be provided")
 
-        self.config = config
         self._client: Optional[Redis] = None
-
-    @staticmethod
-    def _load_config_from_env() -> RedisCliConfig:
-        """Load Redis CLI configuration from environment variables.
-
-        Uses TOOLS_REDIS_CLI_* prefix for environment variables.
-
-        Returns:
-            RedisCliConfig loaded from environment
-        """
-        import os
-
-        connection_url = os.getenv("TOOLS_REDIS_CLI_CONNECTION_URL", "redis://localhost:6379")
-
-        return RedisCliConfig(connection_url=connection_url)
 
     @property
     def provider_name(self) -> str:
@@ -103,8 +78,8 @@ class RedisCliToolProvider(ToolProvider):
 
     async def __aenter__(self):
         """Initialize Redis client on context entry."""
-        self._client = Redis.from_url(self.config.connection_url, decode_responses=True)
-        logger.info(f"Connected to Redis at {self.config.connection_url}")
+        self._client = Redis.from_url(self.connection_url, decode_responses=True)
+        logger.info(f"Connected to Redis at {self.connection_url}")
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -127,6 +102,10 @@ class RedisCliToolProvider(ToolProvider):
                 parameters={
                     "type": "object",
                     "properties": {
+                        "connection_url": {
+                            "type": "string",
+                            "description": "Redis connection URL (e.g., redis://localhost:6379)",
+                        },
                         "section": {
                             "type": "string",
                             "description": (
@@ -134,9 +113,9 @@ class RedisCliToolProvider(ToolProvider):
                                 "'clients', 'stats', 'replication', 'cpu', 'keyspace'. "
                                 "Leave empty for all sections."
                             ),
-                        }
+                        },
                     },
-                    "required": [],
+                    "required": ["connection_url"],
                 },
             ),
             ToolDefinition(

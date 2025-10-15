@@ -1,18 +1,38 @@
 """Integration tests for Redis CLI diagnostics provider with ToolManager."""
 
 import pytest
+from testcontainers.redis import RedisContainer
+
+
+@pytest.fixture(scope="module")
+def redis_container():
+    """Start a Redis container for testing."""
+    with RedisContainer("redis:8.2.1") as redis:
+        yield redis
 
 
 @pytest.fixture
-def redis_cli_env(monkeypatch):
-    """Set Redis CLI environment variables."""
-    monkeypatch.setenv("TOOLS_REDIS_CLI_CONNECTION_URL", "redis://localhost:6379")
+def redis_url(redis_container):
+    """Get Redis connection URL from container."""
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    return f"redis://{host}:{port}"
 
 
 @pytest.mark.asyncio
-async def test_redis_cli_provider_loads_via_tool_manager(redis_cli_env):
+async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
     """Test that Redis CLI provider loads correctly via ToolManager."""
+    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+
+    redis_instance = RedisInstance(
+        id="test-redis",
+        name="Test Redis",
+        connection_url=redis_url,
+        environment="test",
+        usage="cache",
+        description="Test instance",
+    )
 
     # Create settings with Redis CLI provider configured
     settings = Settings()
@@ -28,7 +48,7 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_cli_env):
     try:
         from redis_sre_agent.tools.manager import ToolManager
 
-        async with ToolManager() as manager:
+        async with ToolManager(redis_instance=redis_instance) as manager:
             tools = manager.get_tools()
 
             # Should have knowledge base + Redis CLI tools
@@ -57,9 +77,19 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_cli_env):
 
 
 @pytest.mark.asyncio
-async def test_redis_cli_tool_execution_via_manager(redis_cli_env):
+async def test_redis_cli_tool_execution_via_manager(redis_url):
     """Test executing Redis CLI tools via ToolManager."""
+    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+
+    redis_instance = RedisInstance(
+        id="test-redis",
+        name="Test Redis",
+        connection_url=redis_url,
+        environment="test",
+        usage="cache",
+        description="Test instance",
+    )
 
     settings = Settings()
     settings.tool_providers = [
@@ -74,7 +104,7 @@ async def test_redis_cli_tool_execution_via_manager(redis_cli_env):
     try:
         from redis_sre_agent.tools.manager import ToolManager
 
-        async with ToolManager() as manager:
+        async with ToolManager(redis_instance=redis_instance) as manager:
             tools = manager.get_tools()
 
             # Find the info tool
@@ -94,7 +124,7 @@ async def test_redis_cli_tool_execution_via_manager(redis_cli_env):
 
 
 @pytest.mark.asyncio
-async def test_redis_cli_with_redis_instance(redis_cli_env, monkeypatch):
+async def test_redis_cli_with_redis_instance(redis_url):
     """Test Redis CLI provider with Redis instance context."""
     from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
@@ -112,7 +142,7 @@ async def test_redis_cli_with_redis_instance(redis_cli_env, monkeypatch):
     redis_instance = RedisInstance(
         id="test-redis",
         name="Test Redis",
-        connection_url="redis://localhost:6379",
+        connection_url=redis_url,
         environment="test",
         usage="cache",
         description="Test instance",
@@ -143,8 +173,9 @@ async def test_redis_cli_with_redis_instance(redis_cli_env, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_multiple_providers_coexist(redis_cli_env, monkeypatch):
+async def test_multiple_providers_coexist(redis_url, monkeypatch):
     """Test that Redis CLI provider works alongside other providers."""
+    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
 
     # Configure both Prometheus and Redis CLI providers
@@ -157,6 +188,15 @@ async def test_multiple_providers_coexist(redis_cli_env, monkeypatch):
     # Set Prometheus env vars
     monkeypatch.setenv("TOOLS_PROMETHEUS_URL", "http://localhost:9090")
 
+    redis_instance = RedisInstance(
+        id="test-redis",
+        name="Test Redis",
+        connection_url=redis_url,
+        environment="test",
+        usage="cache",
+        description="Test instance",
+    )
+
     import redis_sre_agent.core.config as config_module
 
     original_settings = config_module.settings
@@ -165,7 +205,7 @@ async def test_multiple_providers_coexist(redis_cli_env, monkeypatch):
     try:
         from redis_sre_agent.tools.manager import ToolManager
 
-        async with ToolManager() as manager:
+        async with ToolManager(redis_instance=redis_instance) as manager:
             tools = manager.get_tools()
 
             # Should have both knowledge base, Prometheus, and Redis CLI tools
@@ -182,7 +222,7 @@ async def test_multiple_providers_coexist(redis_cli_env, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_default_providers_enabled():
+async def test_default_providers_enabled(redis_url):
     """Test that default providers are enabled in settings."""
     from redis_sre_agent.core.config import Settings
 
