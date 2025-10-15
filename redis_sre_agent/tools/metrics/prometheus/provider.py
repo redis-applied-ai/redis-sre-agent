@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from prometheus_api_client import PrometheusConnect
 from prometheus_api_client.utils import parse_datetime
-from pydantic import BaseModel, Field
-from pydantic_settings import SettingsConfigDict
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redis_sre_agent.api.instances import RedisInstance
 from redis_sre_agent.tools.protocols import ToolProvider
@@ -20,18 +20,19 @@ from redis_sre_agent.tools.tool_definition import ToolDefinition
 logger = logging.getLogger(__name__)
 
 
-class PrometheusConfig(BaseModel):
+class PrometheusConfig(BaseSettings):
     """Configuration for Prometheus metrics provider.
 
-    Environment variables use the prefix TOOLS_PROMETHEUS_:
+    Automatically loads from environment variables with TOOLS_PROMETHEUS_ prefix:
     - TOOLS_PROMETHEUS_URL
     - TOOLS_PROMETHEUS_DISABLE_SSL
 
     Example:
-        config = PrometheusConfig(
-            url="http://localhost:9090",
-            disable_ssl=False
-        )
+        # Loads from environment automatically
+        config = PrometheusConfig()
+
+        # Or override with explicit values
+        config = PrometheusConfig(url="http://localhost:9090", disable_ssl=False)
     """
 
     # TODO: Create a base ToolConfig class that automatically sets env_prefix
@@ -69,27 +70,12 @@ class PrometheusToolProvider(ToolProvider):
         super().__init__(redis_instance)
 
         # Load config from environment if not provided
+        # PrometheusConfig is a BaseSettings, so it automatically loads from env
         if config is None:
-            config = self._load_config_from_env()
+            config = PrometheusConfig()
 
         self.config = config
         self._client: Optional[PrometheusConnect] = None
-
-    @staticmethod
-    def _load_config_from_env() -> PrometheusConfig:
-        """Load Prometheus configuration from environment variables.
-
-        Uses TOOLS_PROMETHEUS_* prefix for environment variables.
-
-        Returns:
-            PrometheusConfig loaded from environment
-        """
-        import os
-
-        url = os.getenv("TOOLS_PROMETHEUS_URL", "http://localhost:9090")
-        disable_ssl = os.getenv("TOOLS_PROMETHEUS_DISABLE_SSL", "false").lower() == "true"
-
-        return PrometheusConfig(url=url, disable_ssl=disable_ssl)
 
     @property
     def provider_name(self) -> str:
