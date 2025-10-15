@@ -136,7 +136,7 @@ def test_deployment_providers_config_with_providers():
 def test_deployment_providers_config_from_env(monkeypatch):
     """Test creating deployment providers config from environment variables."""
     # Set environment variables
-    monkeypatch.setenv("TOOLS_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus:9090")
     monkeypatch.setenv("PROMETHEUS_TIMEOUT", "60")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
     monkeypatch.setenv("GITHUB_ORGANIZATION", "test-org")
