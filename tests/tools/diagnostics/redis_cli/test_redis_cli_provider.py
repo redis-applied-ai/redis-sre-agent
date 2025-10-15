@@ -37,7 +37,7 @@ async def test_create_tool_schemas(redis_url):
     async with RedisCliToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
 
-        assert len(schemas) == 10  # All 10 diagnostic tools
+        assert len(schemas) == 13  # All 13 diagnostic tools (10 original + 3 new)
 
         # Check tool names
         tool_names = [schema.name for schema in schemas]
@@ -48,6 +48,9 @@ async def test_create_tool_schemas(redis_url):
         assert any("client_list" in name for name in tool_names)
         assert any("memory_doctor" in name for name in tool_names)
         assert any("latency_doctor" in name for name in tool_names)
+        assert any("sample_keys" in name for name in tool_names)
+        assert any("search_indexes" in name for name in tool_names)
+        assert any("search_index_info" in name for name in tool_names)
         assert any("cluster_info" in name for name in tool_names)
         assert any("replication_info" in name for name in tool_names)
         assert any("memory_stats" in name for name in tool_names)
@@ -194,3 +197,309 @@ async def test_provider_requires_connection_url_or_instance():
         ValueError, match="Either redis_instance or connection_url must be provided"
     ):
         RedisCliToolProvider()
+
+
+@pytest.mark.asyncio
+async def test_sample_keys(redis_url, redis_container):
+    """Test sampling keys from the keyspace."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        # First, populate some test keys
+        client = provider.get_client()
+        await client.set("test:key1", "value1")
+        await client.set("test:key2", "value2")
+        await client.lpush("test:list", "item1")
+        await client.hset("test:hash", "field", "value")
+
+        # Sample all keys
+        result = await provider.sample_keys(count=10, pattern="test:*")
+
+        assert result["status"] == "success"
+        assert result["pattern"] == "test:*"
+        assert result["requested_count"] == 10
+        assert result["sampled_count"] >= 4  # At least the 4 keys we created
+        assert "keys" in result
+        assert "type_distribution" in result
+
+        # Check that we got key types
+        key_names = [k["key"] for k in result["keys"]]
+        assert b"test:key1" in key_names or "test:key1" in key_names
+
+        # Check type distribution
+        assert "string" in result["type_distribution"]
+        assert "list" in result["type_distribution"]
+        assert "hash" in result["type_distribution"]
+
+        # Clean up
+        await client.delete("test:key1", "test:key2", "test:list", "test:hash")
+
+
+@pytest.mark.asyncio
+async def test_sample_keys_with_pattern(redis_url, redis_container):
+    """Test sampling keys with a specific pattern."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        client = provider.get_client()
+
+        # Create keys with different prefixes
+        await client.set("user:1", "alice")
+        await client.set("user:2", "bob")
+        await client.set("session:1", "data")
+
+        # Sample only user keys
+        result = await provider.sample_keys(count=10, pattern="user:*")
+
+        assert result["status"] == "success"
+        assert result["sampled_count"] >= 2
+
+        # All keys should match the pattern
+        for key_info in result["keys"]:
+            key = key_info["key"]
+            if isinstance(key, bytes):
+                key = key.decode()
+            assert key.startswith("user:")
+
+        # Clean up
+        await client.delete("user:1", "user:2", "session:1")
+
+
+@pytest.mark.asyncio
+async def test_search_indexes(redis_url):
+    """Test listing search indexes."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        result = await provider.search_indexes()
+
+        # Should succeed even if no RediSearch module (will return error)
+        # or return empty list if module is loaded but no indexes
+        assert "status" in result
+        if result["status"] == "success":
+            assert "indexes" in result
+            assert "count" in result
+            assert isinstance(result["indexes"], list)
+        else:
+            # Error case - RediSearch not loaded
+            assert "error" in result
+            assert "note" in result
+
+
+@pytest.mark.asyncio
+async def test_search_index_info(redis_url):
+    """Test getting search index info."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        result = await provider.search_index_info(index_name="test_index")
+
+        # Should return error if index doesn't exist or RediSearch not loaded
+        # This is expected behavior
+        assert "status" in result
+        if result["status"] == "error":
+            assert "error" in result
+            assert result["index_name"] == "test_index"
+
+
+@pytest.mark.asyncio
+async def test_sample_keys_empty_keyspace(redis_url, redis_container):
+    """Test sampling keys when keyspace is empty or pattern matches nothing."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        # Sample with a pattern that won't match anything
+        result = await provider.sample_keys(count=10, pattern="nonexistent:*")
+
+        assert result["status"] == "success"
+        assert result["pattern"] == "nonexistent:*"
+        assert result["sampled_count"] == 0
+        assert result["keys"] == []
+        assert result["type_distribution"] == {}
+
+
+@pytest.mark.asyncio
+async def test_sample_keys_count_limit(redis_url, redis_container):
+    """Test that sample_keys respects the count limit."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        client = provider.get_client()
+
+        # Create more keys than we'll sample
+        for i in range(20):
+            await client.set(f"limit:test:{i}", f"value{i}")
+
+        # Sample only 5 keys
+        result = await provider.sample_keys(count=5, pattern="limit:test:*")
+
+        assert result["status"] == "success"
+        assert result["requested_count"] == 5
+        assert result["sampled_count"] == 5
+        assert len(result["keys"]) == 5
+
+        # Clean up
+        for i in range(20):
+            await client.delete(f"limit:test:{i}")
+
+
+@pytest.mark.asyncio
+async def test_sample_keys_type_distribution(redis_url, redis_container):
+    """Test that type distribution is calculated correctly."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        client = provider.get_client()
+
+        # Create keys of different types
+        await client.set("dist:string1", "value")
+        await client.set("dist:string2", "value")
+        await client.lpush("dist:list1", "item")
+        await client.sadd("dist:set1", "member")
+        await client.zadd("dist:zset1", {"member": 1.0})
+        await client.hset("dist:hash1", "field", "value")
+
+        result = await provider.sample_keys(count=10, pattern="dist:*")
+
+        assert result["status"] == "success"
+        assert result["sampled_count"] == 6
+
+        # Check type distribution
+        dist = result["type_distribution"]
+        assert dist.get("string", 0) == 2
+        assert dist.get("list", 0) == 1
+        assert dist.get("set", 0) == 1
+        assert dist.get("zset", 0) == 1
+        assert dist.get("hash", 0) == 1
+
+        # Clean up
+        await client.delete(
+            "dist:string1", "dist:string2", "dist:list1", "dist:set1", "dist:zset1", "dist:hash1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolve_tool_call_sample_keys(redis_url, redis_container):
+    """Test routing for sample_keys tool."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        client = provider.get_client()
+        await client.set("route:test", "value")
+
+        schemas = provider.create_tool_schemas()
+        sample_keys_tool = [s for s in schemas if "sample_keys" in s.name][0]
+
+        result = await provider.resolve_tool_call(
+            sample_keys_tool.name, {"count": 5, "pattern": "route:*"}
+        )
+
+        assert result["status"] == "success"
+        assert result["pattern"] == "route:*"
+        assert result["sampled_count"] >= 1
+
+        await client.delete("route:test")
+
+
+@pytest.mark.asyncio
+async def test_resolve_tool_call_search_indexes(redis_url):
+    """Test routing for search_indexes tool."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        schemas = provider.create_tool_schemas()
+        search_indexes_tool = [s for s in schemas if "search_indexes" in s.name][0]
+
+        result = await provider.resolve_tool_call(search_indexes_tool.name, {})
+
+        assert "status" in result
+        # Will succeed or fail depending on RediSearch availability
+        if result["status"] == "success":
+            assert "indexes" in result
+            assert "count" in result
+        else:
+            assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_resolve_tool_call_search_index_info(redis_url):
+    """Test routing for search_index_info tool."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        schemas = provider.create_tool_schemas()
+        search_info_tool = [s for s in schemas if "search_index_info" in s.name][0]
+
+        result = await provider.resolve_tool_call(search_info_tool.name, {"index_name": "test_idx"})
+
+        assert "status" in result
+        assert "index_name" in result
+        assert result["index_name"] == "test_idx"
+
+
+@pytest.mark.asyncio
+async def test_sample_keys_default_parameters(redis_url, redis_container):
+    """Test sample_keys with default parameters."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        client = provider.get_client()
+
+        # Create a few test keys
+        await client.set("default:1", "value")
+        await client.set("default:2", "value")
+
+        # Call with defaults (count=100, pattern="*")
+        result = await provider.sample_keys()
+
+        assert result["status"] == "success"
+        assert result["pattern"] == "*"
+        assert result["requested_count"] == 100
+        assert result["sampled_count"] >= 2  # At least our test keys
+
+        # Clean up
+        await client.delete("default:1", "default:2")
+
+
+@pytest.mark.asyncio
+async def test_sample_keys_with_bytes_keys(redis_url, redis_container):
+    """Test that sample_keys handles byte-encoded keys properly."""
+    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+        client = provider.get_client()
+
+        # Create keys (redis-py returns bytes by default)
+        await client.set("bytes:test:1", "value")
+        await client.set("bytes:test:2", "value")
+
+        result = await provider.sample_keys(count=10, pattern="bytes:test:*")
+
+        assert result["status"] == "success"
+        assert result["sampled_count"] >= 2
+
+        # Keys should be present (either as bytes or strings)
+        keys = result["keys"]
+        assert len(keys) >= 2
+
+        # Each key should have 'key' and 'type' fields
+        for key_info in keys:
+            assert "key" in key_info
+            assert "type" in key_info
+            assert key_info["type"] == "string"
+
+        # Clean up
+        await client.delete("bytes:test:1", "bytes:test:2")
+
+
+@pytest.mark.asyncio
+async def test_sample_keys_error_handling():
+    """Test sample_keys error handling with invalid connection."""
+    # Use an invalid connection URL to trigger error
+    async with RedisCliToolProvider(connection_url="redis://invalid-host:9999") as provider:
+        result = await provider.sample_keys(count=10, pattern="*")
+
+        assert result["status"] == "error"
+        assert "error" in result
+        assert result["pattern"] == "*"
+
+
+@pytest.mark.asyncio
+async def test_search_indexes_error_handling():
+    """Test search_indexes error handling with invalid connection."""
+    # Use an invalid connection URL to trigger error
+    async with RedisCliToolProvider(connection_url="redis://invalid-host:9999") as provider:
+        result = await provider.search_indexes()
+
+        assert result["status"] == "error"
+        assert "error" in result
+        assert "note" in result
+
+
+@pytest.mark.asyncio
+async def test_search_index_info_error_handling():
+    """Test search_index_info error handling with invalid connection."""
+    # Use an invalid connection URL to trigger error
+    async with RedisCliToolProvider(connection_url="redis://invalid-host:9999") as provider:
+        result = await provider.search_index_info(index_name="test_index")
+
+        assert result["status"] == "error"
+        assert "error" in result
+        assert result["index_name"] == "test_index"
+        assert "note" in result

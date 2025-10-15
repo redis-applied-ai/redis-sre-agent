@@ -41,6 +41,10 @@ class RedisCliToolProvider(ToolProvider):
     - CLUSTER INFO (cluster diagnostics)
     - Replication info (replication diagnostics)
     - MEMORY STATS (detailed memory breakdown)
+    - SCAN/RANDOMKEY (keyspace sampling)
+    - TYPE (key type inspection)
+    - FT._LIST (list Search indexes)
+    - FT.INFO (Search index information)
 
     The provider is initialized with a connection URL and manages the Redis client lifecycle.
     """
@@ -49,7 +53,7 @@ class RedisCliToolProvider(ToolProvider):
         self,
         redis_instance: Optional[RedisInstance] = None,
         connection_url: Optional[str] = None,
-        config: Optional[RedisCliConfig] = None,
+        _config: Optional[RedisCliConfig] = None,
     ):
         """Initialize the Redis CLI diagnostics provider.
 
@@ -58,7 +62,7 @@ class RedisCliToolProvider(ToolProvider):
                            If provided, uses its connection_url.
             connection_url: Redis connection URL (e.g., redis://localhost:6379).
                            Required if redis_instance is not provided.
-            config: Optional config (unused, kept for compatibility)
+            _config: Optional config (unused, kept for compatibility)
         """
         super().__init__(redis_instance)
 
@@ -76,14 +80,23 @@ class RedisCliToolProvider(ToolProvider):
     def provider_name(self) -> str:
         return "redis_cli"
 
+    def get_client(self) -> Redis:
+        """Get or create the Redis client (lazy initialization).
+
+        Returns:
+            Redis: Initialized Redis client
+        """
+        if self._client is None:
+            self._client = Redis.from_url(self.connection_url, decode_responses=True)
+            logger.info(f"Connected to Redis at {self.connection_url}")
+        return self._client
+
     async def __aenter__(self):
-        """Initialize Redis client on context entry."""
-        self._client = Redis.from_url(self.connection_url, decode_responses=True)
-        logger.info(f"Connected to Redis at {self.connection_url}")
+        """Support async context manager (no-op, client is lazily initialized)."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Clean up on context exit."""
+    async def __aexit__(self, *args):
+        """Clean up Redis connection on context exit."""
         if self._client:
             await self._client.aclose()
         self._client = None
@@ -261,6 +274,64 @@ class RedisCliToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
+            ToolDefinition(
+                name=self._make_tool_name("sample_keys"),
+                description=(
+                    "Sample keys from the Redis keyspace to understand what data is stored. "
+                    "Uses SCAN to iterate through keys and returns a sample with their types. "
+                    "Use this to get a sense of the data model, key naming patterns, and "
+                    "key distribution across different data types."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "count": {
+                            "type": "integer",
+                            "description": "Number of keys to sample (default: 100)",
+                            "default": 100,
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": (
+                                "Optional SCAN pattern to filter keys. Examples: 'user:*', "
+                                "'session:*', 'cache:*'. Use '*' for all keys."
+                            ),
+                            "default": "*",
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("search_indexes"),
+                description=(
+                    "List all Redis Search (RediSearch) indexes using FT._LIST. "
+                    "Use this to discover what search indexes exist in the Redis instance."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("search_index_info"),
+                description=(
+                    "Get detailed information about a Redis Search index using FT.INFO. "
+                    "Returns schema, statistics, and configuration for the specified index. "
+                    "Use this to understand index structure, document count, and performance metrics."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "index_name": {
+                            "type": "string",
+                            "description": "Name of the search index to inspect",
+                        }
+                    },
+                    "required": ["index_name"],
+                },
+            ),
         ]
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
@@ -277,7 +348,15 @@ class RedisCliToolProvider(ToolProvider):
         operation = tool_name.split("_")[-1]
 
         if operation == "info":
-            return await self.info(**args)
+            # Disambiguate between different info commands
+            if "cluster" in tool_name:
+                return await self.cluster_info()
+            elif "replication" in tool_name:
+                return await self.replication_info()
+            elif "index" in tool_name:
+                return await self.search_index_info(**args)
+            else:
+                return await self.info(**args)
         elif operation == "slowlog":
             return await self.slowlog(**args)
         elif operation == "log" and "acl" in tool_name:
@@ -290,12 +369,12 @@ class RedisCliToolProvider(ToolProvider):
             return await self.memory_doctor()
         elif operation == "doctor" and "latency" in tool_name:
             return await self.latency_doctor()
-        elif operation == "info" and "cluster" in tool_name:
-            return await self.cluster_info()
-        elif operation == "info" and "replication" in tool_name:
-            return await self.replication_info()
         elif operation == "stats" and "memory" in tool_name:
             return await self.memory_stats()
+        elif operation == "keys":
+            return await self.sample_keys(**args)
+        elif operation == "indexes":
+            return await self.search_indexes()
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
@@ -310,10 +389,11 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info(f"Executing INFO{' ' + section if section else ''}")
         try:
+            client = self.get_client()
             if section:
-                result = await self._client.info(section)
+                result = await client.info(section)
             else:
-                result = await self._client.info()
+                result = await client.info()
 
             return {
                 "status": "success",
@@ -338,7 +418,8 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info(f"Querying SLOWLOG (count={count})")
         try:
-            result = await self._client.slowlog_get(count)
+            client = self.get_client()
+            result = await client.slowlog_get(count)
 
             # Format slowlog entries
             entries = []
@@ -377,7 +458,8 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info(f"Querying ACL LOG (count={count})")
         try:
-            result = await self._client.acl_log(count)
+            client = self.get_client()
+            result = await client.acl_log(count)
 
             # Format ACL log entries
             entries = []
@@ -417,7 +499,8 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info(f"Executing CONFIG GET {pattern}")
         try:
-            result = await self._client.config_get(pattern)
+            client = self.get_client()
+            result = await client.config_get(pattern)
 
             return {
                 "status": "success",
@@ -443,10 +526,11 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info(f"Executing CLIENT LIST{' TYPE ' + client_type if client_type else ''}")
         try:
+            client = self.get_client()
             if client_type:
-                result = await self._client.client_list(_type=client_type)
+                result = await client.client_list(_type=client_type)
             else:
-                result = await self._client.client_list()
+                result = await client.client_list()
 
             return {
                 "status": "success",
@@ -469,7 +553,8 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info("Executing MEMORY DOCTOR")
         try:
-            result = await self._client.memory_doctor()
+            client = self.get_client()
+            result = await client.memory_doctor()
 
             return {
                 "status": "success",
@@ -490,7 +575,8 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info("Executing LATENCY DOCTOR")
         try:
-            result = await self._client.execute_command("LATENCY", "DOCTOR")
+            client = self.get_client()
+            result = await client.execute_command("LATENCY", "DOCTOR")
 
             return {
                 "status": "success",
@@ -511,7 +597,8 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info("Executing CLUSTER INFO")
         try:
-            result = await self._client.cluster("INFO")
+            client = self.get_client()
+            result = await client.cluster("INFO")
 
             return {
                 "status": "success",
@@ -533,18 +620,20 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info("Getting replication info")
         try:
+            client = self.get_client()
+
             # Get INFO replication
-            info = await self._client.info("replication")
+            info = await client.info("replication")
 
             # Get ROLE command output
-            role = await self._client.execute_command("ROLE")
+            role = await client.execute_command("ROLE")
 
             return {
                 "status": "success",
                 "info": info,
                 "role": {
                     "type": role[0] if role else "unknown",
-                    "details": role[1:] if len(role) > 1 else [],
+                    "details": role[1:] if (role and len(role) > 1) else [],
                 },
             }
         except Exception as e:
@@ -562,7 +651,8 @@ class RedisCliToolProvider(ToolProvider):
         """
         logger.info("Executing MEMORY STATS")
         try:
-            result = await self._client.memory_stats()
+            client = self.get_client()
+            result = await client.memory_stats()
 
             return {
                 "status": "success",
@@ -573,4 +663,143 @@ class RedisCliToolProvider(ToolProvider):
             return {
                 "status": "error",
                 "error": str(e),
+            }
+
+    async def sample_keys(self, count: int = 100, pattern: str = "*") -> Dict[str, Any]:
+        """Sample keys from the Redis keyspace.
+
+        Args:
+            count: Number of keys to sample
+            pattern: SCAN pattern to filter keys
+
+        Returns:
+            Sample of keys with their types and statistics
+        """
+        logger.info(f"Sampling {count} keys with pattern '{pattern}'")
+        try:
+            client = self.get_client()
+
+            # Use SCAN to iterate through keys
+            sampled_keys = []
+            cursor = 0
+
+            while len(sampled_keys) < count:
+                cursor, keys = await client.scan(cursor=cursor, match=pattern, count=100)
+
+                # Get type for each key
+                for key in keys:
+                    if len(sampled_keys) >= count:
+                        break
+
+                    key_type = await client.type(key)
+                    sampled_keys.append(
+                        {
+                            "key": key,
+                            "type": key_type,
+                        }
+                    )
+
+                # Break if we've scanned the entire keyspace
+                if cursor == 0:
+                    break
+
+            # Calculate type distribution
+            type_counts: Dict[str, int] = {}
+            for item in sampled_keys:
+                key_type = item["type"]
+                type_counts[key_type] = type_counts.get(key_type, 0) + 1
+
+            return {
+                "status": "success",
+                "pattern": pattern,
+                "requested_count": count,
+                "sampled_count": len(sampled_keys),
+                "keys": sampled_keys,
+                "type_distribution": type_counts,
+            }
+        except Exception as e:
+            logger.error(f"Failed to sample keys: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "pattern": pattern,
+            }
+
+    async def search_indexes(self) -> Dict[str, Any]:
+        """List all Redis Search indexes.
+
+        Returns:
+            List of search index names
+        """
+        logger.info("Listing Redis Search indexes")
+        try:
+            client = self.get_client()
+
+            # Execute FT._LIST command
+            result = await client.execute_command("FT._LIST")
+
+            # Result is a list of index names
+            if result is None:
+                indexes = []
+            else:
+                indexes = [idx.decode() if isinstance(idx, bytes) else idx for idx in result]
+
+            return {
+                "status": "success",
+                "count": len(indexes),
+                "indexes": indexes,
+            }
+        except Exception as e:
+            logger.error(f"Failed to list search indexes: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "note": "This command requires RediSearch module to be loaded",
+            }
+
+    async def search_index_info(self, index_name: str) -> Dict[str, Any]:
+        """Get information about a Redis Search index.
+
+        Args:
+            index_name: Name of the search index
+
+        Returns:
+            Index schema, statistics, and configuration
+        """
+        logger.info(f"Getting info for search index: {index_name}")
+        try:
+            client = self.get_client()
+
+            # Execute FT.INFO command
+            result = await client.execute_command("FT.INFO", index_name)
+
+            # Parse the result (it's a flat list of key-value pairs)
+            info = {}
+            if result is not None:
+                i = 0
+                while i < len(result):
+                    key = result[i].decode() if isinstance(result[i], bytes) else result[i]
+                    value = result[i + 1]
+
+                    # Decode bytes values
+                    if isinstance(value, bytes):
+                        value = value.decode()
+                    elif isinstance(value, list):
+                        value = [v.decode() if isinstance(v, bytes) else v for v in value]
+
+                    info[key] = value
+                    i += 2
+
+            return {
+                "status": "success",
+                "index_name": index_name,
+                "info": info,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get search index info: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "index_name": index_name,
+                "note": "This command requires RediSearch module and a valid index name",
             }
