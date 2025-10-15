@@ -43,6 +43,19 @@ class RedisInstance(BaseModel):
         "unknown",
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
+    admin_url: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API URL (e.g., https://cluster.example.com:9443). "
+        "Only applicable for instance_type='redis_enterprise'.",
+    )
+    admin_username: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
+    )
+    admin_password: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
+    )
     status: Optional[str] = "unknown"
     version: Optional[str] = None
     memory: Optional[str] = None
@@ -110,6 +123,18 @@ class CreateInstanceRequest(BaseModel):
         "unknown",
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
+    admin_url: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API URL. Only for instance_type='redis_enterprise'.",
+    )
+    admin_username: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
+    )
+    admin_password: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
+    )
     created_by: str = Field(
         default="user", description="Who created this instance: 'user' or 'agent'"
     )
@@ -168,6 +193,18 @@ class UpdateInstanceRequest(BaseModel):
     instance_type: Optional[str] = Field(
         None,
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
+    )
+    admin_url: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API URL. Only for instance_type='redis_enterprise'.",
+    )
+    admin_username: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
+    )
+    admin_password: Optional[str] = Field(
+        None,
+        description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
     )
     status: Optional[str] = None
     version: Optional[str] = None
@@ -416,6 +453,9 @@ async def create_instance(request: CreateInstanceRequest):
             monitoring_identifier=request.monitoring_identifier,
             logging_identifier=request.logging_identifier,
             instance_type=request.instance_type,
+            admin_url=request.admin_url,
+            admin_username=request.admin_username,
+            admin_password=request.admin_password,
             created_by=request.created_by,
             user_id=request.user_id,
         )
