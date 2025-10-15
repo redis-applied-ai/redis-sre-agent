@@ -65,10 +65,16 @@ def prometheus_config(prometheus_container):
 
 @pytest.mark.asyncio
 async def test_prometheus_provider_initialization(prometheus_config):
-    """Test that provider initializes correctly."""
+    """Test that provider initializes correctly with lazy client initialization."""
     async with PrometheusToolProvider(config=prometheus_config) as provider:
-        assert provider._client is not None
+        # Client should be None until first use (lazy initialization)
+        assert provider._client is None
         assert provider.provider_name == "prometheus"
+
+        # After calling get_client(), it should be initialized
+        client = provider.get_client()
+        assert client is not None
+        assert provider._client is not None
 
 
 @pytest.mark.asyncio
@@ -251,3 +257,35 @@ async def test_search_metrics_specific_pattern(prometheus_config):
 
         assert result["status"] == "success"
         assert "up" in result["metrics"]
+
+
+@pytest.mark.asyncio
+async def test_query_range_invalid_start_time(prometheus_config):
+    """Test that invalid start_time format returns error."""
+    async with PrometheusToolProvider(config=prometheus_config) as provider:
+        result = await provider.query_range(
+            query="up", start_time="invalid_time_format", end_time="now"
+        )
+
+        assert result["status"] == "error"
+        assert "error" in result
+        assert "Invalid start_time format" in result["error"]
+        assert result["query"] == "up"
+        assert result["start_time"] == "invalid_time_format"
+        assert result["end_time"] == "now"
+
+
+@pytest.mark.asyncio
+async def test_query_range_invalid_end_time(prometheus_config):
+    """Test that invalid end_time format returns error."""
+    async with PrometheusToolProvider(config=prometheus_config) as provider:
+        result = await provider.query_range(
+            query="up", start_time="5m", end_time="invalid_time_format"
+        )
+
+        assert result["status"] == "error"
+        assert "error" in result
+        assert "Invalid end_time format" in result["error"]
+        assert result["query"] == "up"
+        assert result["start_time"] == "5m"
+        assert result["end_time"] == "invalid_time_format"

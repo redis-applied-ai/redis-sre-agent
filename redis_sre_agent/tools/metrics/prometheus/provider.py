@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from prometheus_api_client import PrometheusConnect
 from prometheus_api_client.utils import parse_datetime
-from pydantic import BaseModel, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redis_sre_agent.api.instances import RedisInstance
 from redis_sre_agent.tools.protocols import ToolProvider
@@ -19,15 +20,24 @@ from redis_sre_agent.tools.tool_definition import ToolDefinition
 logger = logging.getLogger(__name__)
 
 
-class PrometheusConfig(BaseModel):
+class PrometheusConfig(BaseSettings):
     """Configuration for Prometheus metrics provider.
 
+    Automatically loads from environment variables with TOOLS_PROMETHEUS_ prefix:
+    - TOOLS_PROMETHEUS_URL
+    - TOOLS_PROMETHEUS_DISABLE_SSL
+
     Example:
-        config = PrometheusConfig(
-            url="http://localhost:9090",
-            disable_ssl=False
-        )
+        # Loads from environment automatically
+        config = PrometheusConfig()
+
+        # Or override with explicit values
+        config = PrometheusConfig(url="http://localhost:9090", disable_ssl=False)
     """
+
+    # TODO: Create a base ToolConfig class that automatically sets env_prefix
+    # based on the tool name, unless overridden
+    model_config = SettingsConfigDict(env_prefix="tools_prometheus_")
 
     url: str = Field(default="http://localhost:9090", description="Prometheus server URL")
     disable_ssl: bool = Field(default=False, description="Disable SSL certificate verification")
@@ -41,9 +51,9 @@ class PrometheusToolProvider(ToolProvider):
     - Range queries (metrics over time)
     - Metric discovery (list available metrics)
 
-    Configuration is loaded from environment variables or settings:
-    - PROMETHEUS_URL: Prometheus server URL (default: http://localhost:9090)
-    - PROMETHEUS_DISABLE_SSL: Disable SSL verification (default: false)
+    Configuration is loaded from environment variables:
+    - TOOLS_PROMETHEUS_URL: Prometheus server URL (default: http://localhost:9090)
+    - TOOLS_PROMETHEUS_DISABLE_SSL: Disable SSL verification (default: false)
     """
 
     def __init__(
@@ -60,39 +70,37 @@ class PrometheusToolProvider(ToolProvider):
         super().__init__(redis_instance)
 
         # Load config from environment if not provided
+        # PrometheusConfig is a BaseSettings, so it automatically loads from env
         if config is None:
-            config = self._load_config_from_env()
+            config = PrometheusConfig()
 
         self.config = config
         self._client: Optional[PrometheusConnect] = None
-
-    @staticmethod
-    def _load_config_from_env() -> PrometheusConfig:
-        """Load Prometheus configuration from environment variables.
-
-        Returns:
-            PrometheusConfig loaded from environment
-        """
-        import os
-
-        url = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
-        disable_ssl = os.getenv("PROMETHEUS_DISABLE_SSL", "false").lower() == "true"
-
-        return PrometheusConfig(url=url, disable_ssl=disable_ssl)
 
     @property
     def provider_name(self) -> str:
         return "prometheus"
 
+    def get_client(self) -> PrometheusConnect:
+        """Get or create the Prometheus client (lazy initialization).
+
+        Returns:
+            PrometheusConnect: Initialized Prometheus client
+        """
+        if self._client is None:
+            self._client = PrometheusConnect(
+                url=self.config.url, disable_ssl=self.config.disable_ssl
+            )
+            logger.info(f"Connected to Prometheus at {self.config.url}")
+        return self._client
+
     async def __aenter__(self):
-        """Initialize Prometheus client on context entry."""
-        self._client = PrometheusConnect(url=self.config.url, disable_ssl=self.config.disable_ssl)
-        logger.info(f"Connected to Prometheus at {self.config.url}")
+        """Support async context manager (no-op, client is lazily initialized)."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Clean up on context exit."""
-        self._client = None
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
+        """Support async context manager (no-op, no cleanup needed)."""
+        pass
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for Prometheus operations."""
@@ -223,7 +231,8 @@ class PrometheusToolProvider(ToolProvider):
         """
         logger.info(f"Prometheus instant query: {query}")
         try:
-            result = self._client.custom_query(query=query)
+            client = self.get_client()
+            result = client.custom_query(query=query)
             return {
                 "status": "success",
                 "query": query,
@@ -256,10 +265,33 @@ class PrometheusToolProvider(ToolProvider):
             f"Prometheus range query: {query} (start={start_time}, end={end_time}, step={step})"
         )
         try:
-            result = self._client.custom_query_range(
+            # Parse datetime strings
+            parsed_start = parse_datetime(start_time)
+            parsed_end = parse_datetime(end_time)
+
+            if parsed_start is None:
+                return {
+                    "status": "error",
+                    "error": f"Invalid start_time format: {start_time}",
+                    "query": query,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                }
+
+            if parsed_end is None:
+                return {
+                    "status": "error",
+                    "error": f"Invalid end_time format: {end_time}",
+                    "query": query,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                }
+
+            client = self.get_client()
+            result = client.custom_query_range(
                 query=query,
-                start_time=parse_datetime(start_time),
-                end_time=parse_datetime(end_time),
+                start_time=parsed_start,
+                end_time=parsed_end,
                 step=step,
             )
             return {
@@ -296,8 +328,10 @@ class PrometheusToolProvider(ToolProvider):
         """
         logger.info(f"Searching metrics with pattern: '{pattern}', filters: {label_filters}")
         try:
+            client = self.get_client()
+
             # Get all metrics
-            all_metrics = self._client.all_metrics()
+            all_metrics = client.all_metrics()
 
             # Filter by pattern (case-insensitive substring match)
             # Empty pattern returns all metrics
@@ -322,7 +356,7 @@ class PrometheusToolProvider(ToolProvider):
                     metrics_with_labels = []
                     for metric in filtered_metrics:
                         query = f"{metric}{label_selector}"
-                        result = self._client.custom_query(query=query)
+                        result = client.custom_query(query=query)
                         if result:  # If this metric exists with these labels
                             metrics_with_labels.append(metric)
 
