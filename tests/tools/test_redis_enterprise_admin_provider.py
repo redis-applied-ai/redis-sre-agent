@@ -1,6 +1,7 @@
 """Tests for Redis Enterprise admin API tool provider.
 
 These are unit tests with mocked HTTP responses - no actual Redis Enterprise cluster required.
+Mock responses are validated against Pydantic schemas derived from the official API documentation.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +12,14 @@ from redis_sre_agent.api.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise.provider import (
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
+)
+
+# Import test-only schemas for validating mock responses
+from tests.tools.redis_enterprise_schemas import (
+    ActionObject,
+    BDBObject,
+    ClusterObject,
+    NodeObject,
 )
 
 
@@ -101,13 +110,22 @@ async def test_create_tool_schemas(provider):
 
 @pytest.mark.asyncio
 async def test_get_cluster_info_success(provider):
-    """Test successful cluster info retrieval."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {
+    """Test successful cluster info retrieval with schema validation."""
+    # Create a mock response that matches the ClusterObject schema
+    cluster_data = {
         "name": "test-cluster",
+        "nodes_count": 3,
+        "shards_count": 10,
         "rack_aware": False,
         "email_alerts": True,
+        "created_time": "2024-01-01T00:00:00Z",
     }
+
+    # Validate against schema
+    ClusterObject(**cluster_data)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = cluster_data
     mock_response.raise_for_status = MagicMock()
 
     with patch.object(provider, "get_client") as mock_get_client:
@@ -127,12 +145,35 @@ async def test_get_cluster_info_success(provider):
 
 @pytest.mark.asyncio
 async def test_list_databases_success(provider):
-    """Test successful database listing."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = [
-        {"uid": 1, "name": "db1", "memory_size": 1073741824},
-        {"uid": 2, "name": "db2", "memory_size": 2147483648},
+    """Test successful database listing with schema validation."""
+    # Create mock databases that match the BDBObject schema
+    databases = [
+        {
+            "uid": 1,
+            "name": "db1",
+            "type": "redis",
+            "memory_size": 1073741824,
+            "status": "active",
+            "shards_count": 2,
+            "replication": True,
+        },
+        {
+            "uid": 2,
+            "name": "db2",
+            "type": "redis",
+            "memory_size": 2147483648,
+            "status": "active",
+            "shards_count": 4,
+            "replication": False,
+        },
     ]
+
+    # Validate each database against schema
+    for db in databases:
+        BDBObject(**db)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = databases
     mock_response.raise_for_status = MagicMock()
 
     with patch.object(provider, "get_client") as mock_get_client:
@@ -173,14 +214,27 @@ async def test_list_databases_with_fields(provider):
 
 @pytest.mark.asyncio
 async def test_get_database_success(provider):
-    """Test successful database retrieval."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {
+    """Test successful database retrieval with schema validation."""
+    database_data = {
         "uid": 1,
         "name": "test-db",
+        "type": "redis",
         "memory_size": 1073741824,
         "status": "active",
+        "shards_count": 2,
+        "replication": True,
+        "data_persistence": "aof",
+        "aof_policy": "appendfsync-every-sec",
+        "eviction_policy": "volatile-lru",
+        "port": 12000,
+        "redis_version": "7.2",
     }
+
+    # Validate against schema
+    BDBObject(**database_data)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = database_data
     mock_response.raise_for_status = MagicMock()
 
     with patch.object(provider, "get_client") as mock_get_client:
@@ -199,12 +253,36 @@ async def test_get_database_success(provider):
 
 @pytest.mark.asyncio
 async def test_list_nodes_success(provider):
-    """Test successful node listing."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = [
-        {"uid": 1, "addr": "10.0.0.1", "status": "active", "accept_servers": True},
-        {"uid": 2, "addr": "10.0.0.2", "status": "active", "accept_servers": False},
+    """Test successful node listing with schema validation."""
+    nodes = [
+        {
+            "uid": 1,
+            "addr": "10.0.0.1",
+            "status": "active",
+            "accept_servers": True,
+            "shard_count": 5,
+            "total_memory": 17179869184,
+            "available_memory": 8589934592,
+            "cores": 4,
+        },
+        {
+            "uid": 2,
+            "addr": "10.0.0.2",
+            "status": "active",
+            "accept_servers": False,  # Maintenance mode
+            "shard_count": 3,
+            "total_memory": 17179869184,
+            "available_memory": 10737418240,
+            "cores": 4,
+        },
     ]
+
+    # Validate each node against schema
+    for node in nodes:
+        NodeObject(**node)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = nodes
     mock_response.raise_for_status = MagicMock()
 
     with patch.object(provider, "get_client") as mock_get_client:
@@ -225,17 +303,39 @@ async def test_list_nodes_success(provider):
 
 @pytest.mark.asyncio
 async def test_list_actions_success(provider):
-    """Test successful action listing."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = [
-        {"action_uid": "abc-123", "name": "SMCreateBDB", "status": "running", "progress": 45.0},
+    """Test successful action listing with schema validation."""
+    actions = [
+        {
+            "action_uid": "abc-123",
+            "name": "SMCreateBDB",
+            "status": "running",
+            "progress": 45.0,
+            "creation_time": 1742595918,
+            "additional_info": {
+                "pending_ops": {
+                    "3": {
+                        "op_name": "wait_for_persistence",
+                        "status_description": "Waiting for AOF sync",
+                        "progress": 45.0,
+                    }
+                }
+            },
+        },
         {
             "action_uid": "def-456",
             "name": "migrate_shard",
             "status": "completed",
             "progress": 100.0,
+            "creation_time": 1742595800,
         },
     ]
+
+    # Validate each action against schema
+    for action in actions:
+        ActionObject(**action)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = actions
     mock_response.raise_for_status = MagicMock()
 
     with patch.object(provider, "get_client") as mock_get_client:
