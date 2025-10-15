@@ -23,10 +23,11 @@ logger = logging.getLogger(__name__)
 class RedisEnterpriseAdminConfig(BaseSettings):
     """Configuration for Redis Enterprise admin API provider.
 
+    This config is used for default/fallback values only. The actual admin URL,
+    username, and password should come from the RedisInstance object's admin_url,
+    admin_username, and admin_password fields.
+
     Automatically loads from environment variables with TOOLS_REDIS_ENTERPRISE_ADMIN_ prefix:
-    - TOOLS_REDIS_ENTERPRISE_ADMIN_URL
-    - TOOLS_REDIS_ENTERPRISE_ADMIN_USERNAME
-    - TOOLS_REDIS_ENTERPRISE_ADMIN_PASSWORD
     - TOOLS_REDIS_ENTERPRISE_ADMIN_VERIFY_SSL
 
     Example:
@@ -34,20 +35,11 @@ class RedisEnterpriseAdminConfig(BaseSettings):
         config = RedisEnterpriseAdminConfig()
 
         # Or override with explicit values
-        config = RedisEnterpriseAdminConfig(
-            url="https://cluster.example.com:9443",
-            username="admin@example.com",
-            password="secret"
-        )
+        config = RedisEnterpriseAdminConfig(verify_ssl=False)
     """
 
     model_config = SettingsConfigDict(env_prefix="tools_redis_enterprise_admin_")
 
-    url: str = Field(
-        default="https://localhost:9443", description="Redis Enterprise cluster admin API URL"
-    )
-    username: str = Field(default="", description="Admin API username")
-    password: str = Field(default="", description="Admin API password")
     verify_ssl: bool = Field(default=True, description="Verify SSL certificates")
 
 
@@ -61,27 +53,39 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
     - Module information
     - Statistics and metrics
 
-    Configuration is loaded from environment variables:
-    - TOOLS_REDIS_ENTERPRISE_ADMIN_URL: Cluster admin API URL
-    - TOOLS_REDIS_ENTERPRISE_ADMIN_USERNAME: Admin username
-    - TOOLS_REDIS_ENTERPRISE_ADMIN_PASSWORD: Admin password
-    - TOOLS_REDIS_ENTERPRISE_ADMIN_VERIFY_SSL: Verify SSL (default: true)
+    The admin API URL, username, and password are taken from the RedisInstance object:
+    - redis_instance.admin_url: Cluster admin API URL (e.g., https://cluster.example.com:9443)
+    - redis_instance.admin_username: Admin username
+    - redis_instance.admin_password: Admin password
+
+    The RedisInstance must have instance_type='redis_enterprise' and admin_url set.
     """
 
     def __init__(
         self,
-        redis_instance: Optional[RedisInstance] = None,
+        redis_instance: RedisInstance,
         config: Optional[RedisEnterpriseAdminConfig] = None,
     ):
         """Initialize the Redis Enterprise admin API provider.
 
         Args:
-            redis_instance: Optional Redis instance for scoped queries
-            config: Optional admin API configuration (loaded from env if not provided)
+            redis_instance: Redis instance with admin_url, admin_username, and admin_password
+            config: Optional config for SSL verification settings (loaded from env if not provided)
+
+        Raises:
+            ValueError: If redis_instance is None or missing required admin fields
         """
         super().__init__(redis_instance)
 
-        # Load config from environment if not provided
+        if redis_instance is None:
+            raise ValueError("RedisInstance is required for Redis Enterprise admin API provider")
+
+        if not redis_instance.admin_url:
+            raise ValueError(
+                f"RedisInstance '{redis_instance.name}' must have admin_url set for Redis Enterprise admin API"
+            )
+
+        # Load config from environment if not provided (for SSL settings)
         if config is None:
             config = RedisEnterpriseAdminConfig()
 
@@ -95,17 +99,27 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
     def get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client (lazy initialization).
 
+        Uses admin_url, admin_username, and admin_password from the RedisInstance.
+
         Returns:
             httpx.AsyncClient: Initialized HTTP client
         """
         if self._client is None:
+            # Get credentials from the instance
+            admin_url = self.redis_instance.admin_url
+            admin_username = self.redis_instance.admin_username or ""
+            admin_password = self.redis_instance.admin_password or ""
+
+            # Create auth tuple only if username is provided
+            auth = (admin_username, admin_password) if admin_username else None
+
             self._client = httpx.AsyncClient(
-                base_url=self.config.url,
-                auth=(self.config.username, self.config.password),
+                base_url=admin_url,
+                auth=auth,
                 verify=self.config.verify_ssl,
                 timeout=30.0,
             )
-            logger.info(f"Connected to Redis Enterprise admin API at {self.config.url}")
+            logger.info(f"Connected to Redis Enterprise admin API at {admin_url}")
         return self._client
 
     async def __aenter__(self):

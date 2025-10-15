@@ -45,15 +45,16 @@ This provider enables LLMs to inspect and monitor Redis Enterprise clusters thro
 
 ## Configuration
 
-The provider loads configuration from environment variables:
+The provider takes admin API credentials from the `RedisInstance` object, allowing each instance to have its own admin API configuration:
 
+- `admin_url`: Redis Enterprise admin API URL (e.g., `https://cluster.example.com:9443`)
+- `admin_username`: Admin API username
+- `admin_password`: Admin API password
+
+The `RedisInstance` must have `instance_type='redis_enterprise'` and `admin_url` set.
+
+Optional environment variable for SSL verification:
 ```bash
-# Required
-TOOLS_REDIS_ENTERPRISE_ADMIN_URL=https://cluster.example.com:9443
-TOOLS_REDIS_ENTERPRISE_ADMIN_USERNAME=admin@example.com
-TOOLS_REDIS_ENTERPRISE_ADMIN_PASSWORD=your-password
-
-# Optional
 TOOLS_REDIS_ENTERPRISE_ADMIN_VERIFY_SSL=true  # Default: true
 ```
 
@@ -176,20 +177,25 @@ The LLM can call:
 ## Example Usage
 
 ```python
-from redis_sre_agent.tools.admin.redis_enterprise import (
-    RedisEnterpriseAdminConfig,
-    RedisEnterpriseAdminToolProvider,
+from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.tools.admin.redis_enterprise import RedisEnterpriseAdminToolProvider
+
+# Create a Redis instance with admin API configuration
+instance = RedisInstance(
+    id="prod-cluster-1",
+    name="production-cluster",
+    connection_url="redis://cluster.example.com:6379",
+    environment="production",
+    usage="cache",
+    description="Production Redis Enterprise cluster",
+    instance_type="redis_enterprise",
+    admin_url="https://cluster.example.com:9443",
+    admin_username="admin@example.com",
+    admin_password="secret",
 )
 
-# Create provider with config
-config = RedisEnterpriseAdminConfig(
-    url="https://cluster.example.com:9443",
-    username="admin@example.com",
-    password="secret",
-    verify_ssl=True,
-)
-
-async with RedisEnterpriseAdminToolProvider(config=config) as provider:
+# Create provider for this instance
+async with RedisEnterpriseAdminToolProvider(redis_instance=instance) as provider:
     # Get cluster info
     cluster_info = await provider.get_cluster_info()
 

@@ -1,9 +1,13 @@
-"""Tests for Redis Enterprise admin API tool provider."""
+"""Tests for Redis Enterprise admin API tool provider.
+
+These are unit tests with mocked HTTP responses - no actual Redis Enterprise cluster required.
+"""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from redis_sre_agent.api.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise.provider import (
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
@@ -11,28 +15,65 @@ from redis_sre_agent.tools.admin.redis_enterprise.provider import (
 
 
 @pytest.fixture
-def config():
-    """Create a test configuration."""
-    return RedisEnterpriseAdminConfig(
-        url="https://test-cluster.example.com:9443",
-        username="test@example.com",
-        password="test-password",
-        verify_ssl=False,
+def redis_instance():
+    """Create a test Redis instance with admin API configuration."""
+    return RedisInstance(
+        id="test-redis-1",
+        name="test-cluster",
+        connection_url="redis://localhost:6379",
+        environment="test",
+        usage="cache",
+        description="Test Redis Enterprise cluster",
+        instance_type="redis_enterprise",
+        admin_url="https://test-cluster.example.com:9443",
+        admin_username="test@example.com",
+        admin_password="test-password",
     )
 
 
 @pytest.fixture
-def provider(config):
+def config():
+    """Create a test configuration."""
+    return RedisEnterpriseAdminConfig(verify_ssl=False)
+
+
+@pytest.fixture
+def provider(redis_instance, config):
     """Create a test provider instance."""
-    return RedisEnterpriseAdminToolProvider(config=config)
+    return RedisEnterpriseAdminToolProvider(redis_instance=redis_instance, config=config)
 
 
 @pytest.mark.asyncio
-async def test_provider_initialization(provider, config):
+async def test_provider_initialization(provider, config, redis_instance):
     """Test provider initialization."""
     assert provider.provider_name == "redis_enterprise_admin"
     assert provider.config == config
+    assert provider.redis_instance == redis_instance
     assert provider._client is None
+
+
+@pytest.mark.asyncio
+async def test_provider_requires_instance():
+    """Test that provider requires a RedisInstance."""
+    with pytest.raises(ValueError, match="RedisInstance is required"):
+        RedisEnterpriseAdminToolProvider(redis_instance=None)
+
+
+@pytest.mark.asyncio
+async def test_provider_requires_admin_url():
+    """Test that provider requires admin_url in instance."""
+    instance = RedisInstance(
+        id="test-redis-1",
+        name="test-cluster",
+        connection_url="redis://localhost:6379",
+        environment="test",
+        usage="cache",
+        description="Test Redis cluster without admin URL",
+        instance_type="redis_enterprise",
+        # Missing admin_url
+    )
+    with pytest.raises(ValueError, match="must have admin_url set"):
+        RedisEnterpriseAdminToolProvider(redis_instance=instance)
 
 
 @pytest.mark.asyncio
@@ -54,6 +95,8 @@ async def test_create_tool_schemas(provider):
     assert any("databases" in name for name in tool_names)
     assert any("nodes" in name for name in tool_names)
     assert any("modules" in name for name in tool_names)
+    assert any("actions" in name for name in tool_names)
+    assert any("shards" in name for name in tool_names)
 
 
 @pytest.mark.asyncio
@@ -159,8 +202,8 @@ async def test_list_nodes_success(provider):
     """Test successful node listing."""
     mock_response = MagicMock()
     mock_response.json.return_value = [
-        {"uid": 1, "addr": "10.0.0.1", "status": "active"},
-        {"uid": 2, "addr": "10.0.0.2", "status": "active"},
+        {"uid": 1, "addr": "10.0.0.1", "status": "active", "accept_servers": True},
+        {"uid": 2, "addr": "10.0.0.2", "status": "active", "accept_servers": False},
     ]
     mock_response.raise_for_status = MagicMock()
 
@@ -174,17 +217,24 @@ async def test_list_nodes_success(provider):
         assert result["status"] == "success"
         assert result["count"] == 2
         assert len(result["nodes"]) == 2
+        # Node 2 is in maintenance mode (accept_servers=False)
+        assert result["nodes"][1]["accept_servers"] is False
 
         mock_client.get.assert_called_once_with("/v1/nodes", params={})
 
 
 @pytest.mark.asyncio
-async def test_list_modules_success(provider):
-    """Test successful module listing."""
+async def test_list_actions_success(provider):
+    """Test successful action listing."""
     mock_response = MagicMock()
     mock_response.json.return_value = [
-        {"module_name": "search", "semantic_version": "2.8.4"},
-        {"module_name": "ReJSON", "semantic_version": "2.6.6"},
+        {"action_uid": "abc-123", "name": "SMCreateBDB", "status": "running", "progress": 45.0},
+        {
+            "action_uid": "def-456",
+            "name": "migrate_shard",
+            "status": "completed",
+            "progress": 100.0,
+        },
     ]
     mock_response.raise_for_status = MagicMock()
 
@@ -193,13 +243,13 @@ async def test_list_modules_success(provider):
         mock_client.get = AsyncMock(return_value=mock_response)
         mock_get_client.return_value = mock_client
 
-        result = await provider.list_modules()
+        result = await provider.list_actions()
 
         assert result["status"] == "success"
         assert result["count"] == 2
-        assert len(result["modules"]) == 2
+        assert len(result["actions"]) == 2
 
-        mock_client.get.assert_called_once_with("/v1/modules")
+        mock_client.get.assert_called_once_with("/v2/actions")
 
 
 @pytest.mark.asyncio
