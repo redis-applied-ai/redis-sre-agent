@@ -22,12 +22,20 @@ logger = logging.getLogger(__name__)
 class PrometheusConfig(BaseModel):
     """Configuration for Prometheus metrics provider.
 
+    Environment variables use the prefix TOOLS_PROMETHEUS_:
+    - TOOLS_PROMETHEUS_URL
+    - TOOLS_PROMETHEUS_DISABLE_SSL
+
     Example:
         config = PrometheusConfig(
             url="http://localhost:9090",
             disable_ssl=False
         )
     """
+
+    # TODO: Create a base ToolConfig class that automatically sets env_prefix
+    # based on the tool name, unless overridden
+    model_config = {"env_prefix": "tools_prometheus_"}
 
     url: str = Field(default="http://localhost:9090", description="Prometheus server URL")
     disable_ssl: bool = Field(default=False, description="Disable SSL certificate verification")
@@ -41,9 +49,9 @@ class PrometheusToolProvider(ToolProvider):
     - Range queries (metrics over time)
     - Metric discovery (list available metrics)
 
-    Configuration is loaded from environment variables or settings:
-    - PROMETHEUS_URL: Prometheus server URL (default: http://localhost:9090)
-    - PROMETHEUS_DISABLE_SSL: Disable SSL verification (default: false)
+    Configuration is loaded from environment variables:
+    - TOOLS_PROMETHEUS_URL: Prometheus server URL (default: http://localhost:9090)
+    - TOOLS_PROMETHEUS_DISABLE_SSL: Disable SSL verification (default: false)
     """
 
     def __init__(
@@ -70,13 +78,15 @@ class PrometheusToolProvider(ToolProvider):
     def _load_config_from_env() -> PrometheusConfig:
         """Load Prometheus configuration from environment variables.
 
+        Uses TOOLS_PROMETHEUS_* prefix for environment variables.
+
         Returns:
             PrometheusConfig loaded from environment
         """
         import os
 
-        url = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
-        disable_ssl = os.getenv("PROMETHEUS_DISABLE_SSL", "false").lower() == "true"
+        url = os.getenv("TOOLS_PROMETHEUS_URL", "http://localhost:9090")
+        disable_ssl = os.getenv("TOOLS_PROMETHEUS_DISABLE_SSL", "false").lower() == "true"
 
         return PrometheusConfig(url=url, disable_ssl=disable_ssl)
 

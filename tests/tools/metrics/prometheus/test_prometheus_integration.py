@@ -47,8 +47,8 @@ def prometheus_env(prometheus_container, monkeypatch):
     port = prometheus_container.get_exposed_port(9090)
     host = prometheus_container.get_container_host_ip()
 
-    monkeypatch.setenv("PROMETHEUS_URL", f"http://{host}:{port}")
-    monkeypatch.setenv("PROMETHEUS_DISABLE_SSL", "false")
+    monkeypatch.setenv("TOOLS_PROMETHEUS_URL", f"http://{host}:{port}")
+    monkeypatch.setenv("TOOLS_PROMETHEUS_DISABLE_SSL", "false")
 
 
 @pytest.mark.asyncio

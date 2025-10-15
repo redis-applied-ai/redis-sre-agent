@@ -30,8 +30,8 @@ config = PrometheusConfig(
 You can also configure via environment variables:
 
 ```bash
-export PROMETHEUS_URL=http://prometheus.example.com:9090
-export PROMETHEUS_DISABLE_SSL=false
+export TOOLS_PROMETHEUS_URL=http://prometheus.example.com:9090
+export TOOLS_PROMETHEUS_DISABLE_SSL=false
 ```
 
 ## Usage
