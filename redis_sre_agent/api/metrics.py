@@ -68,7 +68,7 @@ async def get_application_metrics() -> Dict[str, Any]:
     try:
         from redis_sre_agent.core.redis import get_knowledge_index
 
-        knowledge_index = get_knowledge_index()
+        knowledge_index = await get_knowledge_index()
         index_exists = await knowledge_index.exists()
         metrics["sre_agent_vector_index_status"] = {
             "value": 1 if index_exists else 0,
@@ -101,7 +101,7 @@ async def get_application_metrics() -> Dict[str, Any]:
     try:
         from docket.docket import Docket
 
-        async with Docket(url=settings.redis_url, name="sre_docket") as docket:
+        async with Docket(url=settings.redis_url.get_secret_value(), name="sre_docket") as docket:
             workers = await docket.workers()
             metrics["sre_agent_workers_total"] = {
                 "value": len(workers),

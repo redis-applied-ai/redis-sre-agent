@@ -5,6 +5,8 @@ import {
   Button,
 } from '@radar/ui-kit';
 import sreAgentApi, { RedisInstance as APIRedisInstance, CreateInstanceRequest } from '../services/sreAgentApi';
+import { ConfirmDialog } from '../components/Modal';
+import { maskRedisUrl } from '../utils/urlMasking';
 
 // Simple components for missing UI kit elements
 const Loader = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => (
@@ -30,7 +32,7 @@ const Tooltip = ({ content, children }: { content: string; children: React.React
 );
 
 // Use the API interface but with camelCase for UI consistency
-interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier' | 'instance_type'> {
+interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier' | 'instance_type' | 'admin_url' | 'admin_username' | 'admin_password'> {
   connectionUrl: string;
   repoUrl?: string;
   lastChecked?: string;
@@ -39,6 +41,9 @@ interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checke
   monitoringIdentifier?: string;
   loggingIdentifier?: string;
   instanceType?: string;
+  adminUrl?: string;
+  adminUsername?: string;
+  adminPassword?: string;
 }
 
 // Add Instance Form Component
@@ -64,11 +69,16 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     notes: initialData?.notes || '',
     monitoringIdentifier: initialData?.monitoringIdentifier || '',
     loggingIdentifier: initialData?.loggingIdentifier || '',
-    instanceType: initialData?.instanceType || 'unknown'
+    instanceType: initialData?.instanceType || 'unknown',
+    adminUrl: (initialData as any)?.adminUrl || '',
+    adminUsername: (initialData as any)?.adminUsername || '',
+    adminPassword: (initialData as any)?.adminPassword || ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testingAdminApi, setTestingAdminApi] = useState(false);
+  const [adminApiResult, setAdminApiResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,8 +103,13 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         version: initialData?.version,
         memory: initialData?.memory,
         connections: initialData?.connections,
-        lastChecked: initialData?.lastChecked || new Date().toISOString()
-      };
+        lastChecked: initialData?.lastChecked || new Date().toISOString(),
+        ...(formData.instanceType === 'redis_enterprise' && formData.adminUrl && {
+          adminUrl: formData.adminUrl,
+          adminUsername: formData.adminUsername || undefined,
+          adminPassword: formData.adminPassword || undefined
+        })
+      } as RedisInstance;
 
       onSubmit(instance);
     } catch (error) {
@@ -160,8 +175,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
 
         setConnectionResult({ success, message });
       } else {
-        // For existing instances, use the API test endpoint
-        const result = await sreAgentApi.testInstanceConnection(initialData.id);
+        // For existing instances, test the current form URL (not the stored one)
+        // This allows testing a new URL before saving
+        const result = await sreAgentApi.testConnectionUrl(formData.connectionUrl);
         setConnectionResult({
           success: result.success,
           message: result.success ? `✅ ${result.message}` : `❌ ${result.message}`
@@ -175,6 +191,41 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       });
     } finally {
       setTestingConnection(false);
+    }
+  };
+
+  const testAdminApi = async () => {
+    setTestingAdminApi(true);
+    setAdminApiResult(null);
+
+    try {
+      if (!formData.adminUrl || !formData.adminUsername || !formData.adminPassword) {
+        setAdminApiResult({
+          success: false,
+          message: '❌ Please fill in all admin API fields (URL, username, and password) before testing.'
+        });
+        return;
+      }
+
+      const result = await sreAgentApi.testAdminApiConnection(
+        formData.adminUrl,
+        formData.adminUsername,
+        formData.adminPassword
+      );
+
+      setAdminApiResult({
+        success: result.success,
+        message: result.success
+          ? `✅ ${result.message}`
+          : `❌ ${result.message}`
+      });
+    } catch (error) {
+      setAdminApiResult({
+        success: false,
+        message: `❌ Admin API test failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
+    } finally {
+      setTestingAdminApi(false);
     }
   };
 
@@ -279,6 +330,84 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           Specify the type of Redis instance. Choose "Unknown" to auto-detect during health checks.
         </p>
       </div>
+
+      {/* Redis Enterprise Admin API Fields */}
+      {formData.instanceType === 'redis_enterprise' && (
+        <div className="space-y-4 p-4 bg-redis-blue-01/5 border border-redis-blue-03/30 rounded-redis-sm">
+          <h4 className="text-redis-sm font-semibold text-redis-blue-03">
+            Redis Enterprise Admin API Configuration
+          </h4>
+          <p className="text-redis-xs text-redis-dusk-04">
+            Provide admin API credentials to enable cluster-level diagnostics and monitoring.
+          </p>
+
+          <div>
+            <label className="block text-redis-sm font-medium mb-1">
+              Admin API URL
+            </label>
+            <input
+              type="url"
+              value={formData.adminUrl}
+              onChange={(e) => setFormData(prev => ({ ...prev, adminUrl: e.target.value }))}
+              className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+              placeholder="https://redis-enterprise:9443"
+            />
+            <p className="text-redis-xs text-redis-dusk-04 mt-1">
+              Redis Enterprise admin API endpoint (typically port 9443)
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-redis-sm font-medium mb-1">
+                Admin Username
+              </label>
+              <input
+                type="text"
+                value={formData.adminUsername}
+                onChange={(e) => setFormData(prev => ({ ...prev, adminUsername: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                placeholder="admin@redis.com"
+              />
+            </div>
+
+            <div>
+              <label className="block text-redis-sm font-medium mb-1">
+                Admin Password
+              </label>
+              <input
+                type="password"
+                value={formData.adminPassword}
+                onChange={(e) => setFormData(prev => ({ ...prev, adminPassword: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                placeholder="••••••••"
+              />
+            </div>
+          </div>
+
+          {/* Test Admin API Connection Button */}
+          <div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={testAdminApi}
+              isLoading={testingAdminApi}
+              disabled={testingAdminApi || !formData.adminUrl || !formData.adminUsername || !formData.adminPassword}
+            >
+              {testingAdminApi ? 'Testing Admin API...' : 'Test Admin API Connection'}
+            </Button>
+            {adminApiResult && (
+              <div className={`mt-2 p-3 rounded-redis-sm text-redis-sm ${
+                adminApiResult.success
+                  ? 'bg-redis-green/10 text-redis-green border border-redis-green/30'
+                  : 'bg-redis-red/10 text-redis-red border border-redis-red/30'
+              }`}>
+                {adminApiResult.message}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="block text-redis-sm font-medium text-foreground mb-1">
@@ -427,6 +556,7 @@ const Instances = () => {
   const [selectedUsage, setSelectedUsage] = useState('all');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingInstance, setEditingInstance] = useState<RedisInstance | null>(null);
+  const [deletingInstance, setDeletingInstance] = useState<RedisInstance | null>(null);
 
   // Load instances on component mount
   useEffect(() => {
@@ -452,6 +582,9 @@ const Instances = () => {
         monitoringIdentifier: instance.monitoring_identifier,
         loggingIdentifier: instance.logging_identifier,
         instanceType: instance.instance_type || 'unknown',
+        adminUrl: instance.admin_url,
+        adminUsername: instance.admin_username,
+        adminPassword: instance.admin_password,
       }));
 
       setInstances(uiInstances);
@@ -483,6 +616,22 @@ const Instances = () => {
       alert(message);
     } catch (error) {
       alert(`❌ Connection test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleDeleteInstance = async () => {
+    if (!deletingInstance) return;
+
+    try {
+      setError('');
+      await sreAgentApi.deleteInstance(deletingInstance.id);
+
+      // Reload instances after successful deletion
+      await loadInstances();
+      setDeletingInstance(null);
+    } catch (err) {
+      setError(`Failed to delete instance: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setDeletingInstance(null);
     }
   };
 
@@ -711,7 +860,7 @@ const Instances = () => {
                         </p>
                         <div className="grid grid-cols-2 gap-4 mb-3">
                           <div className="text-redis-xs text-redis-dusk-05">
-                            <div><strong>Connection:</strong> {instance.connectionUrl}</div>
+                            <div><strong>Connection:</strong> {maskRedisUrl(instance.connectionUrl)}</div>
                             {instance.version && <div><strong>Version:</strong> {instance.version}</div>}
                             {instance.memory && <div><strong>Memory:</strong> {instance.memory}</div>}
                           </div>
@@ -752,6 +901,13 @@ const Instances = () => {
                           onClick={() => handleTestInstanceConnection(instance.id)}
                         >
                           Test Connection
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => setDeletingInstance(instance)}
+                        >
+                          Delete
                         </Button>
                       </div>
                     </div>
@@ -802,6 +958,9 @@ const Instances = () => {
                       monitoring_identifier: instance.monitoringIdentifier,
                       logging_identifier: instance.loggingIdentifier,
                       instance_type: instance.instanceType,
+                      admin_url: instance.adminUrl,
+                      admin_username: instance.adminUsername,
+                      admin_password: instance.adminPassword,
                     };
                     await sreAgentApi.updateInstance(instance.id, updateRequest);
                   } else {
@@ -817,6 +976,9 @@ const Instances = () => {
                       monitoring_identifier: instance.monitoringIdentifier,
                       logging_identifier: instance.loggingIdentifier,
                       instance_type: instance.instanceType,
+                      admin_url: instance.adminUrl,
+                      admin_username: instance.adminUsername,
+                      admin_password: instance.adminPassword,
                     };
                     await sreAgentApi.createInstance(createRequest);
                   }
@@ -837,6 +999,18 @@ const Instances = () => {
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={deletingInstance !== null}
+        onClose={() => setDeletingInstance(null)}
+        onConfirm={handleDeleteInstance}
+        title="Delete Redis Instance"
+        message={`Are you sure you want to delete "${deletingInstance?.name}"? This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="destructive"
+      />
     </div>
   );
 };

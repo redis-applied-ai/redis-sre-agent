@@ -53,13 +53,19 @@ uv run fastapi dev redis_sre_agent/api/app.py
 
 **API**:
 ```bash
-# Health check
-curl http://localhost:8000/health
+# Simple health check (load balancer)
+curl http://localhost:8000/
 
-# Agent query
-curl -X POST http://localhost:8000/agent/query \\
+# Detailed health check
+curl http://localhost:8000/api/v1/health
+
+# Submit a triage request (returns thread_id for tracking)
+curl -X POST http://localhost:8000/api/v1/tasks/triage \\
   -H "Content-Type: application/json" \\
-  -d '{"query": "Check Redis cluster health and memory usage"}'
+  -d '{"query": "Check Redis cluster health and memory usage", "user_id": "sre-user"}'
+
+# Check task status
+curl http://localhost:8000/api/v1/tasks/{thread_id}
 ```
 
 ## Configuration
@@ -75,6 +81,82 @@ PROMETHEUS_URL=http://prometheus:9090
 GRAFANA_URL=http://grafana:3000
 GRAFANA_API_KEY=your-grafana-key
 ```
+
+### Redis Enterprise Configuration
+
+When monitoring Redis Enterprise instances, configure admin API access for cluster-level diagnostics:
+
+**Via UI**: When creating/editing an instance with `instance_type="redis_enterprise"`, provide:
+- **Admin API URL**: `https://redis-enterprise:9443` (or your cluster's admin API endpoint)
+- **Admin Username**: Your Redis Enterprise admin username (e.g., `admin@redis.com`)
+- **Admin Password**: Your Redis Enterprise admin password
+
+**Via API**: Include these fields in the instance creation/update request:
+```json
+{
+  "name": "Production Redis Enterprise",
+  "connection_url": "redis://redis-enterprise:12000/0",
+  "instance_type": "redis_enterprise",
+  "admin_url": "https://redis-enterprise:9443",
+  "admin_username": "admin@redis.com",
+  "admin_password": "your-admin-password",
+  "environment": "production",
+  "usage": "enterprise",
+  "description": "Redis Enterprise cluster"
+}
+```
+
+**Docker Compose**: For local Redis Enterprise clusters running in Docker Compose:
+- Admin API is typically available at `https://redis-enterprise:9443`
+- Default credentials are usually `admin@redis.com` / `admin` (check your setup)
+- Database connections use ports 12000-12999 (e.g., `redis://redis-enterprise:12000/0`)
+- **SSL Verification**: Disabled by default to support self-signed certificates
+  - To enable SSL verification: Set `TOOLS_REDIS_ENTERPRISE_ADMIN_VERIFY_SSL=true`
+  - For production with proper certs: Enable SSL verification
+
+With admin API configured, the agent can:
+- Check cluster health and node status
+- Monitor database (BDB) configurations
+- Detect stuck operations or maintenance mode
+- View shard distribution and replication status
+- Access Redis Enterprise-specific metrics
+
+### Redis Enterprise Admin API High Availability
+
+**Important**: Redis Enterprise does **NOT** provide a built-in load balancer or proxy for the admin API. Each node exposes its own admin API on port 9443.
+
+**For Production Deployments**:
+
+1. **Use a Load Balancer**: Place nginx, HAProxy, or a cloud load balancer in front of the admin API:
+   ```nginx
+   upstream redis_enterprise_admin {
+       server redis-node1:9443 max_fails=3 fail_timeout=30s;
+       server redis-node2:9443 max_fails=3 fail_timeout=30s;
+       server redis-node3:9443 max_fails=3 fail_timeout=30s;
+   }
+
+   server {
+       listen 9443 ssl;
+       location / {
+           proxy_pass https://redis_enterprise_admin;
+           proxy_ssl_verify off;
+       }
+   }
+   ```
+
+2. **Use DNS with Multiple A Records**: Configure DNS to return multiple node IPs and rely on client-side failover.
+
+3. **Monitor Node Health**: Implement health checks to remove failed nodes from rotation.
+
+**For Docker Compose** (Development/Testing):
+- The `redis-enterprise` alias points to `redis-enterprise-node1`
+- If node1 fails, the alias becomes unavailable
+- For testing, this is acceptable; for production, use a load balancer
+
+**Why This Matters**:
+- If you configure `admin_url: https://redis-enterprise-node1:9443` and node1 goes down, the agent loses cluster visibility
+- Using a load balancer ensures the agent can always reach a healthy node
+- The admin API is stateless, so any node can serve requests
 
 ## SRE Tools
 

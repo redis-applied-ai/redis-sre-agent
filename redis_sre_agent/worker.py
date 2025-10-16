@@ -14,9 +14,11 @@ from docket import Worker
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.tasks import register_sre_tasks
 
-# Configure logging
+# Configure logging with consistent format
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,8 @@ async def main():
         logger.error("❌ Redis URL not configured")
         sys.exit(1)
 
-    logger.info(f"Starting SRE Docket worker connected to {settings.redis_url}")
+    redis_url = settings.redis_url.get_secret_value()
+    logger.info("Starting SRE Docket worker connected to Redis")
 
     try:
         # Register tasks first
@@ -44,7 +47,7 @@ async def main():
 
         await Worker.run(
             docket_name="sre_docket",
-            url=settings.redis_url,
+            url=redis_url,
             concurrency=2,  # Allow 2 concurrent SRE tasks
             redelivery_timeout=timedelta(seconds=120),  # 2 minute timeout for SRE tasks
             tasks=["redis_sre_agent.core.tasks:SRE_TASK_COLLECTION"],

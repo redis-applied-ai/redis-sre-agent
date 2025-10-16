@@ -33,8 +33,11 @@ from typing import Optional
 import redis
 
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
-from redis_sre_agent.tools.redis_diagnostics import get_redis_diagnostics
-from redis_sre_agent.tools.sre_functions import get_detailed_redis_diagnostics
+from redis_sre_agent.api.instances import (
+    RedisInstance,
+    get_instances_from_redis,
+    save_instances_to_redis,
+)
 
 DEMO_PORT = 7844
 
@@ -124,7 +127,50 @@ class RedisSREDemo:
             print(f"❌ Redis connection failed on port {DEMO_PORT}")
             return False
 
+        # Register the demo instance with the agent (especially important for UI mode)
+        await self._register_demo_instance()
+
         return True
+
+    async def _register_demo_instance(self):
+        """Register the demo Redis instance with the agent's instance registry."""
+        try:
+            # Get existing instances
+            instances = await get_instances_from_redis()
+
+            # Check if demo instance already exists
+            demo_instance_name = "Demo Redis (Scenarios)"
+            existing_demo = None
+            for inst in instances:
+                if inst.name == demo_instance_name:
+                    existing_demo = inst
+                    break
+
+            if existing_demo:
+                # Update the connection URL in case it changed
+                existing_demo.connection_url = self.redis_url
+                await save_instances_to_redis(instances)
+                print("✅ Updated existing demo instance registration")
+            else:
+                # Create new demo instance
+                from datetime import datetime
+
+                demo_instance = RedisInstance(
+                    id=f"redis-demo-{int(datetime.now().timestamp())}",
+                    name=demo_instance_name,
+                    connection_url=self.redis_url,
+                    environment="development",
+                    usage="demo",
+                    description="Demo Redis instance for scenario testing. This instance is used by demo_scenarios.py to showcase the agent's capabilities.",
+                    notes="Automatically registered by demo_scenarios.py. Data is cleared between scenario runs.",
+                )
+                instances.append(demo_instance)
+                await save_instances_to_redis(instances)
+                print("✅ Registered demo instance with agent")
+
+        except Exception as e:
+            print(f"⚠️  Warning: Could not register demo instance: {e}")
+            print("   The agent may not be able to connect to the demo instance in UI mode.")
 
     def _wait_for_ui_interaction(self, scenario_name: str, scenario_description: str):
         """Wait for user to interact with the UI while scenario data is active."""
@@ -133,12 +179,13 @@ class RedisSREDemo:
         print("=" * 80)
         print(f"📊 Scenario: {scenario_description}")
         print(f"🔗 Redis Instance: localhost:{self.redis_port}")
-        print("🌐 Web UI: http://localhost:8000")
+        print("🌐 Web UI: http://localhost:3002")
+        print("🔧 API: http://localhost:8000")
         print()
         print("The Redis instance has been configured with the scenario data.")
         print("You can now:")
-        print("  1. Open the web UI at http://localhost:8000")
-        print("  2. Select the Redis instance (redis-demo)")
+        print("  1. Open the web UI at http://localhost:3002")
+        print("  2. Select the Redis instance: 'Demo Redis (Scenarios)'")
         print("  3. Ask the agent about the current Redis state")
         print()
         print("💡 Suggested queries for this scenario:")
@@ -177,7 +224,7 @@ class RedisSREDemo:
 
         if self.ui_mode:
             print("\n🌐 UI MODE: Scenarios will set up data and pause for web UI interaction")
-            print("   Web UI available at: http://localhost:8000")
+            print("   Web UI available at: http://localhost:3002")
         else:
             print("\n💻 CLI MODE: Scenarios will run agent queries directly in terminal")
 
@@ -332,47 +379,11 @@ class RedisSREDemo:
             )
             return
 
-        # Get fresh diagnostic data using the agent's diagnostic tool
-        print("   Getting current Redis diagnostic data to send to agent...")
-        diagnostics = await get_detailed_redis_diagnostics(self.redis_url)
-
-        # Add key pattern analysis by sampling some keys
-        print("   Sampling keys for pattern analysis...")
-        sample_keys = []
-        for pattern in ["user:profile:*", "product:details:*", "order:data:*"]:
-            pattern_keys = self.redis_client.keys(pattern)
-            if pattern_keys:
-                # Sample up to 5 keys per pattern
-                sample_keys.extend(pattern_keys[:5])
-
-        # Add sample keys to diagnostic data
-        if sample_keys:
-            diagnostics.setdefault("diagnostics", {})["sample_keys"] = [
-                key.decode() if isinstance(key, bytes) else key for key in sample_keys[:15]
-            ]
-
-        # Log current memory state for debugging
-        current_info = self.redis_client.info("memory")
-        current_memory = current_info.get("used_memory", 0)
-        current_maxmemory = current_info.get("maxmemory", 0)
-        print(
-            f"   Debug - Current memory: {current_memory / (1024 * 1024):.2f} MB, maxmemory: {current_maxmemory / (1024 * 1024):.2f} MB"
-        )
-
-        # Format the diagnostics for the agent
-        diagnostic_summary = self._format_diagnostics_for_agent(diagnostics)
-        print(f"   Debug - Sample keys included: {len(sample_keys)} keys")
-        if sample_keys:
-            print(f"   Debug - Sample key patterns: {sample_keys[:5]}")
-
-        # Debug: Check if diagnostic summary includes the investigation prompt
-        if "INVESTIGATION REQUIRED" in diagnostic_summary:
-            print("   Debug - Investigation prompt included in diagnostic data")
-
-        # Consult agent with pre-loaded diagnostic data
-        await self._run_agent_with_diagnostics(
-            query="The application team has reported performance issues with this Redis instance. Please analyze the diagnostic data and provide immediate remediation steps.",
-            diagnostic_data=diagnostic_summary,
+        # Consult the agent - let it gather its own diagnostics
+        await self._run_diagnostics_and_agent_query(
+            f"The application team has reported performance issues with this Redis instance at {self.redis_url}. "
+            f"The instance is showing high memory utilization ({utilization:.1f}% of {maxmemory / (1024 * 1024):.1f} MB limit) "
+            f"with {keys_loaded:,} keys loaded. Please analyze the situation and provide immediate remediation steps."
         )
 
         # Cleanup and restore settings
@@ -591,13 +602,12 @@ class RedisSREDemo:
                     f"Redis with {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, {rejected_attempts} recent rejections",
                 )
             else:
-                # Get comprehensive diagnostics showing connection problems
-                print("   📊 Getting diagnostic data to show connection issues...")
-                await get_detailed_redis_diagnostics(self.redis_url)
-
-                # Run diagnostics and agent consultation with connection-focused query
+                # Run agent consultation with connection-focused query
                 await self._run_diagnostics_and_agent_query(
-                    f"Application users are reporting connection timeouts and service unavailability. Current metrics show {total_clients} connected clients (max: {current_maxclients}), {blocked_clients} blocked clients, and {rejected_attempts} recent connection rejections. Please analyze the connection issues and provide immediate remediation steps."
+                    f"Application users are reporting connection timeouts and service unavailability at {self.redis_url}. "
+                    f"Current metrics show {total_clients} connected clients (max: {current_maxclients}), "
+                    f"{blocked_clients} blocked clients, and {rejected_attempts} recent connection rejections. "
+                    f"Please analyze the connection issues and provide immediate remediation steps."
                 )
 
         finally:
@@ -792,80 +802,21 @@ class RedisSREDemo:
         """Run comprehensive health check and agent consultation."""
         self.print_header("Full Health Check Scenario", "🏥")
 
-        self.print_step(1, "Running comprehensive Redis diagnostics")
-
-        # Run the full diagnostic suite
-        health_checker = get_redis_diagnostics(self.redis_url)
-        diagnostics = await health_checker.run_diagnostic_suite()
-
-        # Display key results
-        diagnostic_data = diagnostics.get("diagnostics", {})
-
-        print("   📊 Diagnostic Results Summary:")
-
-        # Memory diagnostics
-        memory_diag = diagnostic_data.get("memory", {})
-        if memory_diag:
-            print(
-                f"   💾 Memory: {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.2f} MB used"
-            )
-            if (
-                "memory_usage_percentage" in memory_diag
-                and memory_diag["memory_usage_percentage"] is not None
-            ):
-                print(f"   💾 Memory utilization: {memory_diag['memory_usage_percentage']:.1f}%")
-            if memory_diag.get("memory_fragmentation_ratio"):
-                print(f"   💾 Fragmentation ratio: {memory_diag['memory_fragmentation_ratio']:.2f}")
-
-        # Connection diagnostics
-        connection_diag = diagnostic_data.get("connection", {})
-        if connection_diag.get("basic_operations_test"):
-            print(
-                f"   🔗 Connectivity: OK (ping: {connection_diag.get('ping_duration_ms', 0):.1f}ms)"
-            )
-        else:
-            print("   🔗 Connectivity: FAILED")
-
-        # Keyspace diagnostics
-        keyspace_diag = diagnostic_data.get("keyspace", {})
-        total_keys = keyspace_diag.get("total_keys", 0)
-        print(f"   🔑 Total keys: {total_keys}")
-
-        # Performance diagnostics
-        performance_diag = diagnostic_data.get("performance", {})
-        hit_rate = performance_diag.get("hit_rate_percentage")
-        if hit_rate is not None:
-            print(f"   ⚡ Cache hit rate: {hit_rate:.1f}%")
-
-        # Replication diagnostics
-        replication_diag = diagnostic_data.get("replication", {})
-        role = replication_diag.get("role", "unknown")
-        print(f"   🔄 Role: {role}")
-
-        # Persistence diagnostics
-        persistence_diag = diagnostic_data.get("persistence", {})
-        if persistence_diag.get("rdb_enabled"):
-            print("   💿 RDB persistence: Enabled")
-        if persistence_diag.get("aof_enabled"):
-            print("   📝 AOF persistence: Enabled")
-
-        # Security diagnostics
-        security_diag = diagnostic_data.get("security", {})
-        if security_diag.get("auth_required"):
-            print("   🔒 Authentication: Required")
-        else:
-            print("   ⚠️  Authentication: Not configured")
+        self.print_step(1, "Requesting comprehensive Redis health check from agent")
 
         # Handle UI mode vs CLI mode
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Full Health Check",
-                f"Complete Redis diagnostics: {total_keys} keys, {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB memory, role: {role}",
+                f"Redis instance ready for comprehensive health check at {self.redis_url}",
             )
         else:
-            # Run comprehensive agent consultation
+            # Let the agent run its own comprehensive diagnostics
             await self._run_diagnostics_and_agent_query(
-                f"Complete Redis health check completed. Total keys: {total_keys}, memory usage: {memory_diag.get('used_memory_bytes', 0) / (1024 * 1024):.1f}MB, role: {role}. Please provide a comprehensive health assessment and recommendations for optimization, security, and best practices."
+                f"Please perform a complete health check on the Redis instance at {self.redis_url}. "
+                f"Provide a comprehensive assessment covering memory usage, connections, performance, "
+                f"security, persistence, replication, and any other relevant areas. "
+                f"Include recommendations for optimization, security hardening, and best practices."
             )
 
     async def redis_enterprise_scenario(self):
@@ -1535,147 +1486,6 @@ Use your Redis Enterprise tools to check the actual cluster state."""
                 print("2. Monitor key metrics: memory, connections, performance")
                 print("3. Implement proper security measures")
                 print("4. Set up monitoring and alerting")
-
-    def _format_diagnostics_for_agent(self, diagnostics: dict) -> str:
-        """Format diagnostic data for inclusion in agent system prompt."""
-        lines = ["## CURRENT REDIS DIAGNOSTIC DATA"]
-        lines.append("(Automatically gathered - analyze this data to identify problems)")
-        lines.append("")
-
-        # Handle both formats: health_checker format and get_detailed_redis_diagnostics format
-        if "diagnostics" in diagnostics:
-            diagnostic_data = diagnostics.get("diagnostics", {})
-        else:
-            diagnostic_data = diagnostics
-
-        # Memory diagnostics
-        memory = diagnostic_data.get("memory", {})
-        if memory and "error" not in memory:
-            lines.append("### Memory Status")
-            used_bytes = memory.get("used_memory_bytes", 0)
-            max_bytes = memory.get("maxmemory_bytes", 0)
-
-            def format_bytes(bytes_value: int) -> str:
-                """Format bytes into human readable format."""
-                if bytes_value == 0:
-                    return "0 B"
-                for unit in ["B", "KB", "MB", "GB", "TB"]:
-                    if bytes_value < 1024.0:
-                        return f"{bytes_value:.1f} {unit}"
-                    bytes_value /= 1024.0
-                return f"{bytes_value:.1f} PB"
-
-            if max_bytes > 0:
-                utilization = (used_bytes / max_bytes) * 100
-                lines.append(
-                    f"- Used Memory: {format_bytes(used_bytes)} of {format_bytes(max_bytes)} ({utilization:.1f}%)"
-                )
-            else:
-                lines.append(f"- Used Memory: {format_bytes(used_bytes)} (unlimited)")
-            lines.append(f"- Max Memory: {format_bytes(max_bytes)}")
-            lines.append(f"- Fragmentation Ratio: {memory.get('mem_fragmentation_ratio', 0):.2f}")
-            lines.append(f"- Peak Memory: {format_bytes(memory.get('used_memory_peak_bytes', 0))}")
-            lines.append("")
-
-        # Configuration
-        config = diagnostic_data.get("configuration", {})
-        if config and "error" not in config:
-            lines.append("### Critical Configuration")
-            lines.append(f"- Maxmemory Policy: {config.get('maxmemory_policy', 'unknown')}")
-            lines.append(f"- Save Configuration: {config.get('save', 'unknown')}")
-            lines.append(f"- AOF Enabled: {config.get('appendonly', 'unknown')}")
-            lines.append("")
-
-        # Performance
-        performance = diagnostic_data.get("performance", {})
-        if performance and "error" not in performance:
-            lines.append("### Performance Metrics")
-            lines.append(f"- Ops/Second: {performance.get('instantaneous_ops_per_sec', 0)}")
-            hits = performance.get("keyspace_hits", 0)
-            misses = performance.get("keyspace_misses", 0)
-            if hits + misses > 0:
-                hit_rate = (hits / (hits + misses)) * 100
-                lines.append(f"- Hit Rate: {hit_rate:.1f}%")
-            lines.append(f"- Evicted Keys: {performance.get('evicted_keys', 0)}")
-            lines.append("")
-
-        # Clients
-        clients = diagnostic_data.get("clients", {})
-        if clients and "error" not in clients:
-            lines.append("### Client Connections")
-            lines.append(f"- Connected Clients: {clients.get('connected_clients', 0)}")
-            lines.append(f"- Blocked Clients: {clients.get('blocked_clients', 0)}")
-            lines.append("")
-
-        # Keyspace
-        keyspace = diagnostic_data.get("keyspace", {})
-        if keyspace and "error" not in keyspace:
-            lines.append("### Keyspace Data")
-            lines.append(f"- Total Keys: {keyspace.get('total_keys', 0)}")
-            databases = keyspace.get("databases", {})
-            for db, info in databases.items():
-                keys_count = info.get("keys", 0)
-                expires_count = info.get("expires", 0)
-                lines.append(f"- DB{db}: {keys_count} keys, {expires_count} with TTL")
-                if keys_count > 0:
-                    ttl_percentage = (expires_count / keys_count) * 100
-                    lines.append(
-                        f"  - TTL Coverage: {ttl_percentage:.1f}% (indicates cache vs persistent data)"
-                    )
-            lines.append("")
-
-        # Sample keys (if available in diagnostic data)
-        if "sample_keys" in diagnostic_data:
-            lines.append("### Sample Keys (for pattern analysis)")
-            sample_keys = diagnostic_data.get("sample_keys", [])
-            for key in sample_keys[:10]:  # Show first 10 sample keys
-                lines.append(f"- {key}")
-            lines.append("")
-
-        lines.append(
-            "**INVESTIGATION REQUIRED**: Agent should analyze key patterns and persistence config to determine safe remediation steps"
-        )
-
-        return "\n".join(lines)
-
-    async def _run_agent_with_diagnostics(self, query: str, diagnostic_data: str):
-        """Run agent query with pre-loaded diagnostic data."""
-        try:
-            print("   🤖 Analyzing diagnostic data with SRE expertise...")
-            agent = get_sre_agent()
-
-            # Create enhanced query with diagnostic data
-            enhanced_query = f"""DIAGNOSTIC DATA PROVIDED:
-
-{diagnostic_data}
-
-USER REQUEST: {query}
-
-Analyze the diagnostic data above to identify problems and provide immediate remediation steps."""
-
-            response = await agent.process_query_with_fact_check(
-                query=enhanced_query, session_id="demo_scenario", user_id="sre_demo_user"
-            )
-
-            print("\n" + "=" * 60)
-            print("🤖 SRE Agent Analysis & Recommendations")
-            print("=" * 60)
-            print(response)
-            print("=" * 60)
-
-        except Exception as e:
-            print(f"   ⚠️  Agent query failed: {str(e)}")
-            print("   This might be due to missing OpenAI API key or network issues.")
-
-            # Provide fallback analysis based on diagnostic data
-            print("\n📋 Fallback Analysis from Diagnostic Data:")
-            print("-" * 40)
-            if "maxmemory_policy" in diagnostic_data and "noeviction" in diagnostic_data:
-                if "Memory Utilization: " in diagnostic_data:
-                    print("⚠️  HIGH MEMORY USAGE WITH NOEVICTION POLICY DETECTED!")
-                    print("1. Immediate: Change eviction policy to allkeys-lru")
-                    print("2. Monitor: Set up memory usage alerts")
-                    print("3. Investigate: Identify large keys consuming memory")
 
     async def run_interactive_demo(
         self, auto_run: bool = False, specific_scenario: Optional[str] = None

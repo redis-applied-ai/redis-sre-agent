@@ -13,7 +13,7 @@ async def store_schedule(schedule_data: Dict) -> bool:
     """Store a schedule in Redis with search index."""
     try:
         client = get_redis_client()
-        get_schedules_index()
+        await get_schedules_index()
 
         schedule_id = schedule_data["id"]
 
@@ -96,7 +96,7 @@ async def list_schedules() -> List[Dict]:
     try:
         from redisvl.query import FilterQuery
 
-        index = get_schedules_index()
+        index = await get_schedules_index()
 
         # Create a filter query to get all schedules
         filter_query = FilterQuery(
@@ -118,8 +118,7 @@ async def list_schedules() -> List[Dict]:
         )
 
         # Execute the search
-        async with index:
-            results = await index.query(filter_query)
+        results = await index.query(filter_query)
 
         schedules = []
 
@@ -280,7 +279,7 @@ async def find_schedules_needing_runs(current_time: datetime) -> List[Dict]:
     try:
         from redisvl.query import FilterQuery
 
-        index = get_schedules_index()
+        index = await get_schedules_index()
         current_timestamp = current_time.timestamp()
 
         # Create a filter query for enabled schedules where next_run_at <= current_time
@@ -304,8 +303,7 @@ async def find_schedules_needing_runs(current_time: datetime) -> List[Dict]:
         )
 
         # Execute the search
-        async with index:
-            results = await index.query(filter_query)
+        results = await index.query(filter_query)
 
         schedules_needing_runs = []
 

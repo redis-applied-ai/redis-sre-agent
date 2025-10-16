@@ -46,7 +46,8 @@ class ToolManager:
 
     # Hard-coded always-on providers
     _always_on_providers = [
-        "redis_sre_agent.tools.knowledge.knowledge_base.KnowledgeBaseToolProvider"
+        "redis_sre_agent.tools.knowledge.knowledge_base.KnowledgeBaseToolProvider",
+        "redis_sre_agent.tools.utilities.provider.UtilitiesToolProvider",
     ]
 
     def __init__(self, redis_instance: Optional[RedisInstance] = None):
@@ -65,15 +66,61 @@ class ToolManager:
         self._stack = AsyncExitStack()
         await self._stack.__aenter__()
 
-        # Load always-on providers first
+        # Load always-on providers first (these don't require redis_instance)
         for provider_path in self._always_on_providers:
-            await self._load_provider(provider_path)
+            await self._load_provider(provider_path, always_on=True)
 
-        # Load configured providers
-        from redis_sre_agent.core.config import settings
+        # Load instance-specific providers only if redis_instance is provided
+        if self.redis_instance:
+            logger.info(f"Loading instance-specific providers for: {self.redis_instance.name}")
 
-        for provider_path in settings.tool_providers:
-            await self._load_provider(provider_path)
+            # Load configured providers (these require redis_instance)
+            from redis_sre_agent.core.config import settings
+
+            for provider_path in settings.tool_providers:
+                await self._load_provider(provider_path)
+
+            # Load additional providers based on instance type
+            instance_type = self.redis_instance.instance_type
+            logger.info(f"Instance type: {instance_type}")
+
+            if instance_type == "redis_enterprise":
+                # Load Redis Enterprise admin API provider
+                # Check for non-empty admin_url (handle None, empty string, whitespace)
+                has_admin_url = (
+                    self.redis_instance.admin_url and self.redis_instance.admin_url.strip()
+                )
+
+                if has_admin_url:
+                    logger.info("Loading Redis Enterprise admin API provider")
+                    await self._load_provider(
+                        "redis_sre_agent.tools.admin.redis_enterprise.provider.RedisEnterpriseAdminToolProvider"
+                    )
+                else:
+                    logger.warning(
+                        f"Redis Enterprise instance '{self.redis_instance.name}' detected but no admin_url configured. "
+                        "Enterprise admin tools will not be available. Using standard Redis CLI tools only."
+                    )
+
+            elif instance_type == "oss_cluster":
+                # Future: Load Redis Cluster-specific tools
+                logger.info(
+                    "OSS Cluster instance detected (cluster-specific tools not yet implemented)"
+                )
+
+            elif instance_type == "oss_single":
+                logger.info("OSS Single instance detected (using standard Redis CLI tools)")
+
+            elif instance_type == "redis_cloud":
+                logger.info("Redis Cloud instance detected (using standard Redis CLI tools)")
+
+            else:
+                logger.info(
+                    f"Unknown or unspecified instance type '{instance_type}' for instance '{self.redis_instance.name}'. "
+                    "Using standard Redis tools."
+                )
+        else:
+            logger.info("No redis_instance provided - loading only instance-independent providers")
 
         logger.info(
             f"ToolManager initialized with {len(self._tools)} tools "
@@ -82,17 +129,18 @@ class ToolManager:
 
         return self
 
-    async def _load_provider(self, provider_path: str) -> None:
+    async def _load_provider(self, provider_path: str, always_on: bool = False) -> None:
         """Load and register a provider.
 
         Args:
             provider_path: Fully qualified class path
+            always_on: If True, initialize without redis_instance (for always-on providers)
         """
         try:
             provider_cls = self._get_provider_class(provider_path)
-            provider = await self._stack.enter_async_context(
-                provider_cls(redis_instance=self.redis_instance)
-            )
+            # Always-on providers should not have redis_instance set
+            instance = None if always_on else self.redis_instance
+            provider = await self._stack.enter_async_context(provider_cls(redis_instance=instance))
 
             # Register tools in routing table
             tool_schemas = provider.create_tool_schemas()

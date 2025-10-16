@@ -15,13 +15,13 @@
 
 ### 1. Check Database Sync Status
 ```bash
-rladmin status databases
+rladmin status | grep -A 30 "DATABASES:"
 # Look for databases with sync_status != "synced"
 ```
 
 ### 2. Check Replication Status
 ```bash
-rladmin status databases db_name=<database_name>
+rladmin info db <database_name>
 # Check detailed replication status for specific database
 ```
 
@@ -34,7 +34,7 @@ crdb-cli crdb status --crdb-guid <guid>
 
 ### 4. Check Network Connectivity
 ```bash
-rladmin status nodes
+rladmin status | grep -A 20 "NODES:"
 # Verify all nodes are online and communicating
 ```
 
@@ -56,7 +56,7 @@ rladmin restart db <database_name>
 ### Option 2: Check and Resolve Network Issues
 ```bash
 # Test connectivity between nodes
-rladmin status nodes
+rladmin status | grep -A 20 "NODES:"
 # Check for network partitions or connectivity issues
 
 # Check cluster network configuration
@@ -75,7 +75,7 @@ crdb-cli crdb resolve-conflict --crdb-guid <guid> --conflict-id <conflict_id>
 ### Option 4: Check Disk Space and Resources
 ```bash
 # Check disk space on all nodes
-rladmin status nodes | grep -E "node:|free_disk"
+rladmin status | grep -A 20 "NODES:" | grep -E "node:|free_disk"
 
 # Check memory usage
 rladmin info cluster | grep memory
@@ -100,7 +100,7 @@ rladmin info db <database_name>
 ### 3. Monitor Replication Metrics
 ```bash
 # Check replication lag metrics
-rladmin status databases | grep -A5 -B5 <database_name>
+rladmin status | grep -A5 -B5 <database_name>
 ```
 
 ### 4. Check for Split-Brain Scenarios
@@ -132,10 +132,10 @@ rladmin status
 ```bash
 # Create monitoring script for database sync status
 #!/bin/bash
-rladmin status databases | grep -v "synced" | grep -v "Status"
+rladmin status | grep -A 30 "DATABASES:" | grep -v "synced" | grep -v "Status"
 if [ $? -eq 0 ]; then
     echo "WARNING: Databases with sync issues detected"
-    rladmin status databases
+    rladmin status
 fi
 ```
 
@@ -152,7 +152,7 @@ fi
 # Collect comprehensive cluster information
 rladmin status > cluster_status.txt
 rladmin info cluster > cluster_info.txt
-rladmin status databases > database_status.txt
+rladmin info db all > all_databases.txt
 
 # For Active-Active databases
 crdb-cli crdb list > crdb_list.txt

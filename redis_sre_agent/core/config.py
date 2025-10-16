@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, List, Optional
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -64,8 +64,10 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, description="Server port")
 
     # Redis
-    redis_url: str = Field(default="redis://localhost:7843/0", description="Redis connection URL")
-    redis_password: Optional[str] = Field(default=None, description="Redis password")
+    redis_url: SecretStr = Field(
+        default="redis://localhost:7843/0", description="Redis connection URL"
+    )
+    redis_password: Optional[SecretStr] = Field(default=None, description="Redis password")
 
     # OpenAI
     openai_api_key: str = Field(description="OpenAI API key")

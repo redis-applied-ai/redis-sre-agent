@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 
 class TestHealthEndpoints:
@@ -53,7 +54,7 @@ class TestHealthEndpoints:
             )  # Active workers
             mock_docket.return_value = mock_docket_instance
 
-            response = test_client.get("/health")
+            response = test_client.get("/api/v1/health")
 
         assert response.status_code == 200
 
@@ -99,7 +100,7 @@ class TestHealthEndpoints:
             mock_docket_instance.workers = AsyncMock(return_value=[])  # No workers
             mock_docket.return_value = mock_docket_instance
 
-            response = test_client.get("/health")
+            response = test_client.get("/api/v1/health")
 
         assert response.status_code == 503
 
@@ -133,7 +134,7 @@ class TestHealthEndpoints:
                 side_effect=Exception("Docket connection failed"),
             ),
         ):
-            response = test_client.get("/health")
+            response = test_client.get("/api/v1/health")
 
         assert response.status_code == 503
 
@@ -166,7 +167,7 @@ class TestHealthEndpoints:
             mock_docket_instance.workers = AsyncMock(return_value=["worker1"])
             mock_docket.return_value = mock_docket_instance
 
-            response = test_client.head("/health")
+            response = test_client.head("/api/v1/health")
 
         assert response.status_code == 200
         assert response.text == ""  # HEAD should have no body
@@ -190,7 +191,7 @@ class TestHealthEndpoints:
             patch("redis_sre_agent.api.health.settings") as mock_settings,
         ):
             # Mock settings with password
-            mock_settings.redis_url = "redis://:secret_password@localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://:secret_password@localhost:6379/0")
             mock_settings.redis_password = "secret_password"
             mock_settings.embedding_model = "text-embedding-3-small"
             mock_settings.task_queue_name = "sre_tasks"
@@ -201,7 +202,7 @@ class TestHealthEndpoints:
             mock_docket_instance.workers.return_value = ["worker1"]
             mock_docket.return_value = mock_docket_instance
 
-            response = test_client.get("/health")
+            response = test_client.get("/api/v1/health")
 
         data = response.json()
 
@@ -301,7 +302,7 @@ class TestAppConfiguration:
 
         # Health endpoints should be registered
         assert "/" in routes
-        assert "/health" in routes
+        assert "/api/v1/health" in routes
 
     def test_app_tags(self, app_with_mocks):
         """Test that route tags are properly configured."""
@@ -309,7 +310,7 @@ class TestAppConfiguration:
         health_routes = [
             route
             for route in app_with_mocks.routes
-            if hasattr(route, "path") and route.path in ["/", "/health"]
+            if hasattr(route, "path") and route.path in ["/", "/api/v1/health"]
         ]
 
         # At least one route should exist

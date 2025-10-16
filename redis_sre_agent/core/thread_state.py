@@ -257,9 +257,10 @@ Subject:"""
                     # Get basic thread info
                     keys = self._get_thread_keys(thread_id)
 
-                    # Get status, metadata, and latest update
+                    # Get status, metadata, context, and latest update
                     status_data = await client.get(keys["status"])
                     metadata_data = await client.hgetall(keys["metadata"])
+                    context_data = await client.hgetall(keys["context"])
                     latest_update = await client.lrange(keys["updates"], 0, 0)
 
                     if not status_data:
@@ -281,6 +282,11 @@ Subject:"""
                             except json.JSONDecodeError:
                                 metadata["tags"] = []
 
+                    # Parse context to get instance_id
+                    context = {}
+                    if context_data:
+                        context = {k.decode(): v.decode() for k, v in context_data.items()}
+
                     # Get latest update message
                     latest_message = "No updates"
                     if latest_update:
@@ -300,6 +306,9 @@ Subject:"""
                         "latest_message": latest_message[:100],  # Truncate for summary
                         "tags": metadata.get("tags", []),
                         "priority": int(metadata.get("priority", 0)),
+                        "instance_id": context.get(
+                            "instance_id"
+                        ),  # Include instance_id from context
                     }
 
                     threads.append(thread_summary)

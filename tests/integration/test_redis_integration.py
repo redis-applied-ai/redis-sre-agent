@@ -211,7 +211,7 @@ class TestAPIIntegration:
 
         # Mock vectorizer to avoid API calls
         with patch("redis_sre_agent.core.redis.OpenAITextVectorizer"):
-            response = await async_test_client.get("/health")
+            response = await async_test_client.get("/api/v1/health")
 
         # Should return some status (may be unhealthy due to missing components)
         assert response.status_code in [200, 503]

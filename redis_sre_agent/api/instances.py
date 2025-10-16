@@ -4,9 +4,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
 
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
@@ -16,19 +17,63 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def mask_redis_url(url: str) -> str:
+    """Mask username and password in Redis URL for safe display.
+
+    Args:
+        url: Redis connection URL (e.g., redis://user:pass@host:port/db)
+
+    Returns:
+        Masked URL (e.g., redis://***:***@host:port/db)
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            # Reconstruct URL with masked credentials
+            masked_netloc = parsed.hostname or ""
+            if parsed.port:
+                masked_netloc += f":{parsed.port}"
+            if parsed.username or parsed.password:
+                masked_netloc = f"***:***@{masked_netloc}"
+
+            masked_url = f"{parsed.scheme}://{masked_netloc}{parsed.path}"
+            if parsed.query:
+                masked_url += f"?{parsed.query}"
+            if parsed.fragment:
+                masked_url += f"#{parsed.fragment}"
+            return masked_url
+        return url
+    except Exception as e:
+        logger.warning(f"Failed to mask URL credentials: {e}")
+        return "redis://***:***@<host>:<port>"
+
+
 class RedisInstance(BaseModel):
     """Redis instance configuration model.
 
     Represents a Redis database that the agent can monitor and diagnose.
     Instances can be pre-configured by users or created dynamically by the agent.
+
+    Note: This model does NOT validate connection_url on read from Redis,
+    to allow loading instances with invalid URLs so they can be fixed in the UI.
+    Validation only happens on API create/update requests.
     """
 
     id: str
     name: str
-    connection_url: str = Field(
+    connection_url: SecretStr = Field(
         ..., description="Redis connection URL (e.g., redis://localhost:6379)"
     )
     environment: str = Field(..., description="Environment: development, staging, production")
+
+    @field_serializer("connection_url", "admin_password", when_used="json")
+    def dump_secret(self, v):
+        """Serialize SecretStr fields as plain text when dumping to dict/json."""
+        if v is None:
+            return None
+        # Handle both SecretStr and plain str (in case model_copy passed a plain str)
+        return v.get_secret_value() if hasattr(v, "get_secret_value") else v
+
     usage: str = Field(..., description="Usage type: cache, analytics, session, queue, or custom")
     description: str
     repo_url: Optional[str] = None
@@ -52,7 +97,7 @@ class RedisInstance(BaseModel):
         None,
         description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
     )
-    admin_password: Optional[str] = Field(
+    admin_password: Optional[SecretStr] = Field(
         None,
         description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
     )
@@ -75,15 +120,22 @@ class RedisInstance(BaseModel):
 
     @field_validator("connection_url")
     @classmethod
-    def validate_not_app_redis(cls, v: str) -> str:
+    def validate_not_app_redis(cls, v: SecretStr) -> SecretStr:
         """Ensure this is not the application's own Redis database."""
         try:
             from redis_sre_agent.core.config import settings
 
-            if v == settings.redis_url:
+            url_value = v.get_secret_value() if isinstance(v, SecretStr) else v
+            settings_url = (
+                settings.redis_url.get_secret_value()
+                if isinstance(settings.redis_url, SecretStr)
+                else settings.redis_url
+            )
+
+            if url_value == settings_url:
                 raise ValueError(
                     "Cannot create instance for application's own Redis database. "
-                    f"The URL {v} is used by the SRE agent application itself "
+                    "The URL is used by the SRE agent application itself "
                     "and should not be diagnosed or monitored by the agent."
                 )
         except (ImportError, AttributeError):
@@ -100,12 +152,80 @@ class RedisInstance(BaseModel):
             raise ValueError(f"created_by must be 'user' or 'agent', got: {v}")
         return v
 
+    def to_response(self) -> "RedisInstanceResponse":
+        """Convert to response model with masked credentials."""
+        # Handle both SecretStr and plain str (after model_copy)
+        conn_url = (
+            self.connection_url.get_secret_value()
+            if hasattr(self.connection_url, "get_secret_value")
+            else self.connection_url
+        )
+        admin_pwd = (
+            self.admin_password.get_secret_value()
+            if self.admin_password and hasattr(self.admin_password, "get_secret_value")
+            else self.admin_password
+        )
+
+        return RedisInstanceResponse(
+            id=self.id,
+            name=self.name,
+            connection_url=mask_redis_url(conn_url),
+            environment=self.environment,
+            usage=self.usage,
+            description=self.description,
+            repo_url=self.repo_url,
+            notes=self.notes,
+            monitoring_identifier=self.monitoring_identifier,
+            logging_identifier=self.logging_identifier,
+            instance_type=self.instance_type,
+            admin_url=self.admin_url,
+            admin_username=self.admin_username,
+            admin_password="***" if admin_pwd else None,
+            status=self.status,
+            version=self.version,
+            memory=self.memory,
+            connections=self.connections,
+            last_checked=self.last_checked,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+            created_by=self.created_by,
+            user_id=self.user_id,
+        )
+
+
+class RedisInstanceResponse(BaseModel):
+    """Response model for Redis instance with masked credentials."""
+
+    id: str
+    name: str
+    connection_url: str  # Masked URL
+    environment: str
+    usage: str
+    description: str
+    repo_url: Optional[str] = None
+    notes: Optional[str] = None
+    monitoring_identifier: Optional[str] = None
+    logging_identifier: Optional[str] = None
+    instance_type: Optional[str] = "unknown"
+    admin_url: Optional[str] = None
+    admin_username: Optional[str] = None
+    admin_password: Optional[str] = None  # Always masked as "***"
+    status: Optional[str] = "unknown"
+    version: Optional[str] = None
+    memory: Optional[str] = None
+    connections: Optional[int] = None
+    last_checked: Optional[str] = None
+    created_at: str
+    updated_at: str
+    created_by: str = "user"
+    user_id: Optional[str] = None
+
 
 class CreateInstanceRequest(BaseModel):
     """Request model for creating a Redis instance."""
 
     name: str
-    connection_url: str = Field(
+    connection_url: SecretStr = Field(
         ..., description="Redis connection URL (e.g., redis://localhost:6379)"
     )
     environment: str
@@ -131,7 +251,7 @@ class CreateInstanceRequest(BaseModel):
         None,
         description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
     )
-    admin_password: Optional[str] = Field(
+    admin_password: Optional[SecretStr] = Field(
         None,
         description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
     )
@@ -142,15 +262,15 @@ class CreateInstanceRequest(BaseModel):
 
     @field_validator("connection_url")
     @classmethod
-    def validate_connection_url(cls, v: str) -> str:
+    def validate_connection_url(cls, v: SecretStr) -> SecretStr:
         """Validate that connection_url is a valid Redis URL."""
-        from urllib.parse import urlparse
+        url_value = v.get_secret_value() if isinstance(v, SecretStr) else v
 
-        if not v:
+        if not url_value:
             raise ValueError("Connection URL cannot be empty")
 
         try:
-            parsed = urlparse(v)
+            parsed = urlparse(url_value)
             if not parsed.scheme:
                 raise ValueError("Connection URL must include a scheme (e.g., redis://)")
             if parsed.scheme not in ["redis", "rediss"]:
@@ -161,6 +281,13 @@ class CreateInstanceRequest(BaseModel):
             raise ValueError(f"Invalid connection URL format: {str(e)}")
 
         return v
+
+    @field_serializer("connection_url", "admin_password", when_used="json")
+    def dump_secret(self, v):
+        """Serialize SecretStr fields as plain text when dumping to dict/json."""
+        if v is None:
+            return None
+        return v.get_secret_value() if isinstance(v, SecretStr) else v
 
     @field_validator("environment")
     @classmethod
@@ -176,12 +303,34 @@ class UpdateInstanceRequest(BaseModel):
     """Request model for updating a Redis instance."""
 
     name: Optional[str] = None
-    connection_url: Optional[str] = Field(
+    connection_url: Optional[SecretStr] = Field(
         None, description="Redis connection URL (e.g., redis://localhost:6379)"
     )
     environment: Optional[str] = None
     usage: Optional[str] = None
     description: Optional[str] = None
+
+    @field_validator("connection_url")
+    @classmethod
+    def validate_connection_url(cls, v):
+        """Validate that connection_url has a valid Redis URL scheme."""
+        if v is None:
+            return v
+        url_str = v.get_secret_value() if isinstance(v, SecretStr) else str(v)
+        if not url_str.startswith(("redis://", "rediss://", "unix://")):
+            raise ValueError(
+                f"Invalid Redis URL. Must start with redis://, rediss://, or unix://. "
+                f"Got: {url_str[:20]}..."
+            )
+        return v
+
+    @field_serializer("connection_url", "admin_password", when_used="json")
+    def dump_secret(self, v):
+        """Serialize SecretStr fields as plain text when dumping to dict/json."""
+        if v is None:
+            return None
+        return v.get_secret_value() if isinstance(v, SecretStr) else v
+
     repo_url: Optional[str] = None
     notes: Optional[str] = None
     monitoring_identifier: Optional[str] = Field(
@@ -202,7 +351,7 @@ class UpdateInstanceRequest(BaseModel):
         None,
         description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
     )
-    admin_password: Optional[str] = Field(
+    admin_password: Optional[SecretStr] = Field(
         None,
         description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
     )
@@ -213,7 +362,11 @@ class UpdateInstanceRequest(BaseModel):
 
 
 async def get_instances_from_redis() -> List[RedisInstance]:
-    """Get all instances from Redis storage."""
+    """Get all instances from Redis storage.
+
+    Skips instances that fail validation (e.g., invalid URLs) but logs errors.
+    This allows the UI to load and display instances so users can fix them.
+    """
     try:
         redis_client = get_redis_client()
         instances_data = await redis_client.get(RedisKeys.instances_set())
@@ -222,7 +375,21 @@ async def get_instances_from_redis() -> List[RedisInstance]:
             return []
 
         instances_list = json.loads(instances_data)
-        return [RedisInstance(**instance) for instance in instances_list]
+        instances = []
+        for inst_data in instances_list:
+            try:
+                instances.append(RedisInstance(**inst_data))
+            except Exception as e:
+                # Log error but continue loading other instances
+                logger.error(
+                    f"Failed to load instance '{inst_data.get('name', 'unknown')}' "
+                    f"(ID: {inst_data.get('id', 'unknown')}): {e}. "
+                    f"This instance will be skipped. Please fix it in the UI."
+                )
+        return instances
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse instances data from Redis: {e}")
+        return []
     except Exception as e:
         logger.error(f"Failed to get instances from Redis: {e}")
         return []
@@ -307,11 +474,12 @@ async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
     """Save instances to Redis storage."""
     try:
         redis_client = get_redis_client()
-        instances_data = json.dumps([instance.model_dump() for instance in instances])
+        # Use mode='json' to properly serialize SecretStr fields
+        instances_data = json.dumps([instance.model_dump(mode="json") for instance in instances])
         await redis_client.set(RedisKeys.instances_set(), instances_data)
         return True
     except Exception as e:
-        logger.error(f"Failed to save instances to Redis: {e}")
+        logger.exception(f"Failed to save instances to Redis: {e}")
         return False
 
 
@@ -358,7 +526,9 @@ async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
 
         # Check if instance already exists (by name or URL)
         for existing in instances:
-            if existing.name == instance.name or existing.connection_url == instance.connection_url:
+            existing_url = existing.connection_url.get_secret_value()
+            instance_url = instance.connection_url.get_secret_value()
+            if existing.name == instance.name or existing_url == instance_url:
                 logger.info(f"Instance {instance.name} already exists in session {thread_id}")
                 return True
 
@@ -366,7 +536,7 @@ async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
         instances.append(instance)
 
         # Serialize and save with TTL (1 hour)
-        instances_json = json.dumps([inst.model_dump() for inst in instances])
+        instances_json = json.dumps([inst.model_dump(mode="json") for inst in instances])
         instances_key = RedisKeys.thread_instances(thread_id)
         await redis_client.set(instances_key, instances_json, ex=3600)
 
@@ -406,27 +576,27 @@ async def get_all_instances(
 
     # Combine, avoiding duplicates (prefer configured over session)
     all_instances = list(configured)
-    configured_urls = {inst.connection_url for inst in configured}
+    configured_urls = {inst.connection_url.get_secret_value() for inst in configured}
 
     for session_inst in session_instances:
-        if session_inst.connection_url not in configured_urls:
+        if session_inst.connection_url.get_secret_value() not in configured_urls:
             all_instances.append(session_inst)
 
     return all_instances
 
 
-@router.get("/instances", response_model=List[RedisInstance])
+@router.get("/instances", response_model=List[RedisInstanceResponse])
 async def list_instances():
-    """List all Redis instances."""
+    """List all Redis instances with masked credentials."""
     try:
         instances = await get_instances_from_redis()
-        return instances
+        return [inst.to_response() for inst in instances]
     except Exception as e:
         logger.error(f"Failed to list instances: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve instances")
 
 
-@router.post("/instances", response_model=RedisInstance, status_code=201)
+@router.post("/instances", response_model=RedisInstanceResponse, status_code=201)
 async def create_instance(request: CreateInstanceRequest):
     """Create a new Redis instance."""
     try:
@@ -468,7 +638,7 @@ async def create_instance(request: CreateInstanceRequest):
             raise HTTPException(status_code=500, detail="Failed to save instance")
 
         logger.info(f"Created Redis instance: {new_instance.name} ({new_instance.id})")
-        return new_instance
+        return new_instance.to_response()
 
     except HTTPException:
         raise
@@ -477,15 +647,15 @@ async def create_instance(request: CreateInstanceRequest):
         raise HTTPException(status_code=500, detail="Failed to create instance")
 
 
-@router.get("/instances/{instance_id}", response_model=RedisInstance)
+@router.get("/instances/{instance_id}", response_model=RedisInstanceResponse)
 async def get_instance(instance_id: str):
-    """Get a specific Redis instance by ID."""
+    """Get a specific Redis instance by ID with masked credentials."""
     try:
         instances = await get_instances_from_redis()
 
         for instance in instances:
             if instance.id == instance_id:
-                return instance
+                return instance.to_response()
 
         raise HTTPException(status_code=404, detail=f"Instance with ID '{instance_id}' not found")
 
@@ -496,7 +666,7 @@ async def get_instance(instance_id: str):
         raise HTTPException(status_code=500, detail="Failed to retrieve instance")
 
 
-@router.put("/instances/{instance_id}", response_model=RedisInstance)
+@router.put("/instances/{instance_id}", response_model=RedisInstanceResponse)
 async def update_instance(instance_id: str, request: UpdateInstanceRequest):
     """Update a Redis instance."""
     try:
@@ -516,7 +686,8 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
 
         # Update the instance
         current_instance = instances[instance_index]
-        update_data = request.model_dump(exclude_unset=True)
+        # Use mode='json' to trigger field_serializer which extracts SecretStr values
+        update_data = request.model_dump(exclude_unset=True, mode="json")
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         # Create updated instance
@@ -528,7 +699,7 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
             raise HTTPException(status_code=500, detail="Failed to save updated instance")
 
         logger.info(f"Updated Redis instance: {updated_instance.name} ({updated_instance.id})")
-        return updated_instance
+        return updated_instance.to_response()
 
     except HTTPException:
         raise
@@ -643,7 +814,7 @@ async def test_instance_connection(instance_id: str):
             )
 
         # Test connection using the core redis function
-        success = await test_redis_connection(url=target_instance.connection_url)
+        success = await test_redis_connection(url=target_instance.connection_url.get_secret_value())
 
         if success:
             message = f"Successfully connected to instance {target_instance.name}"
@@ -665,3 +836,97 @@ async def test_instance_connection(instance_id: str):
     except Exception as e:
         logger.error(f"Failed to test connection for instance {instance_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to test connection")
+
+
+class TestAdminApiRequest(BaseModel):
+    """Request model for testing Redis Enterprise admin API connection."""
+
+    admin_url: str = Field(..., description="Redis Enterprise admin API URL")
+    admin_username: str = Field(..., description="Admin API username")
+    admin_password: str = Field(..., description="Admin API password")
+
+
+@router.post("/instances/test-admin-api")
+async def test_admin_api_connection(request: TestAdminApiRequest):
+    """Test connection to Redis Enterprise admin API.
+
+    This endpoint validates that the provided admin API credentials can successfully
+    connect to the Redis Enterprise cluster management API.
+    """
+    try:
+        import ssl
+
+        # Parse URL to extract host and port
+        from urllib.parse import urlparse
+
+        import httpx
+
+        parsed = urlparse(request.admin_url)
+        host = parsed.hostname or "unknown"
+        port = parsed.port or 9443
+
+        # Create SSL context that doesn't verify certificates (for self-signed certs)
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        # Test connection to /v1/cluster endpoint
+        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            try:
+                response = await client.get(
+                    f"{request.admin_url}/v1/cluster",
+                    auth=(request.admin_username, request.admin_password),
+                )
+
+                if response.status_code == 200:
+                    cluster_data = response.json()
+                    cluster_name = cluster_data.get("name", "Unknown")
+
+                    return {
+                        "success": True,
+                        "message": f"Successfully connected to Redis Enterprise cluster '{cluster_name}'",
+                        "host": host,
+                        "port": port,
+                        "cluster_name": cluster_name,
+                        "tested_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                elif response.status_code == 401:
+                    return {
+                        "success": False,
+                        "message": "Authentication failed. Please check your username and password.",
+                        "host": host,
+                        "port": port,
+                        "tested_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"Admin API returned status {response.status_code}",
+                        "host": host,
+                        "port": port,
+                        "tested_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+            except httpx.ConnectError as e:
+                return {
+                    "success": False,
+                    "message": f"Could not connect to {host}:{port}. Please check the URL and ensure the admin API is accessible.",
+                    "host": host,
+                    "port": port,
+                    "error": str(e),
+                    "tested_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except httpx.TimeoutException:
+                return {
+                    "success": False,
+                    "message": f"Connection to {host}:{port} timed out after 10 seconds.",
+                    "host": host,
+                    "port": port,
+                    "tested_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    except Exception as e:
+        logger.error(f"Failed to test admin API connection: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to test admin API connection: {str(e)}"
+        )

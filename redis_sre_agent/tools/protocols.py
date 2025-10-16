@@ -4,7 +4,6 @@ This module defines the base ToolProvider ABC and supporting data classes
 for metrics, logs, tickets, and other SRE tool capabilities.
 """
 
-import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
@@ -205,8 +204,11 @@ class ToolProvider(ABC):
     def _make_tool_name(self, operation: str) -> str:
         """Create unique tool name with instance hash.
 
-        Format: {provider_name}_{instance_name}_{instance_hash}_{operation}
-        Or:     {provider_name}_{instance_hash}_{operation} (if no redis_instance)
+        Format: {provider_name}_{instance_hash}_{operation}
+
+        The instance hash uniquely identifies the instance, so the instance name
+        is not needed and causes problems with parsing (e.g., when instance names
+        contain underscores).
 
         Args:
             operation: Tool operation name (e.g., 'query_metrics', 'create_ticket')
@@ -214,9 +216,6 @@ class ToolProvider(ABC):
         Returns:
             Unique tool name matching pattern ^[a-zA-Z0-9_-]+$
         """
-        if self.redis_instance:
-            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", self.redis_instance.name)
-            return f"{self.provider_name}_{safe_name}_{self._instance_hash}_{operation}"
         return f"{self.provider_name}_{self._instance_hash}_{operation}"
 
     @abstractmethod

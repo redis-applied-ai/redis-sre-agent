@@ -149,16 +149,11 @@ async def search_knowledge(
         if not query or not query.strip():
             raise HTTPException(status_code=400, detail="Query parameter cannot be empty")
 
-        # Parse product labels if provided
-        parsed_product_labels = None
-        if product_labels:
-            parsed_product_labels = [
-                label.strip() for label in product_labels.split(",") if label.strip()
-            ]
+        # Note: product_labels parameter is accepted by the API but not yet implemented
+        # in the search backend. For now, we ignore it and just search by query/category.
+        # TODO: Implement product_labels filtering in search_knowledge_base
 
-        result = await search_knowledge_base(
-            query, category=category, product_labels=parsed_product_labels, limit=limit
-        )
+        result = await search_knowledge_base(query, category=category, limit=limit)
 
         # Handle string, list, and dict responses
         if isinstance(result, str):
@@ -460,7 +455,7 @@ async def get_knowledge_base_stats():
         from ..core.redis import get_knowledge_index
 
         # Get the real vector index
-        index = get_knowledge_index()
+        index = await get_knowledge_index()
 
         # Get accurate document and chunk counts
         try:

@@ -16,7 +16,7 @@
 ### 1. Check Node Status
 ```bash
 # Check which nodes are in maintenance mode
-rladmin status nodes | grep -E "node:|status:"
+rladmin status | grep -A 20 "NODES:" | grep -E "node:|status:"
 
 # Get detailed node information
 rladmin info node <node_id>
@@ -43,7 +43,7 @@ sudo grep -i maintenance /var/log/messages | tail -10
 ### 4. Check Node Health
 ```bash
 # Verify node is actually healthy
-rladmin status nodes | grep -A5 -B5 <node_id>
+rladmin status | grep -A5 -B5 <node_id>
 
 # Check node resources
 rladmin info node <node_id> | grep -E "cpu|memory|disk"
@@ -52,10 +52,10 @@ rladmin info node <node_id> | grep -E "cpu|memory|disk"
 ### 5. Check Impact on Databases
 ```bash
 # Check which databases are affected
-rladmin status databases | grep -E "name:|shards:"
+rladmin status | grep -A 30 "DATABASES:" | grep -E "name:|shards:"
 
 # Check shard distribution
-rladmin status shards | grep <node_id>
+rladmin status | grep -A 50 "SHARDS:" | grep <node_id>
 ```
 
 ## Immediate Remediation
@@ -69,7 +69,7 @@ rladmin info node <node_id>
 rladmin node <node_id> maintenance_mode off
 
 # Verify node is back online
-rladmin status nodes | grep <node_id>
+rladmin status | grep <node_id>
 ```
 
 ### Option 2: Check for Ongoing Operations
@@ -86,10 +86,10 @@ rladmin status | grep -i "operation\|task\|migration"
 rladmin status
 
 # Ensure other nodes are healthy
-rladmin status nodes | grep -v maintenance
+rladmin status | grep -A 20 "NODES:" | grep -v maintenance
 
 # Check database availability
-rladmin status databases | grep -E "status:|endpoint:"
+rladmin status | grep -A 30 "DATABASES:" | grep -E "status:|endpoint:"
 ```
 
 ## Advanced Troubleshooting
@@ -121,7 +121,7 @@ sudo smartctl -a /dev/sda  # Check disk health
 ### 3. Check Network Connectivity
 ```bash
 # Test connectivity to other cluster nodes
-rladmin status nodes | grep addr
+rladmin status | grep -A 20 "NODES:" | grep addr
 
 # Ping other nodes
 ping -c 3 <other_node_ip>
@@ -160,19 +160,19 @@ rladmin status | grep -i operation
 rladmin node <node_id> maintenance_mode off
 
 # Monitor node status during transition
-watch "rladmin status nodes | grep <node_id>"
+watch "rladmin status | grep <node_id>"
 ```
 
 ### 3. Post-Exit Verification
 ```bash
 # Verify node is fully operational
-rladmin status nodes | grep <node_id>
+rladmin status | grep <node_id>
 
 # Check database accessibility
-rladmin status databases
+rladmin status | grep -A 30 "DATABASES:"
 
 # Verify shard distribution
-rladmin status shards | grep <node_id>
+rladmin status | grep -A 50 "SHARDS:" | grep <node_id>
 ```
 
 ## Planned Maintenance Mode Entry
@@ -183,10 +183,10 @@ rladmin status shards | grep <node_id>
 rladmin status
 
 # Verify sufficient resources on other nodes
-rladmin status nodes | grep -E "cpu|memory|free_disk"
+rladmin status | grep -A 20 "NODES:" | grep -E "cpu|memory|free_disk"
 
 # Check database distribution
-rladmin status shards
+rladmin status | grep -A 50 "SHARDS:"
 ```
 
 ### 2. Enter Maintenance Mode Safely
@@ -195,7 +195,7 @@ rladmin status shards
 rladmin node <node_id> maintenance_mode on
 
 # Verify shards are migrated away
-rladmin status shards | grep <node_id>
+rladmin status | grep -A 50 "SHARDS:" | grep <node_id>
 
 # Monitor migration progress
 watch "rladmin status | grep -i operation"
@@ -246,8 +246,8 @@ echo "$(date): Node <node_id> put in maintenance by $(whoami) for <reason>" >> /
 ```bash
 # Collect cluster status
 rladmin status > cluster_status.txt
-rladmin status nodes > node_status.txt
-rladmin status databases > database_status.txt
+rladmin info cluster > cluster_info.txt
+rladmin info node all > all_nodes.txt
 
 # Collect node-specific information
 rladmin info node <node_id> > node_info.txt

@@ -15,6 +15,32 @@ from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis as AsyncRedis
 from testcontainers.compose import DockerCompose
 
+
+# Apply critical patches at session level BEFORE any app imports
+@pytest.fixture(scope="session", autouse=True)
+def mock_redis_infrastructure():
+    """Mock Redis infrastructure functions to prevent connection attempts during test collection."""
+
+    async def mock_initialize():
+        return {"redis": True, "indices": True}
+
+    async def mock_register():
+        pass
+
+    async def mock_cleanup():
+        pass
+
+    with (
+        patch(
+            "redis_sre_agent.core.redis.initialize_redis_infrastructure",
+            side_effect=mock_initialize,
+        ),
+        patch("redis_sre_agent.core.tasks.register_sre_tasks", side_effect=mock_register),
+        patch("redis_sre_agent.core.redis.cleanup_redis_connections", side_effect=mock_cleanup),
+    ):
+        yield
+
+
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
@@ -213,11 +239,25 @@ def app_with_mocks():
 
     os.environ.update(app_test_env)
 
+    # Create async mock for initialize_redis_infrastructure
+    async def mock_initialize():
+        return {"redis": True, "indices": True}
+
+    # Create async mock for register_sre_tasks
+    async def mock_register():
+        pass
+
     with (
         patch("redis_sre_agent.core.redis.Redis") as mock_redis,
         patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer,
         patch("redis_sre_agent.core.redis.AsyncSearchIndex") as mock_index,
         patch("redis_sre_agent.core.tasks.test_task_system", return_value=True),
+        patch(
+            "redis_sre_agent.core.redis.initialize_redis_infrastructure",
+            side_effect=mock_initialize,
+        ),
+        patch("redis_sre_agent.core.tasks.register_sre_tasks", side_effect=mock_register),
+        patch("redis_sre_agent.core.redis.cleanup_redis_connections", new_callable=AsyncMock),
     ):
         # Configure mocks
         mock_redis_instance = AsyncMock()

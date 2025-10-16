@@ -254,7 +254,9 @@ class TestIngestionPipeline:
         mock_index.client = mock_redis_client
 
         # Dynamic embeddings based on input size
-        async def mock_embed_many(texts):
+        async def mock_embed_many(texts, as_buffer=False):
+            if as_buffer:
+                return [b"\x01\x02\x03" for _ in texts]
             return [[0.1, 0.2, 0.3] for _ in texts]
 
         def mock_embed(text, as_buffer=False):

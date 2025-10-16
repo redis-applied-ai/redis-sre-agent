@@ -17,11 +17,38 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
-from ..api.instances import create_instance_programmatically, get_instances_from_redis
+from ..api.instances import (
+    create_instance_programmatically,
+    get_instances_from_redis,
+    save_instances_to_redis,
+)
 from ..core.config import settings
 from ..tools.manager import ToolManager
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_operation_from_tool_name(tool_name: str) -> str:
+    """Extract human-readable operation name from full tool name.
+
+    Tool names follow the format: {provider}_{hash}_{operation}
+    Example: re_admin_ffffa3_get_cluster_info -> get_cluster_info
+
+    Args:
+        tool_name: Full tool name with provider, hash, and operation
+
+    Returns:
+        Operation name (e.g., "get_cluster_info")
+    """
+    import re
+
+    # Match pattern: underscore + 6 hex chars + underscore + operation
+    match = re.search(r"_([0-9a-f]{6})_(.+)$", tool_name)
+    if match:
+        return match.group(2)  # Return the operation part
+
+    # Fallback: return the full name
+    return tool_name
 
 
 def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
@@ -34,6 +61,132 @@ def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
     except Exception as e:
         logger.warning(f"Failed to parse connection URL {connection_url}: {e}")
         return "localhost", 6379
+
+
+def _mask_redis_url_credentials(url: str) -> str:
+    """Mask username and password in Redis URL for safe logging/LLM usage.
+
+    Args:
+        url: Redis connection URL (e.g., redis://user:pass@host:port/db)
+
+    Returns:
+        Masked URL (e.g., redis://***:***@host:port/db)
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            # Reconstruct URL with masked credentials
+            masked_netloc = parsed.hostname or ""
+            if parsed.port:
+                masked_netloc += f":{parsed.port}"
+            if parsed.username or parsed.password:
+                masked_netloc = f"***:***@{masked_netloc}"
+
+            masked_url = f"{parsed.scheme}://{masked_netloc}{parsed.path}"
+            if parsed.query:
+                masked_url += f"?{parsed.query}"
+            if parsed.fragment:
+                masked_url += f"#{parsed.fragment}"
+            return masked_url
+        return url
+    except Exception as e:
+        logger.warning(f"Failed to mask URL credentials: {e}")
+        return "redis://***:***@<host>:<port>"
+
+
+async def _detect_instance_type_with_llm(instance: Any, llm: Optional[ChatOpenAI] = None) -> str:
+    """Use LLM to detect Redis instance type from metadata.
+
+    Analyzes connection URL, description, notes, usage, and other metadata
+    to determine if this is redis_enterprise, oss_cluster, oss_single, or redis_cloud.
+
+    Args:
+        instance: RedisInstance with metadata to analyze
+        llm: Optional LLM to use (creates one if not provided)
+
+    Returns:
+        Detected instance type: 'redis_enterprise', 'oss_cluster', 'oss_single', 'redis_cloud', or 'unknown'
+    """
+
+    # Create LLM if not provided
+    if llm is None:
+        llm = ChatOpenAI(
+            model=settings.model_name,
+            temperature=0,  # Deterministic for classification
+            api_key=settings.openai_api_key,
+        )
+
+    # Build analysis prompt with all available metadata
+    # Extract secret value from SecretStr
+    connection_url_str = instance.connection_url.get_secret_value()
+    parsed_url = urlparse(connection_url_str)
+    port = parsed_url.port or 6379
+    hostname = parsed_url.hostname or "unknown"
+
+    # Mask credentials in URL before sending to LLM
+    masked_url = _mask_redis_url_credentials(connection_url_str)
+
+    prompt = f"""Analyze this Redis instance metadata and determine its type.
+
+Instance Metadata:
+- Name: {instance.name}
+- Connection URL: {masked_url}
+- Hostname: {hostname}
+- Port: {port}
+- Environment: {instance.environment}
+- Usage: {instance.usage}
+- Description: {instance.description}
+- Notes: {instance.notes or "None"}
+
+Instance Type Definitions:
+1. **redis_enterprise**: Redis Enterprise Software or Redis Enterprise Cloud
+   - Indicators: "enterprise" in name/description/notes, port 12000-12999, hostname contains "redis-enterprise"
+   - Has cluster management, admin API, advanced features
+
+2. **oss_cluster**: Open Source Redis Cluster (multi-node)
+   - Indicators: "cluster" in name/description/notes, multiple nodes mentioned
+   - Uses Redis Cluster protocol
+
+3. **oss_single**: Open Source Redis (single node)
+   - Indicators: standard port 6379, no cluster/enterprise mentions
+   - Basic standalone Redis
+
+4. **redis_cloud**: Managed Redis services (AWS ElastiCache, Redis Cloud, etc.)
+   - Indicators: cloud provider hostnames (amazonaws.com, redislabs.com, azure, gcp)
+   - Managed service
+
+Based on the metadata above, what is the most likely instance type?
+
+Respond with ONLY ONE of these exact values:
+- redis_enterprise
+- oss_cluster
+- oss_single
+- redis_cloud
+- unknown (if truly ambiguous)
+
+Your response (one word only):"""
+
+    try:
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        detected_type = response.content.strip().lower()
+
+        # Validate response
+        valid_types = ["redis_enterprise", "oss_cluster", "oss_single", "redis_cloud", "unknown"]
+        if detected_type in valid_types:
+            logger.info(
+                f"LLM detected instance type '{detected_type}' for {instance.name} "
+                f"(port={port}, usage={instance.usage})"
+            )
+            return detected_type
+        else:
+            logger.warning(
+                f"LLM returned invalid instance type '{detected_type}', defaulting to 'unknown'"
+            )
+            return "unknown"
+
+    except Exception as e:
+        logger.error(f"Failed to detect instance type with LLM: {e}")
+        return "unknown"
 
 
 def _extract_instance_details_from_message(message: str) -> Optional[Dict[str, str]]:
@@ -181,6 +334,63 @@ Focus on what they can do right now:
 - Don't explain basic Redis concepts unless directly relevant
 - Avoid generic advice like "monitor your metrics" - be specific
 - If you're not sure about something, say so and suggest investigation steps
+
+## Redis Enterprise Cluster Checks
+
+When working with Redis Enterprise instances (instance_type: redis_enterprise), ALWAYS check:
+1. **Cluster health** - Use get_cluster_info to check overall cluster status
+2. **Node status** - Use list_nodes to check if any nodes are in maintenance mode, failed, or degraded
+3. **Database health** - Use list_databases and get_database to check database status and configuration
+4. **Shard distribution** - Use list_shards to check if shards are properly distributed across nodes
+
+**CRITICAL: Understanding Node Shard Counts and Maintenance Mode**
+
+When you see a node with `shard_count: 0` or `accept_servers: false` in list_nodes output:
+- **This means the node is in MAINTENANCE MODE**
+- Maintenance mode is used for upgrades, hardware maintenance, or troubleshooting
+- The node is NOT serving traffic and shards have been migrated off
+- **You MUST explain this clearly in your Initial Assessment** - don't bury it in recommendations
+
+**How to communicate this to the user:**
+
+❌ DON'T say: "Node 2 is idle" or "Node 2 cannot host shards"
+✅ DO say: "Node 2 is in maintenance mode - it's been taken out of service intentionally"
+
+❌ DON'T treat it as an optimization: "Fix Node 2 if you intend to use all three nodes"
+✅ DO explain the situation: "Node 2 is in maintenance mode. This is typically done for upgrades or maintenance. If the maintenance is complete, you should exit maintenance mode to restore full cluster capacity."
+
+**Example Initial Assessment:**
+```
+⚠️ Node 2 is in maintenance mode
+
+I can see that Node 2 has shard_count=0 and accept_servers=false, which means it's been
+placed in maintenance mode. This is a deliberate action - someone ran `rladmin node 2
+maintenance_mode on` to take it out of service (usually for upgrades or hardware work).
+
+While in maintenance mode:
+- Node 2 is not serving any traffic
+- All shards have been migrated to other nodes
+- Your cluster is running on reduced capacity (2 nodes instead of 3)
+
+If the maintenance is complete, you should exit maintenance mode with:
+`rladmin node 2 maintenance_mode off`
+```
+
+**What to check:**
+- `accept_servers: false` → Node is in maintenance mode
+- `shard_count: 0` → Shards have been migrated off
+- `max_listeners: 0` → Node is not accepting new connections
+
+**What to recommend:**
+1. First, explain that the node is in maintenance mode and what that means
+2. Ask if maintenance is complete
+3. If yes, provide the command to exit: `rladmin node <id> maintenance_mode off`
+4. Warn about reduced capacity and availability risk
+
+**Other key indicators of problems:**
+- Databases in "active-change-pending" status → Configuration change in progress
+- Cluster alerts → Check get_cluster_alerts for active warnings
+- Uneven shard distribution (excluding maintenance nodes) → Potential performance issues
 
 ## When to Search Knowledge Base
 
@@ -362,7 +572,8 @@ class SRELangGraphAgent:
             instances = await get_instances_from_redis()
             for instance in instances:
                 if instance.id == instance_id:
-                    return instance.connection_url
+                    # Return the secret value for internal use
+                    return instance.connection_url.get_secret_value()
 
             logger.error(
                 f"Instance {instance_id} not found. "
@@ -495,12 +706,6 @@ class SRELangGraphAgent:
             """Final reasoning node using O1 model for better analysis."""
             messages = state["messages"]
 
-            # Send safety check reflection
-            if self.progress_callback:
-                await self.progress_callback(
-                    "🛡️ Performing safety checks on recommendations...", "safety_check"
-                )
-
             # Build conversation history with clear turn structure
             conversation_turns = []
             tool_results = []
@@ -604,12 +809,6 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                 )
                 logger.debug("Reasoning LLM call successful")
 
-                # Send fact-checking reflection
-                if self.progress_callback:
-                    await self.progress_callback(
-                        "🔍 Fact-checking recommendations against best practices...", "safety_check"
-                    )
-
             except Exception as e:
                 logger.error(f"Reasoning LLM call failed after all retries: {str(e)}")
                 # Fallback to a simple response
@@ -685,7 +884,9 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         elif tool_name == "check_service_health":
             return "🏥 Performing service health checks..."
         else:
-            return f"🔧 Executing {tool_name.replace('_', ' ')}..."
+            operation = _extract_operation_from_tool_name(tool_name)
+            display_name = operation.replace("_", " ")
+            return f"🔧 Executing {display_name}..."
 
     def _generate_completion_reflection(self, tool_name: str, result: dict) -> str:
         """Generate a reflection about what the agent discovered."""
@@ -736,7 +937,9 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
             else:
                 return "🔍 Docker log search completed"
         else:
-            return f"✅ {tool_name.replace('_', ' ')} completed"
+            operation = _extract_operation_from_tool_name(tool_name)
+            display_name = operation.replace("_", " ")
+            return f"✅ {display_name} completed"
 
     async def process_query(
         self,
@@ -783,9 +986,9 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                         break
 
                 if target_instance:
-                    logger.info(
-                        f"Found target instance: {target_instance.name} ({target_instance.connection_url})"
-                    )
+                    # Get connection URL as string for logging/display
+                    conn_url_str = target_instance.connection_url.get_secret_value()
+                    logger.info(f"Found target instance: {target_instance.name} ({conn_url_str})")
 
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
@@ -793,7 +996,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
 IMPORTANT CONTEXT: This query is specifically about Redis instance:
 - Instance ID: {instance_id}
 - Instance Name: {target_instance.name}
-- Connection URL: {target_instance.connection_url}
+- Connection URL: {conn_url_str}
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
 
@@ -843,8 +1046,9 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
 
                     # Use the newly created instance
                     target_instance = new_instance
-                    host, port = _parse_redis_connection_url(target_instance.connection_url)
-                    redis_url = target_instance.connection_url
+                    redis_url_str = target_instance.connection_url.get_secret_value()
+                    host, port = _parse_redis_connection_url(redis_url_str)
+                    redis_url = redis_url_str
 
                     enhanced_query = f"""User Query: {query}
 
@@ -877,8 +1081,9 @@ Please verify the details and try again, or let me know if you'd like help with 
                     if len(instances) == 1:
                         # Only one instance available - use it automatically
                         target_instance = instances[0]
-                        host, port = _parse_redis_connection_url(target_instance.connection_url)
-                        redis_url = target_instance.connection_url
+                        redis_url_str = target_instance.connection_url.get_secret_value()
+                        host, port = _parse_redis_connection_url(redis_url_str)
+                        redis_url = redis_url_str
                         logger.info(
                             f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})"
                         )
@@ -990,6 +1195,80 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
         # Store instance context in the state for tool execution
         if context and context.get("instance_id"):
             initial_state["instance_context"] = context
+
+        # INSTANCE TYPE TRIAGE: Detect and validate instance type before loading tools
+        if target_instance and target_instance.instance_type in ["unknown", None]:
+            logger.info(
+                f"Instance '{target_instance.name}' has unknown type, attempting LLM-based detection"
+            )
+            detected_type = await _detect_instance_type_with_llm(target_instance, self.llm)
+
+            if detected_type != "unknown":
+                logger.info(
+                    f"Detected instance type '{detected_type}' for '{target_instance.name}'"
+                )
+                # Update the instance with detected type
+                target_instance.instance_type = detected_type
+
+                # Save the updated instance type
+                try:
+                    instances = await get_instances_from_redis()
+                    for i, inst in enumerate(instances):
+                        if inst.id == target_instance.id:
+                            instances[i] = target_instance
+                            break
+                    await save_instances_to_redis(instances)
+                    logger.info(
+                        f"Updated instance '{target_instance.name}' with type '{detected_type}'"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to save updated instance type: {e}")
+
+        # Validate Redis Enterprise instances have required admin credentials
+        # Check for None, empty string, or whitespace-only strings
+        has_admin_url = (
+            target_instance and target_instance.admin_url and target_instance.admin_url.strip()
+        )
+
+        if (
+            target_instance
+            and target_instance.instance_type == "redis_enterprise"
+            and not has_admin_url
+        ):
+            logger.warning(
+                f"Redis Enterprise instance '{target_instance.name}' detected but missing admin_url"
+            )
+
+            # Return early with helpful message asking for admin credentials
+            class AgentResponseStr(str):
+                def get(self, key: str, default: Any = None):
+                    if key == "content":
+                        return str(self)
+                    return default
+
+            return AgentResponseStr(
+                f"""I've detected that **{target_instance.name}** is a Redis Enterprise instance, but I'm missing the admin API credentials needed for full diagnostics.
+
+To enable Redis Enterprise cluster monitoring and diagnostics, please provide:
+
+1. **Admin API URL** (typically port 9443)
+2. **Admin Username** (e.g., `admin@redis.com`)
+3. **Admin Password**
+
+**For example, if you're using the agen'ts Docker Compose setup**:
+- Admin URL: `https://redis-enterprise:9443`
+- Default username: `admin@redis.com`
+- Default password: `admin` (check your docker-compose.yml)
+
+You can update the instance configuration through the UI or API, and I'll be able to:
+- ✅ Check cluster health and node status
+- ✅ Monitor database (BDB) configurations
+- ✅ Detect stuck operations or maintenance mode
+- ✅ View shard distribution and replication status
+- ✅ Access Redis Enterprise-specific metrics
+
+For now, I can still perform basic Redis diagnostics using the database connection URL, but cluster-level insights will be limited."""
+            )
 
         # Create ToolManager for this query with the target instance
         async with ToolManager(redis_instance=target_instance) as tool_mgr:
@@ -1250,7 +1529,14 @@ Please review this Redis SRE agent response for factual accuracy and URL validit
             }
 
     async def process_query_with_fact_check(
-        self, query: str, session_id: str, user_id: str, max_iterations: int = 10
+        self,
+        query: str,
+        session_id: str,
+        user_id: str,
+        max_iterations: int = 10,
+        context: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+        conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """Process a query with fact-checking and potential retry.
 
@@ -1259,12 +1545,23 @@ Please review this Redis SRE agent response for factual accuracy and URL validit
             session_id: Session identifier for conversation context
             user_id: User identifier
             max_iterations: Maximum number of workflow iterations
+            context: Additional context including instance_id if specified
+            progress_callback: Optional callback for progress updates
+            conversation_history: Optional conversation history for context
 
         Returns:
             Agent's response as a string
         """
         # First attempt - normal processing
-        response = await self.process_query(query, session_id, user_id, max_iterations)
+        response = await self.process_query(
+            query,
+            session_id,
+            user_id,
+            max_iterations,
+            context,
+            progress_callback,
+            conversation_history,
+        )
 
         # Safety evaluation - check for dangerous recommendations
         safety_result = await self._safety_evaluate_response(query, response)
@@ -1315,7 +1612,13 @@ Provide a complete corrected response that maintains the same helpful tone while
                         # Retry the safety correction with backoff
                         async def _safety_correction():
                             return await self.process_query(
-                                correction_query, session_id, user_id, max_iterations
+                                correction_query,
+                                session_id,
+                                user_id,
+                                max_iterations,
+                                context,
+                                progress_callback,
+                                conversation_history,
                             )
 
                         corrected_response = await self._retry_with_backoff(
@@ -1413,176 +1716,6 @@ Focus on the specific errors identified in the fact-check analysis above."""
             logger.info("Fact-check completed: Using original response (fact-check unavailable)")
 
         return response
-
-    async def process_query_with_diagnostics(
-        self,
-        query: str,
-        session_id: str,
-        user_id: str,
-        baseline_diagnostics: Optional[Dict[str, Any]] = None,
-        max_iterations: int = 10,
-    ) -> str:
-        """
-        Process query with optional baseline diagnostic context.
-
-        This method enables realistic evaluation scenarios where external tools
-        provide baseline diagnostic context, simulating production workflows
-        where both external systems and agents use the same diagnostic functions.
-
-        Args:
-            query: User's SRE question or request
-            session_id: Session identifier for conversation context
-            user_id: User identifier
-            baseline_diagnostics: Optional baseline diagnostic data captured externally
-            max_iterations: Maximum number of workflow iterations
-
-        Returns:
-            Agent's response as a string
-        """
-        logger.info(
-            f"Processing SRE query with diagnostic context for user {user_id}, session {session_id}"
-        )
-
-        # Enhance query with baseline context if provided
-        enhanced_query = query
-        if baseline_diagnostics:
-            logger.info("Including baseline diagnostic context in query")
-
-            # Format diagnostic summary for context
-            diagnostic_summary = self._format_diagnostic_context(baseline_diagnostics)
-
-            enhanced_query = f"""## Baseline Diagnostic Context
-
-The following Redis diagnostic data was captured as baseline context for this investigation:
-
-{diagnostic_summary}
-
-## User Query
-
-{query}
-
-Please analyze this situation using your diagnostic tools to perform follow-up investigation as needed, calculate your own assessments from the raw data, and provide recommendations based on your analysis."""
-
-            logger.debug(
-                f"Enhanced query with diagnostic context: {len(enhanced_query)} characters"
-            )
-
-        # Process the enhanced query
-        return await self.process_query(enhanced_query, session_id, user_id, max_iterations)
-
-    def _format_bytes(self, bytes_value: int) -> str:
-        """Format bytes into human readable format."""
-        if bytes_value == 0:
-            return "0 B"
-
-        for unit in ["B", "KB", "MB", "GB", "TB"]:
-            if bytes_value < 1024.0:
-                return f"{bytes_value:.1f} {unit}"
-            bytes_value /= 1024.0
-        return f"{bytes_value:.1f} PB"
-
-    def _format_memory_usage(self, used_bytes: int, max_bytes: int) -> str:
-        """Format memory usage with utilization percentage."""
-        if max_bytes == 0:
-            return f"{self._format_bytes(used_bytes)} (unlimited)"
-
-        utilization = (used_bytes / max_bytes) * 100
-        return f"{self._format_bytes(used_bytes)} of {self._format_bytes(max_bytes)} ({utilization:.1f}%)"
-
-    def _format_diagnostic_context(self, diagnostics: Dict[str, Any]) -> str:
-        """Format diagnostic data as readable context for the agent."""
-        lines = []
-
-        # Header information
-        lines.append(f"**Capture Time**: {diagnostics.get('timestamp', 'Unknown')}")
-        lines.append(
-            f"**Sections Captured**: {', '.join(diagnostics.get('sections_captured', []))}"
-        )
-        lines.append(f"**Status**: {diagnostics.get('capture_status', 'Unknown')}")
-        lines.append("")
-
-        diagnostic_data = diagnostics.get("diagnostics", {})
-
-        # Connection status
-        connection = diagnostic_data.get("connection", {})
-        if connection and "error" not in connection:
-            lines.append("### Connection Status")
-            lines.append(f"- Ping Response: {connection.get('ping_response', 'N/A')}")
-            lines.append(f"- Ping Duration: {connection.get('ping_duration_ms', 'N/A')} ms")
-            lines.append(
-                f"- Basic Operations: {'✓' if connection.get('basic_operations_test') else '✗'}"
-            )
-            lines.append("")
-
-        # Memory metrics with human-readable formatting
-        memory = diagnostic_data.get("memory", {})
-        if memory and "error" not in memory:
-            lines.append("### Memory Metrics")
-            used_bytes = memory.get("used_memory_bytes", 0)
-            max_bytes = memory.get("maxmemory_bytes", 0)
-            lines.append(f"- Used Memory: {self._format_memory_usage(used_bytes, max_bytes)}")
-            lines.append(
-                f"- RSS Memory: {self._format_bytes(memory.get('used_memory_rss_bytes', 0))}"
-            )
-            lines.append(
-                f"- Peak Memory: {self._format_bytes(memory.get('used_memory_peak_bytes', 0))}"
-            )
-            lines.append(f"- Fragmentation Ratio: {memory.get('mem_fragmentation_ratio', 1.0)}")
-            lines.append(f"- Memory Allocator: {memory.get('mem_allocator', 'N/A')}")
-            lines.append("")
-
-        # Performance metrics (raw data only)
-        performance = diagnostic_data.get("performance", {})
-        if performance and "error" not in performance:
-            lines.append("### Performance Metrics (Raw Data)")
-            lines.append(f"- Ops/Second: {performance.get('instantaneous_ops_per_sec', 0)}")
-            lines.append(f"- Total Commands: {performance.get('total_commands_processed', 0)}")
-            lines.append(f"- Keyspace Hits: {performance.get('keyspace_hits', 0)}")
-            lines.append(f"- Keyspace Misses: {performance.get('keyspace_misses', 0)}")
-            lines.append(f"- Expired Keys: {performance.get('expired_keys', 0)}")
-            lines.append(f"- Evicted Keys: {performance.get('evicted_keys', 0)}")
-            lines.append("")
-
-        # Client metrics (raw data only)
-        clients = diagnostic_data.get("clients", {})
-        if clients and "error" not in clients:
-            lines.append("### Client Connection Metrics (Raw Data)")
-            lines.append(f"- Connected Clients: {clients.get('connected_clients', 0)}")
-            lines.append(f"- Blocked Clients: {clients.get('blocked_clients', 0)}")
-
-            client_connections = clients.get("client_connections", [])
-            if client_connections:
-                lines.append(f"- Total Client Records: {len(client_connections)}")
-                # Sample some client data
-                sample_clients = client_connections[:3]
-                for i, client in enumerate(sample_clients, 1):
-                    idle = client.get("idle_seconds", 0)
-                    lines.append(f"  - Client {i}: {client.get('addr', 'N/A')}, idle {idle}s")
-            lines.append("")
-
-        # Slowlog data (raw entries)
-        slowlog = diagnostic_data.get("slowlog", {})
-        if slowlog and "error" not in slowlog:
-            lines.append("### Slowlog Data (Raw Entries)")
-            lines.append(f"- Slowlog Length: {slowlog.get('slowlog_length', 0)}")
-
-            entries = slowlog.get("slowlog_entries", [])
-            if entries:
-                lines.append(f"- Recent Entries: {len(entries)}")
-                # Show sample entries
-                for i, entry in enumerate(entries[:3], 1):
-                    duration_us = entry.get("duration_microseconds", 0)
-                    lines.append(
-                        f"  - Entry {i}: {entry.get('command', 'Unknown')} ({duration_us} μs)"
-                    )
-            lines.append("")
-
-        lines.append("---")
-        lines.append(
-            "**Note**: This is raw diagnostic data. Agent should analyze values, calculate percentages/ratios, and determine operational severity levels."
-        )
-
-        return "\n".join(lines)
 
     async def _retry_with_backoff(
         self, func, max_retries: int = 3, initial_delay: float = 1.0, backoff_factor: float = 2.0

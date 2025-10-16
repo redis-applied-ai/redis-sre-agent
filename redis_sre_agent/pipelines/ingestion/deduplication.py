@@ -2,6 +2,7 @@
 Document deduplication and replacement logic for ingestion pipeline.
 """
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -28,11 +29,7 @@ class DocumentDeduplicator:
     async def find_existing_chunks(self, document_hash: str) -> List[str]:
         """Find all existing chunk keys for a document."""
         try:
-            # Connect the index if not already connected
-            if not self.index.client:
-                await self.index.connect()
-
-            # Get Redis client from the index
+            # Get Redis client from the index (already initialized)
             redis_client = self.index.client
 
             # Search for all chunks with this document hash
@@ -59,10 +56,6 @@ class DocumentDeduplicator:
             return 0
 
         try:
-            # Connect the index if not already connected
-            if not self.index.client:
-                await self.index.connect()
-
             redis_client = self.index.client
             deleted_count = await redis_client.delete(*existing_keys)
             logger.info(f"Deleted {deleted_count} existing chunks for document {document_hash}")
@@ -75,10 +68,6 @@ class DocumentDeduplicator:
     async def update_document_metadata(self, document_hash: str, metadata: Dict[str, Any]) -> None:
         """Update document-level metadata tracking."""
         try:
-            # Connect the index if not already connected
-            if not self.index.client:
-                await self.index.connect()
-
             redis_client = self.index.client
             tracking_key = self.generate_document_tracking_key(document_hash)
 
@@ -97,10 +86,6 @@ class DocumentDeduplicator:
     async def get_document_metadata(self, document_hash: str) -> Optional[Dict[str, Any]]:
         """Get document-level metadata."""
         try:
-            # Connect the index if not already connected
-            if not self.index.client:
-                await self.index.connect()
-
             redis_client = self.index.client
             tracking_key = self.generate_document_tracking_key(document_hash)
 
@@ -119,6 +104,44 @@ class DocumentDeduplicator:
         except Exception as e:
             logger.error(f"Failed to get document metadata for {document_hash}: {e}")
             return None
+
+    async def get_existing_chunks_with_hashes(
+        self, document_hash: str
+    ) -> Dict[str, Dict[str, Any]]:
+        """Get existing chunks with their content hashes and embeddings for reuse."""
+        try:
+            redis_client = self.index.client
+            pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
+
+            existing_chunks = {}
+            async for key in redis_client.scan_iter(match=pattern):
+                if isinstance(key, bytes):
+                    key = key.decode("utf-8")
+
+                # Get the chunk data (hash storage)
+                chunk_data = await redis_client.hgetall(key)
+                if chunk_data:
+                    # Extract content_hash and vector
+                    content_hash = chunk_data.get(b"content_hash") or chunk_data.get("content_hash")
+                    if isinstance(content_hash, bytes):
+                        content_hash = content_hash.decode("utf-8")
+
+                    vector = chunk_data.get(b"vector") or chunk_data.get("vector")
+
+                    if content_hash and vector:
+                        existing_chunks[key] = {
+                            "content_hash": content_hash,
+                            "vector": vector,
+                        }
+
+            logger.debug(
+                f"Found {len(existing_chunks)} existing chunks with hashes for document {document_hash}"
+            )
+            return existing_chunks
+
+        except Exception as e:
+            logger.error(f"Failed to get existing chunks with hashes for {document_hash}: {e}")
+            return {}
 
     async def should_replace_document(
         self, document_hash: str, new_content_hash: Optional[str] = None
@@ -166,7 +189,7 @@ class DocumentDeduplicator:
         return prepared_chunks
 
     async def replace_document_chunks(self, chunks: List[Dict[str, Any]], vectorizer: Any) -> int:
-        """Replace all chunks for a document atomically."""
+        """Replace chunks for a document, reusing embeddings for unchanged chunks."""
         if not chunks:
             return 0
 
@@ -180,24 +203,56 @@ class DocumentDeduplicator:
             return 0
 
         try:
-            # Step 1: Delete existing chunks
-            deleted_count = await self.delete_existing_chunks(document_hash)
-            if deleted_count > 0:
-                logger.info(
-                    f"Replaced {deleted_count} existing chunks for document {document_hash}"
-                )
+            # Step 1: Get existing chunks with their content hashes and embeddings
+            existing_chunks = await self.get_existing_chunks_with_hashes(document_hash)
 
-            # Step 2: Prepare chunks with deterministic keys
+            # Step 2: Prepare chunks with deterministic keys and compute content hashes
             prepared_chunks = self.prepare_chunks_for_replacement(chunks)
 
-            # Step 3: Generate embeddings
-            chunk_texts = [chunk["content"] for chunk in prepared_chunks]
-            embeddings = []
-            for text in chunk_texts:
-                embedding = vectorizer.embed(text, as_buffer=True)
-                embeddings.append(embedding)
+            # Step 3: Separate chunks into "reuse embedding" vs "need embedding"
+            chunks_to_embed = []
+            chunks_to_embed_indices = []
+            reused_embeddings = {}
 
-            # Step 4: Prepare documents for indexing
+            for i, chunk in enumerate(prepared_chunks):
+                # Compute content hash for this chunk
+                content_hash = hashlib.sha256(chunk["content"].encode()).hexdigest()
+                chunk["content_hash"] = content_hash  # Store for later
+
+                chunk_key = chunk["chunk_key"]
+                existing = existing_chunks.get(chunk_key)
+
+                if existing and existing.get("content_hash") == content_hash:
+                    # Content unchanged - reuse existing embedding!
+                    reused_embeddings[i] = existing["vector"]
+                    logger.debug(f"Reusing embedding for chunk {chunk_key}")
+                else:
+                    # Content changed or new - need to embed
+                    chunks_to_embed.append(chunk["content"])
+                    chunks_to_embed_indices.append(i)
+
+            # Step 4: Batch embed only the changed/new chunks
+            new_embeddings = []
+            if chunks_to_embed:
+                logger.info(
+                    f"Embedding {len(chunks_to_embed)} changed/new chunks "
+                    f"(reusing {len(reused_embeddings)} unchanged)"
+                )
+                new_embeddings = await vectorizer.embed_many(chunks_to_embed, as_buffer=True)
+            else:
+                logger.info(f"All {len(prepared_chunks)} chunks unchanged, reusing embeddings")
+
+            # Step 5: Combine reused and new embeddings in correct order
+            all_embeddings = []
+            new_emb_idx = 0
+            for i in range(len(prepared_chunks)):
+                if i in reused_embeddings:
+                    all_embeddings.append(reused_embeddings[i])
+                else:
+                    all_embeddings.append(new_embeddings[new_emb_idx])
+                    new_emb_idx += 1
+
+            # Step 6: Prepare documents for indexing
             documents_to_index = []
             for i, chunk in enumerate(prepared_chunks):
                 # Handle product labels specially for Redis schema
@@ -230,6 +285,9 @@ class DocumentDeduplicator:
                 doc_for_index = {
                     "id": chunk["chunk_key"],  # Use deterministic key
                     "document_hash": chunk["document_hash"],
+                    "content_hash": chunk[
+                        "content_hash"
+                    ],  # Store content hash for future deduplication
                     "title": chunk["title"],
                     "content": chunk["content"],
                     "source": chunk["source"],
@@ -237,7 +295,7 @@ class DocumentDeduplicator:
                     "doc_type": chunk["doc_type"],
                     "severity": chunk["severity"],
                     "chunk_index": chunk["chunk_index"],
-                    "vector": embeddings[i],
+                    "vector": all_embeddings[i],
                     "created_at": datetime.now(timezone.utc).timestamp(),
                     "product_labels": product_labels,
                     "product_label_tags": product_label_tags,
@@ -245,13 +303,18 @@ class DocumentDeduplicator:
                 }
                 documents_to_index.append(doc_for_index)
 
-            # Step 5: Create deterministic keys for Redis
+            # Step 7: Delete old chunks (do this after we have new embeddings ready)
+            deleted_count = await self.delete_existing_chunks(document_hash)
+            if deleted_count > 0:
+                logger.info(f"Deleted {deleted_count} old chunks for document {document_hash}")
+
+            # Step 8: Create deterministic keys for Redis
             keys = [chunk["chunk_key"] for chunk in prepared_chunks]
 
-            # Step 6: Index in Redis
+            # Step 9: Index in Redis
             await self.index.load(data=documents_to_index, id_field="id", keys=keys)
 
-            # Step 7: Update document metadata tracking
+            # Step 10: Update document metadata tracking
             await self.update_document_metadata(
                 document_hash,
                 {
@@ -264,7 +327,8 @@ class DocumentDeduplicator:
             )
 
             logger.info(
-                f"Successfully indexed {len(documents_to_index)} chunks for document {document_hash}"
+                f"Successfully indexed {len(documents_to_index)} chunks for document {document_hash} "
+                f"({len(chunks_to_embed)} new embeddings, {len(reused_embeddings)} reused)"
             )
             return len(documents_to_index)
 

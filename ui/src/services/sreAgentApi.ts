@@ -48,6 +48,7 @@ export interface ThreadSummary {
   latest_message: string;
   tags: string[];
   priority: number;
+  instance_id?: string;
 }
 
 export interface RedisInstance {
@@ -62,6 +63,9 @@ export interface RedisInstance {
   monitoring_identifier?: string;
   logging_identifier?: string;
   instance_type?: string;
+  admin_url?: string;
+  admin_username?: string;
+  admin_password?: string;
   status?: string;
   version?: string;
   memory?: string;
@@ -82,6 +86,9 @@ export interface CreateInstanceRequest {
   monitoring_identifier?: string;
   logging_identifier?: string;
   instance_type?: string;
+  admin_url?: string;
+  admin_username?: string;
+  admin_password?: string;
 }
 
 export interface UpdateInstanceRequest {
@@ -95,6 +102,9 @@ export interface UpdateInstanceRequest {
   monitoring_identifier?: string;
   logging_identifier?: string;
   instance_type?: string;
+  admin_url?: string;
+  admin_username?: string;
+  admin_password?: string;
   status?: string;
   version?: string;
   memory?: string;
@@ -129,13 +139,11 @@ export interface AgentStatus {
 }
 
 class SREAgentAPI {
-  private baseUrl: string;
   private tasksBaseUrl: string;
 
   constructor(baseUrl?: string) {
     // Determine the base URL dynamically
     const apiBaseUrl = this.getApiBaseUrl(baseUrl);
-    this.baseUrl = `${apiBaseUrl}/agent`;
     this.tasksBaseUrl = `${apiBaseUrl}`;
   }
 
@@ -409,14 +417,30 @@ class SREAgentAPI {
   }
 
   async getAgentStatus(): Promise<AgentStatus> {
-    const response = await fetch(`${this.baseUrl}/status`);
+    // Use the /health endpoint instead of the removed /agent/status
+    const response = await fetch(`${this.tasksBaseUrl}/health`);
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
-    return response.json();
+    const healthData = await response.json();
+
+    // Transform health endpoint response to AgentStatus format
+    return {
+      agent_available: healthData.status === 'healthy' || healthData.status === 'degraded',
+      workers_available: healthData.components?.workers === 'available',
+      system_health: {
+        redis_connection: healthData.components?.redis_connection === 'available',
+        vectorizer: healthData.components?.vectorizer === 'available',
+        vector_search: healthData.components?.vector_search === 'available',
+        task_queue: healthData.components?.task_system === 'available',
+      },
+      tools_available: [], // Not provided by health endpoint
+      version: healthData.version || '0.1.0',
+      status: healthData.status,
+    };
   }
 
   async checkHealth(): Promise<boolean> {
@@ -529,6 +553,38 @@ class SREAgentAPI {
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || `Failed to test connection URL: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  async testAdminApiConnection(
+    adminUrl: string,
+    adminUsername: string,
+    adminPassword: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    host?: string;
+    port?: number;
+    cluster_name?: string;
+    tested_at: string;
+  }> {
+    const response = await fetch(`${this.tasksBaseUrl}/instances/test-admin-api`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        admin_url: adminUrl,
+        admin_username: adminUsername,
+        admin_password: adminPassword,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `Failed to test admin API connection: ${response.statusText}`);
     }
 
     return response.json();

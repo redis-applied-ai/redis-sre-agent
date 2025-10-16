@@ -10,6 +10,7 @@ import {
   Tooltip,
 } from '@radar/ui-kit';
 import { sreAgentApi, type TaskStatusResponse, type RedisInstance } from '../services/sreAgentApi';
+import { maskRedisUrl } from '../utils/urlMasking';
 
 interface KnowledgeStats {
   total_documents: number;
@@ -64,7 +65,7 @@ const Dashboard = () => {
         sreAgentApi.listTasks(undefined, undefined, 10), // Get recent 10 tasks
         sreAgentApi.listInstances(),
         fetch('/api/v1/knowledge/stats').then(res => res.json()),
-        fetch('/health').then(res => res.json()),
+        fetch('/api/v1/health').then(res => res.json()),
       ]);
 
       // Convert tasks to conversation threads
@@ -441,7 +442,7 @@ const Dashboard = () => {
                     </div>
                     <div className="space-y-1">
                       <p className="text-redis-xs text-redis-dusk-04 truncate">
-                        {instance.connection_url}
+                        {maskRedisUrl(instance.connection_url)}
                       </p>
                       <p className="text-redis-xs text-redis-dusk-04">
                         {instance.environment} • {instance.usage}

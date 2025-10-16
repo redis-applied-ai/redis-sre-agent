@@ -24,6 +24,21 @@ const ErrorMessage = ({ message }: { message: string }) => (
   </div>
 );
 
+/**
+ * Extract human-readable operation name from full tool name.
+ * Format: {provider}_{hash}_{operation}
+ * Example: re_admin_ffffa3_get_cluster_info -> get_cluster_info
+ */
+const extractOperationName = (fullToolName: string): string => {
+  // Match pattern: underscore + 6 hex chars + underscore + operation
+  const match = fullToolName.match(/_([0-9a-f]{6})_(.+)$/);
+  if (match) {
+    return match[2]; // Return the operation part
+  }
+  // Fallback: return the full name
+  return fullToolName;
+};
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'tool' | 'system';
@@ -44,6 +59,7 @@ interface ChatThread {
   status: string;
   subject: string;
   isScheduled?: boolean;
+  instanceId?: string;
 }
 
 const Triage = () => {
@@ -192,6 +208,7 @@ const Triage = () => {
             messageCount: task.updates.length,
             status: task.status,
             isScheduled: isScheduled,
+            instanceId: task.context?.instance_id,
           };
         });
 
@@ -292,16 +309,17 @@ const Triage = () => {
             });
           } else if (update.type === 'tool_call') {
             // Show tool calls in a user-friendly way
-            const toolName = update.metadata?.tool_name || 'Unknown Tool';
+            const fullToolName = update.metadata?.tool_name || 'Unknown Tool';
             const toolArgs = update.metadata?.tool_args;
+            const displayName = extractOperationName(fullToolName);
 
             newMessages.push({
               id: `tool-${index}`,
               role: 'tool',
-              content: `Making tool call: ${toolName}`,
+              content: `Making tool call: ${displayName}`,
               timestamp: update.timestamp,
               toolCall: {
-                name: toolName,
+                name: displayName,
                 args: toolArgs,
               },
             });
@@ -488,16 +506,17 @@ const Triage = () => {
           });
         } else if (update.type === 'tool_call') {
           // Show tool calls in a user-friendly way
-          const toolName = update.metadata?.tool_name || 'Unknown Tool';
+          const fullToolName = update.metadata?.tool_name || 'Unknown Tool';
           const toolArgs = update.metadata?.tool_args;
+          const displayName = extractOperationName(fullToolName);
 
           newMessages.push({
             id: `tool-${index}`,
             role: 'tool',
-            content: `Making tool call: ${toolName}`,
+            content: `Making tool call: ${displayName}`,
             timestamp: update.timestamp,
             toolCall: {
-              name: toolName,
+              name: displayName,
               args: toolArgs,
             },
           });
@@ -811,6 +830,23 @@ const Triage = () => {
           <Card className="flex-1 flex flex-col h-full">
             {activeThreadId ? (
             <>
+              {/* Chat Header with Instance Info */}
+              {threads.find(t => t.id === activeThreadId)?.instanceId &&
+                instances.find(i => i.id === threads.find(t => t.id === activeThreadId)?.instanceId) && (
+                <div className="px-4 py-3 border-b border-redis-dusk-08 bg-redis-dusk-09">
+                  <div className="flex items-center gap-2 text-redis-sm">
+                    <span className="text-redis-dusk-04">Redis Instance:</span>
+                    <span className="font-medium text-foreground">
+                      {instances.find(i => i.id === threads.find(t => t.id === activeThreadId)?.instanceId)?.name}
+                    </span>
+                    <span className="text-redis-dusk-05">•</span>
+                    <span className="text-redis-dusk-04">
+                      {instances.find(i => i.id === threads.find(t => t.id === activeThreadId)?.instanceId)?.environment}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* WebSocket Chat Interface */}
               <CardContent className="flex-1 overflow-hidden">
                 <TaskMonitor
@@ -876,7 +912,7 @@ const Triage = () => {
                       <option value="">No specific instance (general troubleshooting)</option>
                       {instances.map((instance) => (
                         <option key={instance.id} value={instance.id}>
-                          {instance.name} ({instance.host}:{instance.port}) - {instance.environment}
+                          {instance.name} - {instance.environment}
                         </option>
                       ))}
                     </select>

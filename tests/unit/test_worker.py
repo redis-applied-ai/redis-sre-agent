@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from redis_sre_agent.worker import main
 
@@ -21,7 +22,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.Worker.run", mock_worker),
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             # Mock the worker run to avoid infinite loop
             mock_worker.return_value = None
@@ -39,7 +40,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.settings") as mock_settings,
             patch("sys.exit", side_effect=SystemExit) as mock_exit,
         ):
-            mock_settings.redis_url = ""  # Empty Redis URL
+            mock_settings.redis_url = SecretStr("")  # Empty Redis URL
 
             with pytest.raises(SystemExit):
                 await main()
@@ -57,7 +58,7 @@ class TestWorkerSystem:
             ),
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             # Should raise the exception
             with pytest.raises(Exception, match="Registration failed"):
@@ -71,7 +72,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.Worker.run", side_effect=Exception("Worker run failed")),
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             # Should raise the exception
             with pytest.raises(Exception, match="Worker run failed"):
@@ -87,7 +88,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.Worker.run", mock_worker_run),
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             await main()
 
@@ -154,7 +155,7 @@ class TestWorkerErrorHandling:
             ),
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             # KeyboardInterrupt should propagate
             with pytest.raises(KeyboardInterrupt):
@@ -170,7 +171,7 @@ class TestWorkerErrorHandling:
             ),
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             # Unexpected errors should propagate
             with pytest.raises(RuntimeError, match="Unexpected error"):
@@ -199,7 +200,7 @@ class TestWorkerLogging:
             patch("redis_sre_agent.worker.settings") as mock_settings,
             patch("redis_sre_agent.worker.logger") as mock_logger,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             await main()
 
@@ -218,7 +219,7 @@ class TestWorkerLogging:
             patch("redis_sre_agent.worker.settings") as mock_settings,
             patch("redis_sre_agent.worker.logger") as mock_logger,
         ):
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
 
             with pytest.raises(Exception):
                 await main()

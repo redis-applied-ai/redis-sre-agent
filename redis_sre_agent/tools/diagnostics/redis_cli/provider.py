@@ -36,8 +36,6 @@ class RedisCliToolProvider(ToolProvider):
     - ACL LOG (security diagnostics)
     - CONFIG GET (configuration inspection)
     - CLIENT LIST (connection diagnostics)
-    - MEMORY DOCTOR (memory analysis)
-    - LATENCY DOCTOR (latency analysis)
     - CLUSTER INFO (cluster diagnostics)
     - Replication info (replication diagnostics)
     - MEMORY STATS (detailed memory breakdown)
@@ -45,6 +43,9 @@ class RedisCliToolProvider(ToolProvider):
     - TYPE (key type inspection)
     - FT._LIST (list Search indexes)
     - FT.INFO (Search index information)
+
+    Note: MEMORY DOCTOR and LATENCY DOCTOR are not included as they are not
+    available in Redis Cloud and some Redis versions.
 
     The provider is initialized with a connection URL and manages the Redis client lifecycle.
     """
@@ -68,11 +69,44 @@ class RedisCliToolProvider(ToolProvider):
 
         # Get connection URL from redis_instance or parameter
         if redis_instance:
-            self.connection_url = redis_instance.connection_url
+            # Extract secret value if it's a SecretStr
+            from pydantic import SecretStr
+
+            conn_url = redis_instance.connection_url
+            logger.debug(f"redis_instance.connection_url type: {type(conn_url)}")
+
+            if isinstance(conn_url, SecretStr):
+                self.connection_url = conn_url.get_secret_value()
+                logger.debug(
+                    f"Extracted from SecretStr, starts with: {self.connection_url[:10] if self.connection_url else 'EMPTY'}..."
+                )
+            elif isinstance(conn_url, str):
+                self.connection_url = conn_url
+                logger.debug(
+                    f"Using plain string, starts with: {self.connection_url[:10] if self.connection_url else 'EMPTY'}..."
+                )
+            else:
+                raise ValueError(f"connection_url has unexpected type: {type(conn_url)}")
         elif connection_url:
             self.connection_url = connection_url
+            logger.debug(
+                f"Using provided connection_url, starts with: {self.connection_url[:10] if self.connection_url else 'EMPTY'}..."
+            )
         else:
             raise ValueError("Either redis_instance or connection_url must be provided")
+
+        # Validate that we have a non-empty connection URL
+        if not self.connection_url or not isinstance(self.connection_url, str):
+            raise ValueError(
+                f"Invalid connection_url: {self.connection_url!r} (type: {type(self.connection_url)})"
+            )
+
+        # Validate URL scheme
+        if not self.connection_url.startswith(("redis://", "rediss://", "unix://")):
+            raise ValueError(
+                f"Invalid Redis URL scheme: {self.connection_url!r}. "
+                "Must start with redis://, rediss://, or unix://"
+            )
 
         self._client: Optional[Redis] = None
 
@@ -87,8 +121,10 @@ class RedisCliToolProvider(ToolProvider):
             Redis: Initialized Redis client
         """
         if self._client is None:
+            from redis_sre_agent.api.instances import mask_redis_url
+
             self._client = Redis.from_url(self.connection_url, decode_responses=True)
-            logger.info(f"Connected to Redis at {self.connection_url}")
+            logger.info(f"Connected to Redis at {mask_redis_url(self.connection_url)}")
         return self._client
 
     async def __aenter__(self):
@@ -115,10 +151,6 @@ class RedisCliToolProvider(ToolProvider):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "connection_url": {
-                            "type": "string",
-                            "description": "Redis connection URL (e.g., redis://localhost:6379)",
-                        },
                         "section": {
                             "type": "string",
                             "description": (
@@ -128,7 +160,7 @@ class RedisCliToolProvider(ToolProvider):
                             ),
                         },
                     },
-                    "required": ["connection_url"],
+                    "required": [],
                 },
             ),
             ToolDefinition(
@@ -210,32 +242,8 @@ class RedisCliToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
-            ToolDefinition(
-                name=self._make_tool_name("memory_doctor"),
-                description=(
-                    "Run Redis MEMORY DOCTOR to get memory usage analysis and recommendations. "
-                    "Use this to diagnose memory issues and get Redis's own advice on "
-                    "memory optimization."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-            ),
-            ToolDefinition(
-                name=self._make_tool_name("latency_doctor"),
-                description=(
-                    "Run Redis LATENCY DOCTOR to get latency analysis and recommendations. "
-                    "Use this to diagnose latency issues and get Redis's own advice on "
-                    "latency optimization."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-            ),
+            # NOTE: MEMORY DOCTOR and LATENCY DOCTOR are not available in Redis Cloud
+            # and some Redis versions, so they have been removed
             ToolDefinition(
                 name=self._make_tool_name("cluster_info"),
                 description=(
@@ -344,6 +352,9 @@ class RedisCliToolProvider(ToolProvider):
         Returns:
             Tool execution result
         """
+        # Defensive: Remove connection_url if LLM passes it (provider already has it)
+        args = {k: v for k, v in args.items() if k != "connection_url"}
+
         # Extract operation from tool name
         operation = tool_name.split("_")[-1]
 
@@ -365,10 +376,6 @@ class RedisCliToolProvider(ToolProvider):
             return await self.config_get(**args)
         elif operation == "list" and "client" in tool_name:
             return await self.client_list(**args)
-        elif operation == "doctor" and "memory" in tool_name:
-            return await self.memory_doctor()
-        elif operation == "doctor" and "latency" in tool_name:
-            return await self.latency_doctor()
         elif operation == "stats" and "memory" in tool_name:
             return await self.memory_stats()
         elif operation == "keys":
@@ -540,50 +547,6 @@ class RedisCliToolProvider(ToolProvider):
             }
         except Exception as e:
             logger.error(f"Failed to execute CLIENT LIST: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-            }
-
-    async def memory_doctor(self) -> Dict[str, Any]:
-        """Execute MEMORY DOCTOR command.
-
-        Returns:
-            Memory analysis and recommendations
-        """
-        logger.info("Executing MEMORY DOCTOR")
-        try:
-            client = self.get_client()
-            result = await client.memory_doctor()
-
-            return {
-                "status": "success",
-                "analysis": result,
-            }
-        except Exception as e:
-            logger.error(f"Failed to execute MEMORY DOCTOR: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-            }
-
-    async def latency_doctor(self) -> Dict[str, Any]:
-        """Execute LATENCY DOCTOR command.
-
-        Returns:
-            Latency analysis and recommendations
-        """
-        logger.info("Executing LATENCY DOCTOR")
-        try:
-            client = self.get_client()
-            result = await client.execute_command("LATENCY", "DOCTOR")
-
-            return {
-                "status": "success",
-                "analysis": result,
-            }
-        except Exception as e:
-            logger.error(f"Failed to execute LATENCY DOCTOR: {e}")
             return {
                 "status": "error",
                 "error": str(e),

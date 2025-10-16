@@ -24,8 +24,8 @@ class TestAppInitialization:
         routes = [route.path for route in app.routes]
 
         # Health and metrics routes
-        assert "/health" in routes or any("/health" in r for r in routes)
-        assert "/metrics" in routes or any("/metrics" in r for r in routes)
+        assert "/api/v1/health" in routes or any("/api/v1/health" in r for r in routes)
+        assert "/api/v1/metrics" in routes or any("/api/v1/metrics" in r for r in routes)
 
         # API routes
         assert any("/api/v1" in r for r in routes)
@@ -181,14 +181,6 @@ class TestRouterInclusion:
         routes = [route.path for route in app.routes]
         assert any("metrics" in r for r in routes)
 
-    def test_agent_router_included(self):
-        """Test agent router is included with prefix."""
-        from redis_sre_agent.api.app import app
-
-        routes = [route.path for route in app.routes]
-        # Agent routes should have /api/v1 prefix
-        assert any("/api/v1" in r and "agent" in r.lower() for r in routes)
-
     def test_instances_router_included(self):
         """Test instances router is included with prefix."""
         from redis_sre_agent.api.app import app
@@ -252,7 +244,7 @@ class TestAppEndpoints:
         from redis_sre_agent.api.app import app
 
         client = TestClient(app)
-        response = client.get("/health")
+        response = client.get("/api/v1/health")
 
         # Should get a response (may be 200 or error depending on Redis)
         assert response.status_code in [200, 500, 503]
@@ -262,7 +254,7 @@ class TestAppEndpoints:
         from redis_sre_agent.api.app import app
 
         client = TestClient(app)
-        response = client.get("/metrics")
+        response = client.get("/api/v1/metrics")
 
         # Should get a response
         assert response.status_code in [200, 500]

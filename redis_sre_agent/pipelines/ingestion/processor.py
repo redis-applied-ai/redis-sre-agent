@@ -1,5 +1,6 @@
 """Document ingestion and processing for vector store."""
 
+import asyncio
 import json
 import logging
 import re
@@ -173,7 +174,7 @@ class IngestionPipeline:
 
         try:
             # Get Redis components
-            index = get_knowledge_index()
+            index = await get_knowledge_index()
             vectorizer = get_vectorizer()
 
             # Initialize deduplicator
@@ -234,7 +235,9 @@ class IngestionPipeline:
         json_files = list(category_path.glob("*.json"))
         logger.info(f"Found {len(json_files)} documents in {category}")
 
-        for json_file in json_files:
+        # Process documents in parallel batches
+        async def process_document(json_file: Path) -> Dict[str, Any]:
+            """Process a single document and return stats."""
             try:
                 # Load document
                 with open(json_file, "r", encoding="utf-8") as f:
@@ -244,19 +247,45 @@ class IngestionPipeline:
 
                 # Process document into chunks
                 chunks = self.processor.chunk_document(document)
-                stats["chunks_created"] += len(chunks)
 
                 # Index chunks with deduplication
                 indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
-                stats["chunks_indexed"] += indexed_count
 
-                stats["documents_processed"] += 1
                 logger.debug(f"Processed document: {document.title} ({len(chunks)} chunks)")
 
+                return {
+                    "success": True,
+                    "chunks_created": len(chunks),
+                    "chunks_indexed": indexed_count,
+                }
+
             except Exception as e:
-                error_msg = f"Failed to process {json_file}: {str(e)}"
+                error_msg = f"Failed to process {json_file.name}: {str(e)}"
                 logger.error(error_msg)
-                stats["errors"].append(error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                }
+
+        # Process documents in parallel batches (e.g., 10 at a time)
+        batch_size = 10
+        for i in range(0, len(json_files), batch_size):
+            batch = json_files[i : i + batch_size]
+            logger.info(
+                f"Processing batch {i // batch_size + 1}/{(len(json_files) + batch_size - 1) // batch_size} ({len(batch)} documents)"
+            )
+
+            # Process batch in parallel
+            results = await asyncio.gather(*[process_document(f) for f in batch])
+
+            # Aggregate stats
+            for result in results:
+                if result["success"]:
+                    stats["documents_processed"] += 1
+                    stats["chunks_created"] += result["chunks_created"]
+                    stats["chunks_indexed"] += result["chunks_indexed"]
+                else:
+                    stats["errors"].append(result["error"])
 
         return stats
 
@@ -407,7 +436,7 @@ class IngestionPipeline:
         logger.info(f"Found {len(markdown_files)} markdown files to process")
 
         # Get Redis components
-        index = get_knowledge_index()
+        index = await get_knowledge_index()
         vectorizer = get_vectorizer()
 
         # Initialize deduplicator

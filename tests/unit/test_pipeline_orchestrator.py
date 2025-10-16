@@ -101,10 +101,10 @@ class TestPipelineOrchestrator:
             result = await orchestrator.run_scraping_pipeline()
 
         assert result["success"] is True
-        assert result["total_documents"] == 15  # 5 scrapers * 3 documents each
+        assert result["total_documents"] == 18  # 6 scrapers * 3 documents each
         assert (
-            len(result["scraper_results"]) == 5
-        )  # 5 scrapers: redis_docs, redis_kb, redis_runbooks, redis_cloud_api, runbook_generator
+            len(result["scraper_results"]) == 6
+        )  # 6 scrapers: redis_docs, redis_docs_local, redis_kb, redis_runbooks, redis_cloud_api, runbook_generator
         assert "manifest_path" in result
 
         # Verify all scrapers were called
@@ -133,7 +133,13 @@ class TestPipelineOrchestrator:
         ]
 
         # Mock all other scrapers to succeed with 1 document each
-        for scraper_name in ["redis_kb", "redis_runbooks", "redis_cloud_api", "runbook_generator"]:
+        for scraper_name in [
+            "redis_docs_local",
+            "redis_kb",
+            "redis_runbooks",
+            "redis_cloud_api",
+            "runbook_generator",
+        ]:
             orchestrator.scrapers[scraper_name].run_scraping_job = AsyncMock(
                 return_value={"documents_scraped": 1, "success": True}
             )
@@ -147,7 +153,9 @@ class TestPipelineOrchestrator:
         assert result["success"] is True  # Pipeline continues despite one failure
         assert "error" in result["scraper_results"]["redis_docs"]
         assert result["scraper_results"]["redis_docs"]["documents_scraped"] == 0
-        assert result["total_documents"] == 4  # 4 successful scrapers with 1 document each
+        assert (
+            result["total_documents"] == 5
+        )  # 5 successful scrapers with 1 document each (6 total - 1 failed)
 
     @pytest.mark.asyncio
     async def test_run_scraping_pipeline_with_specific_scrapers(self, orchestrator):
@@ -281,8 +289,8 @@ class TestPipelineOrchestrator:
         assert "current_batch_date" in status
         assert status["available_batches"] == ["2025-01-20", "2025-01-19"]
         assert (
-            len(status["scrapers"]) == 5
-        )  # redis_docs, redis_kb, redis_runbooks, redis_cloud_api, runbook_generator
+            len(status["scrapers"]) == 6
+        )  # redis_docs, redis_docs_local, redis_kb, redis_runbooks, redis_cloud_api, runbook_generator
         assert status["ingestion"]["batches_ingested"] == 1  # Only successful ones
         assert len(status["ingestion"]["recent_batches"]) == 2
 

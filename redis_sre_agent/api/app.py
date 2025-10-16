@@ -4,8 +4,8 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
-from redis_sre_agent.api.agent import router as agent_router
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
 from redis_sre_agent.api.knowledge import router as knowledge_router
@@ -17,11 +17,17 @@ from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import cleanup_redis_connections, initialize_redis_infrastructure
 
-# Configure logging
+# Configure logging with consistent format
+# Note: When running via uvicorn with --log-config, this is overridden by logging_config.yaml
+LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
+LOG_DATE_FORMAT = "%H:%M:%S"
+
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format=LOG_FORMAT,
+    datefmt=LOG_DATE_FORMAT,
 )
+
 logger = logging.getLogger(__name__)
 
 # Global startup state for agent status checks
@@ -58,8 +64,10 @@ async def lifespan(app: FastAPI):
         # Store startup state for agent status checks
         _app_startup_state = redis_status
 
-        # Log configuration
-        logger.info(f"Redis URL: {settings.redis_url}")
+        # Log configuration (mask Redis URL credentials)
+        from redis_sre_agent.api.instances import mask_redis_url
+
+        logger.info(f"Redis URL: {mask_redis_url(settings.redis_url.get_secret_value())}")
         logger.info(f"Embedding model: {settings.embedding_model}")
         logger.info(f"Debug mode: {settings.debug}")
 
@@ -94,10 +102,18 @@ app = FastAPI(
 # Setup middleware
 setup_middleware(app)
 
+
+# Add root endpoint for simple health checks (load balancers, etc.)
+@app.get("/", response_class=PlainTextResponse)
+@app.head("/")
+async def root_health_check():
+    """Simple, fast health check for load balancer - no external dependencies."""
+    return f"{settings.app_name} is running! 🚀"
+
+
 # Include routers
-app.include_router(health_router, tags=["Health"])
-app.include_router(metrics_router, tags=["Metrics"])
-app.include_router(agent_router, prefix="/api/v1", tags=["Agent"])
+app.include_router(health_router, prefix="/api/v1", tags=["Health"])
+app.include_router(metrics_router, prefix="/api/v1", tags=["Metrics"])
 app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
 app.include_router(knowledge_router, tags=["Knowledge"])
 app.include_router(schedules_router, tags=["Schedules"])
@@ -114,4 +130,5 @@ if __name__ == "__main__":
         port=settings.port,
         reload=settings.debug,
         log_level=settings.log_level.lower(),
+        log_config="logging_config.yaml",
     )

@@ -16,7 +16,7 @@
 ### 1. Check Database Status
 ```bash
 # Check if database is online and accessible
-rladmin status databases | grep <database_name>
+rladmin status | grep <database_name>
 
 # Check database endpoint information
 rladmin info db <database_name> | grep -E "endpoint|port|status"
@@ -24,11 +24,11 @@ rladmin info db <database_name> | grep -E "endpoint|port|status"
 
 ### 2. Check Node and Cluster Status
 ```bash
-# Check cluster overall health
+# Check cluster overall health (shows nodes, databases, shards, endpoints)
 rladmin status
 
-# Check individual node status
-rladmin status nodes
+# Check individual node details
+rladmin info node <node_id>
 ```
 
 ### 3. Check Network Connectivity
@@ -46,7 +46,7 @@ redis-cli -h <database_endpoint> -p <port> ping
 rladmin info db <database_name> | grep -E "connections|max_connections"
 
 # Check per-node connection usage
-rladmin status nodes | grep -E "connections|max_connections"
+rladmin status | grep -A 20 "NODES:" | grep -E "connections|max_connections"
 ```
 
 ### 5. Check Authentication Configuration
@@ -63,7 +63,7 @@ rladmin info db <database_name> | grep -E "auth|password|acl"
 rladmin restart db <database_name>
 
 # Monitor restart progress
-rladmin status databases | grep <database_name>
+rladmin status | grep <database_name>
 ```
 
 ### Option 2: Check and Clear Connection Limits
@@ -133,7 +133,7 @@ rladmin info db <database_name> | grep -i ssl
 ### 4. Check Resource Constraints
 ```bash
 # Check if node resources are exhausted
-rladmin status nodes | grep -E "cpu|memory|free_disk"
+rladmin status | grep -A 20 "NODES:" | grep -E "cpu|memory|free_disk"
 
 # Check system limits
 ulimit -n  # File descriptor limits
@@ -212,8 +212,8 @@ rladmin info db <database_name> | grep connections
 ```bash
 # Collect cluster and database status
 rladmin status > cluster_status.txt
-rladmin status databases > database_status.txt
-rladmin status nodes > node_status.txt
+rladmin info cluster > cluster_info.txt
+rladmin info node all > all_nodes.txt
 
 # Collect database-specific information
 rladmin info db <database_name> > db_info.txt

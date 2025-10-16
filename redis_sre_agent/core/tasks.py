@@ -354,7 +354,7 @@ async def scheduler_task(
 
 async def get_redis_url() -> str:
     """Get Redis URL for Docket."""
-    return settings.redis_url
+    return settings.redis_url.get_secret_value()
 
 
 async def register_sre_tasks() -> None:
@@ -596,10 +596,12 @@ async def process_agent_turn(
                 elif msg["role"] == "assistant":
                     lc_history.append(AIMessage(content=msg["content"]))
 
-            response_text = await agent.process_query(
+            response_text = await agent.process_query_with_fact_check(
                 query=message,
                 user_id=thread_state.metadata.user_id or "unknown",
                 session_id=thread_state.metadata.session_id or thread_id,
+                max_iterations=10,
+                context=None,
                 progress_callback=progress_callback,
                 conversation_history=lc_history if lc_history else None,
             )
@@ -758,7 +760,7 @@ async def run_agent_with_progress(
 
         # Pass conversation history to the agent
         # MemorySaver is created fresh each time, so we need to provide history
-        response = await progress_agent.process_query(
+        response = await progress_agent.process_query_with_fact_check(
             query=latest_user_message,
             session_id=thread_id,
             user_id=thread_state.metadata.user_id if thread_state else "system",

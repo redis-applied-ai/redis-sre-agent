@@ -186,9 +186,21 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
               processUpdates(updatesWithoutFinalResult);
             }
 
-            // Add the final result once
+            // Add the final result only if we don't already have messages loaded
+            // (to avoid duplicating the response that was already loaded from REST API)
             if (data.result?.response) {
-              addAssistantMessage(data.result.response, data.result.turn_completed_at || new Date().toISOString());
+              // Check if we already have an assistant message with this response
+              const hasResponse = messages.some(msg =>
+                msg.role === 'assistant' &&
+                msg.content === data.result.response
+              );
+
+              if (hasResponse) {
+                console.log('Skipping initial_state result - already have this response');
+              } else {
+                console.log('Adding initial_state result');
+                addAssistantMessage(data.result.response, data.result.turn_completed_at || new Date().toISOString());
+              }
               setIsThinking(false);
             }
           } else {

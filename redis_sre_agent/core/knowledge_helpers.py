@@ -40,7 +40,7 @@ async def search_knowledge_base_helper(
     logger.info(f"Searching SRE knowledge: '{query}' in category '{category}'")
 
     # Get vector search components
-    index = get_knowledge_index()
+    index = await get_knowledge_index()
     vectorizer = get_vectorizer()
 
     # Create vector embedding for the query
@@ -62,8 +62,7 @@ async def search_knowledge_base_helper(
         vector_query.set_filter(f"@category:{{{category}}}")
 
     # Perform vector search
-    async with index:
-        results = await index.query(vector_query)
+    results = await index.query(vector_query)
 
     search_result = {
         "task_id": str(ULID()),
@@ -112,7 +111,7 @@ async def ingest_sre_document_helper(
     logger.info(f"Ingesting SRE document: {title} from {source}")
 
     # Get components
-    index = get_knowledge_index()
+    index = await get_knowledge_index()
     vectorizer = get_vectorizer()
 
     # Create document embedding (use as_buffer=True for Redis storage)
@@ -176,7 +175,7 @@ async def get_all_document_fragments(
 
     try:
         # Get components
-        index = get_knowledge_index()
+        index = await get_knowledge_index()
 
         # Use FT.SEARCH to find all chunks for this document
         # document_hash is indexed as a TAG field, so we can filter on it
@@ -199,8 +198,7 @@ async def get_all_document_fragments(
         )
 
         # Execute search
-        async with index:
-            results = await index.query(filter_query)
+        results = await index.query(filter_query)
 
         if not results:
             return {

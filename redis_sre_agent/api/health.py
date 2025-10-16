@@ -38,7 +38,7 @@ async def detailed_health_check():
     # Test worker availability (non-blocking)
     docket_available = True
     try:
-        async with Docket(url=settings.redis_url, name="sre_docket") as docket:
+        async with Docket(url=settings.redis_url.get_secret_value(), name="sre_docket") as docket:
             workers = await docket.workers()
             workers_available = len(workers) > 0
             if not workers_available:
@@ -80,17 +80,18 @@ async def detailed_health_check():
         status = "unhealthy"
         status_code = 503
 
+    # Mask Redis URL for display
+    from redis_sre_agent.api.instances import mask_redis_url
+
+    masked_redis_url = mask_redis_url(settings.redis_url.get_secret_value())
+
     response_data = {
         "status": status,
         "components": components,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.0",
         "settings": {
-            "redis_url": (
-                settings.redis_url.replace(settings.redis_password or "", "***")
-                if settings.redis_password
-                else settings.redis_url
-            ),
+            "redis_url": masked_redis_url,
             "embedding_model": settings.embedding_model,
             "task_queue": settings.task_queue_name,
         },

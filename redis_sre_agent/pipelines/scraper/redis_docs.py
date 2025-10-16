@@ -77,6 +77,14 @@ class RedisDocsScraper(BaseScraper):
             ("management/", DocumentType.RUNBOOK, SeverityLevel.HIGH),
             ("operate/", DocumentType.RUNBOOK, SeverityLevel.CRITICAL),
             ("latest/operate/", DocumentType.RUNBOOK, SeverityLevel.CRITICAL),
+            # Redis Enterprise Software CLI utilities (rladmin, redis-cli, etc.)
+            (
+                "latest/operate/rs/references/cli-utilities/",
+                DocumentType.REFERENCE,
+                SeverityLevel.CRITICAL,
+            ),
+            # Redis Enterprise Software operations
+            ("latest/operate/rs/", DocumentType.RUNBOOK, SeverityLevel.CRITICAL),
             # Deep technical sections
             ("latest/operate/oss_and_stack/", DocumentType.RUNBOOK, SeverityLevel.CRITICAL),
             (

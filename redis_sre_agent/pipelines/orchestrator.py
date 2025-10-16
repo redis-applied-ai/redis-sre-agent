@@ -9,6 +9,7 @@ from .ingestion.processor import IngestionPipeline
 from .scraper.base import ArtifactStorage
 from .scraper.redis_cloud_api import RedisCloudAPIScraper
 from .scraper.redis_docs import RedisDocsScraper, RedisRunbookScraper
+from .scraper.redis_docs_local import RedisDocsLocalScraper
 from .scraper.redis_kb import RedisKBScraper
 from .scraper.runbook_generator import RunbookGenerator
 
@@ -34,6 +35,9 @@ class PipelineOrchestrator:
         # Initialize scrapers
         self.scrapers = {
             "redis_docs": RedisDocsScraper(self.storage, self.config.get("redis_docs", {})),
+            "redis_docs_local": RedisDocsLocalScraper(
+                self.storage, self.config.get("redis_docs_local", {})
+            ),
             "redis_runbooks": RedisRunbookScraper(
                 self.storage, self.config.get("redis_runbooks", {})
             ),

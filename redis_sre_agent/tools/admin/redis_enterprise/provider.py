@@ -40,7 +40,10 @@ class RedisEnterpriseAdminConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="tools_redis_enterprise_admin_")
 
-    verify_ssl: bool = Field(default=True, description="Verify SSL certificates")
+    verify_ssl: bool = Field(
+        default=False,
+        description="Verify SSL certificates (default: False to support self-signed certs in Docker Compose)",
+    )
 
 
 class RedisEnterpriseAdminToolProvider(ToolProvider):
@@ -94,7 +97,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
 
     @property
     def provider_name(self) -> str:
-        return "redis_enterprise_admin"
+        return "re_admin"  # Shortened to avoid OpenAI 64-char tool name limit
 
     def get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client (lazy initialization).
@@ -106,12 +109,25 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         if self._client is None:
             # Get credentials from the instance
+            from pydantic import SecretStr
+
             admin_url = self.redis_instance.admin_url
             admin_username = self.redis_instance.admin_username or ""
-            admin_password = self.redis_instance.admin_password or ""
+
+            # Extract secret value if it's a SecretStr
+            admin_password_field = self.redis_instance.admin_password
+            if isinstance(admin_password_field, SecretStr):
+                admin_password = admin_password_field.get_secret_value()
+            else:
+                admin_password = admin_password_field or ""
 
             # Create auth tuple only if username is provided
             auth = (admin_username, admin_password) if admin_username else None
+
+            if not auth:
+                logger.warning(
+                    "No admin credentials provided - API calls will likely fail with 401"
+                )
 
             self._client = httpx.AsyncClient(
                 base_url=admin_url,
@@ -440,15 +456,17 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             Tool execution result
         """
         # Parse operation from tool_name
-        # Format: redis_enterprise_admin_{hash}_get_cluster_info -> get_cluster_info
-        # The hash is 6 characters, so we need to skip it
-        parts = tool_name.split("_")
-        # Find where the hash ends (it's after "admin")
-        # redis_enterprise_admin_{hash}_operation
-        # So we need to skip the first 4 parts (redis, enterprise, admin, hash)
-        if len(parts) >= 5:
-            operation = "_".join(parts[4:])  # Everything after redis_enterprise_admin_{hash}
+        # Format: {provider_name}_{instance_hash}_{operation}
+        # Example: re_admin_ffffa3_get_cluster_info
+        # The instance_hash is always 6 hex characters
+        import re
+
+        # Match the pattern: underscore + 6 hex chars + underscore + operation
+        match = re.search(r"_([0-9a-f]{6})_(.+)$", tool_name)
+        if match:
+            operation = match.group(2)  # Everything after the hash
         else:
+            # Fallback: couldn't parse, use the whole name
             operation = tool_name
 
         if operation == "get_cluster_info":
@@ -508,10 +526,20 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": f"HTTP {e.response.status_code}: {e.response.text}",
             }
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"Failed to get cluster info: {e}")
+
+            # Provide helpful message for SSL errors
+            if "CERTIFICATE_VERIFY_FAILED" in error_msg or "certificate verify failed" in error_msg:
+                error_msg = (
+                    f"SSL certificate verification failed: {e}. "
+                    "This is common with self-signed certificates. "
+                    "Set TOOLS_REDIS_ENTERPRISE_ADMIN_VERIFY_SSL=false in environment to disable SSL verification."
+                )
+
             return {
                 "status": "error",
-                "error": str(e),
+                "error": error_msg,
             }
 
     async def list_databases(self, fields: Optional[str] = None) -> Dict[str, Any]:

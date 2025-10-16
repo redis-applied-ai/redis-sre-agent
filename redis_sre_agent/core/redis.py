@@ -35,6 +35,10 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "text",
         },
         {
+            "name": "content_hash",
+            "type": "tag",
+        },
+        {
             "name": "document_hash",
             "type": "tag",
         },
@@ -136,9 +140,11 @@ SRE_SCHEDULES_SCHEMA = {
 
 def get_redis_client(url: Optional[str] = None) -> Redis:
     """Get Redis client (creates fresh client to avoid event loop issues)."""
+    redis_url = url or settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
     return Redis.from_url(
-        url=url or settings.redis_url,
-        password=settings.redis_password,
+        url=redis_url,
+        password=redis_password,
         decode_responses=False,  # Keep as bytes for RedisVL compatibility
     )
 
@@ -149,7 +155,7 @@ class _AsyncVectorizerProxy:
     def __init__(self, inner: Any):
         self._inner = inner
 
-    async def embed_many(self, texts: List[str]):
+    async def embed_many(self, texts: List[str], **kwargs):
         # Prefer embed_many if available, else try known sync methods
         method: Optional[Callable[..., Any]] = None
         for name in ("embed_many", "embed_texts", "embed"):
@@ -158,7 +164,7 @@ class _AsyncVectorizerProxy:
                 break
         if method is None:
             raise AttributeError("Vectorizer has no embedding method")
-        return await asyncio.to_thread(method, texts)
+        return await asyncio.to_thread(method, texts, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -176,7 +182,7 @@ def get_vectorizer() -> OpenAITextVectorizer:
     compatibility for unit tests that expect the raw OpenAITextVectorizer
     instance while enabling async integration tests to ``await`` the call.
     """
-    cache = EmbeddingsCache(redis_url=settings.redis_url)
+    cache = EmbeddingsCache(redis_url=settings.redis_url.get_secret_value())
     inner = OpenAITextVectorizer(
         model=settings.embedding_model,
         cache=cache,
@@ -185,14 +191,50 @@ def get_vectorizer() -> OpenAITextVectorizer:
     return _AsyncVectorizerProxy(inner)
 
 
-def get_knowledge_index() -> AsyncSearchIndex:
+async def get_knowledge_index() -> AsyncSearchIndex:
     """Get SRE knowledge base index (creates fresh to avoid event loop issues)."""
-    return AsyncSearchIndex.from_dict(SRE_KNOWLEDGE_SCHEMA, redis_url=settings.redis_url)
+    from redisvl.schema import IndexSchema
+
+    # Build Redis URL with password if needed
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        # Insert password into URL: redis://localhost -> redis://:password@localhost
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    # Create Redis client once and pass to index
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+
+    # Convert schema dict to IndexSchema object
+    schema = IndexSchema.from_dict(SRE_KNOWLEDGE_SCHEMA)
+
+    # Create index with the shared client
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+
+    return index
 
 
-def get_schedules_index() -> AsyncSearchIndex:
+async def get_schedules_index() -> AsyncSearchIndex:
     """Get SRE schedules index singleton."""
-    return AsyncSearchIndex.from_dict(SRE_SCHEDULES_SCHEMA, redis_url=settings.redis_url)
+    from redisvl.schema import IndexSchema
+
+    # Build Redis URL with password if needed
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        # Insert password into URL: redis://localhost -> redis://:password@localhost
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    # Create Redis client once and pass to index
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+
+    # Convert schema dict to IndexSchema object
+    schema = IndexSchema.from_dict(SRE_SCHEDULES_SCHEMA)
+
+    # Create index with the shared client
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+
+    return index
 
 
 async def test_redis_connection(url: Optional[str] = None) -> bool:
@@ -217,7 +259,7 @@ async def test_redis_connection(url: Optional[str] = None) -> bool:
 async def test_vector_search() -> bool:
     """Test vector search index availability."""
     try:
-        index = get_knowledge_index()
+        index = await get_knowledge_index()
         exists = await index.exists()
         return exists
     except Exception as e:
@@ -229,7 +271,7 @@ async def create_indices() -> bool:
     """Create vector search indices if they don't exist."""
     try:
         # Create knowledge index
-        knowledge_index = get_knowledge_index()
+        knowledge_index = await get_knowledge_index()
         knowledge_exists = await knowledge_index.exists()
 
         if not knowledge_exists:
@@ -239,7 +281,7 @@ async def create_indices() -> bool:
             logger.info(f"Vector index already exists: {SRE_KNOWLEDGE_INDEX}")
 
         # Create schedules index
-        schedules_index = get_schedules_index()
+        schedules_index = await get_schedules_index()
         schedules_exists = await schedules_index.exists()
 
         if not schedules_exists:
@@ -301,7 +343,7 @@ async def initialize_docket_infrastructure() -> bool:
         from docket import Docket
 
         # Test Docket connection and ensure infrastructure is ready
-        async with Docket(url=settings.redis_url, name="sre_docket") as docket:
+        async with Docket(url=settings.redis_url.get_secret_value(), name="sre_docket") as docket:
             # Test basic Docket functionality by checking for workers
             # This will create necessary Redis structures if they don't exist
             await docket.workers()

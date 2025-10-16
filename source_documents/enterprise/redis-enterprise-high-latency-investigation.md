@@ -16,7 +16,7 @@
 ### 1. Check Database Latency Metrics
 ```bash
 # Check current latency statistics
-rladmin status databases | grep -E "name:|latency"
+rladmin status | grep -A 20 "DATABASES:" | grep -E "name:|latency"
 
 # Get detailed database metrics
 rladmin info db <database_name> | grep -i latency
@@ -28,13 +28,13 @@ rladmin info db <database_name> | grep -i latency
 rladmin info cluster
 
 # Check per-node resource usage
-rladmin status nodes | grep -E "node:|cpu|memory|free_disk"
+rladmin status | grep -A 20 "NODES:" | grep -E "node:|cpu|memory|free_disk"
 ```
 
 ### 3. Check Database Sharding and Distribution
 ```bash
 # Check shard distribution
-rladmin status shards db <database_name>
+rladmin status | grep -A 50 "SHARDS:" | grep <database_name>
 
 # Check if shards are balanced across nodes
 rladmin placement db <database_name>
@@ -46,7 +46,7 @@ rladmin placement db <database_name>
 rladmin status | grep -i network
 
 # Test connectivity between nodes
-rladmin status nodes | grep -E "status:|addr:"
+rladmin status | grep -A 20 "NODES:" | grep -E "status:|addr:"
 ```
 
 ### 5. Analyze Slow Commands
@@ -63,7 +63,7 @@ redis-cli -p <database_port> info commandstats
 ### Option 1: Check for Resource Bottlenecks
 ```bash
 # Check CPU usage on nodes hosting the database
-rladmin status nodes
+rladmin status | grep -A 20 "NODES:"
 
 # If CPU > 80%, consider:
 # 1. Moving shards to less loaded nodes
@@ -108,7 +108,7 @@ redis-cli -p <database_port> lastsave
 ### 1. Analyze Shard Performance
 ```bash
 # Check individual shard performance
-rladmin status shards db <database_name>
+rladmin status | grep -A 50 "SHARDS:" | grep <database_name>
 
 # Look for shards with high CPU or memory usage
 # Consider rebalancing if needed
@@ -120,7 +120,7 @@ rladmin status shards db <database_name>
 rladmin status | grep -A10 "Proxy"
 
 # Check proxy CPU usage
-rladmin status nodes | grep -E "proxy|cpu"
+rladmin status | grep -A 20 "NODES:" | grep -E "proxy|cpu"
 ```
 
 ### 3. Network Latency Analysis
@@ -213,8 +213,8 @@ rladmin info cluster | grep -E "memory|cpu|nodes"
 # Collect performance data
 rladmin status > cluster_status.txt
 rladmin info cluster > cluster_info.txt
-rladmin status databases > database_status.txt
-rladmin status shards > shard_status.txt
+rladmin info db all > all_databases.txt
+rladmin info node all > all_nodes.txt
 
 # Collect database-specific info
 rladmin info db <database_name> > db_info.txt
