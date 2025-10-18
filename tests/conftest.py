@@ -100,8 +100,9 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """Add skip markers to tests based on configuration."""
-    # Skip marker for API tests that require OpenAI
+    # Skip markers
     skip_api = pytest.mark.skip(reason="Use --run-api-tests to run tests that make real API calls")
+    skip_integration = pytest.mark.skip(reason="Use --run-api-tests to run integration tests")
 
     for item in items:
         # Skip tests that require OpenAI API calls unless --run-api-tests flag is set
@@ -110,9 +111,12 @@ def pytest_collection_modifyitems(config, items):
         ) and not config.getoption("--run-api-tests"):
             item.add_marker(skip_api)
 
-        # Integration tests need the redis_container fixture
+        # Require --run-api-tests for integration tests and attach redis container fixture
         if "integration" in item.keywords:
-            # Add redis_container as a fixture dependency
+            if not config.getoption("--run-api-tests"):
+                item.add_marker(skip_integration)
+                continue
+            # Add redis_container as a fixture dependency only when running integration
             item.fixturenames.append("redis_container")
 
 
@@ -317,7 +321,7 @@ def worker_id(request):
     return workerinput.get("workerid", "master")
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def redis_container(worker_id):
     """
     If using xdist, create a unique Compose project for each xdist worker by
