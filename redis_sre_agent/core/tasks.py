@@ -16,6 +16,7 @@ from redis_sre_agent.core.knowledge_helpers import (
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
+from redis_sre_agent.core.task_state import TaskManager
 from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
 
 logger = logging.getLogger(__name__)
@@ -376,6 +377,9 @@ async def process_agent_turn(
     thread_id: str,
     message: str,
     context: Optional[Dict[str, Any]] = None,
+    concurrency: ConcurrencyLimit = ConcurrencyLimit(
+        "thread_id", max_concurrent=1, scope="thread_turns"
+    ),
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """
@@ -398,14 +402,17 @@ async def process_agent_turn(
 
         # Update thread status to in-progress
         await thread_manager.update_thread_status(thread_id, ThreadStatus.IN_PROGRESS)
-        await thread_manager.add_thread_update(
-            thread_id,
-            f"Processing message: {message[:100]}{'...' if len(message) > 100 else ''}",
-            "turn_start",
-        )
 
         # Get current thread state
         thread_state = await thread_manager.get_thread_state(thread_id)
+
+        # Create a per-turn task record associated with this thread
+        task_manager = TaskManager(redis_client=redis_client)
+        task_id = await task_manager.create_task(
+            thread_id=thread_id, user_id=thread_state.metadata.user_id if thread_state else None
+        )
+        await task_manager.update_task_status(task_id, ThreadStatus.IN_PROGRESS)
+        await thread_manager.add_thread_update(thread_id, f"Started task {task_id}", "task_start")
         if not thread_state:
             raise ValueError(f"Thread {thread_id} not found")
 
@@ -521,27 +528,16 @@ async def process_agent_turn(
         )
 
         logger.info(f"Routing query to {agent_type.value} agent")
-        await thread_manager.add_thread_update(
-            thread_id,
-            f"Using {agent_type.value.replace('_', ' ')} agent for optimal results",
-            "agent_routing",
-        )
 
         # Import and initialize the appropriate agent
         if agent_type == AgentType.REDIS_FOCUSED:
             from redis_sre_agent.agent import get_sre_agent
 
-            await thread_manager.add_thread_update(
-                thread_id, "Initializing Redis-focused SRE agent and tools", "agent_init"
-            )
             agent = get_sre_agent()
             use_knowledge_only = False
         else:  # AgentType.KNOWLEDGE_ONLY
             from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 
-            await thread_manager.add_thread_update(
-                thread_id, "Initializing knowledge-only SRE agent", "agent_init"
-            )
             agent = get_knowledge_agent()
             use_knowledge_only = True
 
@@ -567,17 +563,16 @@ async def process_agent_turn(
             }
         )
 
-        # Update progress
-        await thread_manager.add_thread_update(
-            thread_id, "Running agent conversation turn", "agent_processing"
-        )
-
-        # Add initial thinking message
-        await thread_manager.add_thread_update(thread_id, "Agent is thinking...", "agent_status")
+        # Agent will post its own reflections as it works
 
         # Create a progress callback for the agent
         async def progress_callback(update_message: str, update_type: str = "progress"):
             await thread_manager.add_thread_update(thread_id, update_message, update_type)
+            try:
+                await task_manager.add_task_update(task_id, update_message, update_type)
+            except Exception:
+                # Best-effort: do not fail the turn if per-task update logging fails
+                pass
 
         # Run the appropriate agent
         if use_knowledge_only:
@@ -667,12 +662,19 @@ async def process_agent_turn(
             "turn_completed_at": datetime.now(timezone.utc).isoformat(),
         }
 
+        # Set per-task result and mark task done (best-effort)
+        try:
+            await task_manager.set_task_result(task_id, result)
+            await task_manager.update_task_status(task_id, ThreadStatus.DONE)
+        except Exception:
+            pass
+
         await thread_manager.set_thread_result(thread_id, result)
 
         # Mark thread as done
         await thread_manager.update_thread_status(thread_id, ThreadStatus.DONE)
         await thread_manager.add_thread_update(
-            thread_id, "Agent turn completed successfully", "turn_complete"
+            thread_id, f"Task {task_id} completed successfully", "turn_complete"
         )
 
         logger.info(f"Agent turn completed for thread {thread_id}")
@@ -687,6 +689,10 @@ async def process_agent_turn(
         # Update thread with error
         await thread_manager.set_thread_error(thread_id, error_message)
         await thread_manager.add_thread_update(thread_id, f"Error: {error_message}", "error")
+        try:
+            await task_manager.set_task_error(task_id, error_message)
+        except Exception:
+            pass
 
         raise
 
@@ -706,7 +712,7 @@ async def run_agent_with_progress(
         thread_state: Optional thread state object containing metadata and context
     """
     try:
-        await progress_callback("Starting agent analysis", "agent_start")
+        # Agent will post reflections as it works
 
         # Get the conversation messages
         messages = conversation_state.get("messages", [])
@@ -740,7 +746,7 @@ async def run_agent_with_progress(
             "max_iterations": 10,
         }
 
-        await progress_callback("Running agent workflow", "agent_processing")
+        # Agent will post reflections as it executes tools
 
         # Run the agent workflow using the compiled app
         {"configurable": {"thread_id": agent_state["session_id"]}}
@@ -837,6 +843,60 @@ def extract_action_items_from_response(response_content: str) -> List[Dict[str, 
                     )
 
     return action_items[:5]  # Limit to 5 action items
+
+
+async def validate_url(url: str, timeout: float = 3.0) -> Dict[str, Any]:
+    """Validate that a URL is reachable.
+
+    Performs a lightweight HTTP request and returns validity with minimal metadata.
+
+    Args:
+        url: URL to validate
+        timeout: Total timeout in seconds
+
+    Returns:
+        Dict with keys: url, valid (bool), status_code (int|None), final_url (str|None), error (str|None)
+    """
+    import aiohttp
+
+    result: Dict[str, Any] = {
+        "url": url,
+        "valid": False,
+        "status_code": None,
+        "final_url": None,
+        "error": None,
+    }
+
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        headers = {"User-Agent": "redis-sre-agent/1.0"}
+        async with aiohttp.ClientSession(timeout=client_timeout, headers=headers) as session:
+            # Try a HEAD first for speed; if not allowed, fall back to GET
+            try:
+                async with session.head(url, allow_redirects=True) as resp:
+                    result["status_code"] = resp.status
+                    result["final_url"] = str(resp.url)
+                    result["valid"] = resp.status < 400
+                    return result
+            except aiohttp.ClientResponseError as cre:
+                # 405 Method Not Allowed or similar -> fall back to GET
+                if cre.status and cre.status >= 400 and cre.status != 405:
+                    result["status_code"] = cre.status
+                    result["error"] = str(cre)
+                    return result
+            except Exception:
+                # Fall back to GET on any HEAD error
+                pass
+
+            # Fallback to GET
+            async with session.get(url, allow_redirects=True) as resp:
+                result["status_code"] = resp.status
+                result["final_url"] = str(resp.url)
+                result["valid"] = resp.status < 400
+                return result
+    except Exception as e:
+        result["error"] = str(e)
+        return result
 
 
 async def test_task_system() -> bool:

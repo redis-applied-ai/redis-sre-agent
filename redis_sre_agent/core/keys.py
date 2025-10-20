@@ -128,6 +128,35 @@ class RedisKeys:
         return f"sre:health:{task_id}"
 
     # ============================================================================
+    # Task (per-turn) keys
+    # ============================================================================
+
+    @staticmethod
+    def task_status(task_id: str) -> str:
+        return f"sre:task:{task_id}:status"
+
+    @staticmethod
+    def task_updates(task_id: str) -> str:
+        return f"sre:task:{task_id}:updates"
+
+    @staticmethod
+    def task_result(task_id: str) -> str:
+        return f"sre:task:{task_id}:result"
+
+    @staticmethod
+    def task_error(task_id: str) -> str:
+        return f"sre:task:{task_id}:error"
+
+    @staticmethod
+    def task_metadata(task_id: str) -> str:
+        return f"sre:task:{task_id}:metadata"
+
+    @staticmethod
+    def thread_tasks_index(thread_id: str) -> str:
+        """Sorted set of task_ids for a thread (score=timestamp)."""
+        return f"sre:thread:{thread_id}:tasks"
+
+    # ============================================================================
     # Stream keys (for WebSocket updates)
     # ============================================================================
 

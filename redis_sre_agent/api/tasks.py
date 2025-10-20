@@ -3,15 +3,22 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from docket import Docket
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.thread_state import (
-    ThreadManager,
     ThreadStatus,
+)
+from redis_sre_agent.models.tasks import (
+    get_task_status as get_task_status_model,
+    list_tasks as list_tasks_model,
+)
+from redis_sre_agent.models.threads import (
+    cancel_thread,
+    continue_thread,
+    create_thread,
+    delete_thread,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,56 +78,25 @@ async def triage_issue(request: TriageRequest) -> TriageResponse:
     try:
         logger.info(f"Triaging issue for user {request.user_id}: {request.query[:100]}...")
 
-        # Create thread
+        # Keep this call here so tests that patch api.tasks.get_redis_client still work
         redis_client = get_redis_client()
-        thread_manager = ThreadManager(redis_client=redis_client)
 
-        # Prepare initial context
-        initial_context = {
-            "original_query": request.query,
-            "priority": request.priority,
-            "messages": [],
-        }
-        if request.instance_id:
-            initial_context["instance_id"] = request.instance_id
-        if request.context:
-            initial_context.update(request.context)
-
-        # Create thread
-        thread_id = await thread_manager.create_thread(
+        data = await create_thread(
+            query=request.query,
             user_id=request.user_id,
             session_id=request.session_id,
-            initial_context=initial_context,
+            context=request.context,
+            priority=request.priority,
             tags=request.tags or [],
+            instance_id=request.instance_id,
+            redis_client=redis_client,
         )
-
-        # Add initial update
-        await thread_manager.add_thread_update(
-            thread_id,
-            f"Issue received: {request.query[:100]}{'...' if len(request.query) > 100 else ''}",
-            "triage",
-        )
-
-        # Generate and update thread subject
-        await thread_manager.update_thread_subject(thread_id, request.query)
-
-        # Queue the agent processing task
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            # Submit the task to process this turn
-            task_func = docket.add(process_agent_turn)
-            await task_func(thread_id=thread_id, message=request.query, context=initial_context)
-
-            logger.info(f"Queued agent task for thread {thread_id}")
-
-        # Update status to queued
-        await thread_manager.update_thread_status(thread_id, ThreadStatus.QUEUED)
-        await thread_manager.add_thread_update(thread_id, "Task queued for processing", "queued")
 
         return TriageResponse(
-            thread_id=thread_id,
-            status=ThreadStatus.QUEUED,
-            message="Issue has been triaged and queued for analysis",
-            estimated_completion="2-5 minutes",
+            thread_id=data["thread_id"],
+            status=data["status"],
+            message=data["message"],
+            estimated_completion=data.get("estimated_completion"),
         )
 
     except Exception as e:
@@ -145,62 +121,11 @@ async def get_task_status(thread_id: str) -> TaskStatusResponse:
     Clients should poll this endpoint to track progress.
     """
     try:
+        # Keep this call here so tests that patch api.tasks.get_redis_client still work
         redis_client = get_redis_client()
-        thread_manager = ThreadManager(redis_client=redis_client)
 
-        # Get thread state
-        thread_state = await thread_manager.get_thread_state(thread_id)
-        if not thread_state:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"Thread {thread_id} not found"
-            )
-
-        # Convert updates to dict format
-        updates = [
-            {
-                "timestamp": update.timestamp,
-                "message": update.message,
-                "type": update.update_type,
-                "metadata": update.metadata or {},
-            }
-            for update in thread_state.updates
-        ]
-
-        # Convert action items to dict format
-        action_items = [
-            {
-                "id": item.id,
-                "title": item.title,
-                "description": item.description,
-                "priority": item.priority,
-                "category": item.category,
-                "completed": item.completed,
-                "due_date": item.due_date,
-            }
-            for item in thread_state.action_items
-        ]
-
-        # Prepare metadata
-        metadata = {
-            "created_at": thread_state.metadata.created_at,
-            "updated_at": thread_state.metadata.updated_at,
-            "user_id": thread_state.metadata.user_id,
-            "session_id": thread_state.metadata.session_id,
-            "priority": thread_state.metadata.priority,
-            "tags": thread_state.metadata.tags,
-            "subject": thread_state.metadata.subject,
-        }
-
-        return TaskStatusResponse(
-            thread_id=thread_id,
-            status=thread_state.status,
-            updates=updates,
-            result=thread_state.result,
-            action_items=action_items,
-            error_message=thread_state.error_message,
-            metadata=metadata,
-            context=thread_state.context,
-        )
+        data = await get_task_status_model(thread_id=thread_id, redis_client=redis_client)
+        return TaskStatusResponse(**data)
 
     except HTTPException:
         raise
@@ -226,48 +151,20 @@ async def continue_conversation(thread_id: str, request: TriageRequest) -> Triag
     Adds a new message to the thread and queues another agent processing turn.
     """
     try:
+        # Keep this call here so tests that patch api.tasks.get_redis_client still work
         redis_client = get_redis_client()
-        thread_manager = ThreadManager(redis_client=redis_client)
 
-        # Check if thread exists
-        thread_state = await thread_manager.get_thread_state(thread_id)
-        if not thread_state:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"Thread {thread_id} not found"
-            )
-
-        # Check if thread is in a valid state for continuation
-        if thread_state.status in [ThreadStatus.IN_PROGRESS, ThreadStatus.QUEUED]:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Thread {thread_id} is currently {thread_state.status.value}. Wait for completion before continuing.",
-            )
-
-        # Add continuation update
-        await thread_manager.add_thread_update(
-            thread_id,
-            f"Continuing conversation: {request.query[:100]}{'...' if len(request.query) > 100 else ''}",
-            "continuation",
-        )
-
-        # Queue another agent processing task
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_agent_turn)
-            await task_func(thread_id=thread_id, message=request.query, context=request.context)
-
-            logger.info(f"Queued continuation task for thread {thread_id}")
-
-        # Update status to queued
-        await thread_manager.update_thread_status(thread_id, ThreadStatus.QUEUED)
-        await thread_manager.add_thread_update(
-            thread_id, "Conversation continuation queued", "queued"
-        )
-
-        return TriageResponse(
+        data = await continue_thread(
             thread_id=thread_id,
-            status=ThreadStatus.QUEUED,
-            message="Conversation continuation queued for processing",
-            estimated_completion="2-5 minutes",
+            query=request.query,
+            context=request.context,
+            redis_client=redis_client,
+        )
+        return TriageResponse(
+            thread_id=data["thread_id"],
+            status=data["status"],
+            message=data["message"],
+            estimated_completion=data.get("estimated_completion"),
         )
 
     except HTTPException:
@@ -294,43 +191,15 @@ async def cancel_task(thread_id: str, delete: bool = False):
     Otherwise, marks the thread as cancelled and attempts to stop processing.
     """
     try:
+        # Keep this call here so tests that patch api.tasks.get_redis_client still work
         redis_client = get_redis_client()
-        thread_manager = ThreadManager(redis_client=redis_client)
-
-        # Check if thread exists
-        thread_state = await thread_manager.get_thread_state(thread_id)
-        if not thread_state:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"Thread {thread_id} not found"
-            )
 
         if delete:
-            # Delete the thread permanently - allowed for any status
-            success = await thread_manager.delete_thread(thread_id)
-            if not success:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to delete thread {thread_id}",
-                )
-            logger.info(f"Deleted thread {thread_id}")
+            await delete_thread(thread_id=thread_id, redis_client=redis_client)
         else:
-            # Check if thread can be cancelled (only for cancellation, not deletion)
-            if thread_state.status in [
-                ThreadStatus.DONE,
-                ThreadStatus.FAILED,
-                ThreadStatus.CANCELLED,
-            ]:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Thread {thread_id} is already {thread_state.status.value} and cannot be cancelled",
-                )
-
-            # Mark as cancelled
-            await thread_manager.update_thread_status(thread_id, ThreadStatus.CANCELLED)
-            await thread_manager.add_thread_update(
-                thread_id, "Task cancelled by user request", "cancellation"
-            )
-            logger.info(f"Cancelled thread {thread_id}")
+            await cancel_thread(thread_id=thread_id, redis_client=redis_client)
+        # 204 No Content on success
+        return None
 
     except HTTPException:
         raise
@@ -358,87 +227,13 @@ async def list_tasks(
         logger.info(
             f"List tasks requested (user_id={user_id}, status={status_filter}, limit={limit})"
         )
-
+        # Keep this call here so tests that patch api.tasks.get_redis_client still work
         redis_client = get_redis_client()
-        thread_manager = ThreadManager(redis_client=redis_client)
 
-        # Get thread summaries
-        thread_summaries = await thread_manager.list_threads(
-            user_id=user_id,
-            status_filter=status_filter,
-            limit=limit,
-            offset=0,
+        items = await list_tasks_model(
+            user_id=user_id, status_filter=status_filter, limit=limit, redis_client=redis_client
         )
-
-        # Convert to TaskStatusResponse format
-        tasks = []
-        for summary in thread_summaries:
-            logger.info(
-                f"Processing task {summary['thread_id']} with user_id: {summary.get('user_id')}"
-            )
-            # Create minimal updates list for listing
-            updates = [
-                {
-                    "timestamp": summary.get("updated_at", summary.get("created_at")),
-                    "message": summary.get("latest_message", "No updates"),
-                    "type": "summary",
-                    "metadata": {},
-                }
-            ]
-
-            # Create metadata
-            metadata = {
-                "created_at": summary.get("created_at"),
-                "updated_at": summary.get("updated_at"),
-                "user_id": summary.get("user_id"),
-                "session_id": None,  # Not stored in summary
-                "priority": summary.get("priority", 0),
-                "tags": summary.get("tags", []),
-                "subject": summary.get("subject", "Untitled"),
-            }
-
-            # For scheduled tasks, try to get the original query from context for better display names
-            context = {}
-            if summary.get("user_id") == "scheduler":
-                logger.info(
-                    f"Processing scheduled task {summary['thread_id']} for context retrieval"
-                )
-                try:
-                    # Get the full thread state to access context
-                    thread_state = await thread_manager.get_thread_state(summary["thread_id"])
-                    if thread_state:
-                        logger.info(
-                            f"Retrieved thread state for {summary['thread_id']}, context keys: {list(thread_state.context.keys())}"
-                        )
-                        if thread_state.context.get("original_query"):
-                            context["original_query"] = thread_state.context["original_query"]
-                            logger.info(
-                                f"Added original_query to context for {summary['thread_id']}: {context['original_query'][:50]}..."
-                            )
-                        else:
-                            logger.info(
-                                f"No original_query found in context for {summary['thread_id']}"
-                            )
-                    else:
-                        logger.warning(f"No thread state found for {summary['thread_id']}")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to get context for scheduled task {summary['thread_id']}: {e}"
-                    )
-
-            task_response = TaskStatusResponse(
-                thread_id=summary["thread_id"],
-                status=ThreadStatus(summary["status"]),
-                updates=updates,
-                result=None,  # Not included in listing for performance
-                action_items=[],  # Not included in listing for performance
-                error_message=None,  # Not included in listing for performance
-                metadata=metadata,
-                context=context,
-            )
-
-            tasks.append(task_response)
-
+        tasks = [TaskStatusResponse(**item) for item in items]
         logger.info(f"Returning {len(tasks)} tasks")
         return tasks
 
