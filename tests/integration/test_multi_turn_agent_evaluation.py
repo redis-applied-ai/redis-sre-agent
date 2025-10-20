@@ -587,6 +587,25 @@ async def test_multi_turn_agent_evaluation():
     ):
         pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
+    # Check if knowledge base is available
+    from redisvl.index import AsyncSearchIndex
+
+    from redis_sre_agent.core.redis import get_redis_client
+
+    try:
+        redis_client = await get_redis_client()
+        index = AsyncSearchIndex.from_dict(
+            {
+                "index": {"name": "sre_knowledge", "prefix": "doc"},
+                "fields": [{"name": "content", "type": "text"}],
+            }
+        )
+        await index.set_client(redis_client)
+        if not await index.exists():
+            pytest.skip("Knowledge base index not available - run ingestion pipeline first")
+    except Exception as e:
+        pytest.skip(f"Cannot check knowledge base availability: {e}")
+
     results = await run_multi_turn_evaluation()
 
     # Test assertions

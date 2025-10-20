@@ -23,6 +23,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             # Mock the worker run to avoid infinite loop
             mock_worker.return_value = None
@@ -41,6 +42,7 @@ class TestWorkerSystem:
             patch("sys.exit", side_effect=SystemExit) as mock_exit,
         ):
             mock_settings.redis_url = SecretStr("")  # Empty Redis URL
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             with pytest.raises(SystemExit):
                 await main()
@@ -59,6 +61,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             # Should raise the exception
             with pytest.raises(Exception, match="Registration failed"):
@@ -73,6 +76,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             # Should raise the exception
             with pytest.raises(Exception, match="Worker run failed"):
@@ -89,6 +93,7 @@ class TestWorkerSystem:
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             await main()
 
@@ -156,6 +161,7 @@ class TestWorkerErrorHandling:
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             # KeyboardInterrupt should propagate
             with pytest.raises(KeyboardInterrupt):
@@ -172,6 +178,7 @@ class TestWorkerErrorHandling:
             patch("redis_sre_agent.worker.settings") as mock_settings,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             # Unexpected errors should propagate
             with pytest.raises(RuntimeError, match="Unexpected error"):
@@ -201,6 +208,7 @@ class TestWorkerLogging:
             patch("redis_sre_agent.worker.logger") as mock_logger,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             await main()
 
@@ -220,6 +228,7 @@ class TestWorkerLogging:
             patch("redis_sre_agent.worker.logger") as mock_logger,
         ):
             mock_settings.redis_url = SecretStr("redis://localhost:6379/0")
+            mock_settings.task_timeout = 300  # Provide real timeout value
 
             with pytest.raises(Exception):
                 await main()

@@ -64,6 +64,20 @@ async def search_knowledge_base_helper(
     # Perform vector search
     results = await index.query(vector_query)
 
+    # If we got 0 results with a category filter, retry without the filter
+    if len(results) == 0 and category:
+        logger.info(
+            f"No results found with category '{category}', retrying without category filter"
+        )
+        vector_query_no_filter = VectorQuery(
+            vector=query_vector,
+            vector_field_name="vector",
+            return_fields=["title", "content", "source", "category", "severity"],
+            num_results=limit,
+        )
+        results = await index.query(vector_query_no_filter)
+        logger.info(f"Retry without category filter found {len(results)} results")
+
     search_result = {
         "task_id": str(ULID()),
         "query": query,
@@ -75,6 +89,7 @@ async def search_knowledge_base_helper(
                 "title": doc.get("title", ""),
                 "content": doc.get("content", "")[:500],  # Truncate for response
                 "source": doc.get("source", ""),
+                "category": doc.get("category", ""),
                 "score": doc.get("score", 0.0),
             }
             for doc in results

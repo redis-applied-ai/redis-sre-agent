@@ -112,6 +112,7 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider",
             "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider",
+            "redis_sre_agent.tools.logs.loki.provider.LokiToolProvider",
         ],
         description="Enabled tool providers (fully qualified class paths). "
         "Example: redis_sre_agent.tools.metrics.prometheus.PrometheusToolProvider",

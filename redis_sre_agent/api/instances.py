@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
 
+from redis_sre_agent.core.encryption import encrypt_secret, get_secret_value
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 
@@ -101,6 +102,24 @@ class RedisInstance(BaseModel):
         None,
         description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
     )
+    # Redis Cloud identifiers
+    redis_cloud_subscription_id: Optional[int] = Field(
+        None,
+        description="Redis Cloud subscription ID. Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_database_id: Optional[int] = Field(
+        None,
+        description="Redis Cloud database ID. Only for instance_type='redis_cloud'.",
+    )
+    # Redis Cloud metadata for routing
+    redis_cloud_subscription_type: Optional[str] = Field(
+        default=None,
+        description="Redis Cloud subscription type: 'pro' or 'essentials' (aka 'fixed'). Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_database_name: Optional[str] = Field(
+        default=None,
+        description="Redis Cloud database name (used when ID is not available). Only for instance_type='redis_cloud'.",
+    )
     status: Optional[str] = "unknown"
     version: Optional[str] = None
     memory: Optional[str] = None
@@ -190,6 +209,10 @@ class RedisInstance(BaseModel):
             updated_at=self.updated_at,
             created_by=self.created_by,
             user_id=self.user_id,
+            redis_cloud_subscription_id=self.redis_cloud_subscription_id,
+            redis_cloud_database_id=self.redis_cloud_database_id,
+            redis_cloud_subscription_type=self.redis_cloud_subscription_type,
+            redis_cloud_database_name=self.redis_cloud_database_name,
         )
 
 
@@ -219,6 +242,12 @@ class RedisInstanceResponse(BaseModel):
     updated_at: str
     created_by: str = "user"
     user_id: Optional[str] = None
+    # Redis Cloud identifiers
+    redis_cloud_subscription_id: Optional[int] = None
+    redis_cloud_database_id: Optional[int] = None
+    # Redis Cloud metadata
+    redis_cloud_subscription_type: Optional[str] = None
+    redis_cloud_database_name: Optional[str] = None
 
 
 class CreateInstanceRequest(BaseModel):
@@ -255,6 +284,24 @@ class CreateInstanceRequest(BaseModel):
         None,
         description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
     )
+    # Redis Cloud identifiers (optional)
+    redis_cloud_subscription_id: Optional[int] = Field(
+        None,
+        description="Redis Cloud subscription ID. Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_database_id: Optional[int] = Field(
+        None,
+        description="Redis Cloud database ID. Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_subscription_type: Optional[str] = Field(
+        None,
+        description="Redis Cloud subscription type: 'pro' or 'essentials' (aka 'fixed'). Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_database_name: Optional[str] = Field(
+        None,
+        description="Redis Cloud database name (used when ID is not available). Only for instance_type='redis_cloud'.",
+    )
+
     created_by: str = Field(
         default="user", description="Who created this instance: 'user' or 'agent'"
     )
@@ -355,6 +402,23 @@ class UpdateInstanceRequest(BaseModel):
         None,
         description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
     )
+    # Redis Cloud identifiers (optional)
+    redis_cloud_subscription_id: Optional[int] = Field(
+        None,
+        description="Redis Cloud subscription ID. Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_database_id: Optional[int] = Field(
+        None,
+        description="Redis Cloud database ID. Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_subscription_type: Optional[str] = Field(
+        None,
+        description="Redis Cloud subscription type: 'pro' or 'essentials' (aka 'fixed'). Only for instance_type='redis_cloud'.",
+    )
+    redis_cloud_database_name: Optional[str] = Field(
+        None,
+        description="Redis Cloud database name (used when ID is not available). Only for instance_type='redis_cloud'.",
+    )
     status: Optional[str] = None
     version: Optional[str] = None
     memory: Optional[str] = None
@@ -378,6 +442,36 @@ async def get_instances_from_redis() -> List[RedisInstance]:
         instances = []
         for inst_data in instances_list:
             try:
+                # Decrypt connection_url if present
+                if inst_data.get("connection_url"):
+                    encrypted_url = inst_data["connection_url"]
+                    try:
+                        decrypted_url = get_secret_value(encrypted_url)
+                        inst_data["connection_url"] = decrypted_url
+                        logger.debug(
+                            f"Decrypted connection_url for {inst_data.get('name', 'unknown')}"
+                        )
+                    except Exception as decrypt_err:
+                        logger.error(
+                            f"Failed to decrypt connection_url for {inst_data.get('name', 'unknown')}: {decrypt_err}"
+                        )
+                        raise
+
+                # Decrypt admin_password if present
+                if inst_data.get("admin_password"):
+                    encrypted_pwd = inst_data["admin_password"]
+                    try:
+                        decrypted_pwd = get_secret_value(encrypted_pwd)
+                        inst_data["admin_password"] = decrypted_pwd
+                        logger.debug(
+                            f"Decrypted admin_password for {inst_data.get('name', 'unknown')}"
+                        )
+                    except Exception as decrypt_err:
+                        logger.error(
+                            f"Failed to decrypt admin_password for {inst_data.get('name', 'unknown')}: {decrypt_err}"
+                        )
+                        raise
+
                 instances.append(RedisInstance(**inst_data))
             except Exception as e:
                 # Log error but continue loading other instances
@@ -471,11 +565,26 @@ async def create_instance_programmatically(
 
 
 async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
-    """Save instances to Redis storage."""
+    """Save instances to Redis storage with encrypted secrets."""
     try:
         redis_client = get_redis_client()
-        # Use mode='json' to properly serialize SecretStr fields
-        instances_data = json.dumps([instance.model_dump(mode="json") for instance in instances])
+
+        # Serialize instances and encrypt sensitive fields
+        instances_list = []
+        for instance in instances:
+            inst_dict = instance.model_dump(mode="json")
+
+            # Encrypt connection_url if present
+            if inst_dict.get("connection_url"):
+                inst_dict["connection_url"] = encrypt_secret(inst_dict["connection_url"])
+
+            # Encrypt admin_password if present
+            if inst_dict.get("admin_password"):
+                inst_dict["admin_password"] = encrypt_secret(inst_dict["admin_password"])
+
+            instances_list.append(inst_dict)
+
+        instances_data = json.dumps(instances_list)
         await redis_client.set(RedisKeys.instances_set(), instances_data)
         return True
     except Exception as e:
@@ -501,7 +610,17 @@ async def get_session_instances(thread_id: str) -> List[RedisInstance]:
             instances_json = instances_json.decode("utf-8")
 
         instances_data = json.loads(instances_json)
-        return [RedisInstance(**instance) for instance in instances_data]
+
+        # Decrypt secrets in session instances
+        instances = []
+        for inst_data in instances_data:
+            if inst_data.get("connection_url"):
+                inst_data["connection_url"] = get_secret_value(inst_data["connection_url"])
+            if inst_data.get("admin_password"):
+                inst_data["admin_password"] = get_secret_value(inst_data["admin_password"])
+            instances.append(RedisInstance(**inst_data))
+
+        return instances
 
     except Exception as e:
         logger.error(f"Failed to get session instances for thread {thread_id}: {e}")
@@ -535,8 +654,18 @@ async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
         # Add new instance
         instances.append(instance)
 
-        # Serialize and save with TTL (1 hour)
-        instances_json = json.dumps([inst.model_dump(mode="json") for inst in instances])
+        # Serialize and encrypt secrets
+        instances_list = []
+        for inst in instances:
+            inst_dict = inst.model_dump(mode="json")
+            if inst_dict.get("connection_url"):
+                inst_dict["connection_url"] = encrypt_secret(inst_dict["connection_url"])
+            if inst_dict.get("admin_password"):
+                inst_dict["admin_password"] = encrypt_secret(inst_dict["admin_password"])
+            instances_list.append(inst_dict)
+
+        # Save with TTL (1 hour)
+        instances_json = json.dumps(instances_list)
         instances_key = RedisKeys.thread_instances(thread_id)
         await redis_client.set(instances_key, instances_json, ex=3600)
 
@@ -626,6 +755,11 @@ async def create_instance(request: CreateInstanceRequest):
             admin_url=request.admin_url,
             admin_username=request.admin_username,
             admin_password=request.admin_password,
+            # Redis Cloud identifiers
+            redis_cloud_subscription_id=request.redis_cloud_subscription_id,
+            redis_cloud_database_id=request.redis_cloud_database_id,
+            redis_cloud_subscription_type=request.redis_cloud_subscription_type,
+            redis_cloud_database_name=request.redis_cloud_database_name,
             created_by=request.created_by,
             user_id=request.user_id,
         )
@@ -689,6 +823,23 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
         # Use mode='json' to trigger field_serializer which extracts SecretStr values
         update_data = request.model_dump(exclude_unset=True, mode="json")
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        # CRITICAL: Skip masked values to preserve existing secrets
+        # If the UI sends a masked connection_url (e.g., redis://***:***@host:port),
+        # we must NOT overwrite the real encrypted value with the masked one
+        if "connection_url" in update_data:
+            url_str = update_data["connection_url"]
+            # Check if the URL contains masked credentials
+            if "***" in url_str or url_str == "**********":
+                logger.info(f"Skipping masked connection_url in update for {current_instance.name}")
+                del update_data["connection_url"]
+
+        # Same for admin_password
+        if "admin_password" in update_data:
+            pwd_str = update_data["admin_password"]
+            if pwd_str and ("***" in pwd_str or pwd_str == "***"):
+                logger.info(f"Skipping masked admin_password in update for {current_instance.name}")
+                del update_data["admin_password"]
 
         # Create updated instance
         updated_instance = current_instance.model_copy(update=update_data)
@@ -774,22 +925,20 @@ async def test_connection_url(request: TestConnectionRequest):
             }
 
         except Exception as parse_error:
-            logger.error(f"Failed to parse connection URL {request.connection_url}: {parse_error}")
+            logger.error(f"Failed to parse connection URL: {parse_error}")
             result = {
                 "success": False,
-                "message": f"Invalid connection URL format: {request.connection_url}",
+                "message": "Invalid connection URL format",
                 "host": "unknown",
                 "port": "unknown",
                 "tested_at": datetime.now(timezone.utc).isoformat(),
             }
 
-        logger.info(
-            f"Connection URL test: {'SUCCESS' if result['success'] else 'FAILED'} - {request.connection_url}"
-        )
+        logger.info(f"Connection URL test: {'SUCCESS' if result['success'] else 'FAILED'}")
         return result
 
     except Exception as e:
-        logger.error(f"Failed to test connection URL {request.connection_url}: {e}")
+        logger.error(f"Failed to test connection URL: {e}")
         raise HTTPException(status_code=500, detail="Failed to test connection URL")
 
 

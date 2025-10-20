@@ -1172,36 +1172,15 @@ class RedisSREDemo:
             return  # Leave scenario in place for UI interaction
 
         # CLI mode: Query the agent - it will use its tools to check the cluster status
-        query = f"""I need help investigating a Redis Enterprise cluster. The database is active with {used_memory / (1024 * 1024):.1f}MB memory usage.
+        query = """I need help investigating a Redis Enterprise cluster.
 
 Please check the Redis Enterprise cluster status and node status to see if there are any issues. Specifically:
-1. Check if any nodes are in maintenance mode
-2. Check the overall cluster health
-3. If you find any issues, provide recommendations for investigation and remediation.
+1. Check the overall cluster health
+2. If you find any issues, provide recommendations for investigation and remediation.
 
 Use your Redis Enterprise tools to check the actual cluster state."""
 
         await self._run_diagnostics_and_agent_query(query)
-
-        self.print_step(4, "Recommended investigation steps")
-
-        print("   📋 Steps to investigate and resolve:")
-        print()
-        print("   1. Check node health:")
-        print("      docker exec redis-enterprise-node1 rladmin info node 2")
-        print()
-        print("   2. Check maintenance mode history:")
-        print("      docker exec redis-enterprise-node1 rladmin status | grep -i maintenance")
-        print()
-        print("   3. Verify node is healthy before exiting:")
-        print("      docker exec redis-enterprise-node1 rladmin status nodes")
-        print()
-        print("   4. Exit maintenance mode (if safe):")
-        print("      docker exec redis-enterprise-node1 rladmin node 2 maintenance_mode off")
-        print()
-        print("   5. Verify node is back online:")
-        print("      docker exec redis-enterprise-node1 rladmin status nodes")
-        print()
 
         # Note: We don't clean up the test data here to leave the scenario in place
         print()

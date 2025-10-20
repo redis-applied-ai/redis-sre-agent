@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.protocols import ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
@@ -342,6 +343,55 @@ class RedisCliToolProvider(ToolProvider):
             ),
         ]
 
+    def get_status_update(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Return a concise natural-language status for this Redis CLI call."""
+        operation = tool_name.split("_")[-1]
+        if (
+            operation == "info"
+            and "index" not in tool_name
+            and "cluster" not in tool_name
+            and "replication" not in tool_name
+        ):
+            section = args.get("section")
+            if section:
+                return f"I'm running Redis INFO for the {section} section."
+            return "I'm running Redis INFO to collect server metrics."
+        if operation == "slowlog":
+            return "I'm checking Redis SLOWLOG for slow queries."
+        if operation == "client" and "list" in tool_name:
+            return "I'm listing connected Redis clients."
+        if operation == "get" and "config" in tool_name:
+            pattern = args.get("pattern", "*")
+            return f"I'm inspecting Redis configuration with CONFIG GET {pattern}."
+        return None
+
+    def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Map tool_name to concrete method names for decorator/status usage."""
+        op = tool_name.split("_")[-1]
+        if op == "info":
+            if "cluster" in tool_name:
+                return "cluster_info"
+            if "replication" in tool_name:
+                return "replication_info"
+            if "index" in tool_name:
+                return "search_index_info"
+            return "info"
+        if op == "slowlog":
+            return "slowlog"
+        if op == "log" and "acl" in tool_name:
+            return "acl_log"
+        if op == "get" and "config" in tool_name:
+            return "config_get"
+        if op == "list" and "client" in tool_name:
+            return "client_list"
+        if op == "stats" and "memory" in tool_name:
+            return "memory_stats"
+        if op == "keys":
+            return "sample_keys"
+        if op == "indexes":
+            return "search_indexes"
+        return op
+
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Route tool call to appropriate method.
 
@@ -385,6 +435,7 @@ class RedisCliToolProvider(ToolProvider):
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
+    @status_update("I'm running Redis INFO to collect server metrics.")
     async def info(self, section: Optional[str] = None) -> Dict[str, Any]:
         """Execute Redis INFO command.
 
@@ -414,6 +465,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm checking Redis SLOWLOG for slow queries.")
     async def slowlog(self, count: int = 10) -> Dict[str, Any]:
         """Query Redis SLOWLOG.
 
@@ -454,6 +506,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm checking Redis ACL LOG for auth and permission issues.")
     async def acl_log(self, count: int = 10) -> Dict[str, Any]:
         """Query Redis ACL LOG.
 
@@ -495,6 +548,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm inspecting Redis configuration with CONFIG GET {pattern}.")
     async def config_get(self, pattern: str) -> Dict[str, Any]:
         """Get Redis configuration values.
 
@@ -522,6 +576,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm listing connected Redis clients.")
     async def client_list(self, client_type: Optional[str] = None) -> Dict[str, Any]:
         """List connected Redis clients.
 
@@ -552,6 +607,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm checking Redis cluster info.")
     async def cluster_info(self) -> Dict[str, Any]:
         """Execute CLUSTER INFO command.
 
@@ -575,6 +631,7 @@ class RedisCliToolProvider(ToolProvider):
                 "note": "This command only works in cluster mode",
             }
 
+    @status_update("I'm checking Redis replication info.")
     async def replication_info(self) -> Dict[str, Any]:
         """Get replication information.
 
@@ -606,6 +663,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm collecting detailed Redis memory stats.")
     async def memory_stats(self) -> Dict[str, Any]:
         """Execute MEMORY STATS command.
 
@@ -628,6 +686,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm sampling keys from the Redis keyspace.")
     async def sample_keys(self, count: int = 100, pattern: str = "*") -> Dict[str, Any]:
         """Sample keys from the Redis keyspace.
 
@@ -688,6 +747,7 @@ class RedisCliToolProvider(ToolProvider):
                 "pattern": pattern,
             }
 
+    @status_update("I'm listing RediSearch indexes.")
     async def search_indexes(self) -> Dict[str, Any]:
         """List all Redis Search indexes.
 
@@ -720,6 +780,7 @@ class RedisCliToolProvider(ToolProvider):
                 "note": "This command requires RediSearch module to be loaded",
             }
 
+    @status_update("I'm getting RediSearch index info for {index_name}.")
     async def search_index_info(self, index_name: str) -> Dict[str, Any]:
         """Get information about a Redis Search index.
 

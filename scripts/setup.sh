@@ -200,7 +200,7 @@ start_sre_services() {
     docker-compose up -d sre-agent
 
     log "Waiting for SRE Agent API to be ready..."
-    timeout 60 bash -c 'until curl -s http://localhost:8000/health >/dev/null; do sleep 2; done'
+    timeout 60 bash -c 'until curl -s http://localhost:8000/api/v1/health >/dev/null; do sleep 2; done'
 
     # Start the worker
     docker-compose up -d sre-worker
@@ -258,7 +258,7 @@ verify_setup() {
     log "Verifying setup..."
 
     # Test SRE Agent API
-    if curl -s http://localhost:8000/health | grep -q "healthy"; then
+    if curl -s http://localhost:8000/api/v1/health | grep -q "healthy"; then
         success "SRE Agent API is healthy"
     else
         warning "SRE Agent API health check failed"

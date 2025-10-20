@@ -32,7 +32,7 @@ const Tooltip = ({ content, children }: { content: string; children: React.React
 );
 
 // Use the API interface but with camelCase for UI consistency
-interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier' | 'instance_type' | 'admin_url' | 'admin_username' | 'admin_password'> {
+interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier' | 'instance_type' | 'admin_url' | 'admin_username' | 'admin_password' | 'redis_cloud_subscription_id' | 'redis_cloud_database_id' | 'redis_cloud_subscription_type' | 'redis_cloud_database_name'> {
   connectionUrl: string;
   repoUrl?: string;
   lastChecked?: string;
@@ -44,6 +44,11 @@ interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checke
   adminUrl?: string;
   adminUsername?: string;
   adminPassword?: string;
+  // Redis Cloud identifiers (UI camelCase)
+  cloudSubscriptionType?: 'pro' | 'essentials';
+  cloudSubscriptionId?: string;
+  cloudDatabaseId?: string;
+  cloudDatabaseName?: string;
 }
 
 // Add Instance Form Component
@@ -72,7 +77,12 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     instanceType: initialData?.instanceType || 'unknown',
     adminUrl: (initialData as any)?.adminUrl || '',
     adminUsername: (initialData as any)?.adminUsername || '',
-    adminPassword: (initialData as any)?.adminPassword || ''
+    adminPassword: (initialData as any)?.adminPassword || '',
+    // Redis Cloud identifiers
+    cloudSubscriptionType: (initialData as any)?.cloudSubscriptionType || '',
+    cloudSubscriptionId: (initialData as any)?.cloudSubscriptionId || '',
+    cloudDatabaseId: (initialData as any)?.cloudDatabaseId || '',
+    cloudDatabaseName: (initialData as any)?.cloudDatabaseName || ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -108,6 +118,12 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           adminUrl: formData.adminUrl,
           adminUsername: formData.adminUsername || undefined,
           adminPassword: formData.adminPassword || undefined
+        }),
+        ...(formData.instanceType === 'redis_cloud' && {
+          cloudSubscriptionType: (formData.cloudSubscriptionType || undefined) as 'pro' | 'essentials' | undefined,
+          cloudSubscriptionId: formData.cloudSubscriptionId || undefined,
+          cloudDatabaseId: formData.cloudDatabaseId || undefined,
+          cloudDatabaseName: formData.cloudDatabaseName || undefined,
         })
       } as RedisInstance;
 
@@ -324,6 +340,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           <option value="oss_single">Redis OSS (Single Node)</option>
           <option value="oss_cluster">Redis OSS (Cluster Mode)</option>
           <option value="redis_enterprise">Redis Enterprise</option>
+
           <option value="redis_cloud">Redis Cloud / Managed Service</option>
         </select>
         <p className="text-redis-xs text-redis-dusk-04 mt-1">
@@ -364,6 +381,7 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
               </label>
               <input
                 type="text"
+
                 value={formData.adminUsername}
                 onChange={(e) => setFormData(prev => ({ ...prev, adminUsername: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
@@ -408,6 +426,75 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           </div>
         </div>
       )}
+
+      {/* Redis Cloud Configuration Fields */}
+      {formData.instanceType === 'redis_cloud' && (
+        <div className="space-y-4 p-4 bg-blue-50 border border-blue-200 rounded-redis-sm">
+          <h4 className="text-redis-sm font-semibold text-blue-700">
+            Redis Cloud Configuration
+          </h4>
+          <p className="text-redis-xs text-redis-dusk-04">
+            Provide subscription details for this Redis Cloud instance. These will be used automatically by Redis Cloud tools.
+          </p>
+
+          <div>
+            <label className="block text-redis-sm font-medium mb-1">Subscription Type</label>
+            <select
+              value={formData.cloudSubscriptionType}
+              onChange={(e) => setFormData(prev => ({ ...prev, cloudSubscriptionType: e.target.value as 'pro' | 'essentials' }))}
+              className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+            >
+              <option value="">Unknown / Auto-detect</option>
+              <option value="pro">Pro</option>
+              <option value="essentials">Essentials</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-redis-sm font-medium mb-1">Subscription ID</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={formData.cloudSubscriptionId}
+              onChange={(e) => setFormData(prev => ({ ...prev, cloudSubscriptionId: e.target.value }))}
+              className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03 text-foreground"
+              placeholder="e.g., 123456"
+            />
+          </div>
+
+          <div>
+            <label className="block text-redis-sm font-medium mb-1">Database ID</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={formData.cloudDatabaseId}
+              onChange={(e) => setFormData(prev => ({ ...prev, cloudDatabaseId: e.target.value }))}
+              className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03 text-foreground"
+              placeholder="e.g., 987654"
+            />
+            <p className="text-redis-xs text-redis-dusk-04 mt-1">
+              If only the subscription is relevant, you can leave Database ID blank.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-redis-sm font-medium mb-1">Database Name</label>
+            <input
+              type="text"
+              value={formData.cloudDatabaseName}
+              onChange={(e) => setFormData(prev => ({ ...prev, cloudDatabaseName: e.target.value }))}
+              className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+              placeholder="e.g., prod-cache"
+            />
+            <p className="text-redis-xs text-redis-dusk-04 mt-1">
+              Optional. Used if Database ID is not provided.
+            </p>
+          </div>
+        </div>
+      )}
+
 
       <div>
         <label className="block text-redis-sm font-medium text-foreground mb-1">
@@ -585,6 +672,11 @@ const Instances = () => {
         adminUrl: instance.admin_url,
         adminUsername: instance.admin_username,
         adminPassword: instance.admin_password,
+        // Redis Cloud identifiers to UI camelCase
+        cloudSubscriptionType: (instance as any).redis_cloud_subscription_type || '',
+        cloudSubscriptionId: (instance as any).redis_cloud_subscription_id ? String((instance as any).redis_cloud_subscription_id) : '',
+        cloudDatabaseId: (instance as any).redis_cloud_database_id ? String((instance as any).redis_cloud_database_id) : '',
+        cloudDatabaseName: (instance as any).redis_cloud_database_name || '',
       }));
 
       setInstances(uiInstances);
@@ -961,6 +1053,13 @@ const Instances = () => {
                       admin_url: instance.adminUrl,
                       admin_username: instance.adminUsername,
                       admin_password: instance.adminPassword,
+                      // Redis Cloud identifiers
+                      ...(instance.instanceType === 'redis_cloud' && {
+                        redis_cloud_subscription_type: instance.cloudSubscriptionType || undefined,
+                        redis_cloud_subscription_id: instance.cloudSubscriptionId ? parseInt(instance.cloudSubscriptionId, 10) : undefined,
+                        redis_cloud_database_id: instance.cloudDatabaseId ? parseInt(instance.cloudDatabaseId, 10) : undefined,
+                        redis_cloud_database_name: instance.cloudDatabaseName || undefined,
+                      }),
                     };
                     await sreAgentApi.updateInstance(instance.id, updateRequest);
                   } else {
@@ -979,6 +1078,13 @@ const Instances = () => {
                       admin_url: instance.adminUrl,
                       admin_username: instance.adminUsername,
                       admin_password: instance.adminPassword,
+                      // Redis Cloud identifiers
+                      ...(instance.instanceType === 'redis_cloud' && {
+                        redis_cloud_subscription_type: instance.cloudSubscriptionType || undefined,
+                        redis_cloud_subscription_id: instance.cloudSubscriptionId ? parseInt(instance.cloudSubscriptionId, 10) : undefined,
+                        redis_cloud_database_id: instance.cloudDatabaseId ? parseInt(instance.cloudDatabaseId, 10) : undefined,
+                        redis_cloud_database_name: instance.cloudDatabaseName || undefined,
+                      }),
                     };
                     await sreAgentApi.createInstance(createRequest);
                   }

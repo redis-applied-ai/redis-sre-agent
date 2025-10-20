@@ -28,7 +28,7 @@ main() {
     echo
 
     # Check if SRE Agent is running
-    if ! curl -s http://localhost:8000/health >/dev/null; then
+    if ! curl -s http://localhost:8000/api/v1/health >/dev/null; then
         warning "SRE Agent API is not running. Please start it first:"
         echo "  docker-compose up -d sre-agent"
         exit 1

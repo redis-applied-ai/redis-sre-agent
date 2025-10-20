@@ -55,3 +55,18 @@ scrape_configs:
       - targets: ['grafana:3000']
     metrics_path: /metrics
     scrape_interval: 30s
+
+
+  # Loki metrics for Log Volume and health
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Promtail metrics (optional)
+  - job_name: 'promtail'
+    static_configs:
+      - targets: ['promtail:9080']
+    metrics_path: /metrics
+    scrape_interval: 30s

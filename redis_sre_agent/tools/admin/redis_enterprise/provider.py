@@ -134,6 +134,10 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 auth=auth,
                 verify=self.config.verify_ssl,
                 timeout=30.0,
+                headers={
+                    # Be explicit to avoid 406 content negotiation issues on some endpoints
+                    "Accept": "application/json",
+                },
             )
             logger.info(f"Connected to Redis Enterprise admin API at {admin_url}")
         return self._client
@@ -598,8 +602,19 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             if fields:
                 params["fields"] = fields
 
-            response = await client.get(f"/v1/bdbs/{uid}", params=params)
-            response.raise_for_status()
+            try:
+                response = await client.get(f"/v1/bdbs/{uid}", params=params)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # Some Redis Enterprise versions return 406 when 'fields' is not supported on this endpoint
+                if e.response.status_code in (406, 400) and fields:
+                    logger.warning(
+                        f"get_database({uid}) with fields failed ({e.response.status_code}); retrying without fields"
+                    )
+                    response = await client.get(f"/v1/bdbs/{uid}")
+                    response.raise_for_status()
+                else:
+                    raise
 
             return {
                 "status": "success",

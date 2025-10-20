@@ -81,6 +81,8 @@ dev-dependencies = [
     "pre-commit>=3.6.0",
     "safety>=3.0.0",
     "bandit>=1.7.0",
+    # OpenAPI client generator
+    "openapi-python-client>=0.21.0",
 ]
 
 [tool.pytest.ini_options]
@@ -99,6 +101,12 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+extend-exclude = [
+    "redis-docs",
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client",
+    "source_documents",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]

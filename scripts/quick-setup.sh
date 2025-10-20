@@ -26,7 +26,7 @@ main() {
     docker-compose up -d redis redis-demo sre-agent sre-worker sre-ui
 
     log "Waiting for services to be ready..."
-    timeout 60 bash -c 'until curl -s http://localhost:8000/health >/dev/null; do sleep 2; done'
+    timeout 60 bash -c 'until curl -s http://localhost:8000/api/v1/health >/dev/null; do sleep 2; done'
     timeout 60 bash -c 'until curl -s http://localhost:3002 >/dev/null; do sleep 2; done'
 
     log "Loading basic demo data..."

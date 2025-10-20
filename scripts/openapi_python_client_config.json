@@ -1,0 +1,6 @@
+{
+  "package_name": "redis_cloud_api_client",
+  "project_name": "redis-cloud-api-client",
+  "package_version": "0.1.0",
+  "use_path_prefixes_for_title_model_names": true
+}

@@ -4,6 +4,7 @@ This provider uses the prometheus-api-client library to query Prometheus metrics
 It provides tools for instant queries, range queries, and metric discovery.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -340,6 +341,15 @@ class PrometheusToolProvider(ToolProvider):
                 filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
             else:
                 filtered_metrics = all_metrics
+
+            # Retry once if Prometheus just started and metrics aren't populated yet
+            if pattern and not filtered_metrics:
+                try:
+                    await asyncio.sleep(1)
+                    all_metrics = client.all_metrics()
+                    filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
+                except Exception:
+                    pass
 
             # If label filters provided, further filter by querying series
             if label_filters:

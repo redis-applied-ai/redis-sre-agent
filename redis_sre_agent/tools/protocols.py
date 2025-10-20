@@ -173,6 +173,18 @@ class ToolProvider(ABC):
         self.config = config
         self._instance_hash = hex(id(self))[2:8]
 
+    def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Map a tool_name to a provider method name.
+
+        Default implementation returns the last underscore-delimited token
+        from the tool name. Providers can override to handle more complex
+        mappings (e.g., 'config_get', 'client_list').
+        """
+        try:
+            return tool_name.split("_")[-1]
+        except Exception:
+            return None
+
     @property
     @abstractmethod
     def provider_name(self) -> str:
@@ -250,3 +262,28 @@ class ToolProvider(ABC):
             ValueError: If tool_name is not recognized
         """
         ...
+
+    def get_status_update(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Optional natural-language status update for this tool call.
+
+        If a provider method corresponding to this tool call is decorated
+        with @status_update("..."), this uses the template to render a
+        per-call status message via Python str.format(**args).
+        Providers can override this for full control.
+        """
+        try:
+            op = self.resolve_operation(tool_name, args)
+            if not op:
+                return None
+            method = getattr(self, op, None)
+            if not method:
+                return None
+            template = getattr(method, "_status_update_template", None)
+            if not template:
+                return None
+            try:
+                return template.format(**args)
+            except Exception:
+                return template
+        except Exception:
+            return None

@@ -22,9 +22,11 @@ interface ChatMessage {
 interface TaskMonitorProps {
   threadId: string;
   initialQuery?: string;
+  onStatusChange?: (status: string) => void;
+  onCompleted?: (info: { status: string; response?: string }) => void;
 }
 
-const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => {
+const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onStatusChange, onCompleted }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -72,16 +74,20 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
           }));
 
           // Only update messages if we actually got some from the API
-          // This prevents clearing the user's just-sent message
-          if (chatMessages.length > 0) {
+          // and the thread is completed; for active threads, let WS drive UI
+          const completedStatuses = ['done', 'completed', 'failed', 'cancelled'];
+          if (chatMessages.length > 0 && completedStatuses.includes(threadData.status)) {
             setMessages(chatMessages);
             console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}:`, chatMessages);
-          } else {
+          } else if (chatMessages.length === 0) {
             console.log('No messages in thread yet, keeping current messages');
+          } else {
+            console.log('Thread active; skipping REST transcript to avoid duplicates');
           }
 
           // Set status and thinking indicator based on thread status
           setCurrentStatus(threadData.status);
+          onStatusChange?.(threadData.status);
 
           // Only show thinking if thread is actually in progress
           const inProgressStatuses = ['queued', 'in_progress', 'running'];
@@ -108,14 +114,21 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
   }, [messages.length]); // Only trigger when message count changes
 
   useEffect(() => {
-    // Add initial user message if provided
+    // Append initial user message if provided and not already present
     if (initialQuery) {
-      setMessages([{
-        id: 'initial',
-        role: 'user',
-        content: initialQuery,
-        timestamp: new Date().toISOString(),
-      }]);
+      setMessages(prev => {
+        const exists = prev.some(m => m.role === 'user' && m.content === initialQuery);
+        if (exists) return prev;
+        return [
+          ...prev,
+          {
+            id: `initial-${Date.now()}`,
+            role: 'user',
+            content: initialQuery,
+            timestamp: new Date().toISOString(),
+          },
+        ];
+      });
     }
   }, [initialQuery]);
 
@@ -177,34 +190,47 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
 
           // Handle different update types
           if (data.update_type === 'initial_state') {
-            setCurrentStatus(data.status || 'unknown');
+            const status = data.status || 'unknown';
+            setCurrentStatus(status);
+            onStatusChange?.(status);
 
-            // Process initial updates to extract user query and responses
-            // Filter out the final result to avoid duplicates
-            if (data.updates) {
-              const updatesWithoutFinalResult = data.updates.filter(u => !u.result?.response);
-              processUpdates(updatesWithoutFinalResult);
-            }
+            // For completed threads, NEVER process initial_state updates
+            const completedStatuses = ['done', 'completed', 'failed', 'cancelled'];
+            const isCompleted = completedStatuses.includes(status);
 
-            // Add the final result only if we don't already have messages loaded
-            // (to avoid duplicating the response that was already loaded from REST API)
-            if (data.result?.response) {
-              // Check if we already have an assistant message with this response
-              const hasResponse = messages.some(msg =>
-                msg.role === 'assistant' &&
-                msg.content === data.result.response
-              );
-
-              if (hasResponse) {
-                console.log('Skipping initial_state result - already have this response');
-              } else {
-                console.log('Adding initial_state result');
-                addAssistantMessage(data.result.response, data.result.turn_completed_at || new Date().toISOString());
-              }
+            if (isCompleted) {
+              console.log('Skipping initial_state for completed thread - will load from REST API');
               setIsThinking(false);
+              onCompleted?.({ status });
+            } else {
+              // Thread is in progress - process initial updates for real-time display
+              console.log('Processing initial_state updates for in-progress thread');
+
+              // Keep existing transcript; avoid clearing to preserve prior responses
+              // (deduplication occurs when adding new updates)
+
+              // Process initial updates to extract user-visible content in one batch
+              if (data.updates) {
+                const batch: Array<{content: string; timestamp: string}> = [];
+                data.updates.forEach((u: any) => {
+                  if (u.result?.response) return; // skip final result here
+                  if (u.type === 'response' && u.message) {
+                    batch.push({ content: u.message, timestamp: u.timestamp });
+                  } else if (u.type === 'agent_reflection' && u.message && u.message.length > 10) {
+                    batch.push({ content: u.message, timestamp: u.timestamp });
+                  }
+                });
+                addAssistantMessagesBatch(batch);
+              }
+
+              // If initial_state includes a result while status is active, do NOT treat it as completion here.
+              // We defer handling of final results to incremental updates to avoid premature completion flicker.
+              if (data.result?.response) {
+                console.log('Initial_state includes result; deferring to streaming updates (no completion).');
+              }
             }
           } else {
-            // Process new update
+            // Process new update (real-time streaming)
             processUpdate(data);
           }
         } catch (error) {
@@ -214,6 +240,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
 
       ws.onclose = (event) => {
         console.log('WebSocket closed:', event.code, event.reason);
+
         setIsConnected(false);
 
         // Only show error and reconnect if this wasn't an intentional close
@@ -252,14 +279,14 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
 
     setMessages(prev => {
       // Check if this message already exists to prevent duplicates
+      // Dedup by content to handle minor timestamp differences
       const exists = prev.some(msg =>
         msg.role === 'assistant' &&
-        msg.content === content &&
-        msg.timestamp === timestamp
+        msg.content === content
       );
 
       if (exists) {
-        console.log('Duplicate message detected, skipping:', content.substring(0, 50));
+        console.log('Duplicate assistant content detected, skipping:', content.substring(0, 50));
         return prev;
       }
 
@@ -273,6 +300,22 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
       }];
     });
   };
+  const addAssistantMessagesBatch = (items: Array<{content: string; timestamp: string}>) => {
+    if (!items || items.length === 0) return;
+    setMessages(prev => {
+      const existingContents = new Set(prev.filter(m => m.role === 'assistant').map(m => m.content));
+      const next = [...prev];
+      items.forEach(({content, timestamp}) => {
+        if (!existingContents.has(content)) {
+          const id = `assistant-${timestamp}-${content.substring(0,50)}`;
+          next.push({ id, role: 'assistant', content, timestamp });
+          existingContents.add(content);
+        }
+      });
+      return next;
+    });
+  };
+
 
   const addStatusMessage = (content: string, timestamp: string) => {
     // Create a unique ID for this status message
@@ -301,7 +344,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
     const now = Date.now();
     const timeSinceLastRender = now - lastRenderTimeRef.current;
 
-    // Only process updates if enough time has passed (100ms throttle)
+    // Only process updates if enough time has passed (throttle)
     // OR if it's a final result or important status message
     const isFinalResult = update.result?.response ||
                           update.status === 'completed' ||
@@ -310,9 +353,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
 
     const isImportantUpdate = update.message && update.message.length > 0;
 
-    if (!isFinalResult && !isImportantUpdate && timeSinceLastRender < 100) {
+
+    if (!isFinalResult && !isImportantUpdate && timeSinceLastRender < 250) {
       return; // Skip this update to prevent flashing
     }
+
+
 
     lastRenderTimeRef.current = now;
 
@@ -329,21 +375,11 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
       }
     }
 
-    // Show status messages from the agent (progress updates)
+    // Show assistant updates in a stable way (batch-friendly)
+    const updateType = update.type || update.update_type;
     if (update.message && update.message.length > 0) {
-      // Filter out technical/internal messages
-      const technicalPatterns = [
-        /agent turn completed/i,
-        /task completed/i,
-        /task queued/i,
-        /processing complete/i,
-        /initialization complete/i,
-      ];
-
-      const isTechnical = technicalPatterns.some(pattern => pattern.test(update.message!));
-
-      if (!isTechnical) {
-        addStatusMessage(update.message, update.timestamp);
+      if (updateType === 'agent_reflection' || updateType === 'response') {
+        addAssistantMessagesBatch([{ content: update.message, timestamp: update.timestamp }]);
       }
     }
 
@@ -351,6 +387,8 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
     if (update.result?.response) {
       addAssistantMessage(update.result.response, update.timestamp);
       setIsThinking(false);
+      onStatusChange?.('completed');
+      onCompleted?.({ status: 'completed', response: update.result.response });
     }
   };
 
@@ -419,25 +457,26 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery }) => 
                 }`}
               >
                 {message.role === 'assistant' ? (
-                  <div className="prose prose-sm max-w-none text-redis-sm markdown-content">
+                  <div className="markdown-content text-redis-sm leading-[1.35]">
                     <ReactMarkdown
                       components={{
-                        h1: ({children}) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0">{children}</h1>,
-                        h2: ({children}) => <h2 className="text-base font-semibold mb-2 mt-3">{children}</h2>,
-                        h3: ({children}) => <h3 className="text-sm font-medium mb-2 mt-3">{children}</h3>,
-                        p: ({children}) => <p className="mb-3 leading-relaxed">{children}</p>,
-                        ul: ({children}) => <ul className="mb-3 ml-4 space-y-1 list-disc list-outside">{children}</ul>,
-                        ol: ({children}) => <ol className="mb-3 ml-4 space-y-1 list-decimal list-outside">{children}</ol>,
-                        li: ({children}) => <li className="leading-relaxed ml-1">{children}</li>,
+                        // Use CSS to control spacing; avoid Tailwind margin/space-y utilities here
+                        h1: ({children}) => <h1>{children}</h1>,
+                        h2: ({children}) => <h2>{children}</h2>,
+                        h3: ({children}) => <h3>{children}</h3>,
+                        p: ({children}) => <p>{children}</p>,
+                        ul: ({children}) => <ul>{children}</ul>,
+                        ol: ({children}) => <ol>{children}</ol>,
+                        li: ({children}) => <li>{children}</li>,
                         code: ({children, ...props}) => {
                           const isInline = !props.className?.includes('language-');
                           return isInline ?
                             <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">{children}</code> :
-                            <code className="block bg-redis-dusk-08 text-foreground p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3">{children}</code>;
+                            <code className="block bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap">{children}</code>;
                         },
-                        pre: ({children}) => <pre className="bg-redis-dusk-08 text-foreground p-3 rounded text-xs font-mono whitespace-pre-wrap mb-3 overflow-x-auto">{children}</pre>,
+                        pre: ({children}) => <pre className="bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap overflow-x-auto">{children}</pre>,
                         strong: ({children}) => <strong className="font-semibold text-foreground">{children}</strong>,
-                        blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 mb-3 italic">{children}</blockquote>,
+                        blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-3 italic text-redis-sm">{children}</blockquote>,
                       }}
                     >
                       {message.content}

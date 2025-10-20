@@ -59,8 +59,19 @@ def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
         port = parsed.port or 6379
         return host, port
     except Exception as e:
-        logger.warning(f"Failed to parse connection URL {connection_url}: {e}")
+        masked_url = _mask_redis_url_credentials(connection_url)
+        logger.warning(f"Failed to parse connection URL {masked_url}: {e}")
         return "localhost", 6379
+
+
+def _get_secret_value(secret: Any) -> str:
+    """Extract secret value from SecretStr or return plain string.
+
+    Handles both SecretStr (from Pydantic) and plain str (after decryption).
+    """
+    if hasattr(secret, "get_secret_value"):
+        return secret.get_secret_value()
+    return str(secret)
 
 
 def _mask_redis_url_credentials(url: str) -> str:
@@ -117,8 +128,8 @@ async def _detect_instance_type_with_llm(instance: Any, llm: Optional[ChatOpenAI
         )
 
     # Build analysis prompt with all available metadata
-    # Extract secret value from SecretStr
-    connection_url_str = instance.connection_url.get_secret_value()
+    # Extract secret value from SecretStr (or plain str after decryption)
+    connection_url_str = _get_secret_value(instance.connection_url)
     parsed_url = urlparse(connection_url_str)
     port = parsed_url.port or 6379
     hostname = parsed_url.hostname or "unknown"
@@ -337,11 +348,174 @@ Focus on what they can do right now:
 
 ## Redis Enterprise Cluster Checks
 
-When working with Redis Enterprise instances (instance_type: redis_enterprise), ALWAYS check:
-1. **Cluster health** - Use get_cluster_info to check overall cluster status
-2. **Node status** - Use list_nodes to check if any nodes are in maintenance mode, failed, or degraded
-3. **Database health** - Use list_databases and get_database to check database status and configuration
-4. **Shard distribution** - Use list_shards to check if shards are properly distributed across nodes
+**CRITICAL: Redis Enterprise databases are DIFFERENT from Redis Open Source**
+
+When working with Redis Enterprise instances (instance_type: redis_enterprise), you MUST understand:
+
+### What You CANNOT Do with Redis Enterprise
+- ❌ **DO NOT suggest CONFIG SET for persistence, replication, or clustering** - these are managed by Redis Enterprise
+- ❌ **DO NOT suggest BGSAVE, BGREWRITEAOF, or other persistence commands** - not supported
+- ❌ **DO NOT suggest REPLICAOF or replication commands** - replication is automatic
+- ❌ **DO NOT suggest MODULE LOAD** - modules are managed via Cluster Manager/API
+- ❌ **DO NOT trust INFO output for configuration details** - it shows runtime state, not configuration
+- ❌ **DO NOT suggest ACL SETUSER or ACL DELUSER** - ACL is managed via Cluster Manager/API
+
+### What INFO Shows vs. Reality in Redis Enterprise
+The `INFO` command output is MISLEADING for Redis Enterprise:
+- `aof_enabled=1, aof_current_size=0` - This is NORMAL. Redis Enterprise manages AOF internally.
+- `slave0: ip=0.0.0.0, port=0` - This is NORMAL. Replication is managed by Redis Enterprise, not visible via INFO.
+- `maxmemory=0` - This is NORMAL. Memory limits are enforced at the cluster level, not visible via CONFIG GET.
+- `rdb_changes_since_last_save` - This is NORMAL. RDB snapshots are managed by Redis Enterprise.
+
+**DO NOT suggest "fixing" these - they are expected behavior in Redis Enterprise!**
+
+### What You SHOULD Do with Redis Enterprise
+1. **Use the Admin REST API for configuration details** - Call these tools to see actual configuration:
+   - `get_cluster_info` - Cluster-level information
+   - `get_database` - Database configuration (memory limits, persistence, replication, clustering, modules, etc.)
+   - `list_nodes` - Node status (check for maintenance mode: `accept_servers=false`)
+   - `list_shards` - Shard distribution across nodes
+   - `get_database_stats` - Database performance metrics
+   - `get_node_stats` - Node-level metrics
+
+2. **Use Redis commands for data operations only**:
+   - ✅ DBSIZE, KEYS, SCAN - data inspection
+   - ✅ SLOWLOG - query performance
+   - ✅ CLIENT LIST - connection monitoring
+   - ✅ MEMORY USAGE - key-level memory analysis
+   - ✅ INFO stats, keyspace, clients - runtime metrics
+
+3. **ALWAYS check cluster health**:
+   - Call `get_cluster_info` to check overall cluster status
+   - Call `list_nodes` to check if any nodes are in maintenance mode (`accept_servers=false`), failed, or degraded
+   - Call `list_databases` and `get_database` to check database status and configuration
+   - Call `list_shards` to check if shards are properly distributed across nodes
+
+### Example: Correct Redis Enterprise Health Check
+
+❌ **WRONG Approach:**
+```
+I see AOF is enabled but size is 0 - you should run BGREWRITEAOF.
+I see a replica at 0.0.0.0:0 - your replication is broken.
+You should set maxmemory with CONFIG SET.
+```
+
+✅ **CORRECT Approach:**
+```
+I checked your Redis Enterprise database via the Admin REST API. Here's what I found:
+
+**Cluster Status (from get_cluster_info):**
+- Cluster: production-cluster
+- Nodes: 3 (all active)
+- Total shards: 12
+
+**Database Configuration (from get_database):**
+- Memory: 246 MB used / 512 MB limit
+- Persistence: aof-every-1-second (managed by Redis Enterprise)
+- Replication: Enabled (1 replica per shard)
+- Sharding: 2 shards
+- Modules: RedisJSON 2.6, RedisSearch 2.8
+
+**Node Status (from list_nodes):**
+- All 3 nodes active
+- No nodes in maintenance mode
+
+**Runtime Metrics (from INFO):**
+- Current ops/sec: 81
+- Connected clients: 13
+- Keys: 5,357 in db0
+- No slow queries
+
+**Assessment:**
+Your database is healthy. The INFO output shows some confusing values (AOF size=0, replica at 0.0.0.0:0)
+but these are normal for Redis Enterprise - persistence and replication are managed automatically by the platform.
+```
+
+**ALWAYS call get_database and get_cluster_info for Redis Enterprise instances to get accurate configuration!**
+
+## Redis Cloud Management
+
+**CRITICAL: Redis Cloud databases are DIFFERENT from Redis Open Source**
+
+When working with Redis Cloud instances (instance_type: redis_cloud), you MUST understand:
+
+### What You CANNOT Do with Redis Cloud
+- ❌ **DO NOT suggest CONFIG SET for persistence, replication, or clustering** - these are managed by Redis Cloud
+- ❌ **DO NOT suggest BGSAVE, BGREWRITEAOF, or other persistence commands** - not supported
+- ❌ **DO NOT suggest REPLICAOF or replication commands** - replication is automatic
+- ❌ **DO NOT suggest MODULE LOAD** - modules are managed via console/API
+- ❌ **DO NOT trust INFO output for configuration details** - it shows runtime state, not configuration
+- ❌ **DO NOT suggest ACL SETUSER or ACL DELUSER** - ACL is managed via console/API
+
+### What INFO Shows vs. Reality in Redis Cloud
+The `INFO` command output is MISLEADING for Redis Cloud:
+- `aof_enabled=1, aof_current_size=0` - This is NORMAL. Redis Cloud manages AOF internally.
+- `slave0: ip=0.0.0.0, port=0` - This is NORMAL. Replication is managed by Redis Cloud, not visible via INFO.
+- `maxmemory=0` - This is NORMAL. Memory limits are enforced at the cluster level, not visible via CONFIG GET.
+- `rdb_changes_since_last_save` - This is NORMAL. RDB snapshots are managed by Redis Cloud.
+
+**DO NOT suggest "fixing" these - they are expected behavior in Redis Cloud!**
+
+### What You SHOULD Do with Redis Cloud
+1. **Use the REST API for configuration details** - Call `get_database` to see actual configuration:
+   - Memory limits (`memoryUsedInMb`, `datasetSizeInGb`)
+   - Persistence settings (`dataPersistence`)
+   - Replication status (`replication`)
+   - Clustering configuration (`clustering.numberOfShards`)
+   - Security settings (`security.*`)
+   - Module versions (`modules`)
+   - Network endpoints (`publicEndpoint`, `privateEndpoint`)
+   - Throughput limits (`throughputMeasurement`)
+
+2. **Use Redis commands for data operations only**:
+   - ✅ DBSIZE, KEYS, SCAN - data inspection
+   - ✅ SLOWLOG - query performance
+   - ✅ CLIENT LIST - connection monitoring
+   - ✅ MEMORY USAGE - key-level memory analysis
+   - ✅ INFO stats, keyspace, clients - runtime metrics
+
+3. **Available Cloud Management Tools**:
+   - `get_account` - View account details
+   - `get_regions` - List available regions
+   - `list_subscriptions` - List all subscriptions
+   - `get_subscription` - Get subscription details
+   - `list_databases` - List databases in a subscription
+   - `get_database` - **USE THIS for database configuration details**
+   - `list_users` - View account users
+   - `list_tasks` - Monitor async operations
+
+### Example: Correct Redis Cloud Health Check
+
+❌ **WRONG Approach:**
+```
+I see AOF is enabled but size is 0 - you should run BGREWRITEAOF.
+I see a replica at 0.0.0.0:0 - your replication is broken.
+You should set maxmemory with CONFIG SET.
+```
+
+✅ **CORRECT Approach:**
+```
+I checked your Redis Cloud database via the REST API. Here's what I found:
+
+**Configuration (from REST API):**
+- Memory: 246 MB used / 512 MB limit
+- Persistence: snapshot-every-1-hour (managed by Redis Cloud)
+- Replication: Enabled with automatic failover
+- Clustering: 2 shards
+- Throughput: 2500 ops/sec limit
+
+**Runtime Metrics (from INFO):**
+- Current ops/sec: 81 (well below limit)
+- Connected clients: 13
+- Keys: 5,357 in db0
+- No slow queries
+
+**Assessment:**
+Your database is healthy. The INFO output shows some confusing values (AOF size=0, replica at 0.0.0.0:0)
+but these are normal for Redis Cloud - persistence and replication are managed automatically by the platform.
+```
+
+**ALWAYS call get_database for Redis Cloud instances to get accurate configuration!**
 
 **CRITICAL: Understanding Node Shard Counts and Maintenance Mode**
 
@@ -458,7 +632,7 @@ Remember: You are responding to a live incident. Focus on immediate threats and 
 """
 
 # Fact-checker system prompt
-FACT_CHECKER_PROMPT = """You are a Redis technical fact-checker. Your role is to review SRE agent responses for factual accuracy about Redis concepts, metrics, operations, and URLs.
+FACT_CHECKER_PROMPT = """You are a Redis technical fact-checker. Your role is to review SRE agent responses for factual accuracy about Redis concepts, metrics, operations, URLs, and command syntax.
 
 ## Your Task
 
@@ -468,6 +642,7 @@ Review the provided SRE agent response and identify any statements that are:
 3. **Unsupported claims** that lack evidence from the diagnostic data provided
 4. **Contradictions** between stated facts and the actual data shown
 5. **Invalid URLs** that return 404 errors or are inaccessible
+6. **Invalid or fabricated commands** (especially `rladmin` for Redis Enterprise) or incorrect CLI syntax
 
 ## Common Redis Fact-Check Areas
 
@@ -478,23 +653,24 @@ Review the provided SRE agent response and identify any statements that are:
 - **Persistence**: RDB vs AOF, when disk I/O actually occurs
 - **Eviction Policies**: How different policies work and when they trigger
 - **Configuration**: Default values, valid options, and their implications
+- **Command Validity**: Verify that any suggested shell/CLI commands (particularly `rladmin`) are real and use correct syntax per Redis Enterprise documentation; flag invented subcommands or options
 - **Documentation URLs**: Verify that referenced URLs are valid and accessible
 
 ## Response Format
 
-If you find factual errors or invalid URLs, respond with:
+If you find factual errors, invalid commands, or invalid URLs, respond with:
 ```json
 {
   "has_errors": true,
   "errors": [
     {
-      "claim": "exact text of the incorrect claim or invalid URL",
-      "issue": "explanation of why it's wrong or URL validation result",
-      "category": "redis_internals|metrics_interpretation|configuration|invalid_url|other"
+      "claim": "exact text of the incorrect claim, invalid command, or invalid URL",
+      "issue": "explanation of why it's wrong and, if possible, the correct alternative",
+      "category": "redis_internals|metrics_interpretation|configuration|invalid_command|invalid_url|other"
     }
   ],
   "suggested_research": [
-    "specific topics the agent should research to correct the errors"
+    "specific topics the agent should research to correct the errors (e.g., 'rladmin database command syntax')"
   ],
   "url_validation_performed": true
 }
@@ -504,12 +680,12 @@ If no errors are found, respond with:
 ```json
 {
   "has_errors": false,
-  "validation_notes": "brief note about what was verified",
+  "validation_notes": "brief note about what was verified (concepts, commands, URLs)",
   "url_validation_performed": true
 }
 ```
 
-Be strict but fair - flag clear technical inaccuracies and broken URLs, not minor wording choices or style preferences.
+Be strict but fair - flag clear technical inaccuracies, invented CLI commands, and broken URLs, not minor wording choices or style preferences.
 """
 
 
@@ -573,7 +749,7 @@ class SRELangGraphAgent:
             for instance in instances:
                 if instance.id == instance_id:
                     # Return the secret value for internal use
-                    return instance.connection_url.get_secret_value()
+                    return _get_secret_value(instance.connection_url)
 
             logger.error(
                 f"Instance {instance_id} not found. "
@@ -587,11 +763,14 @@ class SRELangGraphAgent:
             )
             return None
 
-    def _build_workflow(self, tool_mgr: ToolManager) -> StateGraph:
+    def _build_workflow(
+        self, tool_mgr: ToolManager, target_instance: Optional[Any] = None
+    ) -> StateGraph:
         """Build the LangGraph workflow for SRE operations.
 
         Args:
             tool_mgr: ToolManager instance for resolving tool calls
+            target_instance: Optional RedisInstance for context-specific prompts
         """
 
         async def agent_node(state: AgentState) -> AgentState:
@@ -602,7 +781,103 @@ class SRELangGraphAgent:
 
             # Add system message if this is the first interaction
             if len(messages) == 1 and isinstance(messages[0], HumanMessage):
-                system_message = AIMessage(content=SRE_SYSTEM_PROMPT)
+                system_prompt = SRE_SYSTEM_PROMPT
+
+                # Add Redis Cloud-specific context if working with a cloud instance
+                if target_instance and target_instance.instance_type == "redis_cloud":
+                    redis_cloud_context = """
+
+## CRITICAL REDIS CLOUD CONTEXT
+
+You are working with a **Redis Cloud** database. Redis Cloud is FUNDAMENTALLY DIFFERENT from Redis Open Source.
+
+### DO NOT Trust INFO Output for Configuration
+The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EXPECTED in Redis Cloud:
+- `aof_enabled=1, aof_current_size=0` - AOF is managed internally by Redis Cloud
+- `slave0: ip=0.0.0.0, port=0` - Replication is managed by Redis Cloud (not visible via INFO)
+- `maxmemory=0` - Memory limits are enforced at cluster level (not visible via CONFIG GET)
+- `rdb_changes_since_last_save` - RDB snapshots are managed by Redis Cloud
+
+**STOP suggesting "fixes" for these - they are NOT problems!**
+
+### What You MUST Do First
+1. **Call `get_database` tool** to get the ACTUAL database configuration from the REST API
+2. This returns the REAL configuration: memory limits, persistence settings, replication status, clustering, security, modules, endpoints, throughput limits
+3. Use INFO only for runtime metrics (ops/sec, connected clients, keyspace stats)
+
+### What You CANNOT Suggest
+- ❌ CONFIG SET for persistence, replication, clustering, maxmemory
+- ❌ BGSAVE, BGREWRITEAOF, or other persistence commands
+- ❌ REPLICAOF or replication commands
+- ❌ MODULE LOAD
+- ❌ ACL SETUSER or ACL DELUSER
+- ❌ "Fix" AOF size=0 or replica at 0.0.0.0:0
+
+### Correct Diagnostic Approach
+1. Call `get_database` to get configuration from REST API
+2. Use INFO for runtime metrics only
+3. Compare actual usage vs. configured limits
+4. Provide recommendations based on ACTUAL configuration, not INFO output
+
+**Remember: Redis Cloud manages persistence, replication, clustering, and modules automatically. Use the REST API to see the real configuration!**
+"""
+                    system_prompt += redis_cloud_context
+
+                # Add Redis Enterprise-specific context if working with an enterprise instance
+                elif target_instance and target_instance.instance_type == "redis_enterprise":
+                    redis_enterprise_context = """
+
+## CRITICAL REDIS ENTERPRISE CONTEXT
+
+You are working with a **Redis Enterprise** database. Redis Enterprise is FUNDAMENTALLY DIFFERENT from Redis Open Source.
+
+### DO NOT Trust INFO Output for Configuration
+The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EXPECTED in Redis Enterprise:
+- `aof_enabled=1, aof_current_size=0` - AOF is managed internally by Redis Enterprise
+- `slave0: ip=0.0.0.0, port=0` - Replication is managed by Redis Enterprise (not visible via INFO)
+- `maxmemory=0` - Memory limits are enforced at cluster level (not visible via CONFIG GET)
+- `rdb_changes_since_last_save` - RDB snapshots are managed by Redis Enterprise
+
+**STOP suggesting "fixes" for these - they are NOT problems!**
+
+### What You MUST Do First
+1. **Call `get_cluster_info` tool** to check overall cluster health
+2. **Call `get_database` tool** to get the ACTUAL database configuration from the Admin REST API
+3. **Call `list_nodes` tool** to check node status (especially maintenance mode: `accept_servers=false`)
+4. **Call `list_shards` tool** to check shard distribution
+5. Use INFO only for runtime metrics (ops/sec, connected clients, keyspace stats)
+
+### What You CANNOT Suggest
+- ❌ CONFIG SET for persistence, replication, clustering, maxmemory
+- ❌ BGSAVE, BGREWRITEAOF, or other persistence commands
+- ❌ REPLICAOF or replication commands
+- ❌ MODULE LOAD
+- ❌ ACL SETUSER or ACL DELUSER
+- ❌ "Fix" AOF size=0 or replica at 0.0.0.0:0
+
+### Correct Diagnostic Approach
+1. Call `get_cluster_info` to check cluster health
+2. Call `list_nodes` to check for nodes in maintenance mode or degraded state
+3. Call `get_database` to get database configuration from Admin REST API
+4. Call `list_shards` to check shard distribution
+5. Use INFO for runtime metrics only
+6. Compare actual usage vs: configured limits
+7. Provide recommendations based on ACTUAL configuration, not INFO output
+
+### Critical: Check for Maintenance Mode
+Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new shards. This is a common cause of issues!
+
+**Remember: Redis Enterprise manages persistence, replication, clustering, and modules automatically. Use the Admin REST API to see the real configuration!**
+
+### CLI Command Guidance (rladmin)
+- Never invent or guess rladmin subcommands. Examples that DO NOT EXIST: `rladmin list databases`, `rladmin get database name <db>`, `rladmin list shards`, `rladmin get database stats`.
+- Before suggesting any rladmin command, use the `search_knowledge_base` tool to find the exact syntax in the Redis Enterprise documentation and cite the source.
+- Prefer the Admin REST API tools available to you (`get_cluster_info`, `get_database`, `list_nodes`, `list_shards`). Do NOT turn tool names into CLI commands.
+- If you cannot find a documented rladmin command for the task, omit CLI suggestions and stick to Admin REST API guidance.
+"""
+                    system_prompt += redis_enterprise_context
+
+                system_message = AIMessage(content=system_prompt)
                 messages = [system_message] + messages
 
             # Generate response with tool calling capability using retry logic
@@ -660,10 +935,14 @@ class SRELangGraphAgent:
 
                 logger.info(f"Executing SRE tool: {tool_name} with args: {tool_args}")
 
-                # Send meaningful reflection about what the agent is doing
+                # Send a single, meaningful status update about what the agent is doing
                 if self.progress_callback:
-                    reflection = self._generate_tool_reflection(tool_name, tool_args)
-                    await self.progress_callback(reflection, "agent_reflection")
+                    # Prefer provider-supplied status update; fall back to generic
+                    status_msg = tool_mgr.get_status_update(
+                        tool_name, tool_args
+                    ) or self._generate_tool_reflection(tool_name, tool_args)
+                    if status_msg:
+                        await self.progress_callback(status_msg, "agent_reflection")
 
                 try:
                     # Use ToolManager to resolve and execute the tool call
@@ -671,13 +950,7 @@ class SRELangGraphAgent:
 
                     result = await tool_mgr.resolve_tool_call(tool_name, tool_args)
 
-                    # Send completion reflection
-                    if self.progress_callback:
-                        completion_reflection = self._generate_completion_reflection(
-                            tool_name, result
-                        )
-                        if completion_reflection:  # Only send if not empty
-                            await self.progress_callback(completion_reflection, "agent_reflection")
+                    # No completion message to reduce noise; keep a single update per tool call
 
                     # Format result as a readable string
                     if isinstance(result, dict):
@@ -866,30 +1139,30 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         return workflow
 
     def _generate_tool_reflection(self, tool_name: str, tool_args: dict) -> str:
-        """Generate a meaningful reflection about what the agent is doing."""
+        """Generate a meaningful first-person reflection about what the agent is doing."""
         if tool_name == "get_detailed_redis_diagnostics":
-            return "🔍 Analyzing Redis instance health and performance metrics..."
+            return "Let me check the Redis instance health and performance metrics..."
         elif tool_name == "search_knowledge_base":
             query = tool_args.get("query", "")
             if "memory" in query.lower():
-                return "📚 Searching knowledge base for memory management best practices..."
+                return "I'm looking up memory management best practices in the knowledge base..."
             elif "performance" in query.lower():
-                return "📚 Looking up performance optimization strategies..."
+                return "Let me find some performance optimization strategies..."
             elif "persistence" in query.lower():
-                return "📚 Researching data persistence and durability options..."
+                return "I'm researching data persistence and durability options..."
             elif "connection" in query.lower():
-                return "📚 Finding connection troubleshooting guidance..."
+                return "Let me look up connection troubleshooting guidance..."
             else:
-                return f"📚 Searching knowledge base for: {query}"
+                return f"I'm searching the knowledge base for information about: {query}"
         elif tool_name == "check_service_health":
-            return "🏥 Performing service health checks..."
+            return "Let me perform some service health checks..."
         else:
             operation = _extract_operation_from_tool_name(tool_name)
             display_name = operation.replace("_", " ")
-            return f"🔧 Executing {display_name}..."
+            return f"I'm running {display_name}..."
 
     def _generate_completion_reflection(self, tool_name: str, result: dict) -> str:
-        """Generate a reflection about what the agent discovered."""
+        """Generate a first-person reflection about what the agent discovered."""
         if tool_name == "get_detailed_redis_diagnostics":
             if isinstance(result, dict) and result.get("status") == "success":
                 diagnostics = result.get("diagnostics", {})
@@ -900,14 +1173,16 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                     if max_memory > 0:
                         usage_pct = (used_memory / max_memory) * 100
                         if usage_pct > 80:
-                            return f"⚠️ Memory usage is elevated at {usage_pct:.1f}% - investigating further..."
+                            return f"I see memory usage is elevated at {usage_pct:.1f}%. Let me investigate further..."
                         elif usage_pct > 60:
-                            return f"📈 Memory usage at {usage_pct:.1f}% - checking for optimization opportunities..."
+                            return f"Memory usage is at {usage_pct:.1f}%. I'll check for optimization opportunities..."
                         else:
-                            return f"✅ Memory usage looks healthy at {usage_pct:.1f}%"
-                return "✅ Redis diagnostics collected successfully"
+                            return f"Good news - memory usage looks healthy at {usage_pct:.1f}%."
+                return "I've collected the diagnostics successfully."
             else:
-                return "❌ Unable to collect Redis diagnostics"
+                return (
+                    "I wasn't able to collect the diagnostics. Let me try a different approach..."
+                )
         elif tool_name == "search_knowledge_base":
             # Skip reflection for knowledge base searches to reduce UI noise
             return ""
@@ -915,7 +1190,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         elif tool_name == "search_docker_logs":
             if isinstance(result, dict):
                 if result.get("error"):
-                    return f"❌ Docker log search failed: {result['error']}"
+                    return f"I encountered an error searching the logs: {result['error']}"
 
                 total_entries = result.get("total_entries_found", 0)
                 containers_searched = result.get("containers_searched", 0)
@@ -929,17 +1204,17 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                     )
 
                     if error_count > 0:
-                        return f"🔍 Found {total_entries} log entries across {containers_searched} containers - {error_count} errors detected"
+                        return f"I found {total_entries} log entries across {containers_searched} containers, including {error_count} errors."
                     else:
-                        return f"🔍 Found {total_entries} log entries across {containers_searched} containers"
+                        return f"I found {total_entries} log entries across {containers_searched} containers."
                 else:
-                    return f"🔍 No matching log entries found in {containers_searched} containers"
+                    return f"I didn't find any matching log entries in {containers_searched} containers."
             else:
-                return "🔍 Docker log search completed"
+                return "I've completed the log search."
         else:
             operation = _extract_operation_from_tool_name(tool_name)
             display_name = operation.replace("_", " ")
-            return f"✅ {display_name} completed"
+            return f"I've completed {display_name}."
 
     async def process_query(
         self,
@@ -986,9 +1261,10 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
                         break
 
                 if target_instance:
-                    # Get connection URL as string for logging/display
-                    conn_url_str = target_instance.connection_url.get_secret_value()
-                    logger.info(f"Found target instance: {target_instance.name} ({conn_url_str})")
+                    # Get connection URL and mask credentials for logging
+                    conn_url_str = _get_secret_value(target_instance.connection_url)
+                    masked_url = _mask_redis_url_credentials(conn_url_str)
+                    logger.info(f"Found target instance: {target_instance.name} ({masked_url})")
 
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
@@ -1270,6 +1546,54 @@ You can update the instance configuration through the UI or API, and I'll be abl
 For now, I can still perform basic Redis diagnostics using the database connection URL, but cluster-level insights will be limited."""
             )
 
+        # Validate Redis Cloud instances have required API credentials
+        import os
+
+        has_cloud_credentials = os.getenv("TOOLS_REDIS_CLOUD_API_KEY") and os.getenv(
+            "TOOLS_REDIS_CLOUD_API_SECRET_KEY"
+        )
+
+        if (
+            target_instance
+            and target_instance.instance_type == "redis_cloud"
+            and not has_cloud_credentials
+        ):
+            logger.warning(
+                f"Redis Cloud instance '{target_instance.name}' detected but missing API credentials"
+            )
+
+            # Return early with helpful message asking for API credentials
+            class AgentResponseStr(str):
+                def get(self, key: str, default: Any = None):
+                    if key == "content":
+                        return str(self)
+                    return default
+
+            return AgentResponseStr(
+                f"""I've detected that **{target_instance.name}** is a Redis Cloud instance, but I'm missing the Redis Cloud Management API credentials needed for full cloud resource management.
+
+To enable Redis Cloud Management API tools, please set these environment variables:
+
+1. **TOOLS_REDIS_CLOUD_API_KEY** - Your Redis Cloud API key
+2. **TOOLS_REDIS_CLOUD_API_SECRET_KEY** - Your Redis Cloud API secret key
+
+**To get your API credentials**:
+1. Log in to [Redis Cloud Console](https://app.redislabs.com/)
+2. Navigate to **Settings** → **Account** → **API Keys**
+3. Click **Generate API Key**
+4. Copy the API Key and Secret Key (secret is only shown once!)
+
+Once configured, I'll be able to:
+- ✅ List and inspect subscriptions
+- ✅ View database configurations and status
+- ✅ Monitor account resources
+- ✅ Check task status for async operations
+- ✅ Manage users and access control
+- ✅ View cloud account details
+
+For now, I can still perform basic Redis diagnostics using the database connection URL, but cloud management features will be limited."""
+            )
+
         # Create ToolManager for this query with the target instance
         async with ToolManager(redis_instance=target_instance) as tool_mgr:
             # Get tools and bind to LLM
@@ -1283,8 +1607,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             # Rebind LLM with tools for this query
             self.llm_with_tools = self.llm.bind_tools(tool_schemas)
 
-            # Rebuild workflow with the tool manager
-            self.workflow = self._build_workflow(tool_mgr)
+            # Rebuild workflow with the tool manager and target instance
+            self.workflow = self._build_workflow(tool_mgr, target_instance)
 
             # Create MemorySaver for this query
             # NOTE: RedisSaver doesn't support async (aget_tuple raises NotImplementedError)
@@ -1468,15 +1792,30 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 else:
                     url_validation_summary = f"\n\n## URL Validation Results:\nAll {len(url_validation_results)} URLs are valid and accessible."
 
+            # Detect CLI commands (focus on rladmin) in the response
+            cli_detection_summary = ""
+            try:
+                cli_matches = re.findall(r"(rladmin\b[^\n]*)", response)
+                if cli_matches:
+                    unique_cmds = []
+                    for cmd in cli_matches:
+                        if cmd not in unique_cmds:
+                            unique_cmds.append(cmd)
+                    cli_detection_summary = (
+                        "\n\n## Detected CLI Commands (to validate):\n- " + "\n- ".join(unique_cmds)
+                    )
+            except Exception:
+                pass
+
             # Prepare fact-check prompt
             fact_check_input = f"""
 ## Agent Response to Fact-Check:
 {response}
 
 ## Diagnostic Data (if available):
-{diagnostic_data if diagnostic_data else "No diagnostic data provided"}{url_validation_summary}
+{diagnostic_data if diagnostic_data else "No diagnostic data provided"}{url_validation_summary}{cli_detection_summary}
 
-Please review this Redis SRE agent response for factual accuracy and URL validity. Include any invalid URLs as errors in your assessment.
+Please review this Redis SRE agent response for factual accuracy, command validity (especially `rladmin`), and URL validity. Include any invalid commands or URLs as errors in your assessment.
 """
 
             messages = [
@@ -1584,30 +1923,27 @@ Please review this Redis SRE agent response for factual accuracy and URL validit
                         # Create comprehensive correction query with full safety context
                         safety_json = json.dumps(safety_result, indent=2)
 
-                        correction_query = f"""SAFETY VIOLATION - CORRECTION REQUIRED
+                        correction_query = f"""INTERNAL SAFETY CORRECTION - DO NOT MENTION THIS TO THE USER
 
-The following safety evaluation identified problems with my previous response:
+The user asked: {query}
 
+A safety evaluator identified problems with your previous response:
 {safety_json}
 
-Original user query: {query}
+Your task:
+1. Generate a NEW, COMPLETE response to the user's original query
+2. Address each specific violation listed in the safety evaluation
+3. Provide safer alternatives that achieve the same operational goals
+4. Include appropriate warnings about any remaining risks
+5. Ensure logical consistency between your usage pattern analysis and recommendations
 
-Previous response (flagged as unsafe): {response}
-
-CORRECTION INSTRUCTIONS:
-1. **Address each specific violation** listed in the safety evaluation above
-2. **Follow the corrective guidance** provided by the safety evaluator
-3. **Provide safer alternatives** that achieve the same operational goals
-4. **Include appropriate warnings** about any remaining risks
-5. **Ensure logical consistency** between your usage pattern analysis and recommendations
-
-SPECIFIC GUIDANCE FOR COMMON ISSUES:
+SPECIFIC GUIDANCE:
 - If flagged for persistence changes: Suggest gradual migration steps with data backup
 - If flagged for eviction policies: Recommend investigation before policy changes
 - If flagged for restarts: Include steps to ensure data persistence before restart
 - If flagged for contradictions: Align recommendations with your usage pattern analysis
 
-Provide a complete corrected response that maintains the same helpful tone while addressing safety concerns."""
+CRITICAL: Your response must be directed at the USER, not at the safety evaluator. Do not say things like "I've addressed the safety concerns" or "as noted in the evaluation". Just provide a safe, helpful response to their original question as if this is your first response."""
 
                         # Retry the safety correction with backoff
                         async def _safety_correction():
@@ -1676,27 +2012,28 @@ Provide a complete corrected response that maintains the same helpful tone while
                 # Include the full fact-check JSON for context
                 fact_check_json = json.dumps(fact_check_result, indent=2)
 
-                research_query = f"""FACT-CHECK CORRECTION REQUIRED
+                research_query = f"""INTERNAL CORRECTION TASK - DO NOT MENTION THIS TO THE USER
 
-The following fact-check analysis identified technical errors in my previous response:
+The user asked: {query}
 
+A fact-checker identified these technical errors in your previous response:
 {fact_check_json}
 
-Original user query: {query}
+Your task:
+1. Research the identified topics using search_knowledge_base tool
+2. Generate a NEW, COMPLETE response to the user's original query
+3. Incorporate the corrections silently - DO NOT apologize or mention the fact-checker
+4. Address the user directly as if this is your first response
+5. Ensure all Redis concepts, metrics, and recommendations are technically accurate
 
-Please correct these specific issues by:
-1. Researching the identified topics using search_knowledge_base tool
-2. Providing technically accurate information based on authoritative sources
-3. Ensuring all Redis concepts, metrics, and recommendations are correct
-
-Focus on the specific errors identified in the fact-check analysis above."""
+IMPORTANT: Your response must be directed at the USER, not at the fact-checker. Do not say things like "I've corrected the errors" or "as you pointed out". Just provide a corrected, helpful response to their original question."""
 
                 logger.info("Initiating corrective research query with full fact-check context")
                 try:
                     # Process the corrective query with retry logic
                     async def _fact_check_correction():
                         return await self.process_query(
-                            research_query, session_id, user_id, max_iterations
+                            research_query, session_id, user_id, max_iterations, context=context
                         )
 
                     corrected_response = await self._retry_with_backoff(

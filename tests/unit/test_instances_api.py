@@ -397,6 +397,9 @@ class TestRedisStorageHelpers:
     @pytest.mark.asyncio
     async def test_save_instances_to_redis_success(self):
         """Test saving instances successfully."""
+        import base64
+        import os
+
         from redis_sre_agent.api.instances import RedisInstance, save_instances_to_redis
 
         instance = RedisInstance(
@@ -409,7 +412,12 @@ class TestRedisStorageHelpers:
             created_by="user",
         )
 
-        with patch("redis_sre_agent.api.instances.get_redis_client") as mock_client:
+        # Set test master key
+        test_key = base64.b64encode(os.urandom(32)).decode()
+        with (
+            patch("redis_sre_agent.api.instances.get_redis_client") as mock_client,
+            patch.dict(os.environ, {"REDIS_SRE_MASTER_KEY": test_key}),
+        ):
             mock_redis = AsyncMock()
             mock_redis.set = AsyncMock(return_value=True)
             mock_client.return_value = mock_redis
@@ -422,6 +430,9 @@ class TestRedisStorageHelpers:
     @pytest.mark.asyncio
     async def test_save_instances_to_redis_error(self):
         """Test saving instances when Redis raises an error."""
+        import base64
+        import os
+
         from redis_sre_agent.api.instances import RedisInstance, save_instances_to_redis
 
         instance = RedisInstance(
@@ -434,7 +445,12 @@ class TestRedisStorageHelpers:
             created_by="user",
         )
 
-        with patch("redis_sre_agent.api.instances.get_redis_client") as mock_client:
+        # Set test master key
+        test_key = base64.b64encode(os.urandom(32)).decode()
+        with (
+            patch("redis_sre_agent.api.instances.get_redis_client") as mock_client,
+            patch.dict(os.environ, {"REDIS_SRE_MASTER_KEY": test_key}),
+        ):
             mock_redis = AsyncMock()
             mock_redis.set = AsyncMock(side_effect=Exception("Redis error"))
             mock_client.return_value = mock_redis

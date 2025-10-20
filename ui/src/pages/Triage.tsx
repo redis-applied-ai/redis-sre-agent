@@ -60,6 +60,7 @@ interface ChatThread {
   subject: string;
   isScheduled?: boolean;
   instanceId?: string;
+  instanceName?: string;
 }
 
 const Triage = () => {
@@ -80,6 +81,12 @@ const Triage = () => {
   const [instances, setInstances] = useState<RedisInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   const [isThinking, setIsThinking] = useState(false);
+  const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
+  const [isThreadBusy, setIsThreadBusy] = useState(false);
+
+  const [liveModeLocked, setLiveModeLocked] = useState(false);
+
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingIntervalRef = useRef<number | null>(null);
 
@@ -209,6 +216,8 @@ const Triage = () => {
             status: task.status,
             isScheduled: isScheduled,
             instanceId: task.context?.instance_id,
+            // Only set instanceName when provided; do not default to General Q&A here
+            instanceName: task.context?.instance_name,
           };
         });
 
@@ -385,6 +394,22 @@ const Triage = () => {
     }
   };
 
+  const handleStop = async () => {
+    if (!activeThreadId) return;
+    try {
+      await sreAgentApi.cancelTask(activeThreadId);
+      setIsThreadBusy(false);
+      setLiveModeLocked(false);
+      setShowWebSocketMonitor(false);
+      // Refresh thread list and reload current thread transcript
+      await loadThreads();
+      await selectThread(activeThreadId);
+    } catch (err) {
+      console.error('Failed to cancel task:', err);
+      setError(`Failed to stop: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
   const createNewThread = async () => {
     // Clear current conversation and prepare for new one
     // Don't create placeholder threads - just clear the UI state
@@ -414,12 +439,18 @@ const Triage = () => {
       pollingIntervalRef.current = null;
     }
 
+    // Determine if thread is likely active from sidebar data to avoid initial flip
+    const sidebarThread = threads.find(t => t.id === threadId);
+    const sidebarActive = sidebarThread ? ['queued','in_progress','running'].includes(sidebarThread.status as any) : false;
+
+    // Reset state and optimistically set live view based on sidebar status
     setActiveThreadId(threadId);
     setMessages([]);
     setError('');
     setIsPolling(false);
     setShowNewConversation(false);
-    setShowWebSocketMonitor(false); // Reset WebSocket monitor state
+    setLiveModeLocked(sidebarActive);
+    setShowWebSocketMonitor(sidebarActive);
 
     // On mobile only, switch to chat view
     if (window.innerWidth < 768) { // md breakpoint
@@ -546,17 +577,20 @@ const Triage = () => {
       console.log('Processed messages:', newMessages);
       setMessages(newMessages);
 
-      // Show WebSocket monitor for active tasks, traditional chat for completed ones
-      if (status.status === 'in_progress') {
-        setShowWebSocketMonitor(true);
-      } else {
-        setShowWebSocketMonitor(false);
-        // For completed tasks, we already have the messages loaded above
+      // Determine busy/live state and UI mode
+      const activeStatuses = ['queued', 'in_progress', 'running'];
+      const isActive = activeStatuses.includes(status.status as any);
+      setIsThreadBusy(isActive);
+
+      // Only change view mode if not locked (prevents flicker during follow-ups)
+      if (!liveModeLocked) {
+        setShowWebSocketMonitor(isActive);
       }
 
     } catch (err) {
       console.warn('Could not load thread status:', err);
       // Continue with empty messages - this is expected for new threads
+      setIsThreadBusy(false);
     }
   };
 
@@ -579,6 +613,12 @@ const Triage = () => {
     try {
       let threadId = activeThreadId;
 
+      // Block sending if the thread is busy (user should press Stop)
+      if (activeThreadId && isThreadBusy) {
+        setIsLoading(false);
+        return;
+      }
+
       // If no active thread, create a new one
       if (!activeThreadId) {
         const triageResponse = await sreAgentApi.startNewConversation(
@@ -594,10 +634,13 @@ const Triage = () => {
         setActiveThreadId(threadId);
         setShowNewConversation(false);
 
-        // Store the initial query for WebSocket display
+        // Store the initial query for WebSocket display and show live monitor
         sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
+        setShowWebSocketMonitor(true);
+        setIsThreadBusy(true);
 
         // Add new thread to the list
+        const resolvedInstanceName = selectedInstanceId ? (instances.find(i => i.id === selectedInstanceId)?.name || undefined) : undefined;
         const newThread: ChatThread = {
           id: threadId,
           name: messageContent.substring(0, 30) + (messageContent.length > 30 ? '...' : ''),
@@ -606,12 +649,18 @@ const Triage = () => {
           timestamp: new Date().toISOString(),
           messageCount: 1,
           status: 'queued',
+          instanceId: selectedInstanceId || undefined,
+          instanceName: resolvedInstanceName,
         };
         setThreads(prev => [newThread, ...prev]);
 
       } else {
-        // Continue existing conversation
+        // Continue existing conversation: switch to live WebSocket monitor
         await sreAgentApi.continueConversation(threadId!, messageContent, userId);
+        sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
+        setShowWebSocketMonitor(true);
+        setIsThreadBusy(true);
+        setLiveModeLocked(true);
       }
 
       // WebSocket will handle updates - reset loading state after API call succeeds
@@ -769,12 +818,14 @@ const Triage = () => {
                   onClick={() => selectThread(thread.id)}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className="flex flex-col gap-1 flex-1 min-w-0">
                       <div className={`font-medium text-redis-sm truncate ${
                         activeThreadId === thread.id ? 'text-white' : 'text-foreground'
                       }`}>
                         {thread.name}
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
                       {thread.isScheduled && (
                         <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
                           activeThreadId === thread.id
@@ -807,10 +858,18 @@ const Triage = () => {
                   }`}>
                     {thread.lastMessage}
                   </div>
-                  <div className={`text-redis-xs mt-1 ${
+                  <div className={`text-redis-xs mt-1 flex items-center gap-2 ${
                     activeThreadId === thread.id ? 'text-blue-200' : 'text-redis-dusk-05'
                   }`}>
-                    {formatTimestamp(thread.timestamp)} • {thread.messageCount} messages
+                    <span>{formatTimestamp(thread.timestamp)}</span>
+                    <span>•</span>
+                    <span>{thread.messageCount} messages</span>
+                    <>
+                      <span>•</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 max-w-[140px] truncate">
+                        {thread.instanceName || (instances.find(i => i.id === thread.instanceId)?.name) || 'General Q&A'}
+                      </span>
+                    </>
                   </div>
                 </div>
               ))}
@@ -847,12 +906,94 @@ const Triage = () => {
                 </div>
               )}
 
-              {/* WebSocket Chat Interface */}
+              {/* Chat Content Area: WebSocket monitor for live threads, static transcript for completed */}
               <CardContent className="flex-1 overflow-hidden">
-                <TaskMonitor
-                  threadId={activeThreadId}
-                  initialQuery={sessionStorage.getItem(`thread-${activeThreadId}-query`) || undefined}
-                />
+                {showWebSocketMonitor ? (
+                  <TaskMonitor
+                    threadId={activeThreadId}
+                    initialQuery={sessionStorage.getItem(`thread-${activeThreadId}-query`) || undefined}
+                    onStatusChange={(status) => {
+                      const active = ['queued','in_progress','running'].includes(status as any);
+                      setIsThreadBusy(active);
+                      // Only ever turn ON live view from status; do not turn OFF here
+                      if (active) {
+                        setShowWebSocketMonitor(true);
+                        setLiveModeLocked(true);
+                      }
+                    }}
+                    onCompleted={async () => {
+                      setIsThreadBusy(false);
+                      setLiveModeLocked(false);
+                      setShowWebSocketMonitor(false);
+                      await loadThreads();
+                      if (activeThreadId) {
+                        await selectThread(activeThreadId);
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="h-full overflow-y-auto p-4 space-y-4">
+                    {messages.length === 0 ? (
+                      <div className="text-redis-sm text-redis-dusk-04">No messages yet for this conversation.</div>
+                    ) : (
+                      messages.map((msg) => (
+                        <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div
+                            className={`max-w-[80%] rounded-redis-md px-3 py-2 whitespace-pre-wrap break-words ${
+                              msg.role === 'user'
+                                ? 'bg-redis-blue-03 text-white text-redis-sm'
+                                : msg.role === 'assistant'
+                                ? 'bg-redis-dusk-09 text-foreground'
+                                : msg.role === 'tool'
+                                ? 'bg-amber-50 text-amber-900 border border-amber-200 text-redis-sm'
+                                : 'bg-redis-dusk-09 text-redis-dusk-03 text-redis-sm'
+                            }`}
+                            title={new Date(msg.timestamp).toLocaleString()}
+                          >
+                            {msg.role === 'assistant' ? (
+                              <div className="markdown-content text-redis-sm leading-[1.35]">
+                                <ReactMarkdown
+                                  components={{
+                                    // Use CSS to control spacing; avoid Tailwind margin/space-y utilities here
+                                    h1: ({children}) => <h1>{children}</h1>,
+                                    h2: ({children}) => <h2>{children}</h2>,
+                                    h3: ({children}) => <h3>{children}</h3>,
+                                    p: ({children}) => <p>{children}</p>,
+                                    ul: ({children}) => <ul>{children}</ul>,
+                                    ol: ({children}) => <ol>{children}</ol>,
+                                    li: ({children}) => <li>{children}</li>,
+                                    code: ({children, ...props}) => {
+                                      const isInline = !props.className?.includes('language-');
+                                      return isInline ?
+                                        <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">{children}</code> :
+                                        <code className="block bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap">{children}</code>;
+                                    },
+                                    pre: ({children}) => <pre className="bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap overflow-x-auto">{children}</pre>,
+                                    strong: ({children}) => <strong className="font-semibold text-foreground">{children}</strong>,
+                                    blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-3 italic text-redis-sm">{children}</blockquote>,
+                                  }}
+                                >
+                                  {msg.content}
+                                </ReactMarkdown>
+                              </div>
+                            ) : (
+                              <div className="text-redis-sm">{msg.content}</div>
+                            )}
+                            {msg.toolCall && (
+                              <div className="mt-2 text-redis-xs opacity-80">
+                                Tool: {msg.toolCall.name}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {isThreadBusy && (
+                      <div className="text-redis-xs text-redis-dusk-04">Task is running. Press Stop to cancel before sending a new message.</div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
+                )}
               </CardContent>
 
               {/* Input Area for Follow-up Messages */}
@@ -867,17 +1008,29 @@ const Triage = () => {
                     rows={2}
                     disabled={isLoading || agentStatus !== 'available'}
                   />
-                  <Button
-                    variant="primary"
-                    onClick={sendMessage}
-                    disabled={!inputMessage.trim() || isLoading || agentStatus !== 'available'}
-                    className="self-end"
-                  >
-                    {isLoading ? <Loader size="sm" /> : 'Send'}
-                  </Button>
+                  {isThreadBusy ? (
+                    <Button
+                      variant="destructive"
+                      onClick={handleStop}
+                      className="self-end"
+                    >
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      onClick={sendMessage}
+                      disabled={!inputMessage.trim() || isLoading || agentStatus !== 'available'}
+                      className="self-end"
+                    >
+                      {isLoading ? <Loader size="sm" /> : 'Send'}
+                    </Button>
+                  )}
                 </div>
                 <div className="text-redis-xs text-redis-dusk-04 mt-2">
-                  {agentStatus === 'available'
+                  {isThreadBusy
+                    ? 'Task is running — press Stop to cancel before sending a new message.'
+                    : agentStatus === 'available'
                     ? 'Press Enter to send, Shift+Enter for new line'
                     : 'Agent is currently unavailable'}
                 </div>

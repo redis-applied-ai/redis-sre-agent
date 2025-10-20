@@ -197,12 +197,20 @@ async def test_instance_context_passed_to_agent(thread_manager, async_redis_clie
     )
 
     instance_key = RedisKeys.instance(test_instance.id)
+    # Extract secret value from SecretStr for Redis storage
+    from pydantic import SecretStr
+
+    connection_url_value = (
+        test_instance.connection_url.get_secret_value()
+        if isinstance(test_instance.connection_url, SecretStr)
+        else test_instance.connection_url
+    )
     await async_redis_client.hset(
         instance_key,
         mapping={
             "id": test_instance.id,
             "name": test_instance.name,
-            "connection_url": test_instance.connection_url,
+            "connection_url": connection_url_value,
             "environment": test_instance.environment,
             "usage": test_instance.usage,
             "description": test_instance.description,

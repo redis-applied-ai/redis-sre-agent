@@ -49,7 +49,7 @@ async def main():
             docket_name="sre_docket",
             url=redis_url,
             concurrency=2,  # Allow 2 concurrent SRE tasks
-            redelivery_timeout=timedelta(seconds=120),  # 2 minute timeout for SRE tasks
+            redelivery_timeout=timedelta(seconds=settings.task_timeout),  # Use configured timeout
             tasks=["redis_sre_agent.core.tasks:SRE_TASK_COLLECTION"],
         )
     except Exception as e:

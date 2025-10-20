@@ -23,6 +23,8 @@ services:
       - "7844:6379"  # Demo/testing Redis
     volumes:
       - redis_demo_data:/data
+    labels:
+      - "logging=true"  # Collected by promtail for Loki
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -139,16 +141,16 @@ services:
       - redis-enterprise-node1
     entrypoint: ["tail", "-f", "/dev/null"]
 
-  # Redis Exporter for Prometheus metrics
+  # Redis Exporter for Redis demo metrics
   redis-exporter:
     image: oliver006/redis_exporter:latest
     ports:
       - "9121:9121"
     environment:
-      - REDIS_ADDR=redis://redis:6379
+      - REDIS_ADDR=redis://redis-demo:6379
       - REDIS_EXPORTER_LOG_FORMAT=txt
     depends_on:
-      redis:
+      redis-demo:
         condition: service_healthy
     networks:
       - sre-network
@@ -184,6 +186,7 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
+      - loki
     networks:
       - sre-network
 
@@ -213,7 +216,7 @@ services:
       - "8000:8000"
     environment:
       - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
-      - PROMETHEUS_URL=http://prometheus:9090
+      - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - GRAFANA_URL=http://grafana:3000
     depends_on:
       redis:
@@ -225,7 +228,7 @@ services:
       - ./artifacts:/app/artifacts  # For data pipeline
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
-    command: uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload --log-config logging_config.yaml
+    command: uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - sre-network
 
@@ -236,7 +239,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
-      - PROMETHEUS_URL=http://prometheus:9090
+      - TOOLS_PROMETHEUS_URL=http://prometheus:9090
     depends_on:
       redis:
         condition: service_healthy
@@ -272,6 +275,33 @@ services:
     networks:
       - sre-network
 
+
+  # Loki - Log aggregation
+  loki:
+    image: grafana/loki:3.5.0
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+      - ./monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+    networks:
+      - sre-network
+
+  # Promtail - Log shipping to Loki
+  promtail:
+    image: grafana/promtail:3.5.0
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./monitoring/loki/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - loki
+    networks:
+      - sre-network
+
 networks:
   sre-network:
     driver: bridge
@@ -287,3 +317,4 @@ volumes:
   redis_enterprise_node3_data:
   prometheus_data:
   grafana_data:
+  loki_data:

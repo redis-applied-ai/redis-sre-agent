@@ -55,7 +55,7 @@ def provider(redis_instance, config):
 @pytest.mark.asyncio
 async def test_provider_initialization(provider, config, redis_instance):
     """Test provider initialization."""
-    assert provider.provider_name == "redis_enterprise_admin"
+    assert provider.provider_name == "re_admin"  # Shortened to avoid OpenAI 64-char tool name limit
     assert provider.config == config
     assert provider.redis_instance == redis_instance
     assert provider._client is None
@@ -97,7 +97,7 @@ async def test_create_tool_schemas(provider):
 
     # All tools should have the provider name and hash
     for name in tool_names:
-        assert name.startswith("redis_enterprise_admin_")
+        assert name.startswith("re_admin_")  # Shortened provider name
 
     # Check for specific tools
     assert any("cluster" in name and "info" in name for name in tool_names)
@@ -359,7 +359,7 @@ async def test_resolve_tool_call(provider):
     with patch.object(provider, "get_cluster_info") as mock_method:
         mock_method.return_value = {"status": "success", "data": {}}
 
-        tool_name = f"redis_enterprise_admin_{provider._instance_hash}_get_cluster_info"
+        tool_name = f"re_admin_{provider._instance_hash}_get_cluster_info"
         result = await provider.resolve_tool_call(tool_name, {})
 
         assert result["status"] == "success"
@@ -369,7 +369,7 @@ async def test_resolve_tool_call(provider):
 @pytest.mark.asyncio
 async def test_resolve_tool_call_unknown_operation(provider):
     """Test tool call resolution with unknown operation."""
-    tool_name = f"redis_enterprise_admin_{provider._instance_hash}_unknown_operation"
+    tool_name = f"re_admin_{provider._instance_hash}_unknown_operation"
 
     with pytest.raises(ValueError, match="Unknown operation"):
         await provider.resolve_tool_call(tool_name, {})

@@ -112,7 +112,24 @@ class ToolManager:
                 logger.info("OSS Single instance detected (using standard Redis CLI tools)")
 
             elif instance_type == "redis_cloud":
-                logger.info("Redis Cloud instance detected (using standard Redis CLI tools)")
+                # Load Redis Cloud Management API provider if credentials are available
+                import os
+
+                has_cloud_credentials = os.getenv("TOOLS_REDIS_CLOUD_API_KEY") and os.getenv(
+                    "TOOLS_REDIS_CLOUD_API_SECRET_KEY"
+                )
+
+                if has_cloud_credentials:
+                    logger.info("Loading Redis Cloud Management API provider")
+                    await self._load_provider(
+                        "redis_sre_agent.tools.cloud.redis_cloud.provider.RedisCloudToolProvider"
+                    )
+                else:
+                    logger.warning(
+                        f"Redis Cloud instance '{self.redis_instance.name}' detected but no API credentials configured. "
+                        "Set TOOLS_REDIS_CLOUD_API_KEY and TOOLS_REDIS_CLOUD_API_SECRET_KEY environment variables "
+                        "to enable Redis Cloud Management API tools. Using standard Redis CLI tools only."
+                    )
 
             else:
                 logger.info(
@@ -183,6 +200,17 @@ class ToolManager:
             List of ToolDefinition objects for LLM binding
         """
         return self._tools
+
+    def get_status_update(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Return a provider-supplied status update for a tool call, if available."""
+        provider = self._routing_table.get(tool_name)
+        if not provider:
+            return None
+        try:
+            return provider.get_status_update(tool_name, args)
+        except Exception:
+            logger.exception("Provider.get_status_update failed")
+            return None
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Route tool call to appropriate provider.

@@ -37,7 +37,7 @@ async def test_create_tool_schemas(redis_url):
     async with RedisCliToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
 
-        assert len(schemas) == 13  # All 13 diagnostic tools (10 original + 3 new)
+        assert len(schemas) == 11  # All 11 diagnostic tools
 
         # Check tool names
         tool_names = [schema.name for schema in schemas]
@@ -46,8 +46,7 @@ async def test_create_tool_schemas(redis_url):
         assert any("acl_log" in name for name in tool_names)
         assert any("config_get" in name for name in tool_names)
         assert any("client_list" in name for name in tool_names)
-        assert any("memory_doctor" in name for name in tool_names)
-        assert any("latency_doctor" in name for name in tool_names)
+        # NOTE: memory_doctor and latency_doctor removed (not available in Redis Cloud)
         assert any("sample_keys" in name for name in tool_names)
         assert any("search_indexes" in name for name in tool_names)
         assert any("search_index_info" in name for name in tool_names)

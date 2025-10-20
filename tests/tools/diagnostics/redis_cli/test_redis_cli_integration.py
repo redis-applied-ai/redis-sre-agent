@@ -56,8 +56,8 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
 
             # Check for Redis CLI tools
             redis_cli_tools = [n for n in tool_names if "redis_cli" in n]
-            assert len(redis_cli_tools) == 10, (
-                f"Expected 10 Redis CLI tools, got {len(redis_cli_tools)}"
+            assert len(redis_cli_tools) == 11, (
+                f"Expected 11 Redis CLI tools, got {len(redis_cli_tools)}"
             )
 
             # Check for specific tools
@@ -66,8 +66,7 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
             assert any("acl_log" in n for n in redis_cli_tools)
             assert any("config_get" in n for n in redis_cli_tools)
             assert any("client_list" in n for n in redis_cli_tools)
-            assert any("memory_doctor" in n for n in redis_cli_tools)
-            assert any("latency_doctor" in n for n in redis_cli_tools)
+            # NOTE: memory_doctor and latency_doctor removed (not available in Redis Cloud)
             assert any("cluster_info" in n for n in redis_cli_tools)
             assert any("replication_info" in n for n in redis_cli_tools)
             assert any("memory_stats" in n for n in redis_cli_tools)
@@ -156,7 +155,7 @@ async def test_redis_cli_with_redis_instance(redis_url):
 
             # Tools should be scoped to the Redis instance
             redis_cli_tools = [t for t in tools if "redis_cli" in t.name]
-            assert len(redis_cli_tools) == 10
+            assert len(redis_cli_tools) == 11
 
             # Tool names should include instance hash
             tool_name = redis_cli_tools[0].name
@@ -215,7 +214,7 @@ async def test_multiple_providers_coexist(redis_url, monkeypatch):
 
             assert len(knowledge_tools) > 0, "Knowledge base tools should be loaded"
             assert len(prometheus_tools) == 3, "Prometheus tools should be loaded"
-            assert len(redis_cli_tools) == 10, "Redis CLI tools should be loaded"
+            assert len(redis_cli_tools) == 11, "Redis CLI tools should be loaded"
 
     finally:
         config_module.settings = original_settings
