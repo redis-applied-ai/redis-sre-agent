@@ -13,6 +13,8 @@ from redis_sre_agent.api.metrics import router as metrics_router
 from redis_sre_agent.api.middleware import setup_middleware
 from redis_sre_agent.api.schedules import router as schedules_router
 from redis_sre_agent.api.tasks import router as tasks_router
+from redis_sre_agent.api.tasks_v2 import router as tasks_v2_router
+from redis_sre_agent.api.threads_v2 import router as threads_v2_router
 from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import cleanup_redis_connections, initialize_redis_infrastructure
@@ -116,6 +118,9 @@ app.include_router(health_router, prefix="/api/v1", tags=["Health"])
 app.include_router(metrics_router, prefix="/api/v1", tags=["Metrics"])
 app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
 app.include_router(knowledge_router, tags=["Knowledge"])
+app.include_router(threads_v2_router, prefix="/api/v2", tags=["Threads"])
+app.include_router(tasks_v2_router, prefix="/api/v2", tags=["Tasks"])
+
 app.include_router(schedules_router, tags=["Schedules"])
 app.include_router(tasks_router, prefix="/api/v1", tags=["Tasks"])
 app.include_router(websockets_router, prefix="/api/v1", tags=["WebSockets"])

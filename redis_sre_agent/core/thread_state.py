@@ -648,6 +648,38 @@ Subject:"""
             logger.error(f"Failed to update context for thread {thread_id}: {e}")
             return False
 
+    async def append_messages(self, thread_id: str, messages: List[Dict[str, Any]]) -> bool:
+        """Append messages to a thread's message list in context.
+
+        This treats context["messages"] as a JSON-serializable list of {role, content, ...} dicts.
+        """
+        try:
+            # Load existing messages from thread state
+            state = await self.get_thread_state(thread_id)
+            existing = []
+            if state and isinstance(state.context.get("messages"), list):
+                existing = state.context.get("messages")
+
+            # Append new messages, minimal validation
+            for m in messages or []:
+                if not isinstance(m, dict):
+                    continue
+                role = m.get("role")
+                content = m.get("content")
+                if not content:
+                    continue
+                if role not in ("user", "assistant", "system", None):
+                    role = "user"
+                existing.append(
+                    {k: v for k, v in m.items() if k in ("role", "content", "metadata") or True}
+                )
+
+            # Save back to context
+            return await self.update_thread_context(thread_id, {"messages": existing}, merge=True)
+        except Exception as e:
+            logger.error(f"Failed to append messages for thread {thread_id}: {e}")
+            return False
+
     async def _save_thread_state(self, thread_state: ThreadState) -> bool:
         """Save complete thread state to Redis."""
         try:

@@ -377,6 +377,7 @@ async def process_agent_turn(
     thread_id: str,
     message: str,
     context: Optional[Dict[str, Any]] = None,
+    task_id: Optional[str] = None,
     concurrency: ConcurrencyLimit = ConcurrencyLimit(
         "thread_id", max_concurrent=1, scope="thread_turns"
     ),
@@ -406,11 +407,12 @@ async def process_agent_turn(
         # Get current thread state
         thread_state = await thread_manager.get_thread_state(thread_id)
 
-        # Create a per-turn task record associated with this thread
+        # Create or use a per-turn task record associated with this thread
         task_manager = TaskManager(redis_client=redis_client)
-        task_id = await task_manager.create_task(
-            thread_id=thread_id, user_id=thread_state.metadata.user_id if thread_state else None
-        )
+        if task_id is None:
+            task_id = await task_manager.create_task(
+                thread_id=thread_id, user_id=thread_state.metadata.user_id if thread_state else None
+            )
         await task_manager.update_task_status(task_id, ThreadStatus.IN_PROGRESS)
         await thread_manager.add_thread_update(thread_id, f"Started task {task_id}", "task_start")
         if not thread_state:
@@ -659,6 +661,8 @@ async def process_agent_turn(
             "response": agent_response.get("response", ""),
             "action_items": action_items,
             "metadata": agent_response.get("metadata", {}),
+            "thread_id": thread_id,
+            "task_id": task_id,
             "turn_completed_at": datetime.now(timezone.utc).isoformat(),
         }
 
