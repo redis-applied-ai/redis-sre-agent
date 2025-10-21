@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from ..core.tasks import search_knowledge_base
+from ..core.docket_tasks import search_knowledge_base
 from ..pipelines.orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ async def search_knowledge_post(request: SearchRequest):
 async def ingest_single_document(request: DocumentIngestionRequest):
     """Ingest a single document into the knowledge base."""
     try:
-        from ..core.tasks import ingest_sre_document
+        from ..core.docket_tasks import ingest_sre_document
 
         logger.info(f"Ingesting single document: {request.title}")
 

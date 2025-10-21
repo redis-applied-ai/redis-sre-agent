@@ -32,12 +32,15 @@ from typing import Optional
 
 import redis
 
-from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.api.instances import (
     RedisInstance,
     get_instances_from_redis,
     save_instances_to_redis,
 )
+from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.task_state import TaskManager
+from redis_sre_agent.core.thread_state import ThreadStatus
+from redis_sre_agent.models.tasks import create_task
 
 DEMO_PORT = 7844
 
@@ -171,6 +174,80 @@ class RedisSREDemo:
         except Exception as e:
             print(f"⚠️  Warning: Could not register demo instance: {e}")
             print("   The agent may not be able to connect to the demo instance in UI mode.")
+
+    async def _register_enterprise_instance(
+        self,
+        *,
+        name: str = "Redis Enterprise Demo",
+        # IMPORTANT: Use docker-compose service DNS so containers can reach it
+        connection_url: str = "redis://redis-enterprise-node1:12000/0",
+        admin_url: str = "https://redis-enterprise-node1:9443",
+        admin_username: str = "admin@redis.com",
+        admin_password: str = "admin",
+    ):
+        """Register or update a Redis Enterprise instance for agent use.
+
+        Ensures the agent has an instance with admin API credentials for
+        cluster/node/database status tools.
+        """
+        try:
+            instances = await get_instances_from_redis()
+
+            # Look for existing by name or matching Enterprise admin URL
+            existing = None
+            for inst in instances:
+                try:
+                    if inst.name == name:
+                        existing = inst
+                        break
+                    if (inst.instance_type or "").lower() == "redis_enterprise" and (
+                        inst.admin_url or ""
+                    ) == admin_url:
+                        existing = inst
+                        break
+                except Exception:
+                    continue
+
+            if existing:
+                # Update fields to ensure correctness
+                existing.connection_url = connection_url
+                existing.environment = existing.environment or "production"
+                existing.usage = existing.usage or "enterprise"
+                existing.instance_type = "redis_enterprise"
+                existing.admin_url = admin_url
+                existing.admin_username = admin_username
+                existing.admin_password = admin_password
+                # Persist
+                await save_instances_to_redis(instances)
+                print("✅ Updated existing Redis Enterprise instance registration")
+            else:
+                from datetime import datetime
+
+                new_instance = RedisInstance(
+                    id=f"redis-enterprise-{int(datetime.now().timestamp())}",
+                    name=name,
+                    connection_url=connection_url,
+                    environment="production",
+                    usage="enterprise",
+                    description=(
+                        "Redis Enterprise demo cluster (docker-compose). Includes admin API "
+                        "credentials for cluster/node tools."
+                    ),
+                    notes=(
+                        "Automatically registered by demo_scenarios.py. Assumes cluster "
+                        "created with admin@redis.com/admin on https://localhost:9443"
+                    ),
+                    instance_type="redis_enterprise",
+                    admin_url=admin_url,
+                    admin_username=admin_username,
+                    admin_password=admin_password,
+                )
+                instances.append(new_instance)
+                await save_instances_to_redis(instances)
+                print("✅ Registered Redis Enterprise instance with agent")
+        except Exception as e:
+            print(f"⚠️  Warning: Could not register Redis Enterprise instance: {e}")
+            print("   The agent may not be able to use admin API tools for this scenario.")
 
     def _wait_for_ui_interaction(self, scenario_name: str, scenario_description: str):
         """Wait for user to interact with the UI while scenario data is active."""
@@ -900,6 +977,16 @@ class RedisSREDemo:
 
         self.print_step(3, "Demonstrating buffer-related issues")
 
+        # Ensure a Redis Enterprise instance is registered for the agent
+        await self._register_enterprise_instance(
+            name="Redis Enterprise Demo",
+            # Register with docker service hostnames for agent containers
+            connection_url="redis://redis-enterprise-node1:12000/0",
+            admin_url="https://redis-enterprise-node1:9443",
+            admin_username="admin@redis.com",
+            admin_password="admin",
+        )
+
         print("   ⚠️  With 1MB buffer limits, the following issues may occur:")
         print("   • Client disconnections during large responses (MGET, SCAN)")
         print("   • Replication lag if slave buffer overflows")
@@ -977,6 +1064,16 @@ class RedisSREDemo:
             print("   💡 Make sure Redis Enterprise is running with the demo setup")
             print("   💡 Expected connection: redis://localhost:12000/0")
             return
+
+        # Ensure a Redis Enterprise instance is registered for the agent
+        await self._register_enterprise_instance(
+            name="Redis Enterprise Demo",
+            # Register with docker service hostnames for agent containers
+            connection_url="redis://redis-enterprise-node1:12000/0",
+            admin_url="https://redis-enterprise-node1:9443",
+            admin_username="admin@redis.com",
+            admin_password="admin",
+        )
 
         self.print_step(2, "Putting node 2 in maintenance mode")
 
@@ -1105,7 +1202,6 @@ class RedisSREDemo:
         print()
 
         # Add some test data to make the scenario more realistic
-        print("   🧪 Creating test data to simulate active database...")
         pipe = enterprise_client.pipeline()
         for i in range(50):
             key = f"enterprise:maint_test:{i}"
@@ -1113,52 +1209,12 @@ class RedisSREDemo:
             pipe.set(key, value)
         pipe.execute()
 
-        # Get memory info
-        memory_info = enterprise_client.info("memory")
-        used_memory = memory_info.get("used_memory", 0)
-        print(f"   📊 Database memory usage: {used_memory / (1024 * 1024):.2f} MB")
-
-        self.print_step(3, "Analyzing maintenance mode impact")
-
-        print("   ⚠️  Impact of node in maintenance mode:")
-        print("   • Reduced cluster capacity (node not serving traffic)")
-        print("   • Potential performance impact on remaining nodes")
-        print("   • Risk if another node fails (reduced redundancy)")
-        print("   • Databases may be running with fewer replicas")
-        print("   • Cluster rebalancing may be needed after exit")
-        print()
-
-        print("   🔍 Common reasons for forgotten maintenance mode:")
-        print("   • Incomplete maintenance procedure")
-        print("   • Manual intervention without documentation")
-        print("   • Automated script failure")
-        print("   • Communication gap between team members")
-        print()
-
-        # Summary before agent interaction
-        print("=" * 80)
-        print("📋 SCENARIO READY FOR INVESTIGATION")
-        print("=" * 80)
-        print()
-        print("✅ Setup Complete:")
-        print("   • Redis Enterprise cluster is running")
-        print("   • Node 2 has been placed in maintenance mode (if multi-node cluster)")
-        print("   • Test data created (50 keys)")
-        print(f"   • Database memory usage: {used_memory / (1024 * 1024):.2f} MB")
-        print()
-        print("🔍 What to Verify:")
-        print("   • Check if node 2 shows SHARDS: 0/0 (maintenance mode indicator)")
-        print("   • Verify shards have migrated to other nodes")
-        print("   • Confirm cluster is still operational")
-        print()
-        print("💡 Questions to Ask the Agent:")
-        print("   • 'Check the Redis Enterprise cluster status'")
-        print("   • 'Are any nodes in maintenance mode?'")
-        print("   • 'Show me the node status and explain what I'm seeing'")
-        print("   • 'What should I do about the node in maintenance mode?'")
-        print()
-        print("=" * 80)
-        print()
+        # Get memory usage for status message (best-effort)
+        try:
+            mem_info = enterprise_client.info("memory")
+            used_memory = int(mem_info.get("used_memory", 0))
+        except Exception:
+            used_memory = 0
 
         # Handle UI mode vs CLI mode
         if self.ui_mode:
@@ -1172,13 +1228,10 @@ class RedisSREDemo:
             return  # Leave scenario in place for UI interaction
 
         # CLI mode: Query the agent - it will use its tools to check the cluster status
-        query = """I need help investigating a Redis Enterprise cluster.
-
-Please check the Redis Enterprise cluster status and node status to see if there are any issues. Specifically:
-1. Check the overall cluster health
-2. If you find any issues, provide recommendations for investigation and remediation.
-
-Use your Redis Enterprise tools to check the actual cluster state."""
+        query = """Investigate this Redis Enterprise cluster:
+            1. Check the overall cluster health.
+            2. If you find any issues, provide recommendations for investigation and remediation.
+        """
 
         await self._run_diagnostics_and_agent_query(query)
 
@@ -1186,12 +1239,6 @@ Use your Redis Enterprise tools to check the actual cluster state."""
         print()
         print("   ✅ Redis Enterprise maintenance mode scenario setup completed")
         print()
-        print("   💡 The agent now has access to Redis Enterprise tools:")
-        print("   💡 - get_redis_enterprise_cluster_status")
-        print("   💡 - get_redis_enterprise_node_status")
-        print("   💡 - get_redis_enterprise_database_status")
-        print()
-        print("   💡 In the UI, ask the agent to check the cluster status!")
         print("   💡 Test data left in place - to clean up:")
         print(
             "   💡 redis-cli -h localhost -p 12000 -a admin --scan --pattern 'enterprise:maint_test:*' | xargs redis-cli -h localhost -p 12000 -a admin DEL"
@@ -1421,26 +1468,123 @@ Use your Redis Enterprise tools to check the actual cluster state."""
         print("   💡 Consider using Redis modules or moving complex logic to application layer")
 
     async def _run_diagnostics_and_agent_query(self, query: str):
-        """Run diagnostics and query the SRE agent."""
+        """Run diagnostics and query the SRE agent via Task interface.
+
+        Also attempts to select an appropriate Redis instance automatically so the
+        agent doesn't need to ask which one to use.
+        """
         self.print_step(4, "Consulting SRE Agent for expert analysis")
 
         try:
-            print("   🤖 Analyzing situation with SRE expertise...")
-            agent = get_sre_agent()
+            print("   🤖 Creating task and streaming progress...")
+            rc = get_redis_client()
 
-            response = await agent.process_query_with_fact_check(
-                query=query.strip(), session_id="demo_scenario", user_id="sre_demo_user"
-            )
+            # Attempt to choose an instance automatically
+            selected_instance_id = None
+            selected_instance_name = None
+            try:
+                instances = await get_instances_from_redis()
+                ql = query.lower()
 
-            print("\n" + "=" * 60)
-            print("🤖 SRE Agent Analysis & Recommendations")
-            print("=" * 60)
-            print(response)
-            print("=" * 60)
+                def pick_enterprise_instance():
+                    for inst in instances:
+                        name = (inst.name or "").lower()
+                        url = inst.connection_url.get_secret_value()
+                        if (
+                            "enterprise" in name
+                            or (inst.instance_type or "").lower() == "redis_enterprise"
+                            or ":12000" in url
+                            or "redis-enterprise" in url
+                        ):
+                            return inst
+                    return None
+
+                def pick_demo_instance():
+                    # Prefer the demo scenarios instance we register
+                    for inst in instances:
+                        if inst.name == "Demo Redis (Scenarios)":
+                            return inst
+                    # Fallback: match by URL to the demo port we set up
+                    for inst in instances:
+                        try:
+                            if (
+                                self.redis_url
+                                and inst.connection_url.get_secret_value() == self.redis_url
+                            ):
+                                return inst
+                        except Exception:
+                            continue
+                    return None
+
+                if "redis enterprise" in ql or "enterprise" in ql:
+                    inst = pick_enterprise_instance()
+                else:
+                    inst = pick_demo_instance()
+
+                if inst:
+                    selected_instance_id = inst.id
+                    selected_instance_name = inst.name
+            except Exception:
+                # Best-effort instance selection; continue without if it fails
+                pass
+
+            # Prepare context with selected instance if available
+            context = {"instance_id": selected_instance_id} if selected_instance_id else {}
+            if selected_instance_name:
+                print(
+                    f"   📎 Using Redis instance: {selected_instance_name} ({selected_instance_id})"
+                )
+
+            # Create a new task for this query; thread created automatically if needed
+            task_info = await create_task(message=query.strip(), context=context, redis_client=rc)
+            task_id = task_info["task_id"]
+            thread_id = task_info["thread_id"]
+            print(f"   📌 Task ID: {task_id} | Thread ID: {thread_id}")
+
+            tm = TaskManager(redis_client=rc)
+            last_seen = 0
+            response_text = None
+
+            # Poll for updates until DONE/FAILED
+            while True:
+                state = await tm.get_task_state(task_id)
+                if state and state.updates:
+                    for upd in state.updates[last_seen:]:
+                        print(f"   • {upd.update_type}: {upd.message}")
+                    last_seen = len(state.updates)
+
+                if state and state.status in (ThreadStatus.DONE, ThreadStatus.FAILED):
+                    if state.result and isinstance(state.result, dict):
+                        response_text = state.result.get("response") or state.result.get("message")
+                    if state.error_message:
+                        print(f"   ⚠️ Task error: {state.error_message}")
+                    break
+
+                await asyncio.sleep(0.5)
+
+            if response_text:
+                try:
+                    from rich.console import Console
+                    from rich.markdown import Markdown
+
+                    console = Console()
+                    console.print("\n" + "=" * 60)
+                    console.print("[bold]🤖 SRE Agent Analysis & Recommendations[/bold]")
+                    console.print(Markdown(str(response_text)))
+                    console.print("=" * 60)
+                except Exception:
+                    # Fallback to plain text if Rich is unavailable or rendering fails
+                    print("\n" + "=" * 60)
+                    print("🤖 SRE Agent Analysis & Recommendations")
+                    print("=" * 60)
+                    print(response_text)
+                    print("=" * 60)
+            else:
+                print("   ℹ️ No response text returned by agent.")
 
         except Exception as e:
-            print(f"   ⚠️  Agent query failed: {str(e)}")
-            print("   This might be due to missing OpenAI API key or network issues.")
+            print(f"   ⚠️  Agent task failed: {str(e)}")
+            print("   This might be due to missing OpenAI API key, Redis, or network issues.")
 
             # Provide fallback guidance based on scenario
             print("\n📋 Fallback Recommendations:")

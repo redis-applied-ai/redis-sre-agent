@@ -6,16 +6,16 @@ from unittest.mock import patch
 
 import pytest
 
-from redis_sre_agent.core.redis import (
-    cleanup_redis_connections,
-    create_indices,
-)
-from redis_sre_agent.core.tasks import (
+from redis_sre_agent.core.docket_tasks import (
     check_service_health,
     ingest_sre_document,
     register_sre_tasks,
     search_knowledge_base,
     test_task_system,
+)
+from redis_sre_agent.core.redis import (
+    cleanup_redis_connections,
+    create_indices,
 )
 
 
@@ -267,16 +267,19 @@ class TestDocketWorkerIntegration:
 
         redis_url = redis_container.get_connection_url()
 
-        # Test worker main function imports and basic setup
+        # Test worker CLI command imports and basic setup
         with patch.dict(os.environ, {"REDIS_URL": redis_url}):
-            from redis_sre_agent.worker import main
+            from click.testing import CliRunner
+
+            from redis_sre_agent.cli.main import worker as worker_cmd
 
             # Mock Worker.run to avoid infinite loop
-            with patch("redis_sre_agent.worker.Worker.run") as mock_worker_run:
+            with patch("redis_sre_agent.cli.main.Worker.run") as mock_worker_run:
                 mock_worker_run.return_value = None
 
-                # Should start without errors
-                await main()
+                # Invoke CLI (should complete due to mocks)
+                result = CliRunner().invoke(worker_cmd)
+                assert result.exit_code == 0
 
                 # Verify Worker.run was called with correct parameters
                 mock_worker_run.assert_called_once()
@@ -293,7 +296,7 @@ class TestDocketWorkerIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
-        from redis_sre_agent.core.tasks import SRE_TASK_COLLECTION
+        from redis_sre_agent.core.docket_tasks import SRE_TASK_COLLECTION
 
         # Verify task collection has expected tasks
         assert len(SRE_TASK_COLLECTION) == 4

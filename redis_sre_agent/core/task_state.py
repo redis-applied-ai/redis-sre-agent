@@ -45,15 +45,19 @@ class TaskManager:
     def __init__(self, redis_client=None):
         self._redis = redis_client or get_redis_client()
 
-    async def create_task(self, *, thread_id: str, user_id: Optional[str] = None) -> str:
+    async def create_task(
+        self, *, thread_id: str, user_id: Optional[str] = None, subject: Optional[str] = None
+    ) -> str:
         task_id = str(ULID())
+        now_iso = datetime.now(timezone.utc).isoformat()
         await self._redis.set(RedisKeys.task_status(task_id), ThreadStatus.QUEUED.value)
         await self._redis.hset(
             RedisKeys.task_metadata(task_id),
             mapping={
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": now_iso,
                 "user_id": user_id or "system",
                 "thread_id": thread_id,
+                "subject": subject or "",
             },
         )
         # Index task under thread with timestamp
@@ -61,10 +65,17 @@ class TaskManager:
             RedisKeys.thread_tasks_index(thread_id),
             {task_id: datetime.now(timezone.utc).timestamp()},
         )
+        # Upsert search doc
+        await self._upsert_task_search_doc(task_id)
         return task_id
 
     async def update_task_status(self, task_id: str, status: ThreadStatus) -> bool:
-        return bool(await self._redis.set(RedisKeys.task_status(task_id), status.value))
+        ok = await self._redis.set(RedisKeys.task_status(task_id), status.value)
+        await self._redis.hset(
+            RedisKeys.task_metadata(task_id), "updated_at", datetime.now(timezone.utc).isoformat()
+        )
+        await self._upsert_task_search_doc(task_id)
+        return bool(ok)
 
     async def add_task_update(
         self,
@@ -78,11 +89,14 @@ class TaskManager:
         # For simplicity, store as a JSON-serializable dict
         import json
 
-        return bool(
-            await self._redis.rpush(
-                RedisKeys.task_updates(task_id), json.dumps(update.model_dump())
-            )
+        ok = await self._redis.rpush(
+            RedisKeys.task_updates(task_id), json.dumps(update.model_dump())
         )
+        await self._redis.hset(
+            RedisKeys.task_metadata(task_id), "updated_at", datetime.now(timezone.utc).isoformat()
+        )
+        await self._upsert_task_search_doc(task_id)
+        return bool(ok)
 
     async def set_task_result(self, task_id: str, result: Dict[str, Any]) -> bool:
         import json
@@ -91,6 +105,7 @@ class TaskManager:
         await self._redis.hset(
             RedisKeys.task_metadata(task_id), "updated_at", datetime.now(timezone.utc).isoformat()
         )
+        await self._upsert_task_search_doc(task_id)
         return True
 
     async def set_task_error(self, task_id: str, error_message: str) -> bool:
@@ -98,6 +113,74 @@ class TaskManager:
         await self._redis.hset(
             RedisKeys.task_metadata(task_id), "updated_at", datetime.now(timezone.utc).isoformat()
         )
+        await self.update_task_status(task_id, ThreadStatus.FAILED)
+        await self._upsert_task_search_doc(task_id)
+        return True
+
+    async def _upsert_task_search_doc(self, task_id: str) -> bool:
+        """Upsert a simplified task document into the tasks FT index (hash)."""
+        try:
+            from redis_sre_agent.core.redis import SRE_TASKS_INDEX, get_tasks_index
+
+            # Ensure index exists (best-effort)
+            try:
+                index = await get_tasks_index()
+                if not await index.exists():
+                    await index.create()
+            except Exception:
+                pass
+
+            status = await self._redis.get(RedisKeys.task_status(task_id))
+            md_raw = await self._redis.hgetall(RedisKeys.task_metadata(task_id))
+
+            def _decode(v):
+                return v.decode() if isinstance(v, bytes) else v
+
+            md = {_decode(k): _decode(v) for k, v in (md_raw or {}).items()}
+
+            status_s = _decode(status) if status else ""
+            subject = md.get("subject", "")
+            user_id = md.get("user_id", "")
+            thread_id = md.get("thread_id", "")
+            created_at = md.get("created_at")
+            updated_at = md.get("updated_at")
+
+            from datetime import datetime, timezone
+
+            def _to_ts(val: str | None) -> float:
+                if not val:
+                    return 0.0
+                try:
+                    dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                    return dt.timestamp()
+                except Exception:
+                    try:
+                        return float(val)
+                    except Exception:
+                        return 0.0
+
+            created_ts = _to_ts(created_at)
+            updated_ts = _to_ts(updated_at)
+            if updated_ts <= 0:
+                updated_ts = datetime.now(timezone.utc).timestamp()
+
+            key = f"{SRE_TASKS_INDEX}:{task_id}"
+            await self._redis.hset(
+                key,
+                mapping={
+                    "status": status_s,
+                    "subject": subject or "",
+                    "user_id": user_id or "",
+                    "thread_id": thread_id or "",
+                    "created_at": created_ts,
+                    "updated_at": updated_ts,
+                },
+            )
+            await self._redis.expire(key, 86400)
+            return True
+        except Exception:
+            return False
+
         await self.update_task_status(task_id, ThreadStatus.FAILED)
         return True
 

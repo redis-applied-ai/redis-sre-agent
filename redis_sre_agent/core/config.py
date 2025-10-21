@@ -10,17 +10,17 @@ if TYPE_CHECKING:
 
 # Load environment variables from .env file if it exists
 # In Docker/production, environment variables are set directly
-try:
-    from pathlib import Path
+from pathlib import Path
 
-    from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-    # Only load .env if it exists (for local development)
-    env_file = Path(".env")
-    if env_file.exists():
-        load_dotenv(dotenv_path=env_file)
-except ImportError:
-    pass  # dotenv not installed
+ENV_FILE_OPT: str | None = None
+
+# Only load .env if it exists (for local development)
+_env_path = Path(".env")
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+    ENV_FILE_OPT = str(_env_path)
 
 
 class Settings(BaseSettings):
@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Only hint an env file to pydantic if it actually exists
+        env_file=ENV_FILE_OPT,
         env_file_encoding="utf-8",
         extra="ignore",
         # Don't error if .env file is missing (Docker/production use env vars directly)
@@ -83,11 +84,14 @@ class Settings(BaseSettings):
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
     max_task_retries: int = Field(default=3, description="Maximum task retries")
-    task_timeout: int = Field(default=300, description="Task timeout in seconds")
+    task_timeout: int = Field(default=600, description="Task timeout in seconds (10 minutes)")
 
     # Agent
     max_iterations: int = Field(
-        default=25, description="Maximum agent iterations (increased for complex investigations)"
+        default=50, description="Maximum agent iterations (increased for complex investigations)"
+    )
+    recursion_limit: int = Field(
+        default=100, description="LangGraph recursion limit for complex workflows"
     )
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
 

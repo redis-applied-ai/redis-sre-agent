@@ -407,7 +407,7 @@ async def trigger_schedule_now(schedule_id: str):
         # Submit the agent task directly
         from docket import Docket
 
-        from ..core.tasks import get_redis_url, process_agent_turn
+        from ..core.docket_tasks import get_redis_url, process_agent_turn
 
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Use a deduplication key for the manual trigger
@@ -583,7 +583,7 @@ async def trigger_scheduler():
     try:
         from docket import Docket
 
-        from ..core.tasks import get_redis_url, scheduler_task
+        from ..core.docket_tasks import get_redis_url, scheduler_task
 
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Use a deduplication key based on current time to prevent multiple manual triggers

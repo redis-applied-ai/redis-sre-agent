@@ -11,8 +11,8 @@ from typing import Any, Dict, Optional
 
 from docket import Docket
 
+from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
 
 logger = logging.getLogger(__name__)

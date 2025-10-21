@@ -301,7 +301,7 @@ class TestKnowledgeIngestion:
         mock_result = {"document_id": "test_doc_123"}
 
         with patch(
-            "redis_sre_agent.core.tasks.ingest_sre_document", new_callable=AsyncMock
+            "redis_sre_agent.core.docket_tasks.ingest_sre_document", new_callable=AsyncMock
         ) as mock_ingest:
             mock_ingest.return_value = mock_result
 
@@ -345,7 +345,7 @@ class TestKnowledgeIngestion:
         }
 
         with patch(
-            "redis_sre_agent.core.tasks.ingest_sre_document", new_callable=AsyncMock
+            "redis_sre_agent.core.docket_tasks.ingest_sre_document", new_callable=AsyncMock
         ) as mock_ingest:
             mock_ingest.side_effect = Exception("Ingestion failed")
 

@@ -257,7 +257,10 @@ class RedisDocsScraper(BaseScraper):
     async def _extract_page_content(
         self, soup: BeautifulSoup, url: str
     ) -> Optional[Dict[str, Any]]:
-        """Extract title, content, and metadata from a documentation page."""
+        """Extract title, content, and metadata from a documentation page.
+
+        Phase 0 improvement: include code/pre blocks (examples) inline so LLMs see full examples.
+        """
         try:
             # Extract title
             title = None
@@ -295,6 +298,25 @@ class RedisDocsScraper(BaseScraper):
                 body = soup.select_one("body")
                 if body:
                     content = body.get_text().strip()
+
+            # Append code/pre blocks as fenced sections to preserve examples
+            try:
+                code_blocks = []
+                for pre in soup.find_all("pre"):
+                    code_text = pre.get_text("\n").strip()
+                    if code_text:
+                        code_blocks.append(f"```\n{code_text}\n```")
+                # Some sites wrap JSON in <code> without <pre>
+                for code in soup.find_all("code"):
+                    # Skip tiny inline code snippets; keep substantial examples
+                    code_text = code.get_text("\n").strip()
+                    if code_text and len(code_text) > 80:
+                        code_blocks.append(f"```\n{code_text}\n```")
+                if code_blocks:
+                    content = f"{content}\n\n## Examples\n\n" + "\n\n".join(code_blocks)
+            except Exception:
+                # Never fail scraping due to code block parsing
+                pass
 
             # Clean content
             content = self._clean_content(content)

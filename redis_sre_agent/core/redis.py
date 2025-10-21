@@ -18,6 +18,11 @@ SRE_KNOWLEDGE_INDEX = "sre_knowledge"
 METRICS_INDEX = "sre_metrics"
 SRE_SCHEDULES_INDEX = "sre_schedules"
 
+# Threads index
+SRE_THREADS_INDEX = "sre_threads"
+# Tasks index
+SRE_TASKS_INDEX = "sre_tasks"
+
 # Schema definitions
 SRE_KNOWLEDGE_SCHEMA = {
     "index": {
@@ -137,6 +142,39 @@ SRE_SCHEDULES_SCHEMA = {
     ],
 }
 
+SRE_THREADS_SCHEMA = {
+    "index": {
+        "name": SRE_THREADS_INDEX,
+        "prefix": f"{SRE_THREADS_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "status", "type": "tag"},
+        {"name": "subject", "type": "text"},
+        {"name": "user_id", "type": "tag"},
+        {"name": "instance_id", "type": "tag"},
+        {"name": "priority", "type": "numeric"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "updated_at", "type": "numeric"},
+    ],
+}
+
+SRE_TASKS_SCHEMA = {
+    "index": {
+        "name": SRE_TASKS_INDEX,
+        "prefix": f"{SRE_TASKS_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "status", "type": "tag"},
+        {"name": "subject", "type": "text"},
+        {"name": "user_id", "type": "tag"},
+        {"name": "thread_id", "type": "tag"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "updated_at", "type": "numeric"},
+    ],
+}
+
 
 def get_redis_client(url: Optional[str] = None) -> Redis:
     """Get Redis client (creates fresh client to avoid event loop issues)."""
@@ -211,6 +249,37 @@ async def get_knowledge_index() -> AsyncSearchIndex:
     # Create index with the shared client
     index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
 
+    return index
+
+
+async def get_tasks_index() -> AsyncSearchIndex:
+    """Get SRE tasks index (async)."""
+    from redisvl.schema import IndexSchema
+
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_TASKS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
+async def get_threads_index() -> AsyncSearchIndex:
+    """Get SRE threads/tasks index (async)."""
+    from redisvl.schema import IndexSchema
+
+    # Build Redis URL with password if needed
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_THREADS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
     return index
 
 
@@ -289,6 +358,24 @@ async def create_indices() -> bool:
             logger.info(f"Created schedules index: {SRE_SCHEDULES_INDEX}")
         else:
             logger.info(f"Schedules index already exists: {SRE_SCHEDULES_INDEX}")
+
+        # Create threads index
+        threads_index = await get_threads_index()
+        threads_exists = await threads_index.exists()
+        if not threads_exists:
+            await threads_index.create()
+            logger.info(f"Created threads index: {SRE_THREADS_INDEX}")
+        else:
+            logger.info(f"Threads index already exists: {SRE_THREADS_INDEX}")
+
+        # Create tasks index
+        tasks_index = await get_tasks_index()
+        tasks_exists = await tasks_index.exists()
+        if not tasks_exists:
+            await tasks_index.create()
+            logger.info(f"Created tasks index: {SRE_TASKS_INDEX}")
+        else:
+            logger.info(f"Tasks index already exists: {SRE_TASKS_INDEX}")
 
         return True
     except Exception as e:

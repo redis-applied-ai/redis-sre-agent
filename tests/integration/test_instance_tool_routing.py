@@ -11,8 +11,8 @@ from redis_sre_agent.api.instances import (
     get_instances_from_redis,
     save_instances_to_redis,
 )
+from redis_sre_agent.core.docket_tasks import process_agent_turn
 from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.tasks import process_agent_turn
 from redis_sre_agent.core.thread_state import ThreadManager
 
 

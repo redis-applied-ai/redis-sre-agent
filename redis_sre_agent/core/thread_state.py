@@ -154,6 +154,8 @@ Subject:"""
 
         # Add to thread index for listing
         await self._add_to_thread_index(thread_id, user_id)
+        # Best-effort: upsert search doc for ordering/filtering
+        await self._upsert_thread_search_doc(thread_id)
 
         logger.info(f"Created thread {thread_id} for user {user_id}")
         return thread_id
@@ -172,6 +174,9 @@ Subject:"""
             await client.hset(
                 keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
             )
+
+            # Update search index
+            await self._upsert_thread_search_doc(thread_id)
 
             logger.info(f"Updated thread {thread_id} subject: {subject}")
             return True
@@ -199,9 +204,92 @@ Subject:"""
                 await client.expire(RedisKeys.threads_user_index(user_id), 2592000)
 
             return True
-
         except Exception as e:
             logger.error(f"Failed to add thread {thread_id} to index: {e}")
+            return False
+
+    async def _upsert_thread_search_doc(self, thread_id: str) -> bool:
+        """Upsert a simplified thread document into the RedisVL threads index (hash).
+
+        Best-effort; failures are logged and ignored.
+        """
+        try:
+            from redis_sre_agent.core.redis import SRE_THREADS_INDEX, get_threads_index
+
+            client = await self._get_client()
+            # Ensure index exists
+            try:
+                index = await get_threads_index()
+                if not await index.exists():
+                    await index.create()
+            except Exception:
+                # Index creation is best-effort; proceed to write hash anyway
+                pass
+
+            keys = self._get_thread_keys(thread_id)
+
+            status_b = await client.get(keys["status"]) or b""
+            status = status_b.decode() if isinstance(status_b, bytes) else str(status_b)
+
+            metadata_h = await client.hgetall(keys["metadata"]) or {}
+            context_h = await client.hgetall(keys["context"]) or {}
+
+            def _decode(dct):
+                out = {}
+                for k, v in dct.items():
+                    k2 = k.decode() if isinstance(k, bytes) else k
+                    v2 = v.decode() if isinstance(v, bytes) else v
+                    out[k2] = v2
+                return out
+
+            metadata = _decode(metadata_h)
+            context = _decode(context_h)
+
+            subject = metadata.get("subject", "")
+            user_id = metadata.get("user_id", "")
+            instance_id = context.get("instance_id", "")
+            try:
+                priority = int(metadata.get("priority", 0))
+            except Exception:
+                priority = 0
+
+            from datetime import datetime, timezone
+
+            def _to_ts(val: str | None) -> float:
+                if not val:
+                    return 0.0
+                try:
+                    # ISO8601 string
+                    dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                    return dt.timestamp()
+                except Exception:
+                    try:
+                        return float(val)
+                    except Exception:
+                        return 0.0
+
+            created_ts = _to_ts(metadata.get("created_at"))
+            updated_ts = _to_ts(metadata.get("updated_at"))
+            if updated_ts <= 0:
+                updated_ts = datetime.now(timezone.utc).timestamp()
+
+            # Write to hash backing the index
+            key = f"{SRE_THREADS_INDEX}:{thread_id}"
+            mapping = {
+                "status": status or "",
+                "subject": subject or "",
+                "user_id": user_id or "",
+                "instance_id": instance_id or "",
+                "priority": priority,
+                "created_at": created_ts,
+                "updated_at": updated_ts,
+            }
+            await client.hset(key, mapping=mapping)
+            # TTL aligns with thread data TTL (24h)
+            await client.expire(key, 86400)
+            return True
+        except Exception as e:
+            logger.debug(f"Thread index upsert failed for {thread_id}: {e}")
             return False
 
     async def _remove_from_thread_index(
@@ -233,95 +321,196 @@ Subject:"""
     ) -> List[Dict[str, Any]]:
         """List threads with optional filtering."""
         try:
-            client = await self._get_client()
+            # Prefer RedisVL FT.SEARCH via threads index; fallback to ZSET scan
+            from datetime import datetime, timezone
 
-            # Choose index based on user_id
-            index_key = (
-                RedisKeys.threads_user_index(user_id) if user_id else RedisKeys.threads_index()
-            )
+            from redisvl.query import FilterQuery
+            from redisvl.query.filter import Tag
 
-            # Get thread IDs from index (most recent first)
-            thread_ids = await client.zrevrange(
-                index_key, offset, offset + limit - 1, withscores=False
-            )
+            from redis_sre_agent.core.redis import get_threads_index
 
-            if not thread_ids:
-                return []
+            index = await get_threads_index()
 
-            # Get thread summaries
-            threads = []
-            for thread_id in thread_ids:
-                thread_id = thread_id.decode() if isinstance(thread_id, bytes) else thread_id
+            # Build filter: default to in_progress OR queued if no explicit status and not show_all
+            expr = None
+            if status_filter:
+                expr = Tag("status") == status_filter.value
+            else:
+                expr = (Tag("status") == ThreadStatus.IN_PROGRESS.value) | (
+                    Tag("status") == ThreadStatus.QUEUED.value
+                )
+            if user_id:
+                expr = (
+                    expr & (Tag("user_id") == user_id)
+                    if expr is not None
+                    else (Tag("user_id") == user_id)
+                )
 
+            # Use offset if supported; otherwise overfetch and slice
+            try:
+                fq = FilterQuery(
+                    return_fields=[
+                        "id",
+                        "status",
+                        "subject",
+                        "user_id",
+                        "instance_id",
+                        "priority",
+                        "created_at",
+                        "updated_at",
+                    ],
+                    filter_expression=expr,
+                    num_results=limit,
+                    offset=offset,
+                ).sort_by("updated_at", asc=False)
+            except TypeError:
+                # Older RedisVL without offset param
+                fq = FilterQuery(
+                    return_fields=[
+                        "id",
+                        "status",
+                        "subject",
+                        "user_id",
+                        "instance_id",
+                        "priority",
+                        "created_at",
+                        "updated_at",
+                    ],
+                    filter_expression=expr,
+                    num_results=limit + offset,
+                ).sort_by("updated_at", asc=False)
+
+            results = await index.query(fq)
+            if offset and len(results) > offset:
+                results = results[offset:]
+
+            def _iso(ts) -> str | None:
                 try:
-                    # Get basic thread info
-                    keys = self._get_thread_keys(thread_id)
+                    tsf = float(ts)
+                    if tsf > 0:
+                        return datetime.fromtimestamp(tsf, tz=timezone.utc).isoformat()
+                except Exception:
+                    return None
+                return None
 
-                    # Get status, metadata, context, and latest update
-                    status_data = await client.get(keys["status"])
-                    metadata_data = await client.hgetall(keys["metadata"])
-                    context_data = await client.hgetall(keys["context"])
-                    latest_update = await client.lrange(keys["updates"], 0, 0)
-
-                    if not status_data:
-                        continue  # Skip if thread doesn't exist
-
-                    status = status_data.decode()
-
-                    # Apply status filter
-                    if status_filter and status != status_filter.value:
-                        continue
-
-                    # Parse metadata
-                    metadata = {}
-                    if metadata_data:
-                        metadata = {k.decode(): v.decode() for k, v in metadata_data.items()}
-                        if "tags" in metadata:
-                            try:
-                                metadata["tags"] = json.loads(metadata["tags"])
-                            except json.JSONDecodeError:
-                                metadata["tags"] = []
-
-                    # Parse context to get instance_id
-                    context = {}
-                    if context_data:
-                        context = {k.decode(): v.decode() for k, v in context_data.items()}
-
-                    # Get latest update message
-                    latest_message = "No updates"
-                    if latest_update:
-                        try:
-                            update_data = json.loads(latest_update[0])
-                            latest_message = update_data.get("message", "No updates")
-                        except json.JSONDecodeError:
-                            pass
-
-                    thread_summary = {
-                        "thread_id": thread_id,
-                        "status": status,
-                        "subject": metadata.get("subject", "Untitled"),
-                        "created_at": metadata.get("created_at"),
-                        "updated_at": metadata.get("updated_at"),
-                        "user_id": metadata.get("user_id"),
-                        "latest_message": latest_message[:100],  # Truncate for summary
-                        "tags": metadata.get("tags", []),
-                        "priority": int(metadata.get("priority", 0)),
-                        "instance_id": context.get(
-                            "instance_id"
-                        ),  # Include instance_id from context
+            threads: List[Dict[str, Any]] = []
+            for res in results:
+                row = (
+                    res
+                    if isinstance(res, dict)
+                    else {
+                        k: getattr(res, k, None)
+                        for k in [
+                            "id",
+                            "status",
+                            "subject",
+                            "user_id",
+                            "instance_id",
+                            "priority",
+                            "created_at",
+                            "updated_at",
+                        ]
                     }
+                )
+                redis_key = row.get("id", "")
+                thread_id = (
+                    redis_key[len("sre_threads:") :]
+                    if isinstance(redis_key, str) and redis_key.startswith("sre_threads:")
+                    else redis_key
+                )
 
-                    threads.append(thread_summary)
+                created_iso = _iso(row.get("created_at"))
+                updated_iso = _iso(row.get("updated_at"))
 
-                except Exception as e:
-                    logger.warning(f"Failed to get summary for thread {thread_id}: {e}")
-                    continue
+                # Build summary
+                summary = {
+                    "thread_id": thread_id,
+                    "status": row.get("status") or ThreadStatus.QUEUED.value,
+                    "subject": row.get("subject") or "Untitled",
+                    "created_at": created_iso,
+                    "updated_at": updated_iso,
+                    "user_id": row.get("user_id") or None,
+                    "latest_message": "No updates",
+                    "tags": [],
+                    "priority": int(row.get("priority") or 0),
+                    "instance_id": row.get("instance_id") or None,
+                }
+                threads.append(summary)
 
             return threads
 
-        except Exception as e:
-            logger.error(f"Failed to list threads: {e}")
-            return []
+        except Exception:
+            # Fallback: ZSET-based listing (existing logic)
+            try:
+                client = await self._get_client()
+                index_key = (
+                    RedisKeys.threads_user_index(user_id) if user_id else RedisKeys.threads_index()
+                )
+                threads: list[dict] = []
+                page = max(50, limit * 5)
+                start = offset
+                while len(threads) < limit:
+                    thread_ids = await client.zrevrange(
+                        index_key, start, start + page - 1, withscores=False
+                    )
+                    if not thread_ids:
+                        break
+                    for raw_id in thread_ids:
+                        if len(threads) >= limit:
+                            break
+                        thread_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
+                        try:
+                            keys = self._get_thread_keys(thread_id)
+                            status_data = await client.get(keys["status"])
+                            if not status_data:
+                                continue
+                            status = status_data.decode()
+                            if status_filter and status != status_filter.value:
+                                continue
+                            metadata_data = await client.hgetall(keys["metadata"])
+                            context_data = await client.hgetall(keys["context"])
+                            latest_update = await client.lrange(keys["updates"], 0, 0)
+                            metadata = {}
+                            if metadata_data:
+                                metadata = {
+                                    k.decode(): v.decode() for k, v in metadata_data.items()
+                                }
+                                if "tags" in metadata:
+                                    try:
+                                        metadata["tags"] = json.loads(metadata["tags"])
+                                    except json.JSONDecodeError:
+                                        metadata["tags"] = []
+                            context = {}
+                            if context_data:
+                                context = {k.decode(): v.decode() for k, v in context_data.items()}
+                            latest_message = "No updates"
+                            if latest_update:
+                                try:
+                                    update_data = json.loads(latest_update[0])
+                                    latest_message = update_data.get("message", "No updates")
+                                except json.JSONDecodeError:
+                                    pass
+                            thread_summary = {
+                                "thread_id": thread_id,
+                                "status": status,
+                                "subject": metadata.get("subject", "Untitled"),
+                                "created_at": metadata.get("created_at"),
+                                "updated_at": metadata.get("updated_at"),
+                                "user_id": metadata.get("user_id"),
+                                "latest_message": latest_message[:100],
+                                "tags": metadata.get("tags", []),
+                                "priority": int(metadata.get("priority", 0)),
+                                "instance_id": context.get("instance_id"),
+                            }
+                            threads.append(thread_summary)
+                        except Exception as e:
+                            logger.warning(f"Failed to get summary for thread {thread_id}: {e}")
+                            continue
+                    start += page
+                return threads
+            except Exception as e:
+                logger.error(f"Failed to list threads (fallback): {e}")
+                return []
 
     async def get_thread_state(self, thread_id: str) -> Optional[ThreadState]:
         """Retrieve complete thread state."""
@@ -437,6 +626,9 @@ Subject:"""
                 {"status": status.value, "message": f"Status changed to {status.value}"},
             )
 
+            # Update search index
+            await self._upsert_thread_search_doc(thread_id)
+
             logger.info(f"Updated thread {thread_id} status to {status.value}")
             return True
 
@@ -482,6 +674,9 @@ Subject:"""
                 },
             )
 
+            # Update search index
+            await self._upsert_thread_search_doc(thread_id)
+
             logger.debug(f"Added update to thread {thread_id}: {message}")
             return True
 
@@ -507,6 +702,9 @@ Subject:"""
             await self._publish_stream_update(
                 thread_id, "result_set", {"result": result, "message": "Task result available"}
             )
+
+            # Update search index
+            await self._upsert_thread_search_doc(thread_id)
 
             logger.info(f"Set result for thread {thread_id}")
             return True
@@ -556,6 +754,9 @@ Subject:"""
             await client.hset(
                 keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
             )
+
+            # Update search index
+            await self._upsert_thread_search_doc(thread_id)
 
             logger.info(f"Added {len(action_items)} action items to thread {thread_id}")
             return True

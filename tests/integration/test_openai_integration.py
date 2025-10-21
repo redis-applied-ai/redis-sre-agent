@@ -5,15 +5,15 @@ from unittest.mock import patch
 
 import pytest
 
+from redis_sre_agent.core.docket_tasks import (
+    ingest_sre_document,
+    search_knowledge_base,
+)
 from redis_sre_agent.core.redis import (
     cleanup_redis_connections,
     create_indices,
     get_knowledge_index,
     get_vectorizer,
-)
-from redis_sre_agent.core.tasks import (
-    ingest_sre_document,
-    search_knowledge_base,
 )
 
 

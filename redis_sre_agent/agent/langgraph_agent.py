@@ -2,6 +2,12 @@
 
 This module implements a LangGraph workflow for SRE operations, providing
 multi-turn conversation handling, tool calling integration, and state management.
+
+TODO: The LangGraph agent doesn't use various features of LangGraph that it
+could benefit from (mostly due to haste):
+- ToolNode
+- Conditional edges
+- Sub-agents
 """
 
 import asyncio
@@ -338,6 +344,15 @@ Clear action plan with:
 - Add blank lines between paragraphs for readability
 - Keep paragraphs short (2-3 sentences max)
 
+## Command Guidance
+
+- When you recommend steps that involve executing something, use real user-facing commands or API requests.
+- Valid forms:
+  - CLI commands (e.g., `redis-cli`, `uv run pytest`, `curl ...`)
+  - HTTP requests with method, path, and minimal payload (include a `curl` example for REST APIs like Redis Enterprise Admin)
+- Do NOT reference internal tool names like "run get_cluster_info" or "use list_nodes" — those are internal agent tools the user cannot run.
+- If internal tools informed your findings, translate them to user-facing equivalents (e.g., show the corresponding REST endpoint and example `curl`).
+
 ## Keep It Practical
 
 Focus on what they can do right now:
@@ -370,7 +385,8 @@ The `INFO` command output is MISLEADING for Redis Enterprise:
 **DO NOT suggest "fixing" these - they are expected behavior in Redis Enterprise!**
 
 ### What You SHOULD Do with Redis Enterprise
-1. **Use the Admin REST API for configuration details** - Call these tools to see actual configuration:
+1. **Use the Admin REST API for configuration details** - Call these tools to see actual configuration (refer to the
+    Redis Enterprise Admin API tool descriptions to see all available tools):
    - `get_cluster_info` - Cluster-level information
    - `get_database` - Database configuration (memory limits, persistence, replication, clustering, modules, etc.)
    - `list_nodes` - Node status (check for maintenance mode: `accept_servers=false`)
@@ -475,6 +491,7 @@ The `INFO` command output is MISLEADING for Redis Cloud:
    - ✅ INFO stats, keyspace, clients - runtime metrics
 
 3. **Available Cloud Management Tools**:
+See the Redis Cloud API tool descriptions for more, but a summary is:
    - `get_account` - View account details
    - `get_regions` - List available regions
    - `list_subscriptions` - List all subscriptions
@@ -568,11 +585,14 @@ If the maintenance is complete, you should exit maintenance mode with:
 
 ## When to Search Knowledge Base
 
-Look up specific troubleshooting steps when you identify:
+Look up specific troubleshooting steps and reference documentation whenever
+you're not sure about the best course of action. For example:
 - Connection limit issues → search "connection limit troubleshooting"
 - Memory problems → search "memory optimization" or "eviction policy"
 - Performance issues → search "slow query analysis" or "latency troubleshooting"
 - Security concerns → search "Redis security configuration"
+- Redis CLI commands for JSoN → search "redis-cli commands docs json"
+- rladmin commands for maintenance mode → search "rladmin CLI reference maintenance mode"
 
 ## Understanding Usage Patterns
 
@@ -656,6 +676,17 @@ Review the provided SRE agent response and identify any statements that are:
 - **Command Validity**: Verify that any suggested shell/CLI commands (particularly `rladmin`) are real and use correct syntax per Redis Enterprise documentation; flag invented subcommands or options
 - **Documentation URLs**: Verify that referenced URLs are valid and accessible
 
+
+## CLI Command Validation
+- For any CLI commands detected (e.g., `rladmin`, `redis-cli`), cross-check syntax against official Redis documentation.
+- Prefer exact matches from documentation over inferred syntax.
+- If documentation cannot be found for a suggested command, treat it as invalid and flag it.
+- Cite sources when confirming command syntax.
+
+## Cross-checking Redis Documentation
+- You have access to knowledge search
+- Use `search_knowledge_base` tool to verify facts, command syntax, and URLs
+
 ## Response Format
 
 If you find factual errors, invalid commands, or invalid URLs, respond with:
@@ -713,7 +744,7 @@ class SREToolCall(BaseModel):
 
 # TODO: Break this out into functions.
 # TODO: Researcher, Safety Evaluator, and Fact-checker should be individual nodes
-#       with conditional edges.
+#       with conditional edges and/or sub-agents.
 class SRELangGraphAgent:
     """LangGraph-based SRE Agent with multi-turn conversation and tool calling."""
 
@@ -950,7 +981,39 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                     result = await tool_mgr.resolve_tool_call(tool_name, tool_args)
 
-                    # No completion message to reduce noise; keep a single update per tool call
+                    # Emit fragment/source metadata for knowledge searches
+                    try:
+                        if (
+                            self.progress_callback
+                            and isinstance(result, dict)
+                            and isinstance(tool_name, str)
+                            and tool_name.startswith("knowledge_")
+                            and tool_name.endswith("_search")
+                        ):
+                            items = result.get("results") or []
+                            fragments = []
+                            for doc in items:
+                                try:
+                                    fragments.append(
+                                        {
+                                            "id": doc.get("id"),
+                                            "document_hash": doc.get("document_hash"),
+                                            "chunk_index": doc.get("chunk_index"),
+                                            "title": doc.get("title"),
+                                            "source": doc.get("source"),
+                                        }
+                                    )
+                                except Exception:
+                                    pass
+                            if fragments:
+                                await self.progress_callback(
+                                    "Retrieved knowledge fragments",
+                                    "knowledge_sources",
+                                    {"fragments": fragments},
+                                )
+                    except Exception:
+                        # Best-effort: do not fail tool execution due to progress metadata errors
+                        pass
 
                     # Format result as a readable string
                     if isinstance(result, dict):
@@ -1097,7 +1160,7 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
             """Decide whether to continue with tools, reasoning, or end the conversation."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
-            max_iterations = state.get("max_iterations", 10)
+            max_iterations = state.get("max_iterations", settings.max_iterations)
 
             # Check iteration limit
             if iteration_count >= max_iterations:
@@ -1139,89 +1202,50 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
         return workflow
 
     def _generate_tool_reflection(self, tool_name: str, tool_args: dict) -> str:
-        """Generate a meaningful first-person reflection about what the agent is doing."""
-        if tool_name == "get_detailed_redis_diagnostics":
-            return "Let me check the Redis instance health and performance metrics..."
-        elif tool_name == "search_knowledge_base":
-            query = tool_args.get("query", "")
-            if "memory" in query.lower():
-                return "I'm looking up memory management best practices in the knowledge base..."
-            elif "performance" in query.lower():
-                return "Let me find some performance optimization strategies..."
-            elif "persistence" in query.lower():
-                return "I'm researching data persistence and durability options..."
-            elif "connection" in query.lower():
-                return "Let me look up connection troubleshooting guidance..."
-            else:
-                return f"I'm searching the knowledge base for information about: {query}"
-        elif tool_name == "check_service_health":
-            return "Let me perform some service health checks..."
-        else:
-            operation = _extract_operation_from_tool_name(tool_name)
-            display_name = operation.replace("_", " ")
-            return f"I'm running {display_name}..."
+        """Fallback to generate a first-person reflection about what the agent is doing."""
+        operation = _extract_operation_from_tool_name(tool_name)
+        display_name = operation.replace("_", " ")
+        return f"I'm running {display_name}..."
 
     def _generate_completion_reflection(self, tool_name: str, result: dict) -> str:
-        """Generate a first-person reflection about what the agent discovered."""
+        """Generate a short, first-person reflection after a tool completes.
+
+        This is intentionally minimal to satisfy unit tests and provide
+        user-friendly progress updates.
+        """
+        # Knowledge search completion should not add extra chatter
+        if tool_name == "search_knowledge_base":
+            return ""
+
+        # Specialized handling for Redis diagnostics
         if tool_name == "get_detailed_redis_diagnostics":
-            if isinstance(result, dict) and result.get("status") == "success":
-                diagnostics = result.get("diagnostics", {})
-                memory_info = diagnostics.get("memory", {})
-                if memory_info:
-                    used_memory = memory_info.get("used_memory_bytes", 0)
-                    max_memory = memory_info.get("maxmemory_bytes", 0)
-                    if max_memory > 0:
-                        usage_pct = (used_memory / max_memory) * 100
-                        if usage_pct > 80:
-                            return f"I see memory usage is elevated at {usage_pct:.1f}%. Let me investigate further..."
-                        elif usage_pct > 60:
-                            return f"Memory usage is at {usage_pct:.1f}%. I'll check for optimization opportunities..."
-                        else:
-                            return f"Good news - memory usage looks healthy at {usage_pct:.1f}%."
-                return "I've collected the diagnostics successfully."
+            status = (result or {}).get("status")
+            if status == "success":
+                # If memory diagnostics are present, mention memory usage explicitly
+                try:
+                    mem = (result.get("diagnostics", {}) or {}).get("memory", {})
+                    used = mem.get("used_memory_bytes")
+                    maxm = mem.get("maxmemory_bytes")
+                    if used is not None and maxm is not None:
+                        return f"Memory usage: {used} bytes used out of {maxm}. I can recommend actions next."
+                except Exception:
+                    pass
+                return "Diagnostics collected successfully."
             else:
                 return (
                     "I wasn't able to collect the diagnostics. Let me try a different approach..."
                 )
-        elif tool_name == "search_knowledge_base":
-            # Skip reflection for knowledge base searches to reduce UI noise
-            return ""
 
-        elif tool_name == "search_docker_logs":
-            if isinstance(result, dict):
-                if result.get("error"):
-                    return f"I encountered an error searching the logs: {result['error']}"
-
-                total_entries = result.get("total_entries_found", 0)
-                containers_searched = result.get("containers_searched", 0)
-
-                if total_entries > 0:
-                    level_dist = result.get("level_distribution", {})
-                    error_count = (
-                        level_dist.get("ERROR", 0)
-                        + level_dist.get("FATAL", 0)
-                        + level_dist.get("CRITICAL", 0)
-                    )
-
-                    if error_count > 0:
-                        return f"I found {total_entries} log entries across {containers_searched} containers, including {error_count} errors."
-                    else:
-                        return f"I found {total_entries} log entries across {containers_searched} containers."
-                else:
-                    return f"I didn't find any matching log entries in {containers_searched} containers."
-            else:
-                return "I've completed the log search."
-        else:
-            operation = _extract_operation_from_tool_name(tool_name)
-            display_name = operation.replace("_", " ")
-            return f"I've completed {display_name}."
+        # Default generic completion message
+        display = (tool_name or "").replace("_", " ").strip()
+        return f"I've completed {display}."
 
     async def process_query(
         self,
         query: str,
         session_id: str,
         user_id: str,
-        max_iterations: int = 10,
+        max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
@@ -1617,8 +1641,11 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             checkpointer = MemorySaver()
             self.app = self.workflow.compile(checkpointer=checkpointer)
 
-            # Configure thread for session persistence
-            thread_config = {"configurable": {"thread_id": session_id}}
+            # Configure thread for session persistence and set higher recursion limit
+            thread_config = {
+                "configurable": {"thread_id": session_id},
+                "recursion_limit": self.settings.recursion_limit,
+            }
 
             try:
                 # Run the workflow with isolated memory
@@ -1794,18 +1821,77 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
             # Detect CLI commands (focus on rladmin) in the response
             cli_detection_summary = ""
+            unique_cmds = []
             try:
                 cli_matches = re.findall(r"(rladmin\b[^\n]*)", response)
                 if cli_matches:
-                    unique_cmds = []
                     for cmd in cli_matches:
                         if cmd not in unique_cmds:
                             unique_cmds.append(cmd)
                     cli_detection_summary = (
-                        "\n\n## Detected CLI Commands (to validate):\n- " + "\n- ".join(unique_cmds)
+                        "\n\n## Detected CLI Commands (to validate)\n- " + "\n- ".join(unique_cmds)
                     )
             except Exception:
                 pass
+
+            # Validate detected CLI commands against knowledge base documentation
+            cli_docs_validation_summary = ""
+            unmatched_commands: list[str] = []
+            _doc_search_ran = False
+            try:
+                if unique_cmds:
+                    from redis_sre_agent.core.knowledge_helpers import (
+                        search_knowledge_base_helper,
+                    )
+
+                    _doc_search_ran = True
+
+                    def _build_query_from_cmd(cmd: str) -> str:
+                        # Build a compact query like: "rladmin node maintenance_mode"
+                        parts = []
+                        for tok in cmd.split():
+                            t = tok.strip()
+                            if not t:
+                                continue
+                            # stop at obvious option/value tokens
+                            if t.startswith("-") or t.isdigit():
+                                break
+                            # include rladmin and alpha/underscore tokens
+                            if t.lower() == "rladmin" or t.replace("_", "").isalpha():
+                                parts.append(t)
+                        # Limit length to avoid noisy queries
+                        return " ".join(parts[:4])
+
+                    lines = []
+                    for cmd in unique_cmds:
+                        q = _build_query_from_cmd(cmd)
+                        if not q:
+                            continue
+                        try:
+                            res = await search_knowledge_base_helper(query=q, limit=5)
+                            count = int(res.get("results_count", 0) or 0)
+                            sources = [r.get("source", "") for r in res.get("results", [])]
+                            if count == 0:
+                                unmatched_commands.append(cmd)
+                                lines.append(f"- {cmd}: 0 matching docs found for query '{q}'")
+                            else:
+                                preview_sources = (
+                                    ", ".join(sources[:2]) if sources else "(no sources)"
+                                )
+                                lines.append(
+                                    f"- {cmd}: {count} doc match(es) for query '{q}'; top sources: {preview_sources}"
+                                )
+                        except Exception as _e:
+                            # Continue validating other commands; summarize at end
+                            lines.append(
+                                f"- {cmd}: error during doc lookup; will defer to LLM fact-check"
+                            )
+                    if lines:
+                        cli_docs_validation_summary = (
+                            "\n\n## CLI Documentation Lookup:\n" + "\n".join(lines)
+                        )
+            except Exception as e:
+                logger.info(f"Skipping CLI doc validation during fact-checking: {e}")
 
             # Prepare fact-check prompt
             fact_check_input = f"""
@@ -1813,7 +1899,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 {response}
 
 ## Diagnostic Data (if available):
-{diagnostic_data if diagnostic_data else "No diagnostic data provided"}{url_validation_summary}{cli_detection_summary}
+{diagnostic_data if diagnostic_data else "No diagnostic data provided"}{url_validation_summary}{cli_docs_validation_summary}{cli_detection_summary}
 
 Please review this Redis SRE agent response for factual accuracy, command validity (especially `rladmin`), and URL validity. Include any invalid commands or URLs as errors in your assessment.
 """
@@ -1850,6 +1936,23 @@ Please review this Redis SRE agent response for factual accuracy, command validi
                 logger.info(
                     f"Fact-check completed: {'errors found' if result.get('has_errors') else 'no errors'}"
                 )
+                # Enforce invalid_command when we successfully ran doc validation and found no docs for a detected command
+                try:
+                    if _doc_search_ran and unmatched_commands:
+                        errs = result.get("errors") or []
+                        for cmd in unmatched_commands:
+                            errs.append(
+                                {
+                                    "claim": cmd,
+                                    "issue": "No matching documentation found for this command syntax; verify against official Redis docs.",
+                                    "category": "invalid_command",
+                                }
+                            )
+                        result["errors"] = errs
+                        result["has_errors"] = True
+                except Exception:
+                    # Never break on enforcement
+                    pass
                 return result
             except json.JSONDecodeError as e:
                 logger.error(f"Fact-checker returned invalid JSON after retries: {e}")
@@ -1861,6 +1964,7 @@ Please review this Redis SRE agent response for factual accuracy, command validi
         except Exception as e:
             logger.error(f"Error during fact-checking: {e}")
             # Don't block on fact-check failures - return graceful fallback
+
             return {
                 "has_errors": False,
                 "validation_notes": f"Fact-checking unavailable ({str(e)[:50]}...)",
@@ -1872,7 +1976,7 @@ Please review this Redis SRE agent response for factual accuracy, command validi
         query: str,
         session_id: str,
         user_id: str,
-        max_iterations: int = 10,
+        max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,

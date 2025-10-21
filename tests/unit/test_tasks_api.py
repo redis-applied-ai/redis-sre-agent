@@ -1,6 +1,6 @@
-"""Unit tests for tasks API endpoints."""
+"""Unit tests for tasks API endpoints mounted under /api/v1."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,77 +14,61 @@ def client():
     return TestClient(app)
 
 
-class TestTriageEndpoint:
-    """Test the triage endpoint."""
+class TestTasksAPI:
+    """Tests for /api/v1/tasks (create and get)."""
 
-    def test_triage_issue_error(self, client):
-        """Test triage when an error occurs."""
-        with patch("redis_sre_agent.api.tasks.get_redis_client") as mock_redis:
-            mock_redis.side_effect = Exception("Redis connection failed")
+    def test_create_task_error(self, client):
+        """POST /api/v1/tasks returns 500 when redis client creation fails."""
+        with patch("redis_sre_agent.api.tasks_api.get_redis_client") as mock_get:
+            mock_get.side_effect = Exception("Redis connection failed")
+            resp = client.post("/api/v1/tasks", json={"message": "help"})
+        assert resp.status_code == 500
+        assert "Redis connection failed" in resp.json()["detail"]
 
-            response = client.post(
-                "/api/v1/triage",
-                json={"query": "Redis issue"},
-            )
+    def test_get_task_not_found(self, client):
+        """GET /api/v1/tasks/{task_id} returns 404 when TaskManager returns None."""
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=None)
+        with patch("redis_sre_agent.api.tasks_api.TaskManager", return_value=mock_tm):
+            resp = client.get("/api/v1/tasks/abc123")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Task not found"
 
-            assert response.status_code == 500
-            assert "Failed to triage issue" in response.json()["detail"]
+    def test_create_task_success(self, client):
+        """POST /api/v1/tasks returns 202 and task payload on success."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        with (
+            patch("redis_sre_agent.api.tasks_api.get_redis_client"),
+            patch("redis_sre_agent.api.tasks_api.create_task", new=AsyncMock(return_value=fake)),
+        ):
+            resp = client.post("/api/v1/tasks", json={"message": "help"})
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["task_id"] == "t1"
+        assert data["thread_id"] == "th1"
 
+    def test_get_task_success(self, client):
+        """GET /api/v1/tasks/{task_id} returns 200 with state."""
 
-class TestTaskStatusEndpoint:
-    """Test the task status endpoint."""
+        # Minimal TaskState-like object
+        class S:
+            task_id = "t1"
+            thread_id = "th1"
+            status = "queued"
+            updates = []
+            result = None
+            error_message = None
 
-    def test_get_task_status_error(self, client):
-        """Test getting task status when an error occurs."""
-        with patch("redis_sre_agent.api.tasks.get_redis_client") as mock_redis:
-            mock_redis.side_effect = Exception("Redis error")
-
-            response = client.get("/api/v1/tasks/thread-123")
-
-            assert response.status_code == 500
-            assert "Failed to get task status" in response.json()["detail"]
-
-
-class TestContinueConversationEndpoint:
-    """Test the continue conversation endpoint."""
-
-    def test_continue_conversation_error(self, client):
-        """Test continuing conversation when an error occurs."""
-        with patch("redis_sre_agent.api.tasks.get_redis_client") as mock_redis:
-            mock_redis.side_effect = Exception("Redis error")
-
-            response = client.post(
-                "/api/v1/tasks/thread-123/continue",
-                json={"query": "Follow up"},
-            )
-
-            assert response.status_code == 500
-            assert "Failed to continue conversation" in response.json()["detail"]
-
-
-class TestDeleteTaskEndpoint:
-    """Test the delete/cancel task endpoint."""
-
-    def test_delete_task_error(self, client):
-        """Test deleting task when an error occurs."""
-        with patch("redis_sre_agent.api.tasks.get_redis_client") as mock_redis:
-            mock_redis.side_effect = Exception("Redis error")
-
-            response = client.delete("/api/v1/tasks/thread-123")
-
-            assert response.status_code == 500
-            assert "Failed to" in response.json()["detail"]
-
-
-class TestListTasksEndpoint:
-    """Test the list tasks endpoint."""
-
-    def test_list_tasks_error(self, client):
-        """Test listing tasks when an error occurs."""
-        with patch("redis_sre_agent.api.tasks.get_redis_client") as mock_redis:
-            mock_redis.side_effect = Exception("Redis error")
-
-            response = client.get("/api/v1/tasks")
-
-            assert response.status_code == 500
-            assert "Failed to list tasks" in response.json()["detail"]
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=S())
+        with patch("redis_sre_agent.api.tasks_api.TaskManager", return_value=mock_tm):
+            resp = client.get("/api/v1/tasks/t1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["task_id"] == "t1"
+        assert data["thread_id"] == "th1"

@@ -43,7 +43,7 @@ docker run -d -p 6379:6379 redis:8-alpine
 uv run python scripts/seed.py
 
 # Start worker (Terminal 1)
-uv run python -m redis_sre_agent.worker
+uv run redis-sre-agent worker
 
 # Start API (Terminal 2)
 uv run fastapi dev redis_sre_agent/api/app.py

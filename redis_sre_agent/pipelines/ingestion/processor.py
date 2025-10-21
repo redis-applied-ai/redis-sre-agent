@@ -38,6 +38,10 @@ class DocumentProcessor:
                 "enable_semantic_chunking": knowledge_settings.enable_semantic_chunking,
                 "similarity_threshold": knowledge_settings.similarity_threshold,
                 "embedding_model": knowledge_settings.embedding_model,
+                # New defaults for better doc handling
+                "strip_front_matter": True,
+                "whole_doc_threshold": 6000,
+                "whole_api_threshold": 12000,
             }
         else:
             self.config = {
@@ -50,22 +54,58 @@ class DocumentProcessor:
                 "enable_semantic_chunking": False,
                 "similarity_threshold": 0.7,
                 "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+                "strip_front_matter": True,
+                "whole_doc_threshold": 6000,
+                "whole_api_threshold": 12000,
                 **(config or {}),
             }
 
     def chunk_document(self, document: ScrapedDocument) -> List[Dict[str, Any]]:
-        """Split document into chunks for vector storage."""
-        content = document.content
+        """Split document into chunks for vector storage.
 
-        if len(content) <= self.config["chunk_size"]:
-            # Document is small enough, use as single chunk
+        Improvements:
+        - Strip YAML front-matter by default
+        - Keep short docs as a single chunk (threshold)
+        - Fall back to existing length-based chunking otherwise
+        """
+        content = document.content or ""
+
+        # Optional: strip YAML front matter at top of file
+        if self.config.get("strip_front_matter", True) and content.startswith("---"):
+            content, _ = self._strip_yaml_front_matter(content)
+
+        # Keep small/medium CLI reference docs whole so usage blocks stay intact
+        whole_threshold = int(self.config.get("whole_doc_threshold", 6000))
+        src = (document.source_url or "").lower()
+        title = (document.title or "").lower()
+        is_cli_doc = (
+            "rladmin" in content.lower()
+            or "rladmin" in title
+            or "cli-utilities" in src
+            or "/rladmin/" in src
+        )
+        if is_cli_doc and len(content) <= whole_threshold:
             return [self._create_chunk(document, content, 0)]
 
-        # Split into overlapping chunks
-        chunks = []
-        chunk_size = self.config["chunk_size"]
-        overlap = self.config["chunk_overlap"]
-        max_chunks = self.config["max_chunks_per_doc"]
+        # Treat RS Admin REST API docs as whole documents (to preserve full examples)
+        is_api_doc = (
+            "/references/rest-api/" in src
+            or "/rest-api/requests/" in src
+            or "/operate/rs/references/rest-api/" in src
+        )
+        whole_api_threshold = int(self.config.get("whole_api_threshold", 12000))
+        if is_api_doc and len(content) <= whole_api_threshold:
+            return [self._create_chunk(document, content, 0)]
+
+        # If not a CLI/API doc, still keep truly small docs as a single chunk
+        if len(content) <= self.config["chunk_size"]:
+            return [self._create_chunk(document, content, 0)]
+
+        # Split into overlapping chunks (legacy behavior)
+        chunks: List[Dict[str, Any]] = []
+        chunk_size = int(self.config["chunk_size"])
+        overlap = int(self.config["chunk_overlap"])
+        max_chunks = int(self.config["max_chunks_per_doc"])
 
         start = 0
         chunk_index = 0
@@ -131,6 +171,30 @@ class DocumentProcessor:
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             },
         }
+
+    def _strip_yaml_front_matter(self, text: str) -> tuple[str, bool]:
+        """Remove YAML front-matter delimited by leading --- blocks.
+
+        Returns:
+            (processed_text, removed) where removed indicates if front-matter was found.
+        """
+        if not text.startswith("---"):
+            return text, False
+
+        try:
+            # Find closing '---' after the first line
+            end_idx = text.find("\n---", 3)
+            if end_idx == -1:
+                return text, False
+            # Include the trailing --- line
+            closing_line_end = end_idx + len("\n---")
+            remainder = text[closing_line_end:]
+            # Trim a single leading newline if present
+            if remainder.startswith("\n"):
+                remainder = remainder[1:]
+            return remainder, True
+        except Exception:
+            return text, False
 
 
 class IngestionPipeline:

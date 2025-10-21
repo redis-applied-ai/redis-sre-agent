@@ -2,7 +2,7 @@
 # Use: docker-compose -f docker-compose.yml -f docker-compose.test.yml up
 
 services:
-  redis:
+  redis-demo:
     image: redis:8.2.1
     ports:
       - "6369"
@@ -23,10 +23,10 @@ services:
     ports:
       - "9121:9121"
     environment:
-      - REDIS_ADDR=redis://redis:6379
+      - REDIS_ADDR=redis://redis-demo:6379
       - REDIS_EXPORTER_LOG_FORMAT=txt
     depends_on:
-      redis:
+      redis-demo:
         condition: service_healthy
     networks:
       - sre-network-test
@@ -89,11 +89,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
+      - REDIS_URL=redis://redis-demo:6379/0  # Internal container port stays 6379
       - PROMETHEUS_URL=http://prometheus:9090
       - GRAFANA_URL=http://grafana:3000
     depends_on:
-      redis:
+      redis-demo:
         condition: service_healthy
       prometheus:
         condition: service_started
@@ -112,10 +112,10 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
+      - REDIS_URL=redis://redis-demo:6379/0  # Internal container port stays 6379
       - PROMETHEUS_URL=http://prometheus:9090
     depends_on:
-      redis:
+      redis-demo:
         condition: service_healthy
     volumes:
       - .env:/app/.env
@@ -123,7 +123,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for log access
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
-    command: uv run python -m redis_sre_agent.worker
+    command: uv run redis-sre-agent worker
     networks:
       - sre-network-test
 

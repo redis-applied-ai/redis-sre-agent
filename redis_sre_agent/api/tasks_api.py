@@ -1,4 +1,4 @@
-"""V2 Task API: create task (optionally creating thread) and get task by id.
+"""Task API: create task and get task by id.
 
 Separate from legacy endpoints that returned status by thread.
 """
@@ -9,21 +9,24 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
+import redis_sre_agent.models.tasks as task_models
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.task_state import TaskManager
-from redis_sre_agent.models.tasks_v2 import create_task as create_task_model
 from redis_sre_agent.schemas.tasks import TaskCreateRequest, TaskCreateResponse, TaskResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Alias the model-layer create_task so tests can patch redis_sre_agent.api.tasks_api.create_task
+create_task = task_models.create_task
+
 
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
-async def create_task_v2(req: TaskCreateRequest) -> TaskCreateResponse:
+async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
     try:
         rc = get_redis_client()
-        data = await create_task_model(
+        data = await create_task(
             message=req.message, thread_id=req.thread_id, context=req.context, redis_client=rc
         )
         return TaskCreateResponse(**data)
@@ -33,7 +36,7 @@ async def create_task_v2(req: TaskCreateRequest) -> TaskCreateResponse:
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
-async def get_task_v2(task_id: str) -> TaskResponse:
+async def get_task(task_id: str) -> TaskResponse:
     rc = get_redis_client()
     tm = TaskManager(redis_client=rc)
     state = await tm.get_task_state(task_id)

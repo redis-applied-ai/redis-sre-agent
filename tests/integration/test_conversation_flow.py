@@ -11,7 +11,7 @@ Tests the complete flow:
 
 import pytest
 
-from redis_sre_agent.core.tasks import process_agent_turn
+from redis_sre_agent.core.docket_tasks import process_agent_turn
 from redis_sre_agent.core.thread_state import ThreadManager
 
 

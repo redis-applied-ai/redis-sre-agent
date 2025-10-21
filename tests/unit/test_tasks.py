@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from redis_sre_agent.core.tasks import (
+from redis_sre_agent.core.docket_tasks import (
     SRE_TASK_COLLECTION,
     check_service_health,
     ingest_sre_document,
@@ -149,7 +149,9 @@ class TestCheckServiceHealth:
         mock_session = MockSession()
 
         with (
-            patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis_client
+            ),
             patch("aiohttp.ClientSession", return_value=mock_session),
         ):
             result = await check_service_health(
@@ -179,7 +181,9 @@ class TestCheckServiceHealth:
         mock_redis_client.hset.return_value = 1
         mock_redis_client.expire.return_value = True
 
-        with patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client):
+        with patch(
+            "redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis_client
+        ):
             result = await check_service_health(
                 service_name="single-service", endpoints=["http://service/health"]
             )
@@ -218,7 +222,9 @@ class TestCheckServiceHealth:
         mock_session = MockSession()
 
         with (
-            patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis_client),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis_client
+            ),
             patch("aiohttp.ClientSession", return_value=mock_session),
         ):
             with pytest.raises(Exception, match="Redis error"):
@@ -333,9 +339,10 @@ class TestTaskSystemManagement:
     async def test_register_sre_tasks_success(self):
         """Test successful task registration."""
         with (
-            patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class,
+            patch("redis_sre_agent.core.docket_tasks.Docket") as mock_docket_class,
             patch(
-                "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
+                "redis_sre_agent.core.docket_tasks.get_redis_url",
+                return_value="redis://localhost:6379",
             ),
         ):
             # Set up the mock properly
@@ -355,9 +362,10 @@ class TestTaskSystemManagement:
     async def test_register_sre_tasks_failure(self):
         """Test task registration failure."""
         with (
-            patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class,
+            patch("redis_sre_agent.core.docket_tasks.Docket") as mock_docket_class,
             patch(
-                "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
+                "redis_sre_agent.core.docket_tasks.get_redis_url",
+                return_value="redis://localhost:6379",
             ),
         ):
             mock_docket_instance = AsyncMock()
@@ -370,14 +378,15 @@ class TestTaskSystemManagement:
     @pytest.mark.asyncio
     async def test_task_system_test_success(self):
         """Test task system connectivity test success."""
-        with patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class:
+        with patch("redis_sre_agent.core.docket_tasks.Docket") as mock_docket_class:
             mock_docket_instance = AsyncMock()
             mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
             mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
             mock_docket_class.return_value = mock_docket_instance
 
             with patch(
-                "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
+                "redis_sre_agent.core.docket_tasks.get_redis_url",
+                return_value="redis://localhost:6379",
             ):
                 result = await test_task_system()
 
@@ -386,11 +395,12 @@ class TestTaskSystemManagement:
     @pytest.mark.asyncio
     async def test_task_system_test_failure(self):
         """Test task system connectivity test failure."""
-        with patch("redis_sre_agent.core.tasks.Docket") as mock_docket_class:
+        with patch("redis_sre_agent.core.docket_tasks.Docket") as mock_docket_class:
             mock_docket_class.side_effect = Exception("Connection failed")
 
             with patch(
-                "redis_sre_agent.core.tasks.get_redis_url", return_value="redis://localhost:6379"
+                "redis_sre_agent.core.docket_tasks.get_redis_url",
+                return_value="redis://localhost:6379",
             ):
                 result = await test_task_system()
 

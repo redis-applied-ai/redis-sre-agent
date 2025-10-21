@@ -53,7 +53,16 @@ async def search_knowledge_base_helper(
     vector_query = VectorQuery(
         vector=query_vector,
         vector_field_name="vector",
-        return_fields=["title", "content", "source", "category", "severity"],
+        return_fields=[
+            "id",
+            "document_hash",
+            "chunk_index",
+            "title",
+            "content",
+            "source",
+            "category",
+            "severity",
+        ],
         num_results=limit,
     )
 
@@ -72,7 +81,16 @@ async def search_knowledge_base_helper(
         vector_query_no_filter = VectorQuery(
             vector=query_vector,
             vector_field_name="vector",
-            return_fields=["title", "content", "source", "category", "severity"],
+            return_fields=[
+                "id",
+                "document_hash",
+                "chunk_index",
+                "title",
+                "content",
+                "source",
+                "category",
+                "severity",
+            ],
             num_results=limit,
         )
         results = await index.query(vector_query_no_filter)
@@ -86,8 +104,12 @@ async def search_knowledge_base_helper(
         "results_count": len(results),
         "results": [
             {
+                "id": doc.get("id", ""),
+                "document_hash": doc.get("document_hash", ""),
+                "chunk_index": doc.get("chunk_index", None),
                 "title": doc.get("title", ""),
-                "content": doc.get("content", "")[:500],  # Truncate for response
+                # Return full content so callers/tests can assert on complete examples
+                "content": doc.get("content", ""),
                 "source": doc.get("source", ""),
                 "category": doc.get("category", ""),
                 "score": doc.get("score", 0.0),

@@ -52,6 +52,10 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 - Include relevant examples and use cases
 - Suggest follow-up questions or related topics when helpful
 
+## Command Guidance:
+- When suggesting actions involving commands, use real user-facing CLI commands or API requests.
+- Do NOT reference internal agent tool names (e.g., "run get_cluster_info"). Instead, show an equivalent `redis-cli` command or a `curl` example for a REST API where appropriate.
+
 Remember: You are the knowledge specialist - make the most of the available documentation and provide educational, actionable guidance."""
 
 
@@ -172,6 +176,34 @@ class KnowledgeOnlyAgent:
 
                 tool_messages = []
                 for tool_call, result in zip(last_message.tool_calls, tool_results):
+                    # Record knowledge sources when a knowledge search tool returns results
+                    try:
+                        tool_name = str(tool_call.get("name", ""))
+                        if tool_name.startswith("knowledge_") and "search" in tool_name:
+                            if isinstance(result, dict):
+                                res_list = result.get("results") or []
+                                fragments = []
+                                for doc in res_list:
+                                    if isinstance(doc, dict):
+                                        fragments.append(
+                                            {
+                                                "id": doc.get("id"),
+                                                "document_hash": doc.get("document_hash"),
+                                                "chunk_index": doc.get("chunk_index"),
+                                                "title": doc.get("title"),
+                                                "source": doc.get("source"),
+                                            }
+                                        )
+                                if fragments and self.progress_callback:
+                                    await self.progress_callback(
+                                        f"Found {len(fragments)} knowledge fragments",  # message
+                                        "knowledge_sources",  # update_type
+                                        {"fragments": fragments},  # metadata
+                                    )
+                    except Exception:
+                        # Don't let telemetry failures break tool handling
+                        pass
+
                     tool_messages.append(
                         ToolMessage(
                             content=str(result),

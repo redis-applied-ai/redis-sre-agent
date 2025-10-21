@@ -9,8 +9,8 @@ from fastapi import APIRouter, Response
 from fastapi.responses import PlainTextResponse
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.docket_tasks import test_task_system
 from redis_sre_agent.core.redis import initialize_redis_infrastructure
-from redis_sre_agent.core.tasks import test_task_system
 
 logger = logging.getLogger(__name__)
 

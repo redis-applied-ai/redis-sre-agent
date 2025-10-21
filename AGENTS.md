@@ -16,7 +16,7 @@ This is a production-ready Redis Site Reliability Engineering (SRE) agent built 
 ### Environment Setup
 ```bash
 uv sync --dev
-uv run python -m redis_sre_agent.cli --help
+uv run redis-sre-agent --help
 ```
 
 ### Testing

@@ -255,12 +255,12 @@ def app_with_mocks():
         patch("redis_sre_agent.core.redis.Redis") as mock_redis,
         patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer,
         patch("redis_sre_agent.core.redis.AsyncSearchIndex") as mock_index,
-        patch("redis_sre_agent.core.tasks.test_task_system", return_value=True),
+        patch("redis_sre_agent.core.docket_tasks.test_task_system", return_value=True),
         patch(
             "redis_sre_agent.core.redis.initialize_redis_infrastructure",
             side_effect=mock_initialize,
         ),
-        patch("redis_sre_agent.core.tasks.register_sre_tasks", side_effect=mock_register),
+        patch("redis_sre_agent.core.docket_tasks.register_sre_tasks", side_effect=mock_register),
         patch("redis_sre_agent.core.redis.cleanup_redis_connections", new_callable=AsyncMock),
     ):
         # Configure mocks
@@ -360,8 +360,8 @@ def redis_container(worker_id):
     # Force reload of modules to pick up new settings
     import importlib
 
+    from redis_sre_agent.core import docket_tasks as tasks_module
     from redis_sre_agent.core import redis as redis_module
-    from redis_sre_agent.core import tasks as tasks_module
 
     importlib.reload(redis_module)
     importlib.reload(tasks_module)

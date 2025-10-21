@@ -80,7 +80,7 @@ class TestLifespan:
         from redis_sre_agent.api.app import app, lifespan
 
         with patch("redis_sre_agent.api.app.initialize_redis_infrastructure") as mock_init:
-            with patch("redis_sre_agent.core.tasks.register_sre_tasks") as mock_register:
+            with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
                 with patch("redis_sre_agent.api.app.cleanup_redis_connections") as mock_cleanup:
                     mock_init.return_value = {"redis": "connected"}
                     mock_register.return_value = None
@@ -120,7 +120,7 @@ class TestLifespan:
         from redis_sre_agent.api.app import app, lifespan
 
         with patch("redis_sre_agent.api.app.initialize_redis_infrastructure") as mock_init:
-            with patch("redis_sre_agent.core.tasks.register_sre_tasks") as mock_register:
+            with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
                 with patch("redis_sre_agent.api.app.cleanup_redis_connections") as mock_cleanup:
                     mock_init.return_value = {"redis": "connected"}
                     mock_register.side_effect = Exception("Task registration failed")
@@ -140,7 +140,7 @@ class TestLifespan:
         from redis_sre_agent.api.app import app, lifespan
 
         with patch("redis_sre_agent.api.app.initialize_redis_infrastructure") as mock_init:
-            with patch("redis_sre_agent.core.tasks.register_sre_tasks") as mock_register:
+            with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
                 with patch("redis_sre_agent.api.app.cleanup_redis_connections") as mock_cleanup:
                     mock_init.return_value = {"redis": "connected"}
                     mock_register.return_value = None
@@ -200,7 +200,7 @@ class TestRouterInclusion:
         from redis_sre_agent.api.app import app
 
         routes = [route.path for route in app.routes]
-        assert any("/api/v1" in r and ("tasks" in r or "triage" in r) for r in routes)
+        assert any("/api/v1" in r and ("/api/v1/tasks" in r) for r in routes)
 
     def test_websockets_router_included(self):
         """Test websockets router is included with prefix."""
@@ -240,14 +240,26 @@ class TestAppEndpoints:
     """Test that app responds to basic endpoints."""
 
     def test_health_endpoint_exists(self):
-        """Test health endpoint is accessible."""
+        """Test health endpoint is accessible without starting background systems."""
+        from unittest.mock import AsyncMock
+
         from redis_sre_agent.api.app import app
 
-        client = TestClient(app)
-        response = client.get("/api/v1/health")
+        # Patch heavy dependencies to avoid background tasks/warnings
+        with (
+            patch("redis_sre_agent.api.health.initialize_redis_infrastructure", return_value={}),
+            patch("redis_sre_agent.api.health.test_task_system", new=AsyncMock(return_value=False)),
+            patch("redis_sre_agent.api.health.Docket") as mock_docket,
+        ):
+            # Make workers() a clean async returning empty list
+            mock_ctx = mock_docket.return_value.__aenter__.return_value
+            mock_ctx.workers = AsyncMock(return_value=[])
 
-        # Should get a response (may be 200 or error depending on Redis)
-        assert response.status_code in [200, 500, 503]
+            client = TestClient(app)
+            response = client.get("/api/v1/health")
+
+        # Should get a response (200/503 depending on patched components)
+        assert response.status_code in [200, 503]
 
     def test_metrics_endpoint_exists(self):
         """Test metrics endpoint is accessible."""

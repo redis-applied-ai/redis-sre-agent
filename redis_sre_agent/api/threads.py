@@ -1,4 +1,4 @@
-"""V2 Thread API: CRUD and append-messages.
+"""Thread API: CRUD and append-messages.
 
 This API is separate from the legacy combined Tasks/Threads endpoints.
 """
@@ -27,7 +27,7 @@ router = APIRouter()
 
 
 @router.post("/threads", response_model=ThreadResponse, status_code=status.HTTP_201_CREATED)
-async def create_thread_v2(req: ThreadCreateRequest) -> ThreadResponse:
+async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
     try:
         rc = get_redis_client()
         tm = ThreadManager(redis_client=rc)
@@ -61,7 +61,7 @@ async def create_thread_v2(req: ThreadCreateRequest) -> ThreadResponse:
 
 
 @router.get("/threads/{thread_id}", response_model=ThreadResponse)
-async def get_thread_v2(thread_id: str) -> ThreadResponse:
+async def get_thread(thread_id: str) -> ThreadResponse:
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
     state = await tm.get_thread_state(thread_id)
@@ -79,7 +79,7 @@ async def get_thread_v2(thread_id: str) -> ThreadResponse:
 
 
 @router.patch("/threads/{thread_id}")
-async def update_thread_v2(thread_id: str, req: ThreadUpdateRequest) -> Dict[str, Any]:
+async def update_thread(thread_id: str, req: ThreadUpdateRequest) -> Dict[str, Any]:
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
     state = await tm.get_thread_state(thread_id)
@@ -100,7 +100,7 @@ async def update_thread_v2(thread_id: str, req: ThreadUpdateRequest) -> Dict[str
 
 
 @router.post("/threads/{thread_id}/append-messages", status_code=status.HTTP_204_NO_CONTENT)
-async def append_messages_v2(thread_id: str, req: ThreadAppendMessagesRequest):
+async def append_messages(thread_id: str, req: ThreadAppendMessagesRequest):
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
     ok = await tm.append_messages(thread_id, [m.model_dump() for m in req.messages])
@@ -110,7 +110,7 @@ async def append_messages_v2(thread_id: str, req: ThreadAppendMessagesRequest):
 
 
 @router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_thread_v2(thread_id: str):
+async def delete_thread(thread_id: str):
     rc = get_redis_client()
     # Reuse existing deletion logic for consistency
     await delete_thread_model(thread_id=thread_id, redis_client=rc)

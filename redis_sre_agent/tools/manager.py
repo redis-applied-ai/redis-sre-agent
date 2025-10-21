@@ -57,6 +57,9 @@ class ToolManager:
             redis_instance: Optional Redis instance to scope tools to
         """
         self.redis_instance = redis_instance
+        # Track loaded provider class paths to avoid duplicates
+        self._loaded_provider_paths: set[str] = set()
+
         self._routing_table: Dict[str, ToolProvider] = {}
         self._tools: List[ToolDefinition] = []
         self._stack: Optional[AsyncExitStack] = None
@@ -154,6 +157,11 @@ class ToolManager:
             always_on: If True, initialize without redis_instance (for always-on providers)
         """
         try:
+            # Skip duplicate loads of the same provider class
+            if provider_path in self._loaded_provider_paths:
+                logger.debug(f"Provider already loaded, skipping duplicate: {provider_path}")
+                return
+
             provider_cls = self._get_provider_class(provider_path)
             # Always-on providers should not have redis_instance set
             instance = None if always_on else self.redis_instance
@@ -164,6 +172,9 @@ class ToolManager:
             for tool_def in tool_schemas:
                 self._routing_table[tool_def.name] = provider
                 self._tools.append(tool_def)
+
+            # Mark this provider as loaded to avoid duplicates later
+            self._loaded_provider_paths.add(provider_path)
 
             logger.info(f"Loaded provider {provider.provider_name} with {len(tool_schemas)} tools")
 

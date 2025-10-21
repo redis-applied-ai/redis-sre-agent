@@ -14,6 +14,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.protocols import ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
@@ -141,6 +142,20 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             )
             logger.info(f"Connected to Redis Enterprise admin API at {admin_url}")
         return self._client
+
+    def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Parse operation name from full tool name for status updates.
+
+        Overrides the base implementation to handle operations with underscores,
+        matching the provider's tool name scheme: {provider}_{hash}_{operation}.
+        """
+        try:
+            import re
+
+            match = re.search(r"_([0-9a-f]{6})_(.+)$", tool_name)
+            return match.group(2) if match else None
+        except Exception:
+            return None
 
     async def __aenter__(self):
         """Support async context manager (no-op, client is lazily initialized)."""
@@ -506,6 +521,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
+    @status_update("I'm querying the Redis Enterprise Admin API for cluster info.")
     async def get_cluster_info(self) -> Dict[str, Any]:
         """Get cluster information.
 
@@ -546,6 +562,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": error_msg,
             }
 
+    @status_update("I'm listing databases via the Redis Enterprise Admin API.")
     async def list_databases(self, fields: Optional[str] = None) -> Dict[str, Any]:
         """List all databases in the cluster.
 
@@ -585,6 +602,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm retrieving database details from the Redis Enterprise Admin API for database {uid}."
+    )
     async def get_database(self, uid: int, fields: Optional[str] = None) -> Dict[str, Any]:
         """Get information about a specific database.
 
@@ -636,6 +656,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update("I'm listing cluster nodes via the Redis Enterprise Admin API.")
     async def list_nodes(self, fields: Optional[str] = None) -> Dict[str, Any]:
         """List all nodes in the cluster.
 
@@ -675,6 +696,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm retrieving node details from the Redis Enterprise Admin API for node {uid}."
+    )
     async def get_node(self, uid: int, fields: Optional[str] = None) -> Dict[str, Any]:
         """Get information about a specific node.
 
@@ -715,6 +739,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update("I'm listing available Redis modules via the Redis Enterprise Admin API.")
     async def list_modules(self) -> Dict[str, Any]:
         """List all available Redis modules.
 
@@ -747,6 +772,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm fetching database performance stats via the Admin API for database {uid} (interval={interval})."
+    )
     async def get_database_stats(self, uid: int, interval: str = "1sec") -> Dict[str, Any]:
         """Get statistics for a specific database.
 
@@ -787,6 +815,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update(
+        "I'm fetching cluster-wide performance stats via the Redis Enterprise Admin API (interval={interval})."
+    )
     async def get_cluster_stats(self, interval: str = "1sec") -> Dict[str, Any]:
         """Get cluster-wide statistics.
 
@@ -823,6 +854,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update("I'm listing cluster actions via the Redis Enterprise Admin API.")
     async def list_actions(self) -> Dict[str, Any]:
         """List all actions in the cluster.
 
@@ -856,6 +888,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm checking the status of action {action_uid} via the Redis Enterprise Admin API."
+    )
     async def get_action(self, action_uid: str) -> Dict[str, Any]:
         """Get information about a specific action.
 
@@ -892,6 +927,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "action_uid": action_uid,
             }
 
+    @status_update("I'm listing shards and their placement via the Redis Enterprise Admin API.")
     async def list_shards(self, fields: Optional[str] = None) -> Dict[str, Any]:
         """List all shards in the cluster.
 
@@ -931,6 +967,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm retrieving shard details from the Redis Enterprise Admin API for shard {uid}."
+    )
     async def get_shard(self, uid: int) -> Dict[str, Any]:
         """Get information about a specific shard.
 
@@ -966,6 +1005,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update("I'm retrieving cluster alert settings via the Redis Enterprise Admin API.")
     async def get_cluster_alerts(self) -> Dict[str, Any]:
         """Get cluster alert settings.
 
@@ -999,6 +1039,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm retrieving alert settings via the Redis Enterprise Admin API for database {uid}."
+    )
     async def get_database_alerts(self, uid: int) -> Dict[str, Any]:
         """Get alert configuration for a specific database.
 
@@ -1035,6 +1078,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update(
+        "I'm fetching node performance stats via the Admin API for node {uid} (interval={interval})."
+    )
     async def get_node_stats(self, uid: int, interval: str = "1sec") -> Dict[str, Any]:
         """Get statistics for a specific node.
 
