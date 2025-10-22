@@ -18,9 +18,11 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
 from ..api.instances import (
@@ -30,6 +32,8 @@ from ..api.instances import (
 )
 from ..core.config import settings
 from ..tools.manager import ToolManager
+from .helpers import summarize_signals
+from .prompts import FACT_CHECKER_PROMPT, SRE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -296,428 +300,9 @@ def _extract_instance_details_from_message(message: str) -> Optional[Dict[str, s
 
 
 # SRE-focused system prompt
-SRE_SYSTEM_PROMPT = """
-You are an experienced Redis SRE who writes clear, actionable triage notes. You sound like a knowledgeable colleague sharing findings and recommendations - professional but conversational.
+# Prompts moved to redis_sre_agent/agent/prompts.py
 
-## Your Approach
-
-When someone brings you a Redis issue, you:
-1. **Look at the data first** - examine any diagnostic info they've provided
-2. **Figure out what's actually happening** - separate symptoms from root causes
-3. **Search your knowledge** when you need specific troubleshooting steps
-4. **Give them a clear plan** - actionable steps they can take right now
-
-## Writing Style
-
-Write like you're updating a colleague on what you found. Use natural language:
-- "I took a look at your Redis instance and here's what I'm seeing..."
-- "The good news is..." / "The concerning part is..."
-- "Let's start with..." / "Next, I'd recommend..."
-- "Based on what I found in our runbooks..."
-
-## Response Format (Use Proper Markdown)
-
-Structure your response with clear headers and formatting:
-
-# Initial Assessment
-Brief summary of what you found
-
-# What I'm Seeing
-Key findings from diagnostics, with **bold** for important metrics
-
-# My Recommendation
-Clear action plan with:
-- Numbered steps for immediate actions
-- **Bold text** for critical items
-- Code blocks for commands when helpful
-
-# Supporting Info
-- Where you got your recommendations (cite runbooks/docs)
-- Key diagnostic evidence that supports your analysis
-
-## Formatting Requirements
-
-- Use `#` headers for main sections
-- Use `**bold**` for emphasis on critical items
-- Use `-` or `1.` for lists and action items
-- Use code blocks with ``` for commands
-- Add blank lines between paragraphs for readability
-- Keep paragraphs short (2-3 sentences max)
-
-## Command Guidance
-
-- When you recommend steps that involve executing something, use real user-facing commands or API requests.
-- Valid forms:
-  - CLI commands (e.g., `redis-cli`, `uv run pytest`, `curl ...`)
-  - HTTP requests with method, path, and minimal payload (include a `curl` example for REST APIs like Redis Enterprise Admin)
-- Do NOT reference internal tool names like "run get_cluster_info" or "use list_nodes" — those are internal agent tools the user cannot run.
-- If internal tools informed your findings, translate them to user-facing equivalents (e.g., show the corresponding REST endpoint and example `curl`).
-
-## Keep It Practical
-
-Focus on what they can do right now:
-- Skip the theory - they need action steps
-- Don't explain basic Redis concepts unless directly relevant
-- Avoid generic advice like "monitor your metrics" - be specific
-- If you're not sure about something, say so and suggest investigation steps
-
-## Redis Enterprise Cluster Checks
-
-**CRITICAL: Redis Enterprise databases are DIFFERENT from Redis Open Source**
-
-When working with Redis Enterprise instances (instance_type: redis_enterprise), you MUST understand:
-
-### What You CANNOT Do with Redis Enterprise
-- ❌ **DO NOT suggest CONFIG SET for persistence, replication, or clustering** - these are managed by Redis Enterprise
-- ❌ **DO NOT suggest BGSAVE, BGREWRITEAOF, or other persistence commands** - not supported
-- ❌ **DO NOT suggest REPLICAOF or replication commands** - replication is automatic
-- ❌ **DO NOT suggest MODULE LOAD** - modules are managed via Cluster Manager/API
-- ❌ **DO NOT trust INFO output for configuration details** - it shows runtime state, not configuration
-- ❌ **DO NOT suggest ACL SETUSER or ACL DELUSER** - ACL is managed via Cluster Manager/API
-
-### What INFO Shows vs. Reality in Redis Enterprise
-The `INFO` command output is MISLEADING for Redis Enterprise:
-- `aof_enabled=1, aof_current_size=0` - This is NORMAL. Redis Enterprise manages AOF internally.
-- `slave0: ip=0.0.0.0, port=0` - This is NORMAL. Replication is managed by Redis Enterprise, not visible via INFO.
-- `maxmemory=0` - This is NORMAL. Memory limits are enforced at the cluster level, not visible via CONFIG GET.
-- `rdb_changes_since_last_save` - This is NORMAL. RDB snapshots are managed by Redis Enterprise.
-
-**DO NOT suggest "fixing" these - they are expected behavior in Redis Enterprise!**
-
-### What You SHOULD Do with Redis Enterprise
-1. **Use the Admin REST API for configuration details** - Call these tools to see actual configuration (refer to the
-    Redis Enterprise Admin API tool descriptions to see all available tools):
-   - `get_cluster_info` - Cluster-level information
-   - `get_database` - Database configuration (memory limits, persistence, replication, clustering, modules, etc.)
-   - `list_nodes` - Node status (check for maintenance mode: `accept_servers=false`)
-   - `list_shards` - Shard distribution across nodes
-   - `get_database_stats` - Database performance metrics
-   - `get_node_stats` - Node-level metrics
-
-2. **Use Redis commands for data operations only**:
-   - ✅ DBSIZE, KEYS, SCAN - data inspection
-   - ✅ SLOWLOG - query performance
-   - ✅ CLIENT LIST - connection monitoring
-   - ✅ MEMORY USAGE - key-level memory analysis
-   - ✅ INFO stats, keyspace, clients - runtime metrics
-
-3. **ALWAYS check cluster health**:
-   - Call `get_cluster_info` to check overall cluster status
-   - Call `list_nodes` to check if any nodes are in maintenance mode (`accept_servers=false`), failed, or degraded
-   - Call `list_databases` and `get_database` to check database status and configuration
-   - Call `list_shards` to check if shards are properly distributed across nodes
-
-### Example: Correct Redis Enterprise Health Check
-
-❌ **WRONG Approach:**
-```
-I see AOF is enabled but size is 0 - you should run BGREWRITEAOF.
-I see a replica at 0.0.0.0:0 - your replication is broken.
-You should set maxmemory with CONFIG SET.
-```
-
-✅ **CORRECT Approach:**
-```
-I checked your Redis Enterprise database via the Admin REST API. Here's what I found:
-
-**Cluster Status (from get_cluster_info):**
-- Cluster: production-cluster
-- Nodes: 3 (all active)
-- Total shards: 12
-
-**Database Configuration (from get_database):**
-- Memory: 246 MB used / 512 MB limit
-- Persistence: aof-every-1-second (managed by Redis Enterprise)
-- Replication: Enabled (1 replica per shard)
-- Sharding: 2 shards
-- Modules: RedisJSON 2.6, RedisSearch 2.8
-
-**Node Status (from list_nodes):**
-- All 3 nodes active
-- No nodes in maintenance mode
-
-**Runtime Metrics (from INFO):**
-- Current ops/sec: 81
-- Connected clients: 13
-- Keys: 5,357 in db0
-- No slow queries
-
-**Assessment:**
-Your database is healthy. The INFO output shows some confusing values (AOF size=0, replica at 0.0.0.0:0)
-but these are normal for Redis Enterprise - persistence and replication are managed automatically by the platform.
-```
-
-**ALWAYS call get_database and get_cluster_info for Redis Enterprise instances to get accurate configuration!**
-
-## Redis Cloud Management
-
-**CRITICAL: Redis Cloud databases are DIFFERENT from Redis Open Source**
-
-When working with Redis Cloud instances (instance_type: redis_cloud), you MUST understand:
-
-### What You CANNOT Do with Redis Cloud
-- ❌ **DO NOT suggest CONFIG SET for persistence, replication, or clustering** - these are managed by Redis Cloud
-- ❌ **DO NOT suggest BGSAVE, BGREWRITEAOF, or other persistence commands** - not supported
-- ❌ **DO NOT suggest REPLICAOF or replication commands** - replication is automatic
-- ❌ **DO NOT suggest MODULE LOAD** - modules are managed via console/API
-- ❌ **DO NOT trust INFO output for configuration details** - it shows runtime state, not configuration
-- ❌ **DO NOT suggest ACL SETUSER or ACL DELUSER** - ACL is managed via console/API
-
-### What INFO Shows vs. Reality in Redis Cloud
-The `INFO` command output is MISLEADING for Redis Cloud:
-- `aof_enabled=1, aof_current_size=0` - This is NORMAL. Redis Cloud manages AOF internally.
-- `slave0: ip=0.0.0.0, port=0` - This is NORMAL. Replication is managed by Redis Cloud, not visible via INFO.
-- `maxmemory=0` - This is NORMAL. Memory limits are enforced at the cluster level, not visible via CONFIG GET.
-- `rdb_changes_since_last_save` - This is NORMAL. RDB snapshots are managed by Redis Cloud.
-
-**DO NOT suggest "fixing" these - they are expected behavior in Redis Cloud!**
-
-### What You SHOULD Do with Redis Cloud
-1. **Use the REST API for configuration details** - Call `get_database` to see actual configuration:
-   - Memory limits (`memoryUsedInMb`, `datasetSizeInGb`)
-   - Persistence settings (`dataPersistence`)
-   - Replication status (`replication`)
-   - Clustering configuration (`clustering.numberOfShards`)
-   - Security settings (`security.*`)
-   - Module versions (`modules`)
-   - Network endpoints (`publicEndpoint`, `privateEndpoint`)
-   - Throughput limits (`throughputMeasurement`)
-
-2. **Use Redis commands for data operations only**:
-   - ✅ DBSIZE, KEYS, SCAN - data inspection
-   - ✅ SLOWLOG - query performance
-   - ✅ CLIENT LIST - connection monitoring
-   - ✅ MEMORY USAGE - key-level memory analysis
-   - ✅ INFO stats, keyspace, clients - runtime metrics
-
-3. **Available Cloud Management Tools**:
-See the Redis Cloud API tool descriptions for more, but a summary is:
-   - `get_account` - View account details
-   - `get_regions` - List available regions
-   - `list_subscriptions` - List all subscriptions
-   - `get_subscription` - Get subscription details
-   - `list_databases` - List databases in a subscription
-   - `get_database` - **USE THIS for database configuration details**
-   - `list_users` - View account users
-   - `list_tasks` - Monitor async operations
-
-### Example: Correct Redis Cloud Health Check
-
-❌ **WRONG Approach:**
-```
-I see AOF is enabled but size is 0 - you should run BGREWRITEAOF.
-I see a replica at 0.0.0.0:0 - your replication is broken.
-You should set maxmemory with CONFIG SET.
-```
-
-✅ **CORRECT Approach:**
-```
-I checked your Redis Cloud database via the REST API. Here's what I found:
-
-**Configuration (from REST API):**
-- Memory: 246 MB used / 512 MB limit
-- Persistence: snapshot-every-1-hour (managed by Redis Cloud)
-- Replication: Enabled with automatic failover
-- Clustering: 2 shards
-- Throughput: 2500 ops/sec limit
-
-**Runtime Metrics (from INFO):**
-- Current ops/sec: 81 (well below limit)
-- Connected clients: 13
-- Keys: 5,357 in db0
-- No slow queries
-
-**Assessment:**
-Your database is healthy. The INFO output shows some confusing values (AOF size=0, replica at 0.0.0.0:0)
-but these are normal for Redis Cloud - persistence and replication are managed automatically by the platform.
-```
-
-**ALWAYS call get_database for Redis Cloud instances to get accurate configuration!**
-
-**CRITICAL: Understanding Node Shard Counts and Maintenance Mode**
-
-When you see a node with `shard_count: 0` or `accept_servers: false` in list_nodes output:
-- **This means the node is in MAINTENANCE MODE**
-- Maintenance mode is used for upgrades, hardware maintenance, or troubleshooting
-- The node is NOT serving traffic and shards have been migrated off
-- **You MUST explain this clearly in your Initial Assessment** - don't bury it in recommendations
-
-**How to communicate this to the user:**
-
-❌ DON'T say: "Node 2 is idle" or "Node 2 cannot host shards"
-✅ DO say: "Node 2 is in maintenance mode - it's been taken out of service intentionally"
-
-❌ DON'T treat it as an optimization: "Fix Node 2 if you intend to use all three nodes"
-✅ DO explain the situation: "Node 2 is in maintenance mode. This is typically done for upgrades or maintenance. If the maintenance is complete, you should exit maintenance mode to restore full cluster capacity."
-
-**Example Initial Assessment:**
-```
-⚠️ Node 2 is in maintenance mode
-
-I can see that Node 2 has shard_count=0 and accept_servers=false, which means it's been
-placed in maintenance mode. This is a deliberate action - someone ran `rladmin node 2
-maintenance_mode on` to take it out of service (usually for upgrades or hardware work).
-
-While in maintenance mode:
-- Node 2 is not serving any traffic
-- All shards have been migrated to other nodes
-- Your cluster is running on reduced capacity (2 nodes instead of 3)
-
-If the maintenance is complete, you should exit maintenance mode with:
-`rladmin node 2 maintenance_mode off`
-```
-
-**What to check:**
-- `accept_servers: false` → Node is in maintenance mode
-- `shard_count: 0` → Shards have been migrated off
-- `max_listeners: 0` → Node is not accepting new connections
-
-**What to recommend:**
-1. First, explain that the node is in maintenance mode and what that means
-2. Ask if maintenance is complete
-3. If yes, provide the command to exit: `rladmin node <id> maintenance_mode off`
-4. Warn about reduced capacity and availability risk
-
-**Other key indicators of problems:**
-- Databases in "active-change-pending" status → Configuration change in progress
-- Cluster alerts → Check get_cluster_alerts for active warnings
-- Uneven shard distribution (excluding maintenance nodes) → Potential performance issues
-
-## When to Search Knowledge Base
-
-Look up specific troubleshooting steps and reference documentation whenever
-you're not sure about the best course of action. For example:
-- Connection limit issues → search "connection limit troubleshooting"
-- Memory problems → search "memory optimization" or "eviction policy"
-- Performance issues → search "slow query analysis" or "latency troubleshooting"
-- Security concerns → search "Redis security configuration"
-- Redis CLI commands for JSoN → search "redis-cli commands docs json"
-- rladmin commands for maintenance mode → search "rladmin CLI reference maintenance mode"
-
-## Understanding Usage Patterns
-
-Search for immediate remediation steps based on the identified problem category:
-- **Connection Issues**: "Redis connection limit troubleshooting", "client timeout resolution"
-- **Memory Issues**: "Redis memory optimization", "eviction policy configuration"
-- **Performance Issues**: "Redis slow query analysis", "performance optimization"
-- **Configuration Issues**: "Redis security configuration", "operational best practices"
-- **Search by symptoms**: Use specific metrics and error patterns you discover
-
-When you're trying to figure out how Redis is being used, look for clues but don't be too definitive. Usage patterns aren't always clear-cut.
-
-**Signs it might be used as a cache:**
-- Most keys have TTLs set (high expires/keys ratio)
-- Lots of keys expiring regularly
-- Eviction policies are set up
-- Key names look like session IDs or temp data
-
-**Signs it might be persistent storage:**
-- Few or no TTLs on keys (low expires/keys ratio)
-- Very few keys expiring
-- `noeviction` policy to prevent data loss
-- Key names look like user data or business entities
-
-Redis usage patterns must be inferred from multiple signals - persistence/backup
-settings alone are insufficient. Always express your analysis as **likely patterns**
-rather than definitive conclusions, and acknowledge the uncertainty inherent in
-pattern detection.
-
-**When it's unclear:**
-- Mixed TTL patterns could mean hybrid usage
-- Persistence enabled with high TTL coverage might be cache with backup
-- No clear pattern? Focus on the immediate problem rather than guessing
-
-**How to talk about it:**
-- "Based on what I'm seeing, this looks like..."
-- "The data suggests this might be..."
-- "I can't tell for sure, but it appears to be..."
-- When in doubt: "Let's focus on the immediate issue first"
-
-## Source Citation Requirements
-
-**ALWAYS CITE YOUR SOURCES** when referencing information from search results:
-- When you use search_knowledge_base, cite the source document and title
-- Format citations as: "According to [Document Title] (source: [source_path])"
-- For runbooks, indicate document type: "Based on the runbook: [Title]"
-- For documentation, indicate document type: "From Redis documentation: [Title]"
-- Include severity level when relevant: "[Title] (severity: critical)"
-- When combining information from multiple sources, cite each one
-
-**Example citations:**
-- "According to Redis Connection Limit Exceeded Troubleshooting (source: redis-connection-limit-exceeded.md), the immediate steps are..."
-- "Based on the runbook: Redis Memory Fragmentation Crisis (severity: high), you should..."
-- "From Redis documentation: Performance Optimization Guide, the recommended approach is..."
-
-Remember: You are responding to a live incident. Focus on immediate threats and actionable steps to prevent system failure.
-"""
-
-# Fact-checker system prompt
-FACT_CHECKER_PROMPT = """You are a Redis technical fact-checker. Your role is to review SRE agent responses for factual accuracy about Redis concepts, metrics, operations, URLs, and command syntax.
-
-## Your Task
-
-Review the provided SRE agent response and identify any statements that are:
-1. **Technically incorrect** about Redis internals, operations, or behavior
-2. **Misleading interpretations** of Redis metrics or diagnostic data
-3. **Unsupported claims** that lack evidence from the diagnostic data provided
-4. **Contradictions** between stated facts and the actual data shown
-5. **Invalid URLs** that return 404 errors or are inaccessible
-6. **Invalid or fabricated commands** (especially `rladmin` for Redis Enterprise) or incorrect CLI syntax
-
-## Common Redis Fact-Check Areas
-
-- **Memory Operations**: Redis is entirely in-memory; no disk access for data retrieval
-- **Usage Pattern Detection**: Must consider TTL coverage (`expires` vs `keys`), expiration activity (`expired_keys`), and maxmemory policies - not just AOF/RDB settings
-- **Keyspace Hit Rate**: Measures key existence (hits) vs non-existence (misses), not memory vs disk
-- **Replication**: Master/slave terminology, replication lag implications
-- **Persistence**: RDB vs AOF, when disk I/O actually occurs
-- **Eviction Policies**: How different policies work and when they trigger
-- **Configuration**: Default values, valid options, and their implications
-- **Command Validity**: Verify that any suggested shell/CLI commands (particularly `rladmin`) are real and use correct syntax per Redis Enterprise documentation; flag invented subcommands or options
-- **Documentation URLs**: Verify that referenced URLs are valid and accessible
-
-
-## CLI Command Validation
-- For any CLI commands detected (e.g., `rladmin`, `redis-cli`), cross-check syntax against official Redis documentation.
-- Prefer exact matches from documentation over inferred syntax.
-- If documentation cannot be found for a suggested command, treat it as invalid and flag it.
-- Cite sources when confirming command syntax.
-
-## Cross-checking Redis Documentation
-- You have access to knowledge search
-- Use `search_knowledge_base` tool to verify facts, command syntax, and URLs
-
-## Response Format
-
-If you find factual errors, invalid commands, or invalid URLs, respond with:
-```json
-{
-  "has_errors": true,
-  "errors": [
-    {
-      "claim": "exact text of the incorrect claim, invalid command, or invalid URL",
-      "issue": "explanation of why it's wrong and, if possible, the correct alternative",
-      "category": "redis_internals|metrics_interpretation|configuration|invalid_command|invalid_url|other"
-    }
-  ],
-  "suggested_research": [
-    "specific topics the agent should research to correct the errors (e.g., 'rladmin database command syntax')"
-  ],
-  "url_validation_performed": true
-}
-```
-
-If no errors are found, respond with:
-```json
-{
-  "has_errors": false,
-  "validation_notes": "brief note about what was verified (concepts, commands, URLs)",
-  "url_validation_performed": true
-}
-```
-
-Be strict but fair - flag clear technical inaccuracies, invented CLI commands, and broken URLs, not minor wording choices or style preferences.
-"""
+# Fact-checker prompt moved to redis_sre_agent/agent/prompts.py
 
 
 class AgentState(TypedDict):
@@ -1039,65 +624,142 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             return state
 
         async def reasoning_node(state: AgentState) -> AgentState:
-            """Final reasoning node using O1 model for better analysis."""
+            """Final reasoning node: diagnose problems, fork per-problem plans, then merge.
+
+            This replaces a single end-to-end LLM writeup with a map/reduce style:
+            - Parse tool outputs into structured signals
+            - Diagnose distinct problem areas (ProblemSpecs)
+            - Fork N concurrent LLM calls (one per problem) to synthesize focused plans
+            - Reduce into a coherent, ordered execution plan and produce the final message
+            """
             messages = state["messages"]
 
-            # Build conversation history with clear turn structure
-            conversation_turns = []
-            tool_results = []
-            current_turn_user_msg = None
-            current_turn_assistant_msg = None
-            turn_number = 0
+            # 1) Extract structured tool results from ToolMessage content
+            def _parse_tool_json_blocks(tool_msg_text: str) -> Optional[dict]:
+                try:
+                    # Heuristic: after "Result:" find first JSON object
+                    idx = tool_msg_text.find("Result:")
+                    if idx == -1:
+                        idx = tool_msg_text.find("Result\n")
+                    payload = tool_msg_text[idx + 7 :] if idx != -1 else tool_msg_text
+                    # Find first '{'
+                    j = payload.find("{")
+                    if j == -1:
+                        return None
+                    candidate = payload[j:]
+                    # Try to load as JSON directly
+                    return json.loads(candidate)
+                except Exception:
+                    return None
 
+            tool_signals: Dict[str, Any] = {}
             for msg in messages:
-                if isinstance(msg, HumanMessage):
-                    # If we have a previous turn, save it
-                    if current_turn_user_msg:
-                        turn_number += 1
-                        turn_text = f"**Turn {turn_number}:**\nUser: {current_turn_user_msg}"
-                        if current_turn_assistant_msg:
-                            turn_text += f"\nAssistant: {current_turn_assistant_msg}"
-                        conversation_turns.append(turn_text)
+                if isinstance(msg, ToolMessage):
+                    # Best-effort parse structured results
+                    parsed = _parse_tool_json_blocks(msg.content or "")
+                    # Capture by synthetic key with tool name when we can extract it
+                    try:
+                        # Tool message starts with "Tool 'name' executed successfully."
+                        name_start = msg.content.find("Tool '")
+                        name_end = msg.content.find("' executed successfully")
+                        tool_name = (
+                            msg.content[name_start + 6 : name_end]
+                            if (name_start != -1 and name_end != -1)
+                            else f"tool_{len(tool_signals) + 1}"
+                        )
+                    except Exception:
+                        tool_name = f"tool_{len(tool_signals) + 1}"
+                    tool_signals[tool_name] = (
+                        parsed if isinstance(parsed, dict) else {"raw": msg.content}
+                    )
 
-                    # Start new turn
-                    current_turn_user_msg = msg.content
-                    current_turn_assistant_msg = None
+            # Create a compact summary string of signals for prompting (via helper)
+            signals_summary = summarize_signals(tool_signals)
 
-                elif isinstance(msg, AIMessage):
-                    # Skip system messages (they start with "You are")
-                    if not msg.content.startswith("You are"):
-                        current_turn_assistant_msg = msg.content
+            # 2) Diagnose distinct problem areas with structured output
+            diagnose_prompt = f"""
+{SRE_SYSTEM_PROMPT}
 
-                elif isinstance(msg, ToolMessage):
-                    tool_results.append(f"Tool Data: {msg.content}")
+You are now in a diagnosis phase. Using ONLY the operational signals below, identify distinct problem areas.
 
-            # Add the final turn (current question)
-            if current_turn_user_msg:
-                turn_number += 1
-                turn_text = f"**Turn {turn_number} (Current):**\nUser: {current_turn_user_msg}"
-                if current_turn_assistant_msg:
-                    turn_text += f"\nAssistant: {current_turn_assistant_msg}"
-                conversation_turns.append(turn_text)
+Provide a strict JSON array where each item has:
+- id: short stable id (e.g., "P1", "P2")
+- category: one of ["NodeInMaintenanceMode","ReplicationMismatch","MemoryPressure","Performance","Configuration","Other"]
+- title: concise human-readable label
+- severity: one of ["critical","high","medium","low"]
+- scope: e.g., "cluster","node:2","db:foo"
+- evidence_keys: list of tool keys from signals that support this problem
 
-            # Build the prompt with clear structure
-            conversation_history = (
-                "\n\n".join(conversation_turns)
-                if conversation_turns
-                else "No previous conversation."
-            )
-            tool_data = "\n\n".join(tool_results) if tool_results else "No tool data available."
+Operational signals:
+{signals_summary}
+"""
 
-            # Determine if this is a follow-up question
-            is_followup = turn_number > 1
-            task_description = (
-                "The user has asked a follow-up question. Based on the conversation history and tool results, "
-                "provide a clear, direct answer to their latest question. Reference previous context when relevant."
-                if is_followup
-                else "You've been investigating a Redis issue. Based on your diagnostic work and tool results, "
-                "write up your findings and recommendations like you're updating a colleague."
-            )
+            async def _diagnose_call():
+                return await self.llm.ainvoke([HumanMessage(content=diagnose_prompt)])
 
-            reasoning_prompt = f"""{SRE_SYSTEM_PROMPT}
+            problems: List[Dict[str, Any]] = []
+            try:
+                diag_msg = await self._retry_with_backoff(
+                    _diagnose_call,
+                    max_retries=self.settings.llm_max_retries,
+                    initial_delay=self.settings.llm_initial_delay,
+                    backoff_factor=self.settings.llm_backoff_factor,
+                )
+                content = (diag_msg.content or "").strip()
+                # Try to parse JSON array; if the model wrapped in code fences, strip them
+                if content.startswith("```"):
+                    # Remove leading/trailing code fences and optional language tag
+                    content = content.strip("`\n")
+                    if content.lower().startswith("json\n"):
+                        content = content[5:]
+                problems = json.loads(content)
+                if not isinstance(problems, list):
+                    problems = []
+            except Exception:
+                problems = []
+
+            # Fallback: if no problems detected, produce a simple synthesis using prior behavior
+            if not problems:
+                # Build conversation + tool data as before and ask for final write-up
+                conversation_turns = []
+                tool_results = []
+                current_turn_user_msg = None
+                current_turn_assistant_msg = None
+                turn_number = 0
+                for msg in messages:
+                    if isinstance(msg, HumanMessage):
+                        if current_turn_user_msg:
+                            turn_number += 1
+                            turn_text = f"**Turn {turn_number}:**\nUser: {current_turn_user_msg}"
+                            if current_turn_assistant_msg:
+                                turn_text += f"\nAssistant: {current_turn_assistant_msg}"
+                            conversation_turns.append(turn_text)
+                        current_turn_user_msg = msg.content
+                        current_turn_assistant_msg = None
+                    elif isinstance(msg, AIMessage):
+                        if not msg.content.startswith("You are"):
+                            current_turn_assistant_msg = msg.content
+                    elif isinstance(msg, ToolMessage):
+                        tool_results.append(f"Tool Data: {msg.content}")
+                if current_turn_user_msg:
+                    turn_number += 1
+                    turn_text = f"**Turn {turn_number} (Current):**\nUser: {current_turn_user_msg}"
+                    if current_turn_assistant_msg:
+                        turn_text += f"\nAssistant: {current_turn_assistant_msg}"
+                    conversation_turns.append(turn_text)
+                conversation_history = (
+                    "\n\n".join(conversation_turns)
+                    if conversation_turns
+                    else "No previous conversation."
+                )
+                tool_data = "\n\n".join(tool_results) if tool_results else "No tool data available."
+                is_followup = turn_number > 1
+                task_description = (
+                    "The user has asked a follow-up question. Based on the conversation history and tool results, provide a clear, direct answer to their latest question. Reference previous context when relevant."
+                    if is_followup
+                    else "You've been investigating a Redis issue. Based on your diagnostic work and tool results, write up your findings and recommendations like you're updating a colleague."
+                )
+                fallback_prompt = f"""{SRE_SYSTEM_PROMPT}
 
 ## Conversation History
 
@@ -1110,49 +772,236 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 ## Your Task
 
 {task_description}
+"""
+                try:
 
-## Response Guidelines
+                    async def _fallback_call():
+                        return await self.llm.ainvoke([HumanMessage(content=fallback_prompt)])
 
-Write a natural, conversational response using proper markdown formatting. Include:
+                    response = await self._retry_with_backoff(
+                        _fallback_call,
+                        max_retries=self.settings.llm_max_retries,
+                        initial_delay=self.settings.llm_initial_delay,
+                        backoff_factor=self.settings.llm_backoff_factor,
+                    )
+                except Exception:
+                    response = AIMessage(
+                        content="I couldn't complete analysis due to an internal error. Please try again."
+                    )
+                state["messages"] = messages + [response]
+                return state
 
-- **Clear headers** with `#` for main sections
-- **Bold text** with `**` for critical findings and action items
-- **Proper lists** with `-` for bullet points (ensure blank line before list and space after `-`)
-- **Numbered lists** with `1.` for action steps (ensure blank line before list)
-- **Code blocks** with ``` for any commands
-- **Blank lines** between paragraphs and before/after lists for readability
+            # Build knowledge-only tool adapters for ToolNode (if available)
+            all_tools = tool_mgr.get_tools()
+            knowledge_tools = [
+                t
+                for t in all_tools
+                if isinstance(t.name, str)
+                and t.name.startswith("knowledge_")
+                and ("search" in t.name or t.name.endswith("_search"))
+            ]
+            knowledge_tool_schemas = [t.to_openai_schema() for t in knowledge_tools]
+            knowledge_adapters = []
+            if knowledge_tools:
+                # Bind a dedicated LLM instance limited to knowledge tools
+                knowledge_llm = self.llm.bind_tools(knowledge_tool_schemas)
 
-**Critical formatting rules:**
-- Always put a blank line before and after lists
-- Use `- ` (dash + space) for bullet points
-- Use `1. ` (number + period + space) for numbered lists
-- Put blank lines between major sections
+                def _mk_adapter(tdef):
+                    async def _exec(**kwargs):
+                        return await tool_mgr.resolve_tool_call(tdef.name, kwargs or {})
 
-Sound like an experienced SRE sharing findings with a colleague. Be direct about what you found and what needs to happen next.
+                    return StructuredTool.from_function(
+                        coroutine=_exec,
+                        name=tdef.name,
+                        description=tdef.description or "knowledge search",
+                    )
 
-**Important**: Format numbers with commas (e.g., "4,950 keys" not "4 950 keys")."""
+                knowledge_adapters = [_mk_adapter(t) for t in knowledge_tools]
 
-            try:
-                # Use configured model for final analysis
-                async def _reasoning_llm_call():
-                    return await self.llm.ainvoke([HumanMessage(content=reasoning_prompt)])
+            # 3) Per-problem focused research + planning (with knowledge tool calls)
+            async def _research_and_plan_for_problem(p: Dict[str, Any]) -> Dict[str, Any]:
+                pid = p.get("id") or "P?"
+                cat = p.get("category") or "Other"
+                title = p.get("title") or "Issue"
+                evidence = p.get("evidence_keys") or []
+                scoped_signals = {k: tool_signals.get(k) for k in evidence if k in tool_signals}
+                signals_str = summarize_signals(scoped_signals, max_items=6)
 
-                response = await self._retry_with_backoff(
-                    _reasoning_llm_call,
-                    max_retries=self.settings.llm_max_retries,
-                    initial_delay=self.settings.llm_initial_delay,
-                    backoff_factor=self.settings.llm_backoff_factor,
+                system_text = f"""
+You are a focused SRE researcher and planner working ONLY on this problem:
+- id: {pid}
+- category: {cat}
+- title: {title}
+
+Rules:
+- You may call at most 2 knowledge base search tools.
+- Only use knowledge_* search tools (e.g., knowledge_*_search). Other tools will be rejected.
+- After research, produce a final STRICT JSON plan with keys:
+  - actions: array of {{id, target, verb, args, preconditions, rollback}}
+  - risks: array of strings
+  - verification: array of read-only validation steps
+  - confidence: number in [0,1]
+  - summary: 1-2 sentence rationale
+
+Use only the scoped signals below to inform your searches and plan:
+{signals_str}
+"""
+                messages_local: List[BaseMessage] = [
+                    SystemMessage(content=system_text),
+                    HumanMessage(
+                        content="Research briefly if needed using knowledge search tools, then output a STRICT JSON plan with the specified keys."
+                    ),
+                ]
+
+                last_content: Optional[str] = None
+                max_tool_steps = 3
+                if knowledge_adapters:
+                    # Use a ToolNode with knowledge-only adapters and a small budget
+                    tool_node = ToolNode(knowledge_adapters)
+                    tool_steps = 0
+                    for _ in range(3):
+
+                        async def _k_call():
+                            return await knowledge_llm.ainvoke(messages_local)
+
+                        resp = await self._retry_with_backoff(
+                            _k_call,
+                            max_retries=self.settings.llm_max_retries,
+                            initial_delay=self.settings.llm_initial_delay,
+                            backoff_factor=self.settings.llm_backoff_factor,
+                        )
+                        calls = getattr(resp, "tool_calls", None) or []
+                        if calls and tool_steps < max_tool_steps:
+                            # Execute allowed tools through ToolNode
+                            state_in = {"messages": messages_local + [resp]}
+                            state_out = await tool_node.ainvoke(state_in)
+                            messages_local = state_out.get("messages", messages_local)
+                            tool_steps += 1
+                            continue
+                        last_content = (resp.content or "").strip().strip("`\n")
+                        break
+                else:
+                    # No knowledge tools available; do a single pass without tools
+                    async def _simple_call():
+                        return await self.llm.ainvoke(messages_local)
+
+                    resp = await self._retry_with_backoff(
+                        _simple_call,
+                        max_retries=self.settings.llm_max_retries,
+                        initial_delay=self.settings.llm_initial_delay,
+                        backoff_factor=self.settings.llm_backoff_factor,
+                    )
+                    last_content = (resp.content or "").strip().strip("`\n")
+
+                # Parse plan JSON
+                try:
+                    data = json.loads(last_content or "{}")
+                    if isinstance(data, dict):
+                        data["problem"] = p
+                        return data
+                except Exception:
+                    pass
+
+                # Fallback minimal structure
+                return {
+                    "problem": p,
+                    "actions": [],
+                    "risks": ["planning_failed"],
+                    "verification": [],
+                    "confidence": 0.2,
+                    "summary": "Planning failed.",
+                }
+
+            # Run all problem plans concurrently with a cap to avoid overload
+            problem_limit = 6
+            selected_problems = problems[:problem_limit]
+            leftover_problems = problems[problem_limit:]
+            tasks = [
+                asyncio.create_task(_research_and_plan_for_problem(p)) for p in selected_problems
+            ]
+            per_problem_results = await asyncio.gather(*tasks)
+
+            # 4) Reduce: merge actions, detect simple conflicts, order by severity
+            def _severity_key(p: Dict[str, Any]) -> int:
+                s = (p.get("problem", {}).get("severity") or "medium").lower()
+                return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(s, 2)
+
+            merged_actions = []
+            seen = set()
+            for r in per_problem_results:
+                for a in r.get("actions", []) or []:
+                    ident = f"{a.get('target')}|{a.get('verb')}|{json.dumps(a.get('args', {}), sort_keys=True)}"
+                    if ident not in seen:
+                        seen.add(ident)
+                        merged_actions.append(a)
+
+            # Order problems by severity
+            per_problem_results.sort(key=_severity_key)
+
+            # Build final markdown response
+            def _fmt_actions(actions: List[Dict[str, Any]]) -> List[str]:
+                out = []
+                for i, a in enumerate(actions, start=1):
+                    tgt = a.get("target") or "target"
+                    verb = a.get("verb") or "change"
+                    args = a.get("args") or {}
+                    out.append(f"{i}. {verb} on {tgt} with {json.dumps(args, default=str)}")
+                return out
+
+            # Note any problems we did not investigate this round
+            skipped_lines: List[str] = []
+            for sp in leftover_problems:
+                title = sp.get("title") or sp.get("category") or "Problem"
+                sev = sp.get("severity") or "medium"
+                skipped_lines.append(f"- {title} (severity: {sev})")
+
+            initial_assessment_lines = []
+            for r in per_problem_results:
+                p = r.get("problem", {})
+                initial_assessment_lines.append(
+                    f"- {p.get('title') or p.get('category')} (severity: {p.get('severity', 'medium')})"
                 )
-                logger.debug("Reasoning LLM call successful")
 
-            except Exception as e:
-                logger.error(f"Reasoning LLM call failed after all retries: {str(e)}")
-                # Fallback to a simple response
-                response = AIMessage(
-                    content="I apologize, but I encountered technical difficulties during analysis. Please try again or contact support."
+            what_im_seeing_lines = []
+            for r in per_problem_results:
+                p = r.get("problem", {})
+                what_im_seeing_lines.append(
+                    f"- {p.get('title') or p.get('category')}: {r.get('summary') or ''}"
                 )
 
-            # Update state with final reasoning response
+            combined_actions_lines = _fmt_actions(merged_actions)
+
+            md = []
+            md.append("# Initial Assessment")
+            md.append(
+                "\n".join(initial_assessment_lines)
+                if initial_assessment_lines
+                else "No distinct problems detected."
+            )
+            md.append("\n# What I'm Seeing")
+            md.append(
+                "\n".join(what_im_seeing_lines)
+                if what_im_seeing_lines
+                else "Signals are inconclusive."
+            )
+            md.append("\n# My Recommendation")
+            if combined_actions_lines:
+                md.extend(
+                    ["- Consolidated action plan:"]
+                    + [f"  {line}" for line in combined_actions_lines]
+                )
+            else:
+                md.append("- No immediate actions; continue monitoring and gather more data.")
+            md.append("\n# Supporting Info")
+            md.append(
+                "- Plans were derived via per-problem focused synthesis from the collected operational signals."
+            )
+            if skipped_lines:
+                md.append(
+                    "- Not investigated this round (time/budget):\n  " + "\n  ".join(skipped_lines)
+                )
+
+            response = AIMessage(content="\n\n".join(md))
             state["messages"] = messages + [response]
             return state
 
@@ -1197,9 +1046,50 @@ Sound like an experienced SRE sharing findings with a colleague. Be direct about
             "agent", should_continue, {"tools": "tools", "reasoning": "reasoning", END: END}
         )
         workflow.add_edge("tools", "agent")
+
         workflow.add_edge("reasoning", END)
 
         return workflow
+
+    def _extract_knowledge_fragments(self, tool_name: str, result: dict) -> list[dict]:
+        """Extract standardized knowledge fragments from a tool result.
+
+        Accepts both legacy and provider-based tool names and multiple result shapes.
+        Returns a list of dicts with keys: id, document_hash, chunk_index, title, source.
+        """
+        try:
+            if not isinstance(tool_name, str) or not isinstance(result, dict):
+                return []
+            # Only consider knowledge tools that perform search-like operations
+            is_knowledge_tool = tool_name.startswith("knowledge_")
+            is_search_op = ("search" in tool_name) or tool_name.endswith("_search")
+            if not (is_knowledge_tool and is_search_op):
+                return []
+
+            # Common result containers
+            candidates = []
+            for key in ("results", "fragments", "related_fragments"):
+                items = result.get(key)
+                if isinstance(items, list) and items:
+                    candidates = items
+                    break
+
+            frags: list[dict] = []
+            for doc in candidates:
+                if not isinstance(doc, dict):
+                    continue
+                frags.append(
+                    {
+                        "id": doc.get("id"),
+                        "document_hash": doc.get("document_hash"),
+                        "chunk_index": doc.get("chunk_index"),
+                        "title": doc.get("title"),
+                        "source": doc.get("source"),
+                    }
+                )
+            return [f for f in frags if any(v is not None for v in f.values())]
+        except Exception:
+            return []
 
     def _generate_tool_reflection(self, tool_name: str, tool_args: dict) -> str:
         """Fallback to generate a first-person reflection about what the agent is doing."""
