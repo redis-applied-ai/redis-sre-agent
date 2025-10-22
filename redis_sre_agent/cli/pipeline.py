@@ -21,7 +21,12 @@ def pipeline():
     "--scrapers",
     help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
 )
-def scrape(artifacts_path: str, scrapers: str):
+@click.option(
+    "--latest-only",
+    is_flag=True,
+    help="Only include latest Redis docs (skip versioned docs like 7.x) for redis_docs and redis_docs_local",
+)
+def scrape(artifacts_path: str, scrapers: str, latest_only: bool):
     """Run the scraping pipeline to collect SRE documents."""
     click.echo("🔍 Starting scraping pipeline...")
 
@@ -30,7 +35,12 @@ def scrape(artifacts_path: str, scrapers: str):
         scraper_list = [s.strip() for s in scrapers.split(",")]
 
     async def run_scraping():
-        orchestrator = PipelineOrchestrator(artifacts_path)
+        # Configure scrapers to honor latest-only when requested
+        config = {
+            "redis_docs": {"latest_only": latest_only},
+            "redis_docs_local": {"latest_only": latest_only},
+        }
+        orchestrator = PipelineOrchestrator(artifacts_path, config)
         try:
             results = await orchestrator.run_scraping_pipeline(scraper_list)
 
@@ -60,12 +70,19 @@ def scrape(artifacts_path: str, scrapers: str):
 @pipeline.command()
 @click.option("--batch-date", help="Batch date to ingest (YYYY-MM-DD), defaults to today")
 @click.option("--artifacts-path", default="./artifacts", help="Path to artifacts")
-def ingest(batch_date: str, artifacts_path: str):
+@click.option(
+    "--latest-only",
+    is_flag=True,
+    help="Only index latest Redis docs from the batch (skip versioned docs like 7.x)",
+)
+def ingest(batch_date: str, artifacts_path: str, latest_only: bool):
     """Run the ingestion pipeline to process scraped documents."""
     click.echo("📥 Starting ingestion pipeline...")
 
     async def run_ingestion():
-        orchestrator = PipelineOrchestrator(artifacts_path)
+        # Configure ingestion to honor latest-only when requested
+        config = {"ingestion": {"latest_only": latest_only}}
+        orchestrator = PipelineOrchestrator(artifacts_path, config)
         try:
             results = await orchestrator.run_ingestion_pipeline(batch_date)
 
@@ -95,7 +112,12 @@ def ingest(batch_date: str, artifacts_path: str):
 @pipeline.command()
 @click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
 @click.option("--scrapers", help="Comma-separated list of scrapers to run")
-def full(artifacts_path: str, scrapers: str):
+@click.option(
+    "--latest-only",
+    is_flag=True,
+    help="Only include latest Redis docs (skip versioned docs like 7.x) for both scraping and ingestion",
+)
+def full(artifacts_path: str, scrapers: str, latest_only: bool):
     """Run the complete pipeline: scraping + ingestion."""
     click.echo("🚀 Starting full pipeline (scraping + ingestion)...")
 
@@ -104,7 +126,13 @@ def full(artifacts_path: str, scrapers: str):
         scraper_list = [s.strip() for s in scrapers.split(",")]
 
     async def run_full_pipeline():
-        orchestrator = PipelineOrchestrator(artifacts_path)
+        # Configure scrapers and ingestion to honor latest-only when requested
+        config = {
+            "redis_docs": {"latest_only": latest_only},
+            "redis_docs_local": {"latest_only": latest_only},
+            "ingestion": {"latest_only": latest_only},
+        }
+        orchestrator = PipelineOrchestrator(artifacts_path, config)
         try:
             results = await orchestrator.run_full_pipeline(scraper_list)
 
@@ -447,78 +475,6 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
             raise
 
     return asyncio.run(run_source_preparation())
-
-
-@pipeline.command()
-@click.option("--source-dir", "-s", default="source_documents", help="Source documents directory")
-@click.option(
-    "--dry-run", is_flag=True, help="Show what would be ingested without actually ingesting"
-)
-@click.option("--artifacts-path", default="./artifacts", help="Path to artifacts storage")
-def ingest_sources(source_dir: str, dry_run: bool, artifacts_path: str):
-    """DEPRECATED: Use 'prepare-sources' instead. Direct ingestion from source documents."""
-
-    async def run_source_ingestion():
-        from pathlib import Path
-
-        from ..pipelines.ingestion.processor import IngestionPipeline
-        from ..pipelines.scraper.base import ArtifactStorage
-
-        click.echo(
-            "⚠️  WARNING: This command is deprecated. Use 'prepare-sources' for unified workflow."
-        )
-
-        source_path = Path(source_dir)
-        if not source_path.exists():
-            click.echo(f"❌ Source directory does not exist: {source_path}")
-            return
-
-        click.echo(f"📂 Ingesting from: {source_path}")
-
-        if dry_run:
-            # Just list what would be processed
-            markdown_files = list(source_path.rglob("*.md"))
-            markdown_files = [f for f in markdown_files if f.name.lower() != "readme.md"]
-
-            click.echo(f"📋 Would process {len(markdown_files)} files:")
-            for md_file in markdown_files:
-                click.echo(f"   • {md_file.relative_to(source_path)}")
-            return
-
-        try:
-            # Use existing ingestion pipeline
-            storage = ArtifactStorage(artifacts_path)
-            pipeline = IngestionPipeline(storage)
-
-            results = await pipeline.ingest_source_documents(source_path)
-
-            successful = [r for r in results if r["status"] == "success"]
-            failed = [r for r in results if r["status"] == "error"]
-
-            click.echo("✅ Source document ingestion completed!")
-            click.echo(f"   📝 Successfully ingested: {len(successful)} documents")
-
-            if successful:
-                total_chunks = sum(r.get("chunks_indexed", 0) for r in successful)
-                click.echo(f"   📦 Total chunks indexed: {total_chunks}")
-
-                click.echo("   📚 Documents processed:")
-                for success in successful[:5]:  # Show first 5
-                    chunks = success.get("chunks_indexed", 0)
-                    click.echo(f"      • {success['title']} ({chunks} chunks)")
-                if len(successful) > 5:
-                    click.echo(f"      ... and {len(successful) - 5} more")
-
-            if failed:
-                click.echo(f"   ❌ Failed to ingest: {len(failed)} documents")
-                for failure in failed:
-                    click.echo(f"      • {failure['file']}: {failure['error']}")
-
-        except Exception as e:
-            click.echo(f"❌ Source ingestion failed: {e}")
-            raise
-
-    return asyncio.run(run_source_ingestion())
 
 
 if __name__ == "__main__":

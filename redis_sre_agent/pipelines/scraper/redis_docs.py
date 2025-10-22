@@ -33,10 +33,22 @@ class RedisDocsScraper(BaseScraper):
             "max_pages": 500,  # Increased for comprehensive scraping
             "delay_between_requests": 0.5,  # Faster but still respectful
             "timeout": 30,
+            "latest_only": False,  # If True, skip versioned docs (e.g., /7.x/)
             **self.config,
         }
 
         self.session: Optional[aiohttp.ClientSession] = None
+
+    def _is_versioned_url(self, url: str) -> bool:
+        """Return True if URL path contains a version segment like /7.4/ or /6.2/."""
+        try:
+            import re
+            from urllib.parse import urlparse
+
+            path = urlparse(url).path
+            return bool(re.search(r"/\d+\.\d+/", path))
+        except Exception:
+            return False
 
     def get_source_name(self) -> str:
         return "redis_documentation"
@@ -145,6 +157,10 @@ class RedisDocsScraper(BaseScraper):
         for section, doc_type, severity in oss_sections:
             section_url = urljoin(base_url, section)
 
+            # If latest_only is set, skip section URLs that look versioned
+            if self.config.get("latest_only") and self._is_versioned_url(section_url):
+                continue
+
             try:
                 section_docs = await self._scrape_section(
                     section_url, DocumentCategory.OSS, doc_type, severity, max_depth=4
@@ -177,6 +193,10 @@ class RedisDocsScraper(BaseScraper):
         for section, doc_type, severity in enterprise_sections:
             section_url = urljoin(base_url, section)
 
+            # For enterprise, base_url already uses /latest/, but still guard
+            if self.config.get("latest_only") and self._is_versioned_url(section_url):
+                continue
+
             try:
                 section_docs = await self._scrape_section(
                     section_url, DocumentCategory.ENTERPRISE, doc_type, severity, max_depth=4
@@ -208,6 +228,10 @@ class RedisDocsScraper(BaseScraper):
         documents = []
 
         try:
+            # Respect latest-only: skip versioned URLs outright
+            if self.config.get("latest_only") and self._is_versioned_url(section_url):
+                return []
+
             # Get section page
             async with self.session.get(section_url) as response:
                 if response.status != 200:
@@ -381,6 +405,10 @@ class RedisDocsScraper(BaseScraper):
                         "?search=",  # Changed from /search to avoid excluding search docs
                     ]
                 ):
+                    continue
+
+                # latest-only: skip versioned URLs
+                if self.config.get("latest_only") and self._is_versioned_url(full_url):
                     continue
 
                 # Include documentation paths specifically

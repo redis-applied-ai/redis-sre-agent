@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 class ThreadStatus(str, Enum):
-    """Thread execution status."""
+    """Task execution status.
+
+    NOTE: Threads no longer track status. This enum remains for task status only.
+    """
 
     QUEUED = "queued"
     IN_PROGRESS = "in_progress"
@@ -62,10 +65,12 @@ class ThreadActionItem(BaseModel):
 
 
 class ThreadState(BaseModel):
-    """Complete thread state representation."""
+    """Complete thread state representation.
+
+    Threads do not have a lifecycle status; only tasks do. Status is removed.
+    """
 
     thread_id: str
-    status: ThreadStatus = ThreadStatus.QUEUED
     updates: List[ThreadUpdate] = Field(default_factory=list)
     context: Dict[str, Any] = Field(default_factory=dict)
     action_items: List[ThreadActionItem] = Field(default_factory=list)
@@ -228,9 +233,6 @@ Subject:"""
 
             keys = self._get_thread_keys(thread_id)
 
-            status_b = await client.get(keys["status"]) or b""
-            status = status_b.decode() if isinstance(status_b, bytes) else str(status_b)
-
             metadata_h = await client.hgetall(keys["metadata"]) or {}
             context_h = await client.hgetall(keys["context"]) or {}
 
@@ -276,7 +278,6 @@ Subject:"""
             # Write to hash backing the index
             key = f"{SRE_THREADS_INDEX}:{thread_id}"
             mapping = {
-                "status": status or "",
                 "subject": subject or "",
                 "user_id": user_id or "",
                 "instance_id": instance_id or "",
@@ -331,14 +332,8 @@ Subject:"""
 
             index = await get_threads_index()
 
-            # Build filter: default to in_progress OR queued if no explicit status and not show_all
-            expr = None
-            if status_filter:
-                expr = Tag("status") == status_filter.value
-            else:
-                expr = (Tag("status") == ThreadStatus.IN_PROGRESS.value) | (
-                    Tag("status") == ThreadStatus.QUEUED.value
-                )
+            # Build filter: only apply status filter if explicitly provided; otherwise show all threads
+            expr = Tag("status") == status_filter.value if status_filter else None
             if user_id:
                 expr = (
                     expr & (Tag("user_id") == user_id)
@@ -351,7 +346,6 @@ Subject:"""
                 fq = FilterQuery(
                     return_fields=[
                         "id",
-                        "status",
                         "subject",
                         "user_id",
                         "instance_id",
@@ -368,7 +362,6 @@ Subject:"""
                 fq = FilterQuery(
                     return_fields=[
                         "id",
-                        "status",
                         "subject",
                         "user_id",
                         "instance_id",
@@ -402,7 +395,6 @@ Subject:"""
                         k: getattr(res, k, None)
                         for k in [
                             "id",
-                            "status",
                             "subject",
                             "user_id",
                             "instance_id",
@@ -425,7 +417,6 @@ Subject:"""
                 # Build summary
                 summary = {
                     "thread_id": thread_id,
-                    "status": row.get("status") or ThreadStatus.QUEUED.value,
                     "subject": row.get("subject") or "Untitled",
                     "created_at": created_iso,
                     "updated_at": updated_iso,
@@ -461,12 +452,7 @@ Subject:"""
                         thread_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
                         try:
                             keys = self._get_thread_keys(thread_id)
-                            status_data = await client.get(keys["status"])
-                            if not status_data:
-                                continue
-                            status = status_data.decode()
-                            if status_filter and status != status_filter.value:
-                                continue
+
                             metadata_data = await client.hgetall(keys["metadata"])
                             context_data = await client.hgetall(keys["context"])
                             latest_update = await client.lrange(keys["updates"], 0, 0)
@@ -492,7 +478,6 @@ Subject:"""
                                     pass
                             thread_summary = {
                                 "thread_id": thread_id,
-                                "status": status,
                                 "subject": metadata.get("subject", "Untitled"),
                                 "created_at": metadata.get("created_at"),
                                 "updated_at": metadata.get("updated_at"),
@@ -518,12 +503,11 @@ Subject:"""
             client = await self._get_client()
             keys = self._get_thread_keys(thread_id)
 
-            # Check if thread exists
-            if not await client.exists(keys["status"]):
+            # Check if thread exists (use metadata as source of truth)
+            if not await client.exists(keys["metadata"]):
                 return None
 
             # Load all thread data
-            status = await client.get(keys["status"])
             updates_data = await client.lrange(keys["updates"], 0, -1)
             context_data = await client.hgetall(keys["context"])
             action_items_data = await client.get(keys["action_items"])
@@ -593,7 +577,6 @@ Subject:"""
 
             return ThreadState(
                 thread_id=thread_id,
-                status=ThreadStatus(status.decode()),
                 updates=updates,
                 context=context,
                 action_items=action_items,
@@ -607,33 +590,29 @@ Subject:"""
             return None
 
     async def update_thread_status(self, thread_id: str, status: ThreadStatus) -> bool:
-        """Update thread status."""
+        """Deprecated: Threads no longer track status.
+
+        Retained for backward compatibility; updates the thread's updated_at timestamp only.
+        """
         try:
             client = await self._get_client()
             keys = self._get_thread_keys(thread_id)
 
-            await client.set(keys["status"], status.value)
-
-            # Update metadata timestamp
+            # Update metadata timestamp only
             await client.hset(
                 keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
             )
 
-            # Publish status update to stream
-            await self._publish_stream_update(
-                thread_id,
-                "status_change",
-                {"status": status.value, "message": f"Status changed to {status.value}"},
-            )
-
-            # Update search index
+            # Upsert search doc without a status field
             await self._upsert_thread_search_doc(thread_id)
 
-            logger.info(f"Updated thread {thread_id} status to {status.value}")
+            logger.info(
+                f"(No-op) update_thread_status called for thread {thread_id} -> {status.value}"
+            )
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update thread {thread_id} status: {e}")
+            logger.error(f"Failed to update thread {thread_id} metadata timestamp: {e}")
             return False
 
     async def add_thread_update(
@@ -888,9 +867,6 @@ Subject:"""
             keys = self._get_thread_keys(thread_state.thread_id)
 
             async with client.pipeline(transaction=True) as pipe:
-                # Set basic fields
-                pipe.set(keys["status"], thread_state.status.value)
-
                 # Set context as hash
                 if thread_state.context:
                     # Filter out None values and serialize complex objects as JSON

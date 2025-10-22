@@ -167,16 +167,23 @@ def sample_sre_data() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def mock_vectorizer():
-    """Mock OpenAI text vectorizer."""
+    """Mock OpenAI text vectorizer with async embedding methods."""
     with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_class:
-        mock_instance = Mock()
-        mock_instance.embed_many.return_value = [
-            [0.1] * 1536,  # Mock embedding vector
-            [0.2] * 1536,
-            [0.3] * 1536,
-        ]
-        mock_class.return_value = mock_instance
-        yield mock_instance
+        mv = Mock()
+        # Async methods used by implementation
+        mv.aembed_many = AsyncMock(
+            return_value=[
+                [0.1] * 1536,  # Mock embedding vector
+                [0.2] * 1536,
+                [0.3] * 1536,
+            ]
+        )
+        mv.aembed = AsyncMock(return_value=[0.1] * 1536)
+        # Keep sync methods for any legacy/test expectations
+        mv.embed_many = AsyncMock(return_value=mv.aembed_many.return_value)
+        mv.embed = AsyncMock(return_value=[0.1] * 1536)
+        mock_class.return_value = mv
+        yield mv
 
 
 @pytest.fixture

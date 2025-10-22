@@ -94,8 +94,8 @@ def search(query: str, limit: int, category: str):
                         click.echo(f"Source: {doc.get('source', 'Unknown')}")
                         click.echo(f"Category: {doc.get('category', 'general')}")
                         content = doc.get("content", "")
-                        if len(content) > 200:
-                            content = content[:200] + "..."
+                        if len(content) > 1000:
+                            content = content[:1000] + "..."
                         click.echo(f"Content: {content}")
                 else:
                     click.echo("❌ No results found")
@@ -259,7 +259,12 @@ def task():
     "--all", "show_all", is_flag=True, help="Show all statuses (including cancelled and failed)"
 )
 @click.option("--limit", "-l", default=50, help="Number of tasks to show")
-def task_list(user_id: str | None, status: str | None, show_all: bool, limit: int):
+@click.option(
+    "--tz",
+    required=False,
+    help="IANA timezone (e.g. 'America/Los_Angeles'). Defaults to local time",
+)
+def task_list(user_id: str | None, status: str | None, show_all: bool, limit: int, tz: str | None):
     """List recent tasks and their statuses.
 
     Default: show only in-progress and scheduled (queued) tasks.
@@ -284,13 +289,61 @@ def task_list(user_id: str | None, status: str | None, show_all: bool, limit: in
             limit=limit,
         )
 
+        # Refresh status from KV to avoid stale index results
+        try:
+            from redis_sre_agent.core.keys import RedisKeys
+            from redis_sre_agent.core.redis import get_redis_client
+
+            r = get_redis_client()
+            for t in tasks:
+                tid = t.get("task_id")
+                if not tid:
+                    continue
+                kv_status = await r.get(RedisKeys.task_status(tid))
+                if isinstance(kv_status, bytes):
+                    kv_status = kv_status.decode()
+                if kv_status:
+                    try:
+                        t["status"] = ThreadStatus(kv_status)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         if not tasks:
             console.print("[yellow]No tasks found.[/yellow]")
             return
 
+        # Timestamp formatting helper (similar to thread list)
+        from datetime import datetime
+
+        try:
+            from zoneinfo import ZoneInfo as _ZoneInfo  # Python 3.9+
+
+            zoneinfo_cls = _ZoneInfo
+        except Exception:
+            zoneinfo_cls = None  # type: ignore
+
+        def _fmt(ts: str | None) -> str:
+            if not ts or ts == "-":
+                return "-"
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if tz and zoneinfo_cls is not None:
+                    try:
+                        dt = dt.astimezone(zoneinfo_cls(tz))
+                    except Exception:
+                        dt = dt.astimezone()
+                else:
+                    dt = dt.astimezone()  # local timezone
+                return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+            except Exception:
+                return ts
+
         table = Table(title="Tasks", show_lines=False)
         table.add_column("Status", no_wrap=True)
         table.add_column("Updated", no_wrap=True)
+        table.add_column("Task ID", no_wrap=True)
         table.add_column("Thread Subject")
         table.add_column("Task Subject")
         table.add_column("Thread ID", no_wrap=True)
@@ -300,9 +353,11 @@ def task_list(user_id: str | None, status: str | None, show_all: bool, limit: in
             thread_subject = meta.get("thread_subject") or "Untitled"
             task_subject = meta.get("subject") or "Untitled"
             updated = meta.get("updated_at") or meta.get("created_at") or "-"
+            updated_disp = _fmt(updated)
             status_obj = t.get("status")
             status_str = getattr(status_obj, "value", str(status_obj))
             thread_id = t.get("thread_id") or "-"
+            task_id_val = t.get("task_id") or "-"
 
             color = {
                 "in_progress": "cyan",
@@ -313,7 +368,12 @@ def task_list(user_id: str | None, status: str | None, show_all: bool, limit: in
             }.get(status_str, "white")
 
             table.add_row(
-                f"[{color}]{status_str}[/{color}]", updated, thread_subject, task_subject, thread_id
+                f"[{color}]{status_str}[/{color}]",
+                updated_disp,
+                task_id_val,
+                thread_subject,
+                task_subject,
+                thread_id,
             )
 
         console.print(table)
@@ -400,14 +460,6 @@ def thread():
 
 @thread.command("list")
 @click.option("--user-id", help="Filter by user ID")
-@click.option(
-    "--status",
-    type=click.Choice(
-        ["queued", "in_progress", "done", "failed", "cancelled"], case_sensitive=False
-    ),
-    help="Filter by a single status",
-)
-@click.option("--all", "show_all", is_flag=True, help="Show all statuses")
 @click.option("--limit", "-l", default=50, help="Number of threads to show")
 @click.option(
     "--tz",
@@ -417,13 +469,11 @@ def thread():
 @click.option("--json", "as_json", is_flag=True, help="Output JSON")
 def thread_list(
     user_id: str | None,
-    status: str | None,
-    show_all: bool,
     limit: int,
     tz: str | None,
     as_json: bool,
 ):
-    """List threads with optional filters (ordered by Redis index)."""
+    """List threads (shows all threads by default, ordered by Redis index)."""
 
     async def _list():
         import json as _json
@@ -432,15 +482,13 @@ def thread_list(
         from rich.table import Table
 
         from redis_sre_agent.core.redis import get_redis_client
-        from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
+        from redis_sre_agent.core.thread_state import ThreadManager
 
         console = Console()
         tm = ThreadManager(redis_client=get_redis_client())
-        st = ThreadStatus(status) if status else None
 
-        threads = await tm.list_threads(
-            user_id=user_id, status_filter=st if not show_all else None, limit=limit, offset=0
-        )
+        # Show all threads by default
+        threads = await tm.list_threads(user_id=user_id, limit=limit, offset=0)
 
         # Helper to parse/sort and format timestamps
         from datetime import datetime
@@ -498,12 +546,21 @@ def thread_list(
         table.add_column("Thread ID", no_wrap=True)
         table.add_column("Instance", no_wrap=True)
 
+        instance_names = {}
+
         for th in threads[:limit]:
             updated_iso = th.get("updated_at") or th.get("created_at") or "-"
             updated_disp = _fmt(updated_iso)
             subject = th.get("subject") or "Untitled"
-            instance = th.get("instance_id") or "-"
-            table.add_row(updated_disp, subject, th.get("thread_id") or "-", instance)
+            instance_id = th.get("instance_id") or "-"
+            if instance_id not in instance_names:
+                instance_names[instance_id] = th.get("instance_name") or instance_id
+            table.add_row(
+                updated_disp,
+                subject,
+                th.get("thread_id") or "-",
+                instance_names.get(instance_id, "-"),
+            )
 
         console.print(table)
 
@@ -553,7 +610,6 @@ def thread_get(thread_id: str, as_json: bool):
         table = Table(title=f"Thread {thread_id}")
         table.add_column("Field", no_wrap=True)
         table.add_column("Value")
-        table.add_row("Status", state.status.value)
         table.add_row("Created", meta.created_at or "-")
         table.add_row("Updated", meta.updated_at or "-")
         table.add_row("Subject", meta.subject or "Untitled")
@@ -731,109 +787,45 @@ def knowledge():
     pass
 
 
-@knowledge.command()
-@click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
-@click.option(
-    "--scrapers",
-    default="redis_kb",
-    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
-)
-def scrape(artifacts_path: str, scrapers: str):
-    """Scrape knowledge sources and store artifacts."""
-    click.echo("🔍 Starting knowledge scraping...")
+@knowledge.command("search")
+@click.argument("query")
+@click.option("--limit", "-l", default=5, help="Number of results to return")
+@click.option("--category", "-c", help="Filter by category")
+def knowledge_search(query: str, limit: int, category: str):
+    """Search the knowledge base (query helpers group)."""
 
-    scraper_list = [s.strip() for s in scrapers.split(",")]
+    async def _search():
+        from redis_sre_agent.core.docket_tasks import search_knowledge_base
 
-    async def run_scraping():
-        from ..pipelines.orchestrator import PipelineOrchestrator
+        click.echo(f"🔍 Searching knowledge base for: {query}")
+        if category:
+            click.echo(f"📂 Category filter: {category}")
 
-        orchestrator = PipelineOrchestrator(artifacts_path)
         try:
-            results = await orchestrator.run_scraping_pipeline(scraper_list)
+            result = await search_knowledge_base(query, category=category, limit=limit)
 
-            click.echo("✅ Scraping completed!")
-            click.echo(f"   Batch date: {results['batch_date']}")
-            click.echo(f"   Total documents: {results['total_documents']}")
-            click.echo(f"   Scrapers run: {', '.join(results['scrapers_run'])}")
-
-            # Show scraper results
-            for scraper_name, scraper_result in results["scraper_results"].items():
-                if "error" in scraper_result:
-                    click.echo(f"   ❌ {scraper_name}: {scraper_result['error']}")
+            if isinstance(result, str):
+                click.echo("\n" + result)
+            else:
+                results = result.get("results", [])
+                if results:
+                    click.echo(f"\n✅ Found {len(results)} results:")
+                    for i, doc in enumerate(results, 1):
+                        click.echo(f"\n--- Result {i} ---")
+                        click.echo(f"Title: {doc.get('title', 'Unknown')}")
+                        click.echo(f"Source: {doc.get('source', 'Unknown')}")
+                        click.echo(f"Category: {doc.get('category', 'general')}")
+                        content = doc.get("content", "")
+                        if len(content) > 1000:
+                            content = content[:1000] + "..."
+                        click.echo(f"Content: {content}")
                 else:
-                    click.echo(
-                        f"   ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
-                    )
+                    click.echo("❌ No results found")
 
         except Exception as e:
-            click.echo(f"❌ Scraping failed: {e}")
+            click.echo(f"❌ Search error: {e}")
 
-    asyncio.run(run_scraping())
-
-
-@knowledge.command()
-@click.option("--artifacts-path", default="./artifacts", help="Path to artifacts directory")
-@click.option("--batch-date", help="Batch date (YYYY-MM-DD), defaults to today")
-def ingest(artifacts_path: str, batch_date: str):
-    """Ingest scraped artifacts into the knowledge base."""
-    click.echo("📥 Starting knowledge ingestion...")
-
-    async def run_ingestion():
-        from ..pipelines.orchestrator import PipelineOrchestrator
-
-        orchestrator = PipelineOrchestrator(artifacts_path)
-        try:
-            results = await orchestrator.run_ingestion_pipeline(batch_date)
-
-            click.echo("✅ Ingestion completed!")
-            click.echo(f"   Batch date: {results['batch_date']}")
-            click.echo(f"   Documents processed: {results['documents_processed']}")
-            click.echo(f"   Documents indexed: {results['documents_indexed']}")
-
-        except Exception as e:
-            click.echo(f"❌ Ingestion failed: {e}")
-
-    asyncio.run(run_ingestion())
-
-
-@knowledge.command()
-@click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
-@click.option(
-    "--scrapers",
-    default="redis_kb",
-    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
-)
-def update(artifacts_path: str, scrapers: str):
-    """Run full knowledge update pipeline (scrape + ingest)."""
-    click.echo("🔄 Starting full knowledge update...")
-
-    scraper_list = [s.strip() for s in scrapers.split(",")]
-
-    async def run_full_pipeline():
-        from ..pipelines.orchestrator import PipelineOrchestrator
-
-        orchestrator = PipelineOrchestrator(artifacts_path)
-        try:
-            results = await orchestrator.run_full_pipeline(scraper_list)
-
-            click.echo("✅ Full pipeline completed!")
-            click.echo(f"   Batch date: {results['batch_date']}")
-            click.echo(f"   Total documents scraped: {results['scraping']['total_documents']}")
-            click.echo(f"   Documents indexed: {results['ingestion']['chunks_indexed']}")
-
-            # Show scraper results
-            for scraper_name, scraper_result in results["scraping"]["scraper_results"].items():
-                if "error" in scraper_result:
-                    click.echo(f"   ❌ {scraper_name}: {scraper_result['error']}")
-                else:
-                    click.echo(
-                        f"   ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
-                    )
-
-        except Exception as e:
-            click.echo(f"❌ Pipeline failed: {e}")
-
-    asyncio.run(run_full_pipeline())
+    asyncio.run(_search())
 
 
 @knowledge.command("fragments")

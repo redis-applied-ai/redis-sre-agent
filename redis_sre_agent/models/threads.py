@@ -13,7 +13,7 @@ from docket import Docket
 
 from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
+from redis_sre_agent.core.thread_state import ThreadManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ async def create_thread(
 ) -> Dict[str, Any]:
     """Create a thread and queue the agent to process the initial query.
 
-    Returns a dict with keys: thread_id, status, message, estimated_completion, context.
+    Returns a dict with keys: thread_id, message, estimated_completion, context.
     """
     if redis_client is None:
         redis_client = get_redis_client()
@@ -95,12 +95,9 @@ async def create_thread(
         await task_func(thread_id=thread_id, message=query, context=initial_context)
         logger.info(f"Queued agent task for thread {thread_id}")
 
-    # Update status to queued
-    await thread_manager.update_thread_status(thread_id, ThreadStatus.QUEUED)
-
+    # No thread status; return metadata only
     return {
         "thread_id": thread_id,
-        "status": ThreadStatus.QUEUED,
         "message": "Thread created and queued for analysis",
         "estimated_completion": "2-5 minutes",
         "context": initial_context,
@@ -120,21 +117,16 @@ async def continue_thread(
     if not thread_state:
         raise ValueError(f"Thread {thread_id} not found")
 
-    if thread_state.status in [ThreadStatus.IN_PROGRESS, ThreadStatus.QUEUED]:
-        raise RuntimeError(
-            f"Thread {thread_id} is currently {thread_state.status.value}. Wait for completion before continuing."
-        )
+    # Threads have no status; allow continuation without status checks
 
     async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
         task_func = docket.add(process_agent_turn)
         await task_func(thread_id=thread_id, message=query, context=context)
         logger.info(f"Queued continuation task for thread {thread_id}")
 
-    await thread_manager.update_thread_status(thread_id, ThreadStatus.QUEUED)
-
+    # No thread status; return metadata only
     return {
         "thread_id": thread_id,
-        "status": ThreadStatus.QUEUED,
         "message": "Continuation queued for processing",
         "estimated_completion": "2-5 minutes",
     }
@@ -150,12 +142,8 @@ async def cancel_thread(*, thread_id: str, redis_client=None) -> Dict[str, Any]:
     if not thread_state:
         raise ValueError(f"Thread {thread_id} not found")
 
-    if thread_state.status in [ThreadStatus.DONE, ThreadStatus.FAILED, ThreadStatus.CANCELLED]:
-        raise RuntimeError(
-            f"Thread {thread_id} is already {thread_state.status.value} and cannot be cancelled"
-        )
+    # Threads have no status; perform a best-effort cancellation marker only
 
-    await thread_manager.update_thread_status(thread_id, ThreadStatus.CANCELLED)
     await thread_manager.add_thread_update(
         thread_id, "Task cancelled by user request", "cancellation"
     )

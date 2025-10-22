@@ -40,7 +40,7 @@ class TestSearchRunbookKnowledge:
     async def test_search_knowledge_success(self, mock_search_index, mock_vectorizer):
         """Test successful knowledge search."""
         # Mock vector embedding
-        mock_vectorizer.embed_many = AsyncMock(return_value=[[0.1] * 1536])
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1] * 1536])
 
         # Mock search results
         mock_search_results = [
@@ -75,13 +75,13 @@ class TestSearchRunbookKnowledge:
         assert "task_id" in result
 
         # Verify method calls
-        mock_vectorizer.embed_many.assert_called_once_with(["redis memory issues"])
+        mock_vectorizer.aembed_many.assert_called_once_with(["redis memory issues"])
         mock_search_index.query.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_search_knowledge_no_category(self, mock_search_index, mock_vectorizer):
         """Test knowledge search without category filter."""
-        mock_vectorizer.embed_many = AsyncMock(return_value=[[0.1] * 1536])
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1] * 1536])
         mock_search_index.query.return_value = []
 
         with (
@@ -103,7 +103,7 @@ class TestSearchRunbookKnowledge:
     @pytest.mark.asyncio
     async def test_search_knowledge_vectorizer_failure(self, mock_vectorizer):
         """Test knowledge search with vectorizer failure."""
-        mock_vectorizer.embed_many.side_effect = Exception("OpenAI API error")
+        mock_vectorizer.aembed_many.side_effect = Exception("OpenAI API error")
 
         with patch(
             "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=mock_vectorizer
@@ -240,9 +240,9 @@ class TestIngestSREDocument:
         # Mock embedding generation
         import numpy as np
 
-        mock_inner = Mock()
-        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
-        mock_vectorizer._inner = mock_inner
+        mock_vectorizer.aembed = AsyncMock(
+            return_value=np.array([0.1] * 1536, dtype=np.float32).tobytes()
+        )
 
         # Mock index loading
         mock_search_index.load.return_value = None
@@ -273,7 +273,7 @@ class TestIngestSREDocument:
         assert "task_id" in result
 
         # Verify embedding generation
-        mock_inner.embed.assert_called_once_with(
+        mock_vectorizer.aembed.assert_called_once_with(
             "This is test content for the runbook", as_buffer=True
         )
 
@@ -290,9 +290,9 @@ class TestIngestSREDocument:
         """Test document ingestion with default values."""
         import numpy as np
 
-        mock_inner = Mock()
-        mock_inner.embed.return_value = np.array([0.1] * 1536, dtype=np.float32).tobytes()
-        mock_vectorizer._inner = mock_inner
+        mock_vectorizer.aembed = AsyncMock(
+            return_value=np.array([0.1] * 1536, dtype=np.float32).tobytes()
+        )
         mock_search_index.load.return_value = None
 
         with (
@@ -321,9 +321,7 @@ class TestIngestSREDocument:
     @pytest.mark.asyncio
     async def test_ingest_document_embedding_failure(self, mock_vectorizer):
         """Test document ingestion with embedding failure."""
-        mock_inner = Mock()
-        mock_inner.embed.side_effect = Exception("Embedding failed")
-        mock_vectorizer._inner = mock_inner
+        mock_vectorizer.aembed.side_effect = Exception("Embedding failed")
 
         with patch(
             "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=mock_vectorizer

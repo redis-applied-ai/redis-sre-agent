@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.api.websockets import TaskStreamManager
-from redis_sre_agent.core.thread_state import ThreadState, ThreadStatus, ThreadUpdate
+from redis_sre_agent.core.thread_state import ThreadState, ThreadUpdate
 
 
 class TestTaskStreamManager:
@@ -163,7 +163,6 @@ class TestWebSocketEndpoint:
         # Mock thread state
         mock_thread_state = ThreadState(
             thread_id=thread_id,
-            status=ThreadStatus.IN_PROGRESS,
             updates=[
                 ThreadUpdate(message="Processing...", update_type="progress"),
                 ThreadUpdate(message="Task started", update_type="info"),
@@ -191,7 +190,6 @@ class TestWebSocketEndpoint:
 
                 assert data["update_type"] == "initial_state"
                 assert data["thread_id"] == thread_id
-                assert data["status"] == "in_progress"
                 assert len(data["updates"]) == 2
                 assert data["updates"][0]["message"] == "Processing..."  # Most recent first
 
@@ -242,31 +240,6 @@ class TestWebSocketEndpoint:
 
 class TestThreadManagerIntegration:
     """Test integration between ThreadManager and WebSocket streams."""
-
-    @pytest.mark.asyncio
-    async def test_thread_status_update_publishes_stream(self):
-        """Test that thread status updates are published to streams."""
-        from redis_sre_agent.core.thread_state import ThreadManager
-
-        thread_manager = ThreadManager()
-        thread_id = "test_thread"
-
-        mock_redis = AsyncMock()
-        mock_stream_manager = AsyncMock()
-
-        with (
-            patch.object(thread_manager, "_get_client", return_value=mock_redis),
-            patch(
-                "redis_sre_agent.api.websockets.get_stream_manager",
-                return_value=mock_stream_manager,
-            ),
-        ):
-            await thread_manager.update_thread_status(thread_id, ThreadStatus.DONE)
-
-            # Verify stream update was published
-            mock_stream_manager.publish_task_update.assert_called_once_with(
-                thread_id, "status_change", {"status": "done", "message": "Status changed to done"}
-            )
 
     @pytest.mark.asyncio
     async def test_thread_update_publishes_stream(self):

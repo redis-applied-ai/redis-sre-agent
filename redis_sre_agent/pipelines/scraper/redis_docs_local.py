@@ -44,14 +44,23 @@ class RedisDocsLocalScraper(BaseScraper):
             "include_patterns": ["*.md", "*.markdown"],
             # File patterns to exclude
             "exclude_patterns": ["README.md", "readme.md", "_index.md"],
+            # If True, only include latest docs and skip versioned directories like 7.8/
+            "latest_only": False,
             **self.config,
         }
 
     def get_source_name(self) -> str:
         return "redis_documentation_local"
 
+    def _is_version_dir(self, part: str) -> bool:
+        """Return True if directory name looks like a version (e.g., '7.8')."""
+        import re
+
+        return bool(re.match(r"^\d+\.\d+$", part))
+
     async def scrape(self) -> List[ScrapedDocument]:
         """Scrape Redis documentation from local repo clone."""
+
         documents = []
 
         docs_path = Path(self.config["docs_repo_path"])
@@ -114,6 +123,22 @@ class RedisDocsLocalScraper(BaseScraper):
                     # Skip excluded files
                     if any(md_file.name == exclude for exclude in self.config["exclude_patterns"]):
                         continue
+
+                    # latest-only: skip files in versioned directories like 7.8/
+                    if self.config.get("latest_only"):
+                        rel_path = md_file.relative_to(content_dir)
+                        rel_parts = rel_path.parts
+                        # Skip files in versioned directories like 7.8/
+                        if any(self._is_version_dir(p) for p in rel_parts):
+                            continue
+                        # Prefer latest/ subtree for Enterprise docs; but only skip non-latest
+                        # under operate/rs if a latest/operate/rs subtree actually exists.
+                        rel_str = str(rel_path)
+                        if "operate/rs" in rel_str and not rel_str.startswith("latest/"):
+                            latest_rs_dir = content_dir / "latest" / "operate" / "rs"
+                            if latest_rs_dir.exists():
+                                # A latest/ subtree exists; skip non-latest to avoid duplicates
+                                continue
 
                     # Skip if already added
                     if md_file not in markdown_files:
@@ -180,7 +205,8 @@ class RedisDocsLocalScraper(BaseScraper):
             for line in frontmatter.split("\n"):
                 if ":" in line:
                     key, value = line.split(":", 1)
-                    metadata[key.strip()] = value.strip().strip('"').strip("'")
+                    # Normalize keys to lowercase for consistency (e.g., Title -> title)
+                    metadata[key.strip().lower()] = value.strip().strip('"').strip("'")
 
         except Exception as e:
             self.logger.debug(f"Failed to parse frontmatter: {e}")

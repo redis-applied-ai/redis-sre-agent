@@ -2,8 +2,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from redis_sre_agent.core.thread_state import ThreadStatus
-
 
 class Message(BaseModel):
     role: Optional[str] = Field("user", description="Message role: user|assistant|system")
@@ -35,7 +33,6 @@ class ThreadAppendMessagesRequest(BaseModel):
 
 class ThreadResponse(BaseModel):
     thread_id: str
-    status: ThreadStatus
     messages: List[Message] = Field(default_factory=list)
     action_items: List[Dict[str, Any]] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)

@@ -54,7 +54,6 @@ class TestThreadsAPI:
         # Thread state minimally used; just ensure not None
         state = MagicMock()
         state.context = {"messages": []}
-        state.status = "queued"
 
         mock_tm = MagicMock()
         mock_tm.get_thread_state = AsyncMock(return_value=state)
@@ -80,7 +79,6 @@ class TestThreadsAPI:
         # Minimal ThreadState-like object
         class State:
             context = {"messages": [{"role": "user", "content": "hi"}]}
-            status = "queued"
             action_items = []
             metadata = MagicMock()
             metadata.model_dump = lambda: {"user_id": "u"}
@@ -92,7 +90,6 @@ class TestThreadsAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["thread_id"] == "th1"
-        assert data["status"] == "queued"
         assert data["messages"] and data["messages"][0]["role"] == "user"
 
     def test_update_thread_not_found(self, client):

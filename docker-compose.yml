@@ -182,7 +182,8 @@ services:
     depends_on:
       - redis-enterprise-node1
     networks:
-      - sre-network
+      sre-network:
+        ipv4_address: 172.28.0.20
 
   # Pushgateway for demo metrics (Prometheus pulls from here; demos can push)
   pushgateway:

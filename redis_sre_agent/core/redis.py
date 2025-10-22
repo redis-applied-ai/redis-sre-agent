@@ -1,8 +1,7 @@
 """Redis connection management - no caching to avoid event loop issues."""
 
-import asyncio
 import logging
-from typing import Any, Callable, List, Optional
+from typing import Optional
 
 from redis.asyncio import Redis
 from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
@@ -149,7 +148,6 @@ SRE_THREADS_SCHEMA = {
         "storage_type": "hash",
     },
     "fields": [
-        {"name": "status", "type": "tag"},
         {"name": "subject", "type": "text"},
         {"name": "user_id", "type": "tag"},
         {"name": "instance_id", "type": "tag"},
@@ -187,46 +185,25 @@ def get_redis_client(url: Optional[str] = None) -> Redis:
     )
 
 
-class _AsyncVectorizerProxy:
-    """Proxy providing an awaitable embed_many while delegating other attributes."""
-
-    def __init__(self, inner: Any):
-        self._inner = inner
-
-    async def embed_many(self, texts: List[str], **kwargs):
-        # Prefer embed_many if available, else try known sync methods
-        method: Optional[Callable[..., Any]] = None
-        for name in ("embed_many", "embed_texts", "embed"):
-            if hasattr(self._inner, name):
-                method = getattr(self._inner, name)
-                break
-        if method is None:
-            raise AttributeError("Vectorizer has no embedding method")
-        return await asyncio.to_thread(method, texts, **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
-
-    def __eq__(self, other: Any) -> bool:
-        # Allow equality checks against the inner mock used in unit tests
-        return other is self._inner or other == self._inner
-
-
 def get_vectorizer() -> OpenAITextVectorizer:
-    """Get OpenAI vectorizer with Redis caching (creates fresh to avoid event loop issues).
+    """Get OpenAI vectorizer with Redis-backed embeddings cache.
 
-    Additionally, make ``embed_many`` awaitable on the instance so callers can
-    use ``await vectorizer.embed_many([...])``. This preserves backward
-    compatibility for unit tests that expect the raw OpenAITextVectorizer
-    instance while enabling async integration tests to ``await`` the call.
+    Returns the native vectorizer; callers should use aembed/aembed_many.
     """
-    cache = EmbeddingsCache(redis_url=settings.redis_url.get_secret_value())
-    inner = OpenAITextVectorizer(
+    # Build Redis URL with password if needed (ensure cache can auth)
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    # Name the cache to keep a stable key namespace
+    cache = EmbeddingsCache(name="sre_embeddings_cache", redis_url=redis_url)
+
+    return OpenAITextVectorizer(
         model=settings.embedding_model,
         cache=cache,
         api_config={"api_key": settings.openai_api_key},
     )
-    return _AsyncVectorizerProxy(inner)
 
 
 async def get_knowledge_index() -> AsyncSearchIndex:

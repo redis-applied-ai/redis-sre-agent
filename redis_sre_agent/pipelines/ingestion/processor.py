@@ -74,6 +74,13 @@ class DocumentProcessor:
         if self.config.get("strip_front_matter", True) and content.startswith("---"):
             content, _ = self._strip_yaml_front_matter(content)
 
+        # Guard: skip documents with no body after front-matter stripping
+        if not content.strip():
+            logger.warning(
+                f"Skipping empty document body after front-matter strip: {document.title}"
+            )
+            return []
+
         # Keep small/medium CLI reference docs whole so usage blocks stay intact
         whole_threshold = int(self.config.get("whole_doc_threshold", 6000))
         src = (document.source_url or "").lower()
@@ -297,6 +304,37 @@ class IngestionPipeline:
 
         # Find all JSON files in category
         json_files = list(category_path.glob("*.json"))
+
+        # Optionally filter to latest-only
+        if self.config.get("latest_only"):
+
+            def include_file(path: Path) -> bool:
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    src = data.get("source_url") or ""
+                    meta = data.get("metadata", {})
+                    rel = str(meta.get("relative_path", ""))
+                    blob = f"{src} {rel}"
+                    import re
+
+                    # Skip versioned paths like /7.8/
+                    if re.search(r"/\d+\.\d+/", blob):
+                        return False
+                    # Prefer latest subtree for Enterprise docs
+                    if "operate/rs" in blob and "/latest/" not in blob:
+                        return False
+                    return True
+                except Exception:
+                    # If in doubt, keep the file
+                    return True
+
+            before = len(json_files)
+            json_files = [p for p in json_files if include_file(p)]
+            logger.info(
+                f"Filtered latest-only: {before} -> {len(json_files)} documents in {category}"
+            )
+
         logger.info(f"Found {len(json_files)} documents in {category}")
 
         # Process documents in parallel batches
@@ -625,7 +663,7 @@ class IngestionPipeline:
             texts = [chunk["content"] for chunk in chunks]
 
             # Generate embeddings
-            embeddings = await vectorizer.embed_many(texts)
+            embeddings = await vectorizer.aembed_many(texts)
 
             # Prepare chunks with embeddings for indexing
             indexed_chunks = []

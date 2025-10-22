@@ -52,6 +52,77 @@ warnings.filterwarnings(
 )
 
 
+# ------------------------------ Demo helpers ------------------------------
+# Lightweight helpers to seed demo evidence without extra deps.
+
+
+def pushgateway_push(job: str, instance: str, metrics_text: str) -> bool:
+    """Push Prometheus metrics to Pushgateway.
+
+    Args:
+        job: Prometheus job label
+        instance: Prometheus instance label
+        metrics_text: Exposition format text, e.g. "metric_name{label=\"v\"} 1\n"
+    Returns:
+        True on HTTP 2xx, else False
+    """
+    try:
+        import http.client
+
+        conn = http.client.HTTPConnection("localhost", 9091, timeout=5)
+        path = f"/metrics/job/{job}/instance/{instance}"
+        conn.request("PUT", path, body=metrics_text, headers={"Content-Type": "text/plain"})
+        resp = conn.getresponse()
+        # Drain response to allow connection reuse/cleanup
+        _ = resp.read()
+        conn.close()
+        return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"⚠️  Pushgateway push failed: {e}")
+        return False
+
+
+def loki_push(labels: dict, lines: list[str]) -> bool:
+    """Push labeled log lines to Loki.
+
+    Args:
+        labels: Dict of label key/values (e.g., {"service": "redis-demo", "scenario": "1.1"})
+        lines: List of log message strings. Timestamps are assigned at push time.
+    Returns:
+        True on HTTP 2xx, else False
+    """
+    try:
+        import http.client
+        import json
+
+        # Loki expects ns timestamps as strings; assign current time to each line
+        ts = str(int(time.time() * 1e9))
+        stream = {
+            "stream": labels,
+            "values": [[ts, line] for line in lines],
+        }
+        payload = {"streams": [stream]}
+        body = json.dumps(payload)
+
+        conn = http.client.HTTPConnection("localhost", 3100, timeout=5)
+        conn.request(
+            "POST",
+            "/loki/api/v1/push",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        _ = resp.read()
+        conn.close()
+        return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"⚠️  Loki push failed: {e}")
+        return False
+
+
+# --------------------------------------------------------------------------
+
+
 class RedisSREDemo:
     """Interactive Redis SRE Agent demonstration."""
 
@@ -62,6 +133,7 @@ class RedisSREDemo:
         self.ui_mode = ui_mode
         self.scenarios = {
             "memory": self.memory_pressure_scenario,
+            "network": self.network_saturation_scenario,
             "connections": self.connection_issues_scenario,
             "performance": self.performance_scenario,
             "health": self.full_health_check,
@@ -448,12 +520,46 @@ class RedisSREDemo:
         if evicted_keys > 0:
             print(f"   🚨 EVICTIONS DETECTED: {evicted_keys} keys evicted")
 
+        # Step 4: Seed demo metrics (Prometheus/Pushgateway) and logs (Loki)
+        self.print_step(4, "Seeding demo metrics (Pushgateway) and logs (Loki)")
+        try:
+            mem_total = int(8e9)  # 8 GB demo host
+            mem_available = int(max(0, 2e8))  # 0.2 GB available (pressure)
+            metrics_text = (
+                f'node_memory_MemTotal_bytes{{instance="demo-host"}} {mem_total}\n'
+                f'node_memory_MemAvailable_bytes{{instance="demo-host"}} {mem_available}\n'
+            )
+            if pushgateway_push("demo-scenarios", "demo-host", metrics_text):
+                print(
+                    "   📊 Pushed host memory pressure metrics to Pushgateway (job=demo-scenarios)"
+                )
+            else:
+                print("   ⚠️  Failed to push memory metrics to Pushgateway")
+
+            loki_labels = {
+                "service": "redis-demo",
+                "scenario": "1.1",
+                "component": "system",
+                "level": "warn",
+            }
+            loki_lines = [
+                "kernel: Out of memory: system under memory pressure (demo)",
+                "redis: Asynchronous AOF fsync is taking too long (demo)",
+            ]
+            if loki_push(loki_labels, loki_lines):
+                print("   📝 Pushed memory pressure log lines to Loki")
+            else:
+                print("   ⚠️  Failed to push memory pressure logs to Loki")
+        except Exception as e:
+            print(f"   ⚠️  Seeding demo evidence failed: {e}")
+
         # Handle UI mode vs CLI mode
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Memory Pressure Analysis",
                 f"Redis loaded with {keys_loaded:,} keys using {utilization:.1f}% of {maxmemory / (1024 * 1024):.1f} MB limit",
             )
+            # Note: Baseline metrics will be pushed during cleanup.
             return
 
         # Consult the agent - let it gather its own diagnostics
@@ -480,6 +586,26 @@ class RedisSREDemo:
         restored_info = self.redis_client.info("memory")
         restored_memory = restored_info.get("used_memory", 0)
         print(f"   Final memory usage: {restored_memory / (1024 * 1024):.2f} MB (unlimited)")
+
+        # Push baseline host memory metrics and a recovery log entry
+        try:
+            metrics_text = (
+                f'node_memory_MemTotal_bytes{{instance="demo-host"}} {int(8e9)}\n'  # keep total constant
+                f'node_memory_MemAvailable_bytes{{instance="demo-host"}} {int(6e9)}\n'  # recover to 6 GB free
+            )
+            if pushgateway_push("demo-scenarios", "demo-host", metrics_text):
+                print("   \ud83d\udcca Pushed baseline host memory metrics to Pushgateway")
+            loki_push(
+                {
+                    "service": "redis-demo",
+                    "scenario": "1.1",
+                    "component": "system",
+                    "level": "info",
+                },
+                ["system: memory pressure resolved (demo)"],
+            )
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Baseline metric/log push failed: {e}")
 
     async def connection_issues_scenario(self):
         """Simulate connection issues and demonstrate troubleshooting."""
@@ -704,6 +830,83 @@ class RedisSREDemo:
             final_clients_info = self.redis_client.info("clients")
             final_clients = final_clients_info.get("connected_clients", 0)
             print(f"   Final connection count: {final_clients}")
+
+    async def network_saturation_scenario(self):
+        """Simulate host/network saturation and demonstrate analysis.
+
+        This uses Pushgateway to publish high network throughput/drop metrics and
+        Loki to publish saturation log lines. Optionally generates brief Redis
+        traffic for realism.
+        """
+        self.print_header("Network Saturation Scenario", "🔗")
+
+        self.print_step(1, "Seeding high network throughput/drop metrics via Pushgateway")
+        try:
+            metrics_text = (
+                # Custom demo metrics to avoid collision with real node_exporter
+                'demo_network_tx_bytes_per_sec{instance="demo-host",device="eth0"} 9.5e8\n'
+                'demo_network_rx_bytes_per_sec{instance="demo-host",device="eth0"} 9.2e8\n'
+                'demo_network_drop_rate_per_sec{instance="demo-host",device="eth0"} 500\n'
+            )
+            if pushgateway_push("demo-scenarios", "demo-host", metrics_text):
+                print(
+                    "   📊 Pushed demo network saturation metrics to Pushgateway (job=demo-scenarios)"
+                )
+            else:
+                print("   ⚠️  Failed to push network metrics to Pushgateway")
+        except Exception as e:
+            print(f"   ⚠️  Pushgateway error: {e}")
+
+        self.print_step(2, "Publishing saturation log lines to Loki")
+        try:
+            loki_labels = {
+                "service": "redis-demo",
+                "scenario": "1.2",
+                "component": "net",
+                "level": "warn",
+            }
+            lines = [
+                "kernel: eth0: TX queue length 1000 exceeded, possible congestion (demo)",
+                "app: upstream redis latency increasing due to network saturation (demo)",
+            ]
+            if loki_push(loki_labels, lines):
+                print("   📝 Pushed network saturation log lines to Loki")
+        except Exception as e:
+            print(f"   ⚠️  Loki push failed: {e}")
+
+        self.print_step(3, "Generating brief Redis traffic for realism")
+        try:
+            pipe = self.redis_client.pipeline()
+            for i in range(200):
+                pipe.set(f"demo:net:{i}", "x" * 128)
+            pipe.execute()
+            for i in range(200):
+                _ = self.redis_client.get(f"demo:net:{i}")
+        except Exception:
+            pass
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Network Saturation",
+                "Host-level network throughput approaching link capacity with packet drops (demo)",
+            )
+            return
+
+        await self._run_diagnostics_and_agent_query(
+            "Reports indicate network saturation affecting Redis connectivity. "
+            "Demo metrics show demo_network_* throughput near 1Gbps and packet drops. "
+            f"Redis URL: {self.redis_url}. Analyze likely causes and mitigations."
+        )
+
+        # Cleanup
+        self.print_step(4, "Cleanup demo network keys and reset state")
+        try:
+            demo_keys = self.redis_client.keys("demo:net:*")
+            if demo_keys:
+                self.redis_client.delete(*demo_keys)
+        except Exception:
+            pass
 
     async def performance_scenario(self):
         """Simulate performance issues and demonstrate analysis."""

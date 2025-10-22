@@ -209,11 +209,10 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
         if len(_active_connections[thread_id]) == 1:
             await _stream_manager.start_consumer(thread_id)
 
-        # Send current thread state immediately
+        # Send current thread state immediately (no thread status)
         current_state = {
             "update_type": "initial_state",
             "thread_id": thread_id,
-            "status": thread_state.status.value,
             "updates": [
                 update.model_dump() for update in thread_state.updates[-10:]
             ],  # Last 10 updates

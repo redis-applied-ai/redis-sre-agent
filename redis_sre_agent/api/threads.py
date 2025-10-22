@@ -11,7 +11,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, status
 
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
+from redis_sre_agent.core.thread_state import ThreadManager
 from redis_sre_agent.models.threads import delete_thread as delete_thread_model
 from redis_sre_agent.schemas.threads import (
     Message,
@@ -47,9 +47,14 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
 
         state = await tm.get_thread_state(thread_id)
         messages = state.context.get("messages", []) if state else []
+        # Best-effort status: may be enum or string; normalize to string
+        status_val = None
+        if state is not None and hasattr(state, "status"):
+            s = state.status
+            status_val = getattr(s, "value", s) if s is not None else None
         return ThreadResponse(
             thread_id=thread_id,
-            status=state.status if state else ThreadStatus.QUEUED,
+            status=status_val,
             messages=[Message(**m) for m in messages] if messages else [],
             action_items=[ai.model_dump() for ai in (state.action_items if state else [])],
             metadata=state.metadata.model_dump() if state else {},
@@ -70,7 +75,6 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     messages = state.context.get("messages", [])
     return ThreadResponse(
         thread_id=thread_id,
-        status=state.status,
         messages=[Message(**m) for m in messages] if messages else [],
         action_items=[ai.model_dump() for ai in state.action_items],
         metadata=state.metadata.model_dump(),

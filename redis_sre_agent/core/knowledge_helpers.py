@@ -6,7 +6,6 @@ They are called by:
 - Tools (in agent.knowledge_agent) for LLM access with custom docstrings
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -43,9 +42,8 @@ async def search_knowledge_base_helper(
     index = await get_knowledge_index()
     vectorizer = get_vectorizer()
 
-    # Create vector embedding for the query
-    query_vectors = await vectorizer.embed_many([query])
-    query_vector = query_vectors[0]
+    # Create vector embedding for the query (use native cache within vectorizer)
+    query_vector = (await vectorizer.aembed_many([query]))[0]
 
     # Build vector query
     from redisvl.query import VectorQuery
@@ -151,9 +149,8 @@ async def ingest_sre_document_helper(
     index = await get_knowledge_index()
     vectorizer = get_vectorizer()
 
-    # Create document embedding (use as_buffer=True for Redis storage)
-    # Note: vectorizer.embed returns bytes when as_buffer=True
-    content_vector = await asyncio.to_thread(vectorizer._inner.embed, content, as_buffer=True)
+    # Create document embedding (as_buffer=True for Redis storage)
+    content_vector = await vectorizer.aembed(content, as_buffer=True)
 
     # Prepare document data
     doc_id = str(ULID())
