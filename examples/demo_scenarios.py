@@ -1916,6 +1916,7 @@ async def main():
         "--scenario",
         choices=[
             "memory",
+            "network",
             "connections",
             "performance",
             "health",

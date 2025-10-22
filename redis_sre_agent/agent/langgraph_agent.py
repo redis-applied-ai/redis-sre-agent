@@ -33,7 +33,9 @@ from ..core.config import settings
 from ..tools.manager import ToolManager
 from .helpers import summarize_signals
 from .prompts import FACT_CHECKER_PROMPT, SRE_SYSTEM_PROMPT
+from .subgraphs.diagnose import make_diagnose_prompt, parse_problems
 from .subgraphs.problem_worker import build_problem_worker
+from .subgraphs.reduce import reduce_plans
 
 logger = logging.getLogger(__name__)
 
@@ -677,22 +679,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             signals_summary = summarize_signals(tool_signals)
 
             # 2) Diagnose distinct problem areas with structured output
-            diagnose_prompt = f"""
-{SRE_SYSTEM_PROMPT}
-
-You are now in a diagnosis phase. Using ONLY the operational signals below, identify distinct problem areas.
-
-Provide a strict JSON array where each item has:
-- id: short stable id (e.g., "P1", "P2")
-- category: one of ["NodeInMaintenanceMode","ReplicationMismatch","MemoryPressure","Performance","Configuration","Other"]
-- title: concise human-readable label
-- severity: one of ["critical","high","medium","low"]
-- scope: e.g., "cluster","node:2","db:foo"
-- evidence_keys: list of tool keys from signals that support this problem
-
-Operational signals:
-{signals_summary}
-"""
+            diagnose_prompt = make_diagnose_prompt(signals_summary)
 
             async def _diagnose_call():
                 return await self.llm.ainvoke([HumanMessage(content=diagnose_prompt)])
@@ -706,15 +693,7 @@ Operational signals:
                     backoff_factor=self.settings.llm_backoff_factor,
                 )
                 content = (diag_msg.content or "").strip()
-                # Try to parse JSON array; if the model wrapped in code fences, strip them
-                if content.startswith("```"):
-                    # Remove leading/trailing code fences and optional language tag
-                    content = content.strip("`\n")
-                    if content.lower().startswith("json\n"):
-                        content = content[5:]
-                problems = json.loads(content)
-                if not isinstance(problems, list):
-                    problems = []
+                problems = parse_problems(content)
             except Exception:
                 problems = []
 
@@ -908,21 +887,13 @@ Use only the scoped signals below to inform your searches and plan:
             per_problem_results = await asyncio.gather(*tasks)
 
             # 4) Reduce: merge actions, detect simple conflicts, order by severity
-            def _severity_key(p: Dict[str, Any]) -> int:
-                s = (p.get("problem", {}).get("severity") or "medium").lower()
-                return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(s, 2)
-
-            merged_actions = []
-            seen = set()
-            for r in per_problem_results:
-                for a in r.get("actions", []) or []:
-                    ident = f"{a.get('target')}|{a.get('verb')}|{json.dumps(a.get('args', {}), sort_keys=True)}"
-                    if ident not in seen:
-                        seen.add(ident)
-                        merged_actions.append(a)
-
-            # Order problems by severity
-            per_problem_results.sort(key=_severity_key)
+            (
+                merged_actions,
+                per_problem_results_sorted,
+                skipped_lines,
+                initial_assessment_lines,
+                what_im_seeing_lines,
+            ) = reduce_plans(per_problem_results, leftover_problems)
 
             # Build final markdown response
             def _fmt_actions(actions: List[Dict[str, Any]]) -> List[str]:
@@ -934,26 +905,8 @@ Use only the scoped signals below to inform your searches and plan:
                     out.append(f"{i}. {verb} on {tgt} with {json.dumps(args, default=str)}")
                 return out
 
-            # Note any problems we did not investigate this round
-            skipped_lines: List[str] = []
-            for sp in leftover_problems:
-                title = sp.get("title") or sp.get("category") or "Problem"
-                sev = sp.get("severity") or "medium"
-                skipped_lines.append(f"- {title} (severity: {sev})")
-
-            initial_assessment_lines = []
-            for r in per_problem_results:
-                p = r.get("problem", {})
-                initial_assessment_lines.append(
-                    f"- {p.get('title') or p.get('category')} (severity: {p.get('severity', 'medium')})"
-                )
-
-            what_im_seeing_lines = []
-            for r in per_problem_results:
-                p = r.get("problem", {})
-                what_im_seeing_lines.append(
-                    f"- {p.get('title') or p.get('category')}: {r.get('summary') or ''}"
-                )
+            # Note: skipped_lines, initial_assessment_lines, and what_im_seeing_lines
+            # are produced by reduce_plans above.
 
             combined_actions_lines = _fmt_actions(merged_actions)
 
