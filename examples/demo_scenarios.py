@@ -387,6 +387,8 @@ class RedisSREDemo:
         print("7. 🐌 Redis Enterprise - Lua Script High Latency")
         print("8. 🚀 Run All Scenarios - Complete demonstration")
         print("0. 🚪 Exit")
+        print("\nAdditional CLI-only scenario:")
+        print("- 🌐 Redis Network Saturation (run with --scenario network)")
 
         while True:
             try:
@@ -643,7 +645,6 @@ class RedisSREDemo:
 
         print(f"   Setting maxclients to {demo_maxclients} for connection pressure demo...")
         self.redis_client.config_set("maxclients", str(demo_maxclients))
-
         # Verify the setting was applied
         updated_result = self.redis_client.config_get("maxclients")
         current_maxclients = int(updated_result.get("maxclients", demo_maxclients))
@@ -798,6 +799,28 @@ class RedisSREDemo:
                 print(f"   🚨 {rejected_attempts}/{extra_attempts} connection attempts rejected!")
                 print("   📊 This creates visible connection_rejected_* metrics in Redis")
 
+            # Seed logs/metrics for connection exhaustion evidence
+            try:
+                metrics_text = (
+                    f'demo_redis_blocked_clients{{instance="redis-demo"}} {blocked_clients}\n'
+                    f'demo_redis_connection_rejections_total{{instance="redis-demo"}} {rejected_attempts}\n'
+                )
+                pushgateway_push("demo-scenarios", "redis-demo", metrics_text)
+                loki_push(
+                    {
+                        "service": "redis-demo",
+                        "scenario": "3.2",
+                        "component": "clients",
+                        "level": "error",
+                    },
+                    [
+                        "redis: max number of clients reached (demo)",
+                        f"redis: blocked_clients={blocked_clients} connection_rejections={rejected_attempts} (demo)",
+                    ],
+                )
+            except Exception as e:
+                print(f"   \u26a0\ufe0f  Failed to push connection exhaustion evidence: {e}")
+
             # Handle UI mode vs CLI mode
             if self.ui_mode:
                 self._wait_for_ui_interaction(
@@ -838,7 +861,7 @@ class RedisSREDemo:
         Loki to publish saturation log lines. Optionally generates brief Redis
         traffic for realism.
         """
-        self.print_header("Network Saturation Scenario", "🔗")
+        self.print_header("Redis Network Saturation Scenario", "🔗")
 
         self.print_step(1, "Seeding high network throughput/drop metrics via Pushgateway")
         try:
@@ -888,7 +911,7 @@ class RedisSREDemo:
         # UI vs CLI handling
         if self.ui_mode:
             self._wait_for_ui_interaction(
-                "Network Saturation",
+                "Redis Network Saturation",
                 "Host-level network throughput approaching link capacity with packet drops (demo)",
             )
             return

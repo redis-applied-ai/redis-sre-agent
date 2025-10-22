@@ -22,7 +22,6 @@ from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
 from ..api.instances import (
@@ -34,6 +33,7 @@ from ..core.config import settings
 from ..tools.manager import ToolManager
 from .helpers import summarize_signals
 from .prompts import FACT_CHECKER_PROMPT, SRE_SYSTEM_PROMPT
+from .subgraphs.problem_worker import build_problem_worker
 
 logger = logging.getLogger(__name__)
 
@@ -853,49 +853,35 @@ Use only the scoped signals below to inform your searches and plan:
                     ),
                 ]
 
-                last_content: Optional[str] = None
-                max_tool_steps = 3
+                # Use the per-problem worker subgraph when knowledge tools are available
                 if knowledge_adapters:
-                    # Use a ToolNode with knowledge-only adapters and a small budget
-                    tool_node = ToolNode(knowledge_adapters)
-                    tool_steps = 0
-                    for _ in range(3):
-
-                        async def _k_call():
-                            return await knowledge_llm.ainvoke(messages_local)
-
-                        resp = await self._retry_with_backoff(
-                            _k_call,
-                            max_retries=self.settings.llm_max_retries,
-                            initial_delay=self.settings.llm_initial_delay,
-                            backoff_factor=self.settings.llm_backoff_factor,
+                    try:
+                        compiled = build_problem_worker(
+                            knowledge_llm, knowledge_adapters, max_tool_steps=3
                         )
-                        calls = getattr(resp, "tool_calls", None) or []
-                        if calls and tool_steps < max_tool_steps:
-                            # Execute allowed tools through ToolNode
-                            state_in = {"messages": messages_local + [resp]}
-                            state_out = await tool_node.ainvoke(state_in)
-                            messages_local = state_out.get("messages", messages_local)
-                            tool_steps += 1
-                            continue
-                        last_content = (resp.content or "").strip().strip("`\n")
-                        break
-                else:
-                    # No knowledge tools available; do a single pass without tools
-                    async def _simple_call():
-                        return await self.llm.ainvoke(messages_local)
+                        state_out = await compiled.ainvoke(
+                            {"messages": messages_local, "budget": 3}
+                        )
+                        result = state_out.get("result", {})
+                        if isinstance(result, dict):
+                            result["problem"] = p
+                            return result
+                    except Exception:
+                        pass
 
+                # Fallback path: no knowledge tools or subgraph failed; single-pass call
+                async def _simple_call():
+                    return await self.llm.ainvoke(messages_local)
+
+                try:
                     resp = await self._retry_with_backoff(
                         _simple_call,
                         max_retries=self.settings.llm_max_retries,
                         initial_delay=self.settings.llm_initial_delay,
                         backoff_factor=self.settings.llm_backoff_factor,
                     )
-                    last_content = (resp.content or "").strip().strip("`\n")
-
-                # Parse plan JSON
-                try:
-                    data = json.loads(last_content or "{}")
+                    content = (resp.content or "").strip()
+                    data = json.loads(content or "{}")
                     if isinstance(data, dict):
                         data["problem"] = p
                         return data
