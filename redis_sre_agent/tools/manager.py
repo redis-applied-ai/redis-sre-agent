@@ -63,6 +63,8 @@ class ToolManager:
         self._routing_table: Dict[str, ToolProvider] = {}
         self._tools: List[ToolDefinition] = []
         self._stack: Optional[AsyncExitStack] = None
+        # Per-run cache of tool results: (tool_name, stable_args_json) -> result
+        self._call_cache: Dict[str, Any] = {}
 
     async def __aenter__(self) -> "ToolManager":
         """Enter context manager and load all providers."""
@@ -224,7 +226,7 @@ class ToolManager:
             return None
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Route tool call to appropriate provider.
+        """Route tool call to appropriate provider with per-run memoization.
 
         Args:
             tool_name: Tool name from LLM
@@ -243,7 +245,24 @@ class ToolManager:
                 f"Unknown tool: {tool_name}. "
                 f"Available tools ({len(available_tools)}): {available_tools[:10]}..."
             )
-        return await provider.resolve_tool_call(tool_name, args)
+
+        # Stable JSON key for args
+        try:
+            import json as _json
+
+            args_key = _json.dumps(args or {}, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            # Fallback to string repr
+            args_key = str(args or {})
+
+        cache_key = f"{tool_name}|{args_key}"
+        if cache_key in self._call_cache:
+            return self._call_cache[cache_key]
+
+        result = await provider.resolve_tool_call(tool_name, args)
+        # Cache result for this run
+        self._call_cache[cache_key] = result
+        return result
 
     async def execute_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Any]:
         """Execute a batch of tool calls returned by an LLM.

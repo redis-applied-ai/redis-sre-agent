@@ -5,6 +5,7 @@ multi-turn conversation handling, tool calling integration, and state management
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
@@ -120,7 +121,11 @@ def _preflight_log(msgs: list[BaseMessage], note: str = "") -> None:
         logger.debug(f"Preflight logging failed: {e}")
 
 
-async def _detect_instance_type_with_llm(instance: Any, llm: Optional[ChatOpenAI] = None) -> str:
+async def _detect_instance_type_with_llm(
+    instance: Any,
+    llm: Optional[ChatOpenAI] = None,
+    memoize: Optional[Callable[[str, Any, List[BaseMessage]], Any]] = None,
+) -> str:
     """Use LLM to detect Redis instance type from metadata.
 
     Analyzes connection URL, description, notes, usage, and other metadata
@@ -129,6 +134,7 @@ async def _detect_instance_type_with_llm(instance: Any, llm: Optional[ChatOpenAI
     Args:
         instance: RedisInstance with metadata to analyze
         llm: Optional LLM to use (creates one if not provided)
+        memoize: Optional memoization callback for in-run caching
 
     Returns:
         Detected instance type: 'redis_enterprise', 'oss_cluster', 'oss_single', 'redis_cloud', or 'unknown'
@@ -193,7 +199,10 @@ Respond with ONLY ONE of these exact values:
 Your response (one word only):"""
 
     try:
-        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        if memoize:
+            response = await memoize("instance_type", llm, [HumanMessage(content=prompt)])
+        else:
+            response = await llm.ainvoke([HumanMessage(content=prompt)])
         detected_type = response.content.strip().lower()
 
         # Validate response
@@ -357,6 +366,47 @@ class SRELangGraphAgent:
 
         logger.info("SRE LangGraph agent initialized (tools loaded per-query)")
 
+    # ----- In-run memoization helpers -----
+    def _begin_run_cache(self) -> None:
+        self._run_cache_active = True
+        self._llm_cache: Dict[str, Any] = {}
+
+    def _end_run_cache(self) -> None:
+        self._run_cache_active = False
+        self._llm_cache = {}
+
+    def _messages_cache_key(self, messages: List[BaseMessage]) -> str:
+        try:
+            serial = []
+            for m in messages or []:
+                role = m.__class__.__name__
+                content = getattr(m, "content", "")
+                if isinstance(content, list):
+                    try:
+                        c = json.dumps(content, sort_keys=True, default=str)
+                    except Exception:
+                        c = str(content)
+                else:
+                    c = str(content)
+                serial.append({"role": role, "content": c})
+            raw = json.dumps(serial, sort_keys=True, separators=(",", ":"))
+            return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        except Exception:
+            # Last resort: non-stable key
+            return str(id(messages))
+
+    async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
+        if not getattr(self, "_run_cache_active", False):
+            return await llm.ainvoke(messages)
+        model = getattr(llm, "model", None)
+        temperature = getattr(llm, "temperature", None)
+        key = f"{tag}|{model}|{temperature}|{self._messages_cache_key(messages)}"
+        if key in self._llm_cache:
+            return self._llm_cache[key]
+        resp = await llm.ainvoke(messages)
+        self._llm_cache[key] = resp
+        return resp
+
     def _is_redis_scoped(self, text: str) -> bool:
         """Return True if text clearly concerns Redis/Redis Enterprise/Redis Cloud.
         Conservative: if detection fails, default to True to avoid skipping safety when unsure.
@@ -443,7 +493,7 @@ JSON payload of analyses artifacts:
                 )
             ),
         ]
-        composed = await composer_llm.ainvoke(msgs)
+        composed = await self._ainvoke_memo("composer", composer_llm, msgs)
         content = getattr(composed, "content", "")
         # Normalize to string in case content is a list of parts
         if isinstance(content, list):
@@ -637,7 +687,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             async def _agent_llm_call():
                 """Inner function for agent LLM call with retry logic."""
                 _preflight_log(messages, "main-agent-before")
-                return await self.llm_with_tools.ainvoke(messages)
+                return await self._ainvoke_memo("agent", self.llm_with_tools, messages)
 
             try:
                 response = await self._retry_with_backoff(
@@ -909,7 +959,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         + payload
                     )
                 )
-                resp = await extractor_llm.ainvoke([human])  # TopicsList or similar
+                resp = await self._ainvoke_memo(
+                    "topics_extractor", extractor_llm, [human]
+                )  # TopicsList or similar
                 # Normalize to plain dicts list
                 items = getattr(resp, "items", resp)
                 if isinstance(items, list):
@@ -1419,7 +1471,9 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
             logger.info(
                 f"Instance '{target_instance.name}' has unknown type, attempting LLM-based detection"
             )
-            detected_type = await _detect_instance_type_with_llm(target_instance, self.llm)
+            detected_type = await _detect_instance_type_with_llm(
+                target_instance, self.llm, memoize=self._ainvoke_memo
+            )
 
             if detected_type != "unknown":
                 logger.info(
@@ -1613,7 +1667,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
                     safe_msgs = _sanitize_messages_for_llm(initial_messages)
                     _preflight_log(safe_msgs, "direct-fallback-before")
-                    resp = await self.llm_with_tools.ainvoke(safe_msgs)
+                    resp = await self._ainvoke_memo("agent", self.llm_with_tools, safe_msgs)
                     return str(getattr(resp, "content", resp) or "")
                 except Exception as e:
                     logger.error(f"Direct LLM fallback failed: {e}")
@@ -1907,7 +1961,7 @@ Please review this Redis SRE agent response for factual accuracy, command validi
             # Retry fact-check with parsing
             async def _fact_check_with_retry():
                 """Inner function for fact-check retry logic."""
-                fact_check_response = await fact_checker.ainvoke(messages)
+                fact_check_response = await self._ainvoke_memo("fact_check", fact_checker, messages)
 
                 # Handle markdown code blocks if present
                 response_text = fact_check_response.content.strip()
@@ -1996,6 +2050,9 @@ Please review this Redis SRE agent response for factual accuracy, command validi
         Returns:
             Agent's response as a string
         """
+        # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
+        self._begin_run_cache()
+
         # First attempt - normal processing
         response = await self.process_query(
             query,
@@ -2375,7 +2432,9 @@ RESPONSE FORMAT (JSON):
 
         async def _evaluate_with_retry():
             """Inner function for retry logic."""
-            safety_response = await safety_llm.ainvoke([SystemMessage(content=formatted_prompt)])
+            safety_response = await self._ainvoke_memo(
+                "safety", safety_llm, [SystemMessage(content=formatted_prompt)]
+            )
             # Parse the JSON response - this will raise JSONDecodeError if parsing fails
             result = json.loads(safety_response.content)
             return result
