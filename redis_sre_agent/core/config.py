@@ -15,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ENV_FILE_OPT: str | None = None
+TWENTY_MINUTES_IN_SECONDS = 1200
 
 # Only load .env if it exists (for local development)
 _env_path = Path(".env")
@@ -72,8 +73,8 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = Field(description="OpenAI API key")
-    openai_model: str = Field(default="o4-mini", description="OpenAI model for agent reasoning")
-    openai_model_mini: str = Field(default="o4-mini", description="OpenAI model for tools")
+    openai_model: str = Field(default="gpt-5", description="OpenAI model for agent reasoning")
+    openai_model_mini: str = Field(default="gpt-5-mini", description="OpenAI model for tools")
 
     # Vector Search
     embedding_model: str = Field(
@@ -84,7 +85,7 @@ class Settings(BaseSettings):
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
     max_task_retries: int = Field(default=3, description="Maximum task retries")
-    task_timeout: int = Field(default=600, description="Task timeout in seconds (10 minutes)")
+    task_timeout: int = Field(default=TWENTY_MINUTES_IN_SECONDS, description="Task timeout in seconds")
 
     # Agent
     max_iterations: int = Field(
@@ -101,6 +102,11 @@ class Settings(BaseSettings):
         default=1.0, description="Initial delay for LLM retries (seconds)"
     )
     llm_backoff_factor: float = Field(default=2.0, description="Backoff factor for LLM retries")
+
+    # LLM Request Timeout (seconds)
+    llm_timeout: float = Field(
+        default=180.0, description="HTTP timeout for LLM requests (seconds)"
+    )
 
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")
