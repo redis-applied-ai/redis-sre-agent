@@ -984,7 +984,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         f"Reasoning: knowledge adapters available={len(knowledge_adapters)}; topics to run={len(topics)}"
                     )
                     worker = build_recommendation_worker(
-                        knowledge_llm, knowledge_adapters, max_tool_steps=1
+                        knowledge_llm,
+                        knowledge_adapters,
+                        max_tool_steps=self.settings.max_tool_calls_per_stage,
                     )
                     env_by_key = {
                         e.get("tool_key"): e for e in (state.get("signals_envelopes") or [])
@@ -1001,7 +1003,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                                     content=f"Topic: {json.dumps(t, default=str)}\nInstance: {json.dumps(instance_ctx, default=str)}\nEvidence: {json.dumps(ev, default=str)}"
                                 ),
                             ],
-                            "budget": 1,
+                            "budget": int(self.settings.max_tool_calls_per_stage),
                             "topic": t,
                             "evidence": ev,
                             "instance": instance_ctx,
@@ -1787,7 +1789,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
             # Create fact-checker LLM (separate from main agent)
             fact_checker = ChatOpenAI(
-                model=self.settings.openai_model,
+                model=self.settings.openai_model_mini,
                 openai_api_key=self.settings.openai_api_key,
                 timeout=self.settings.llm_timeout,
             )
@@ -2004,6 +2006,9 @@ Please review this Redis SRE agent response for factual accuracy, command validi
             progress_callback,
             conversation_history,
         )
+        # Track correction attempts across safety/fact-check
+        rejections = 0
+        max_rejections = int(self.settings.max_rejections)
 
         # Safety evaluation - check for dangerous recommendations
         safety_result = await self._safety_evaluate_response(query, response)
@@ -2023,6 +2028,11 @@ Please review this Redis SRE agent response for factual accuracy, command validi
 
                 if correction_guidance or violations:
                     try:
+                        # Enforce a single correction attempt if configured
+                        if rejections >= max_rejections:
+                            return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
+                        rejections += 1
+
                         # Create comprehensive correction query with full safety context
                         safety_json = json.dumps(safety_result, indent=2)
 
@@ -2133,6 +2143,11 @@ IMPORTANT: Your response must be directed at the USER, not at the fact-checker. 
 
                 logger.info("Initiating corrective research query with full fact-check context")
                 try:
+                    # Enforce a single correction attempt if configured
+                    if rejections >= max_rejections:
+                        return response
+                    rejections += 1
+
                     # Process the corrective query with retry logic
                     async def _fact_check_correction():
                         return await self.process_query(
@@ -2352,10 +2367,15 @@ RESPONSE FORMAT (JSON):
         formatted_prompt = safety_prompt.replace("{original_query}", query_str)
         formatted_prompt = formatted_prompt.replace("{response}", response_str)
         formatted_prompt = formatted_prompt.replace("{citations}", citations_text or "(none)")
+        safety_llm = ChatOpenAI(
+            model=self.settings.openai_model_mini,
+            openai_api_key=self.settings.openai_api_key,
+            timeout=self.settings.llm_timeout,
+        )
 
         async def _evaluate_with_retry():
             """Inner function for retry logic."""
-            safety_response = await self.llm.ainvoke([SystemMessage(content=formatted_prompt)])
+            safety_response = await safety_llm.ainvoke([SystemMessage(content=formatted_prompt)])
             # Parse the JSON response - this will raise JSONDecodeError if parsing fails
             result = json.loads(safety_response.content)
             return result

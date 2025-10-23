@@ -74,7 +74,12 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = Field(description="OpenAI API key")
     openai_model: str = Field(default="gpt-5", description="OpenAI model for agent reasoning")
-    openai_model_mini: str = Field(default="gpt-5-mini", description="OpenAI model for tools")
+    openai_model_mini: str = Field(
+        default="gpt-5-mini", description="OpenAI model for knowledge/search and utility tasks"
+    )
+    openai_model_nano: str = Field(
+        default="gpt-5-nano", description="OpenAI model for very simple classification/triage"
+    )
 
     # Vector Search
     embedding_model: str = Field(
@@ -91,7 +96,16 @@ class Settings(BaseSettings):
 
     # Agent
     max_iterations: int = Field(
-        default=50, description="Maximum agent iterations (increased for complex investigations)"
+        default=50,
+        description="Maximum reasoning iterations (LLM message cycles) for the main agent",
+    )
+    max_tool_calls_per_stage: int = Field(
+        default=10,
+        description="Maximum knowledge/tool calls per subgraph stage (e.g., per-topic research budget)",
+    )
+    max_rejections: int = Field(
+        default=1,
+        description="Maximum number of correction attempts triggered by safety or fact-checking per query",
     )
     recursion_limit: int = Field(
         default=100, description="LangGraph recursion limit for complex workflows"
