@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -420,6 +421,57 @@ class SRELangGraphAgent:
             return _re.search(pattern, str(text), flags=_re.IGNORECASE) is not None
         except Exception:
             return True
+
+    async def _render_safety_and_fact_check_section(
+        self,
+        *,
+        safety_result: Optional[Dict[str, Any]],
+        fact_check_result: Optional[Dict[str, Any]],
+    ) -> str:
+        """Summarize safety and fact-check outputs into a natural-language section.
+
+        Returns a Markdown string beginning with '## Safety and Fact Checking'.
+        """
+        # If both are missing, don't render anything
+        if not (safety_result or fact_check_result):
+            return ""
+
+        payload = {
+            "safety": safety_result or {},
+            "fact_check": fact_check_result or {},
+        }
+        summarizer = ChatOpenAI(
+            model=self.settings.openai_model_mini,
+            openai_api_key=self.settings.openai_api_key,
+            timeout=self.settings.llm_timeout,
+        )
+        sys = SystemMessage(
+            content=(
+                "You write concise, operator-facing notes. Use plain, direct language.\n"
+                "Summarize the provided JSON findings without inventing facts."
+            )
+        )
+        human = HumanMessage(
+            content=(
+                f"""
+Given this JSON with safety and fact-check outputs, write a compact Markdown section:
+
+- Title: ## Safety and Fact Checking
+- Subsections: ### Safety, ### Fact Check (include each once)
+- Use natural language sentences; bullets are OK but keep them terse and useful.
+- If a category is empty/unavailable, say so in one short line.
+- Do NOT modify prior recommendations; this section is purely advisory.
+
+JSON:
+```
+{json.dumps(payload, default=str)}
+```
+"""
+            )
+        )
+        resp = await self._ainvoke_memo("safety_fact_section", summarizer, [sys, human])
+        text = getattr(resp, "content", "")
+        return str(text or "")
 
     async def _compose_final_markdown(
         self,
@@ -1868,8 +1920,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             cli_detection_summary = ""
             unique_cmds = []
             try:
-                import re  # ensure regex is available for CLI detection
-
                 cli_matches = re.findall(r"(rladmin\b[^\n]*)", response)
                 if cli_matches:
                     for cmd in cli_matches:
@@ -2064,61 +2114,19 @@ Please review this Redis SRE agent response for factual accuracy, command validi
                 # If scope detection fails, proceed with notes
                 pass
 
-            # Collect notes (no corrections)
-            safety_result = await self._safety_evaluate_response(query, response)
-            fact_check_result = await self._fact_check_response(response)
+            # Collect notes (no corrections) in parallel
+            safety_result, fact_check_result = await asyncio.gather(
+                self._safety_evaluate_response(query, response),
+                self._fact_check_response(response),
+            )
 
-            # Build a concise notes section
-            def _fmt_safety(s: Dict[str, Any]) -> List[str]:
-                lines: List[str] = []
-                if not s:
-                    return ["Safety evaluation unavailable."]
-                lines.append(f"Result: {'SAFE' if s.get('safe', True) else 'UNSAFE'}")
-                if "risk_level" in s:
-                    lines.append(f"Risk level: {s.get('risk_level')}")
-                v = s.get("violations") or []
-                if v:
-                    lines.append("Violations:")
-                    for item in v[:10]:
-                        lines.append(f"- {str(item)[:400]}")
-                cg = s.get("corrective_guidance")
-                if cg:
-                    lines.append(f"Guidance: {str(cg)[:600]}")
-                rsn = s.get("reasoning")
-                if rsn:
-                    lines.append(f"Notes: {str(rsn)[:600]}")
-                return lines or ["No material safety issues detected."]
-
-            def _fmt_fact(f: Dict[str, Any]) -> List[str]:
-                lines: List[str] = []
-                if not f:
-                    return ["Fact-check unavailable."]
-                lines.append(f"Errors: {'YES' if f.get('has_errors') else 'NO'}")
-                errs = f.get("errors") or []
-                if errs:
-                    lines.append("Issues:")
-                    for e in errs[:10]:
-                        claim = (e or {}).get("claim")
-                        issue = (e or {}).get("issue")
-                        lines.append(f"- {str(claim)[:120]}: {str(issue)[:400]}")
-                notes = f.get("validation_notes")
-                if notes:
-                    lines.append(f"Notes: {str(notes)[:600]}")
-                return lines or ["No material fact-check issues detected."]
-
-            safety_lines = _fmt_safety(safety_result)
-            fact_lines = _fmt_fact(fact_check_result)
-            notes_md = [
-                "## Safety and Fact Checking",
-                "",
-                "### Safety",
-                *safety_lines,
-                "",
-                "### Fact Check",
-                *fact_lines,
-            ]
-            appended = response + "\n\n" + "\n".join(notes_md)
-            return appended
+            # Render natural-language notes and append to the response
+            section = await self._render_safety_and_fact_check_section(
+                safety_result=safety_result, fact_check_result=fact_check_result
+            )
+            if section.strip():
+                return response + "\n\n" + section
+            return response
         finally:
             # Clear LLM memo cache for this run
             try:
