@@ -79,7 +79,7 @@ class TestKnowledgeSearchHelper:
                 severity="info",
             )
 
-            # Default distance_threshold (0.02) should return only Doc A
+            # Default distance_threshold (0.2) should return only Doc A
             result = await search_knowledge_base_helper(
                 query="redis memory", category="alpha", limit=5
             )

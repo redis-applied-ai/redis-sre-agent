@@ -27,6 +27,7 @@ from ..api.instances import (
 )
 from ..core.config import settings
 from ..tools.manager import ToolManager
+from .helpers import log_preflight_messages
 from .prompts import FACT_CHECKER_PROMPT, SRE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -107,19 +108,6 @@ def _mask_redis_url_credentials(url: str) -> str:
     except Exception as e:
         logger.warning(f"Failed to mask URL credentials: {e}")
         return "redis://***:***@<host>:<port>"
-
-
-def _preflight_log(msgs: list[BaseMessage], note: str = "") -> None:
-    """
-    Debug helper: log roles and tool_call_ids before ainvoke
-    """
-    try:
-        from .helpers import log_preflight_messages as _log_preflight
-
-        _log_preflight(msgs, label="Preflight LLM", note=note, logger=logger)
-    except Exception as e:
-        # Never break flow due to logging
-        logger.debug(f"Preflight logging failed: {e}")
 
 
 async def _detect_instance_type_with_llm(
@@ -744,7 +732,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
             async def _agent_llm_call():
                 """Inner function for agent LLM call with retry logic."""
-                _preflight_log(messages, "main-agent-before")
+                log_preflight_messages(messages, label="Preflight LLM", logger=logger)
                 return await self._ainvoke_memo("agent", self.llm_with_tools, messages)
 
             try:
@@ -881,7 +869,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 lg_tool_node = LGToolNode(adapters)
 
                 # 3) Execute with ToolNode
-                _preflight_log(messages, "toolnode-before")
+                log_preflight_messages(messages, label="Preflight toolnode-before", logger=logger)
                 out = await lg_tool_node.ainvoke({"messages": messages})
                 out_messages = out.get("messages", [])
                 # Some versions may return only ToolMessages; append deltas to preserve history
@@ -913,7 +901,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         logger.info(
                             f"tool_node: Envelope built for tool call {tool_name} with args {tool_args}"
                         )
-                        logger.info(f"tool_node: Env list is now: {env_list}")
+                        logger.info(f"tool_node: Env list now has {len(env_list)} items")
 
                         # Knowledge fragments progress (best-effort)
                         try:
@@ -1005,7 +993,10 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 }
                 preface = (
                     "About this JSON: signals from upstream tool calls (each has a tool description, args, and raw JSON results).\n"
-                    "Use only these as evidence. Return a list of topics with evidence_keys referencing tool_key."
+                    "Use only these as evidence. Return a list of topics with evidence_keys referencing tool_key.\n"
+                    "For EACH topic, include: id, title, category, scope, narrative, evidence_keys, and severity.\n"
+                    "severity MUST be one of: critical | high | medium | low, based on operational risk/impact/urgency.\n"
+                    "Order the topics by severity (critical->low)."
                 )
                 payload = json.dumps(envelopes, default=str)
                 human = HumanMessage(
@@ -1027,6 +1018,22 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 else:
                     topics = []
                 logger.info(f"Reasoning: topics extracted={len(topics)}")
+                # Order by severity (critical > high > medium > low) and cap to settings
+                _sev_order = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+
+                def _sev_score(t: dict) -> int:
+                    s = (t.get("severity") or "medium") if isinstance(t, dict) else "medium"
+                    s = s.lower() if isinstance(s, str) else "medium"
+                    return _sev_order.get(s, 1)
+
+                topics.sort(key=_sev_score, reverse=True)
+                max_topics = int(getattr(self.settings, "max_recommendation_topics", 3) or 3)
+                if len(topics) > max_topics:
+                    topics = topics[:max_topics]
+                logger.info(
+                    f"Reasoning: topics after severity ordering and cap={len(topics)} (max={max_topics})"
+                )
+
             except Exception as e:
                 logger.error(f"Topic extraction failed: {e}")
                 topics = []
@@ -1725,7 +1732,9 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                         return clean
 
                     safe_msgs = _sanitize_messages_for_llm(initial_messages)
-                    _preflight_log(safe_msgs, "direct-fallback-before")
+                    log_preflight_messages(
+                        safe_msgs, label="Preflight direct-fallback", logger=logger
+                    )
                     resp = await self._ainvoke_memo("agent", self.llm_with_tools, safe_msgs)
                     return str(getattr(resp, "content", resp) or "")
                 except Exception as e:

@@ -40,6 +40,7 @@ class Topic(BaseModel):
         "Observability",
         "Other",
     ] = "Other"
+    severity: Literal["critical", "high", "medium", "low"] = "medium"
     scope: str = "cluster"
     narrative: str = ""
     evidence_keys: List[str] = Field(default_factory=list)

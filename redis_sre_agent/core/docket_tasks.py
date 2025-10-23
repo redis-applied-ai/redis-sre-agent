@@ -111,6 +111,59 @@ async def ingest_sre_document(
         raise
 
 
+async def check_service_health(
+    service_name: str,
+    endpoints: List[str],
+    timeout: int = 30,
+    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """
+    Check health of a group of service endpoints.
+
+    Performs lightweight HTTP validation of each endpoint and returns a summary.
+    Intended to be used as a background task via Docket.
+    """
+    from time import perf_counter
+
+    checks: List[Dict[str, Any]] = []
+    for ep in endpoints:
+        start = perf_counter()
+        try:
+            # Use per-endpoint timeout (cap to a reasonable value)
+            per_timeout = max(1.0, min(float(timeout), 30.0))
+            result = await validate_url(ep, timeout=per_timeout)
+            ok = bool(result.get("valid"))
+            status_code = result.get("status_code")
+            error = result.get("error")
+        except Exception as e:  # pragma: no cover - defensive
+            ok = False
+            status_code = None
+            error = str(e)
+            result = {"final_url": None}
+        duration_ms = int((perf_counter() - start) * 1000)
+        checks.append(
+            {
+                "endpoint": ep,
+                "status": "healthy" if ok else "unhealthy",
+                "status_code": status_code,
+                "response_time_ms": duration_ms,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "final_url": result.get("final_url"),
+                "error": error,
+            }
+        )
+
+    overall_status = "healthy" if all(c["status"] == "healthy" for c in checks) else "unhealthy"
+    return {
+        "task_id": str(ULID()),
+        "service_name": service_name,
+        "endpoints_checked": len(endpoints),
+        "overall_status": overall_status,
+        "health_checks": checks,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @sre_task
 async def scheduler_task(
     perpetual: Perpetual = Perpetual(every=timedelta(seconds=30), automatic=True),

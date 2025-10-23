@@ -71,8 +71,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum number of results to return (default: 5)",
-                            "default": 5,
+                            "description": "Maximum number of results to return (default: 10)",
+                            "default": 10,
                             "minimum": 1,
                             "maximum": 20,
                         },
@@ -177,8 +177,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum number of related fragments to return (default: 5)",
-                            "default": 5,
+                            "description": "Maximum number of related fragments to return (default: 10)",
+                            "default": 10,
                             "minimum": 1,
                             "maximum": 20,
                         },
@@ -221,7 +221,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
         self,
         query: str,
         category: Optional[str] = None,
-        limit: int = 5,
+        limit: int = 10,
         distance_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search the knowledge base.
@@ -238,10 +238,12 @@ class KnowledgeBaseToolProvider(ToolProvider):
         logger.info(
             f"Knowledge base search: {query} (category={category}, limit={limit}, distance_threshold={distance_threshold})"
         )
-        kwargs = {"query": query, "category": category, "limit": limit}
-        if distance_threshold is not None:
-            kwargs["distance_threshold"] = distance_threshold
-        # Do not pass None for distance_threshold to preserve default-on behavior in backend
+        kwargs = {
+            "query": query,
+            "category": category,
+            "limit": limit,
+            "distance_threshold": distance_threshold,
+        }
         return await search_knowledge_base_helper(**kwargs)
 
     async def ingest(
@@ -293,7 +295,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
         return await get_all_document_fragments(document_hash)
 
     async def get_related_fragments(
-        self, document_hash: str, chunk_index: int, limit: int = 5
+        self, document_hash: str, chunk_index: int, limit: int = 10
     ) -> Dict[str, Any]:
         """Get related fragments for a specific chunk.
 

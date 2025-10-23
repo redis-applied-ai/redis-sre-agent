@@ -24,7 +24,7 @@ class SearchRequest(BaseModel):
 
     query: str = Field(..., description="Search query")
     category: Optional[str] = Field(None, description="Filter by category")
-    limit: int = Field(5, ge=1, le=50, description="Number of results to return")
+    limit: int = Field(10, ge=1, le=50, description="Number of results to return")
     distance_threshold: Optional[float] = Field(
         None,
         ge=0.0,

@@ -372,6 +372,35 @@ class RedisSREDemo:
             print(f"⚠️  Warning: Could not register Redis Enterprise instance: {e}")
             print("   The agent may not be able to use admin API tools for this scenario.")
 
+    async def _prepare_enterprise(self):
+        """Connect to local Redis Enterprise DB and register instance for agent.
+
+        Returns:
+            redis.Redis client connected to localhost:12000, or None on failure.
+        """
+        enterprise_url = "redis://localhost:12000/0"
+        try:
+            import redis as _redis
+
+            client = _redis.from_url(enterprise_url)
+            client.ping()
+            print("   ✅ Connected to Redis Enterprise instance")
+        except Exception as e:
+            print(f"   ❌ Could not connect to Redis Enterprise: {e}")
+            print("   💡 Make sure Redis Enterprise is running with the demo setup")
+            print("   💡 Expected connection: redis://localhost:12000/0")
+            return None
+
+        # Ensure the agent can reach this instance via docker service hostnames
+        await self._register_enterprise_instance(
+            name="Redis Enterprise Demo",
+            connection_url="redis://redis-enterprise-node1:12000/0",
+            admin_url="https://redis-enterprise-node1:9443",
+            admin_username="admin@redis.com",
+            admin_password="admin",
+        )
+        return client
+
     def _wait_for_ui_interaction(self, scenario_name: str, scenario_description: str):
         """Wait for user to interact with the UI while scenario data is active."""
         print("\n" + "=" * 80)
@@ -467,14 +496,10 @@ class RedisSREDemo:
         """2.2 Cluster Rebalancing in Progress (Enterprise)"""
         self.print_header("2.2 Cluster Rebalancing in Progress", "🔧")
 
-        # Ensure Enterprise instance is registered so the agent can use admin tools
-        await self._register_enterprise_instance(
-            name="Redis Enterprise Demo",
-            connection_url="redis://redis-enterprise-node1:12000/0",
-            admin_url="https://redis-enterprise-node1:9443",
-            admin_username="admin@redis.com",
-            admin_password="admin",
-        )
+        # Prepare Enterprise connectivity and register instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
+            print("   ⚠️ Proceeding with synthetic evidence only; Enterprise not reachable")
 
         self.print_step(1, "Verifying Redis Enterprise cluster availability")
         import subprocess
@@ -532,8 +557,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "Our Redis Enterprise cluster may be rebalancing. Please verify via admin API/rladmin, "
-                "check shard movements and actions list, and summarize expected impact and guidance."
+                "We are seeing signs of rebalancing in our Redis Enterprise cluster. Please investigate current cluster state and any ongoing operations."
             )
 
         # Cleanup: mark rebalance completed in evidence stream
@@ -648,14 +672,10 @@ class RedisSREDemo:
         """4.1 Master Shard Failover (Enterprise)"""
         self.print_header("4.1 Master Shard Failover", "🔧")
 
-        # Register Enterprise instance so the agent can use admin tools if available
-        await self._register_enterprise_instance(
-            name="Redis Enterprise Demo",
-            connection_url="redis://redis-enterprise-node1:12000/0",
-            admin_url="https://redis-enterprise-node1:9443",
-            admin_username="admin@redis.com",
-            admin_password="admin",
-        )
+        # Prepare Enterprise connectivity and register instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
+            print("   ⚠️ Proceeding with synthetic evidence only; Enterprise not reachable")
 
         self.print_step(1, "Checking cluster status (no destructive actions)")
         import subprocess
@@ -711,8 +731,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "We suspect a master shard failover occurred in the Redis Enterprise demo cluster. "
-                "Verify via admin API/rladmin (list_shards, get_shard) and summarize current roles and impact."
+                "We suspect a Redis Enterprise failover occurred. Please investigate current shard roles, status, and impact."
             )
 
         # Cleanup: mark state as completed
@@ -739,17 +758,11 @@ class RedisSREDemo:
         """4.2 Shard CPU from Expensive Ops (Enterprise)"""
         self.print_header("4.2 Shard CPU from Expensive Ops", "🔧")
 
-        # Attempt a light workload on Enterprise DB if available (kept small)
-        enterprise_client = None
-        try:
-            import redis
-
-            enterprise_client = redis.from_url("redis://localhost:12000/0")
-            enterprise_client.ping()
-            print("   \u2705 Connected to Redis Enterprise DB for light workload")
-        except Exception as e:
+        # Prepare Enterprise connectivity and register instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
             print(
-                f"   \u26a0\ufe0f  Enterprise DB not reachable, proceeding with synthetic evidence only: {e}"
+                "   \u26a0\ufe0f  Proceeding with synthetic evidence only; Enterprise not reachable"
             )
 
         self.print_step(1, "Seeding high shard CPU evidence (metrics + logs)")
@@ -797,8 +810,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "Redis Enterprise shard appears CPU constrained due to expensive operations. "
-                "Correlate admin node stats, shard placement, and metrics; propose mitigations."
+                "We are seeing high CPU on a Redis Enterprise shard and slowdowns. Please investigate causes and recommend mitigations."
             )
 
         # Cleanup baseline
@@ -827,6 +839,13 @@ class RedisSREDemo:
     async def scenario_4_3(self):
         """4.3 Unbalanced Shards (Enterprise)"""
         self.print_header("4.3 Unbalanced Shards", "🔧")
+
+        # Prepare Enterprise connectivity and register instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
+            print(
+                "   \u26a0\ufe0f Proceeding with synthetic evidence only; Enterprise not reachable"
+            )
 
         self.print_step(1, "Checking shard placement (if available)")
         import subprocess
@@ -878,8 +897,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "Shard placement appears unbalanced across nodes. Use admin API/rladmin to confirm shard counts and "
-                "recommend a rebalance plan and expected impact."
+                "Shard placement appears unbalanced across nodes. Please investigate and recommend a rebalance plan."
             )
 
         # Cleanup baseline
@@ -1124,14 +1142,12 @@ class RedisSREDemo:
         """6.2 Dangerous Commands Enabled (Enterprise)"""
         self.print_header("6.2 Dangerous Commands Enabled", "🛠️")
 
-        # Register Enterprise instance for agent admin checks
-        await self._register_enterprise_instance(
-            name="Redis Enterprise Demo",
-            connection_url="redis://redis-enterprise-node1:12000/0",
-            admin_url="https://redis-enterprise-node1:9443",
-            admin_username="admin@redis.com",
-            admin_password="admin",
-        )
+        # Prepare Enterprise connectivity and register instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
+            print(
+                "   \u26a0\ufe0f Proceeding with synthetic evidence only; Enterprise not reachable"
+            )
 
         self.print_step(1, "Seeding evidence that disabled_commands may be unsafe/empty")
         try:
@@ -1163,8 +1179,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "Review the Redis Enterprise database configuration: identify whether disabled_commands is empty "
-                "and propose a recommended safe list (e.g., FLUSHALL, FLUSHDB, KEYS, DEBUG, CONFIG, SCRIPT, EVAL, MIGRATE)."
+                "We suspect unsafe commands may be enabled on a Redis Enterprise database. Please investigate configuration and recommend hardening."
             )
 
         # Cleanup baseline
@@ -1619,10 +1634,7 @@ class RedisSREDemo:
             else:
                 # Run agent consultation with connection-focused query
                 await self._run_diagnostics_and_agent_query(
-                    f"Application users are reporting connection timeouts and service unavailability at {self.redis_url}. "
-                    f"Current metrics show {total_clients} connected clients (max: {current_maxclients}), "
-                    f"{blocked_clients} blocked clients, and {rejected_attempts} recent connection rejections. "
-                    f"Please analyze the connection issues and provide immediate remediation steps."
+                    "We are seeing connection timeouts and some blocked clients. Please investigate connection issues and recommend immediate steps."
                 )
 
         finally:
@@ -1656,11 +1668,11 @@ class RedisSREDemo:
         try:
             metrics_text = (
                 # Custom demo metrics to avoid collision with real node_exporter
-                'demo_network_tx_bytes_per_sec{instance="demo-host",device="eth0"} 9.5e8\n'
-                'demo_network_rx_bytes_per_sec{instance="demo-host",device="eth0"} 9.2e8\n'
-                'demo_network_drop_rate_per_sec{instance="demo-host",device="eth0"} 500\n'
+                'demo_network_tx_bytes_per_sec{instance="redis-demo",device="eth0"} 9.5e8\n'
+                'demo_network_rx_bytes_per_sec{instance="redis-demo",device="eth0"} 9.2e8\n'
+                'demo_network_drop_rate_per_sec{instance="redis-demo",device="eth0"} 500\n'
             )
-            if pushgateway_push("demo-scenarios", "demo-host", metrics_text):
+            if pushgateway_push("demo-scenarios", "redis-demo", metrics_text):
                 print(
                     "   📊 Pushed demo network saturation metrics to Pushgateway (job=demo-scenarios)"
                 )
@@ -1706,9 +1718,8 @@ class RedisSREDemo:
             return
 
         await self._run_diagnostics_and_agent_query(
-            "Reports indicate network saturation affecting Redis connectivity. "
-            "Demo metrics show demo_network_* throughput near 1Gbps and packet drops. "
-            f"Redis URL: {self.redis_url}. Analyze likely causes and mitigations."
+            "Reports indicate Redis connectivity issues. Analyze likely causes and mitigations. "
+            "Check your logs and metrics tools, and anything else you can."
         )
 
         # Cleanup
@@ -1923,28 +1934,18 @@ class RedisSREDemo:
         print("   • Potential for buffer overflow and connection issues")
         print()
 
-        # Note: This scenario is designed to work with the actual Redis Enterprise instance
-        # that was configured via the setup script, not the demo Redis instance
-        enterprise_url = "redis://:admin@redis-enterprise:12000/0"
+        # Prepare Enterprise connectivity and register instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
+            return
 
+        # Optional: baseline memory
         try:
-            # Test connection to Redis Enterprise
-            import redis
-
-            enterprise_client = redis.from_url(enterprise_url)
-            enterprise_client.ping()
-            print("   ✅ Connected to Redis Enterprise instance")
-
-            # Get current memory usage
             info = enterprise_client.info("memory")
             used_memory = info.get("used_memory", 0)
             print(f"   📊 Current memory usage: {used_memory / (1024 * 1024):.2f} MB")
-
-        except Exception as e:
-            print(f"   ❌ Could not connect to Redis Enterprise: {e}")
-            print("   💡 Make sure Redis Enterprise is running with the demo setup")
-            print("   💡 Expected connection: redis://:admin@redis-enterprise:12000/0")
-            return
+        except Exception:
+            pass
 
         self.print_step(2, "Analyzing Redis Enterprise buffer configuration")
 
@@ -1992,16 +1993,6 @@ class RedisSREDemo:
 
         self.print_step(3, "Demonstrating buffer-related issues")
 
-        # Ensure a Redis Enterprise instance is registered for the agent
-        await self._register_enterprise_instance(
-            name="Redis Enterprise Demo",
-            # Register with docker service hostnames for agent containers
-            connection_url="redis://redis-enterprise-node1:12000/0",
-            admin_url="https://redis-enterprise-node1:9443",
-            admin_username="admin@redis.com",
-            admin_password="admin",
-        )
-
         print("   ⚠️  With 1MB buffer limits, the following issues may occur:")
         print("   • Client disconnections during large responses (MGET, SCAN)")
         print("   • Replication lag if slave buffer overflows")
@@ -2018,7 +2009,7 @@ class RedisSREDemo:
         else:
             # Query the agent about the buffer configuration issue
             await self._run_diagnostics_and_agent_query(
-                f"Redis Enterprise database analysis: The database has very low buffer settings (slave_buffer=1MB, client_buffer=1MB) but is using {updated_memory / (1024 * 1024):.1f}MB of memory with {len(scan_results)} keys. Recent operations include MGET of {len(keys_to_get)} keys and SCAN operations. What are the risks of these buffer settings and how should they be optimized for this workload?"
+                "We are concerned buffer settings may be too low for the workload on a Redis Enterprise database. Please assess risks and recommend settings."
             )
 
         # Cleanup test data
@@ -2058,37 +2049,10 @@ class RedisSREDemo:
 
         time.sleep(2)
 
-        # Note: This scenario works with the Redis Enterprise instance in docker-compose
-        enterprise_url = "redis://localhost:12000/0"
-
-        try:
-            # Test connection to Redis Enterprise
-            import redis
-
-            enterprise_client = redis.from_url(enterprise_url)
-            enterprise_client.ping()
-            print("   ✅ Connected to Redis Enterprise instance")
-
-            # Get current server info
-            info = enterprise_client.info("server")
-            redis_version = info.get("redis_version", "unknown")
-            print(f"   📊 Redis Enterprise version: {redis_version}")
-
-        except Exception as e:
-            print(f"   ❌ Could not connect to Redis Enterprise: {e}")
-            print("   💡 Make sure Redis Enterprise is running with the demo setup")
-            print("   💡 Expected connection: redis://localhost:12000/0")
+        # Connect and register Enterprise instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
             return
-
-        # Ensure a Redis Enterprise instance is registered for the agent
-        await self._register_enterprise_instance(
-            name="Redis Enterprise Demo",
-            # Register with docker service hostnames for agent containers
-            connection_url="redis://redis-enterprise-node1:12000/0",
-            admin_url="https://redis-enterprise-node1:9443",
-            admin_username="admin@redis.com",
-            admin_password="admin",
-        )
 
         self.print_step(2, "Putting node 2 in maintenance mode")
 
@@ -2207,11 +2171,6 @@ class RedisSREDemo:
         print("   📋 a node in maintenance mode. The agent has access to rladmin commands")
         print("   📋 through the get_redis_enterprise_node_status tool.")
         print()
-        print("   💡 In the UI, you can ask the agent:")
-        print("   💡 - 'Check the Redis Enterprise cluster status'")
-        print("   💡 - 'Are any nodes in maintenance mode?'")
-        print("   💡 - 'Show me the node status'")
-        print()
         print("   🔍 The agent will use rladmin commands to check the actual cluster state")
         print("   🔍 and provide recommendations based on what it finds.")
         print()
@@ -2272,26 +2231,9 @@ class RedisSREDemo:
         print("   • Performance degradation affecting all operations")
         print()
 
-        # Note: This scenario works with the Redis Enterprise instance in docker-compose
-        enterprise_url = "redis://:admin@redis-enterprise:12000/0"
-
-        try:
-            # Test connection to Redis Enterprise
-            import redis
-
-            enterprise_client = redis.from_url(enterprise_url)
-            enterprise_client.ping()
-            print("   ✅ Connected to Redis Enterprise instance")
-
-            # Get current server info
-            info = enterprise_client.info("server")
-            redis_version = info.get("redis_version", "unknown")
-            print(f"   📊 Redis Enterprise version: {redis_version}")
-
-        except Exception as e:
-            print(f"   ❌ Could not connect to Redis Enterprise: {e}")
-            print("   💡 Make sure Redis Enterprise is running with the demo setup")
-            print("   💡 Expected connection: redis://:admin@redis-enterprise:12000/0")
+        # Connect and register Enterprise instance for agent tools
+        enterprise_client = await self._prepare_enterprise()
+        if not enterprise_client:
             return
 
         self.print_step(2, "Creating test data and problematic Lua script")
@@ -2407,24 +2349,6 @@ class RedisSREDemo:
         except Exception as e:
             print(f"   ⚠️  Could not retrieve slowlog: {e}")
 
-        self.print_step(4, "Analyzing Lua script performance impact")
-
-        print("   ⚠️  Impact of problematic Lua script:")
-        print("   • Redis is single-threaded - Lua blocks all operations")
-        print("   • Other clients experience timeouts and delays")
-        print("   • CPU utilization spikes during script execution")
-        print("   • Replication lag may increase")
-        print("   • Overall database performance degrades")
-        print()
-
-        print("   🔍 Common Lua script performance issues:")
-        print("   • CPU-intensive computations in Lua")
-        print("   • Excessive iterations/loops")
-        print("   • Too many Redis operations in single script")
-        print("   • Lack of script optimization")
-        print("   • Missing script execution time limits")
-        print()
-
         # Handle UI mode vs CLI mode
         if self.ui_mode:
             self._wait_for_ui_interaction(
@@ -2435,41 +2359,8 @@ class RedisSREDemo:
 
         # CLI mode: Query the agent about the Lua latency issue
         await self._run_diagnostics_and_agent_query(
-            f"Redis Enterprise Lua script performance issue: A Lua script is causing severe latency "
-            f"(average {avg_lua_time:.1f}ms per execution). The script performs CPU-intensive computations "
-            f"with nested loops and multiple Redis operations. Normal GET operations take "
-            f"{normal_time / 100 * 1000:.2f}ms, but the Lua script is {avg_lua_time / (normal_time / 100 * 1000):.1f}x slower. "
-            f"The slowlog shows {len(slowlog_entries) if 'slowlog_entries' in locals() else 'multiple'} slow operations. "
-            f"What steps should be taken to identify, optimize, or mitigate this Lua script performance issue?"
+            "We are seeing slow commands and elevated latency on a Redis Enterprise database. Please investigate and recommend fixes."
         )
-
-        self.print_step(5, "Recommended optimization steps")
-
-        print("   📋 Steps to optimize Lua script performance:")
-        print()
-        print("   1. Identify the problematic script:")
-        print("      redis-cli -h redis-enterprise -p 12000 SLOWLOG GET 10")
-        print()
-        print("   2. Analyze script complexity:")
-        print("      • Count iterations and nested loops")
-        print("      • Identify CPU-intensive operations")
-        print("      • Review number of Redis commands")
-        print()
-        print("   3. Optimization strategies:")
-        print("      • Reduce iteration counts")
-        print("      • Move computation to application layer")
-        print("      • Break script into smaller operations")
-        print("      • Use pipelining instead of Lua for bulk operations")
-        print("      • Consider Redis modules for complex operations")
-        print()
-        print("   4. Set script execution limits:")
-        print("      CONFIG SET lua-time-limit 5000  # 5 second limit")
-        print()
-        print("   5. Monitor script performance:")
-        print("      • Track slowlog regularly")
-        print("      • Monitor CPU utilization")
-        print("      • Set up latency monitoring")
-        print()
 
         # Cleanup test data
         print("   🧹 Cleaning up test data...")

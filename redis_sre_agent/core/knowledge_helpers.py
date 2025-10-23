@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
-    limit: int = 5,
-    distance_threshold: float = 0.02,
+    limit: int = 10,
+    distance_threshold: float = 0.2,
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base (core implementation).
 
@@ -45,8 +45,9 @@ async def search_knowledge_base_helper(
     index = await get_knowledge_index()
     vectorizer = get_vectorizer()
 
-    # Create vector embedding for the query (use native cache within vectorizer)
-    query_vector = (await vectorizer.aembed_many([query]))[0]
+    # Create vector embedding for the query (use batch API for test compatibility)
+    query_vector_list = await vectorizer.aembed_many([query])
+    query_vector = query_vector_list[0]
 
     # Build vector query
     if distance_threshold is not None:

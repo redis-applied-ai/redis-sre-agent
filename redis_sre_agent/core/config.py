@@ -6,7 +6,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
-    from redis_sre_agent.models.provider_config import DeploymentProvidersConfig
+    pass
 
 # Load environment variables from .env file if it exists
 # In Docker/production, environment variables are set directly
@@ -39,22 +39,6 @@ class Settings(BaseSettings):
         # Don't error if .env file is missing (Docker/production use env vars directly)
         env_ignore_empty=True,
     )
-
-    # ============================================================================
-    # Provider Configuration (NEW)
-    # ============================================================================
-    # Providers are now configured via DeploymentProvidersConfig
-    # This will be initialized from environment variables
-    _providers: Optional["DeploymentProvidersConfig"] = None
-
-    @property
-    def providers(self) -> "DeploymentProvidersConfig":
-        """Get provider configuration (lazy-loaded from environment)."""
-        if self._providers is None:
-            from ..models.provider_config import DeploymentProvidersConfig
-
-            self._providers = DeploymentProvidersConfig.from_env()
-        return self._providers
 
     # Application
     app_name: str = "Redis SRE Agent"
@@ -100,8 +84,12 @@ class Settings(BaseSettings):
         description="Maximum reasoning iterations (LLM message cycles) for the main agent",
     )
     max_tool_calls_per_stage: int = Field(
-        default=10,
+        default=3,
         description="Maximum knowledge/tool calls per subgraph stage (e.g., per-topic research budget)",
+    )
+    max_recommendation_topics: int = Field(
+        default=3,
+        description="Maximum number of topics to run recommendation workers for",
     )
     max_rejections: int = Field(
         default=1,
