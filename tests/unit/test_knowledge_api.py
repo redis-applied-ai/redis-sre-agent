@@ -679,3 +679,27 @@ class TestKnowledgeSearch:
             assert data["formatted_output"] == "Formatted search results as string"
             assert data["results_count"] == 0
             assert data["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_search_with_distance_threshold(self, test_client):
+        """Test search forwards distance_threshold to the docket task."""
+        with patch(
+            "redis_sre_agent.api.knowledge.search_knowledge_base", new_callable=AsyncMock
+        ) as mock_search:
+            mock_search.return_value = {
+                "query": "redis perf",
+                "category": None,
+                "results_count": 0,
+                "results": [],
+                "formatted_output": "",
+            }
+
+            response = test_client.get(
+                "/api/v1/knowledge/search?query=redis%20perf&limit=3&distance_threshold=0.15"
+            )
+
+            assert response.status_code == 200
+            # Ensure the docket task was called with distance_threshold
+            mock_search.assert_called_once_with(
+                "redis perf", category=None, limit=3, distance_threshold=0.15
+            )

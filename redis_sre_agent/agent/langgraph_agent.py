@@ -758,9 +758,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     async def _exec_fn(_name=name, **kwargs):
                         return await tool_mgr.resolve_tool_call(_name, kwargs or {})
 
-                    ArgsModel = _args_model_from_parameters(
+                    ArgsModel = _args_model_from_parameters(  # noqa: N806
                         name, getattr(tdef, "parameters", {}) or {}
-                    )  # noqa: N806
+                    )
                     adapters.append(
                         StructuredTool.from_function(
                             coroutine=_exec_fn,

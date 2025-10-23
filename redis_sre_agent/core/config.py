@@ -85,7 +85,9 @@ class Settings(BaseSettings):
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
     max_task_retries: int = Field(default=3, description="Maximum task retries")
-    task_timeout: int = Field(default=TWENTY_MINUTES_IN_SECONDS, description="Task timeout in seconds")
+    task_timeout: int = Field(
+        default=TWENTY_MINUTES_IN_SECONDS, description="Task timeout in seconds"
+    )
 
     # Agent
     max_iterations: int = Field(
@@ -104,9 +106,7 @@ class Settings(BaseSettings):
     llm_backoff_factor: float = Field(default=2.0, description="Backoff factor for LLM retries")
 
     # LLM Request Timeout (seconds)
-    llm_timeout: float = Field(
-        default=180.0, description="HTTP timeout for LLM requests (seconds)"
-    )
+    llm_timeout: float = Field(default=180.0, description="HTTP timeout for LLM requests (seconds)")
 
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")

@@ -60,10 +60,11 @@ class TestKnowledgeAgent:
         sig = inspect.signature(search_knowledge_base)
         params = list(sig.parameters.keys())
 
-        # Should have query, category, limit but NOT retry
+        # Should have query, category, limit, distance_threshold but NOT retry
         assert "query" in params
         assert "category" in params
         assert "limit" in params
+        assert "distance_threshold" in params
         assert "retry" not in params
 
     @pytest.mark.asyncio

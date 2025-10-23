@@ -238,6 +238,8 @@ Subject:"""
 
             def _decode(dct):
                 out = {}
+                if not isinstance(dct, dict):
+                    return out
                 for k, v in dct.items():
                     k2 = k.decode() if isinstance(k, bytes) else k
                     v2 = v.decode() if isinstance(v, bytes) else v

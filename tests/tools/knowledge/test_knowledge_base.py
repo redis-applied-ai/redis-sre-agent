@@ -48,8 +48,10 @@ def test_knowledge_provider_search_schema():
     assert "query" in search_schema.parameters["required"]
 
     # Check optional fields
-    assert "category" in search_schema.parameters["properties"]
-    assert "limit" in search_schema.parameters["properties"]
+    props = search_schema.parameters["properties"]
+    assert "category" in props
+    assert "limit" in props
+    assert "distance_threshold" in props
 
 
 def test_knowledge_provider_ingest_schema():

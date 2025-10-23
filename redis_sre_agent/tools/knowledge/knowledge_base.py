@@ -10,12 +10,10 @@ from typing import Any, Dict, List, Optional
 from redis_sre_agent.core.docket_tasks import (
     ingest_sre_document as _ingest_sre_document,
 )
-from redis_sre_agent.core.docket_tasks import (
-    search_knowledge_base as _search_knowledge_base,
-)
 from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
+    search_knowledge_base_helper,
 )
 from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.protocols import ToolProvider
@@ -77,6 +75,16 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "default": 5,
                             "minimum": 1,
                             "maximum": 20,
+                        },
+                        "distance_threshold": {
+                            "type": "number",
+                            "description": (
+                                "Optional semantic distance threshold (cosine distance).\n"
+                                "When provided, a range query is used to filter by distance.\n"
+                                "Omit to use the default threshold from the backend (on by default).\n"
+                                "Set to null/not provided to avoid passing threshold and keep default;\n"
+                                "set explicitly to a number to override; set to 0.0-2.0 range typical."
+                            ),
                         },
                     },
                     "required": ["query"],
@@ -210,7 +218,11 @@ class KnowledgeBaseToolProvider(ToolProvider):
 
     @status_update("I'm searching the knowledge base for {query}.")
     async def search(
-        self, query: str, category: Optional[str] = None, limit: int = 5
+        self,
+        query: str,
+        category: Optional[str] = None,
+        limit: int = 5,
+        distance_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search the knowledge base.
 
@@ -218,12 +230,19 @@ class KnowledgeBaseToolProvider(ToolProvider):
             query: Search query
             category: Optional category filter
             limit: Maximum number of results
+            distance_threshold: Optional cosine distance threshold. If provided, overrides the backend default.
 
         Returns:
             Search results with relevant knowledge base content
         """
-        logger.info(f"Knowledge base search: {query} (category={category}, limit={limit})")
-        return await _search_knowledge_base(query=query, category=category, limit=limit)
+        logger.info(
+            f"Knowledge base search: {query} (category={category}, limit={limit}, distance_threshold={distance_threshold})"
+        )
+        kwargs = {"query": query, "category": category, "limit": limit}
+        if distance_threshold is not None:
+            kwargs["distance_threshold"] = distance_threshold
+        # Do not pass None for distance_threshold to preserve default-on behavior in backend
+        return await search_knowledge_base_helper(**kwargs)
 
     async def ingest(
         self,

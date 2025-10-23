@@ -7,21 +7,12 @@ from redis_sre_agent.agent.langgraph_agent import FACT_CHECKER_PROMPT, SRELangGr
 
 @pytest.mark.asyncio
 @patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
-@patch("redis_sre_agent.core.tasks.validate_url")
-async def test_fact_checker_includes_url_validation_summary_all_valid(
-    mock_validate_url, mock_chat_openai
-):
-    # Mock URL validator to mark all URLs valid
-    async def validate(url, timeout=3.0):
-        return {"url": url, "valid": True}
-
-    mock_validate_url.side_effect = validate
-
+async def test_fact_checker_skips_url_validation(mock_chat_openai):
     # Mock LLM to return minimal valid JSON
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(
         return_value=MagicMock(
-            content="""```json\n{\n  \"has_errors\": false,\n  \"validation_notes\": \"ok\",\n  \"url_validation_performed\": true\n}\n```"""
+            content="""```json\n{\n  \"has_errors\": false,\n  \"validation_notes\": \"ok\"\n}\n```"""
         )
     )
     mock_chat_openai.return_value = mock_llm
@@ -40,27 +31,19 @@ async def test_fact_checker_includes_url_validation_summary_all_valid(
     user_msg = messages[1]["content"] if isinstance(messages[1], dict) else messages[1].content
 
     assert sys_msg == FACT_CHECKER_PROMPT
-    assert "## URL Validation Results:" in user_msg
-    assert "All 2 URLs are valid and accessible." in user_msg
+    assert "## URL Validation Results:" not in user_msg
 
 
 @pytest.mark.asyncio
 @patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
-async def test_fact_checker_system_prompt_is_used(mock_chat_openai):
+async def test_fact_checker_skips_out_of_scope(mock_chat_openai):
     # Mock LLM
     mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(
-        return_value=MagicMock(
-            content="""```json\n{\n  \"has_errors\": false,\n  \"validation_notes\": \"ok\",\n  \"url_validation_performed\": true\n}\n```"""
-        )
-    )
+    mock_llm.ainvoke = AsyncMock()
     mock_chat_openai.return_value = mock_llm
 
     agent = SRELangGraphAgent()
-    _ = await agent._fact_check_response("No URLs here.")
+    _ = await agent._fact_check_response("No URLs here.")  # also no Redis terms -> out of scope
 
-    args = mock_llm.ainvoke.call_args
-    messages = args.args[0] if args.args else args.kwargs.get("messages")
-
-    sys_msg = messages[0]["content"] if isinstance(messages[0], dict) else messages[0].content
-    assert sys_msg == FACT_CHECKER_PROMPT
+    # Ensure fact-check LLM was not called when out of Redis scope
+    mock_llm.ainvoke.assert_not_called()

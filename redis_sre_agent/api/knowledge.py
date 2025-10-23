@@ -25,6 +25,16 @@ class SearchRequest(BaseModel):
     query: str = Field(..., description="Search query")
     category: Optional[str] = Field(None, description="Filter by category")
     limit: int = Field(5, ge=1, le=50, description="Number of results to return")
+    distance_threshold: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Optional cosine distance threshold for vector range search. "
+            "Omit to use backend default (threshold on). Set to a number to override; "
+            "set to null/not provided to keep default behavior."
+        ),
+    )
 
 
 class SearchResponse(BaseModel):
@@ -140,6 +150,15 @@ async def search_knowledge(
         None, description="Comma-separated list of product labels to filter by"
     ),
     limit: int = Query(5, ge=1, le=50, description="Number of results to return"),
+    distance_threshold: Optional[float] = Query(
+        None,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Optional cosine distance threshold for vector range search. "
+            "Omit to use backend default (threshold on)."
+        ),
+    ),
 ):
     """Search the knowledge base for relevant documents."""
     try:
@@ -153,7 +172,13 @@ async def search_knowledge(
         # in the search backend. For now, we ignore it and just search by query/category.
         # TODO: Implement product_labels filtering in search_knowledge_base
 
-        result = await search_knowledge_base(query, category=category, limit=limit)
+        if distance_threshold is not None:
+            result = await search_knowledge_base(
+                query, category=category, limit=limit, distance_threshold=distance_threshold
+            )
+        else:
+            # Do not pass None to preserve backend default threshold-on behavior
+            result = await search_knowledge_base(query, category=category, limit=limit)
 
         # Handle string, list, and dict responses
         if isinstance(result, str):
@@ -198,7 +223,10 @@ async def search_knowledge(
 async def search_knowledge_post(request: SearchRequest):
     """Search the knowledge base using POST request."""
     return await search_knowledge(
-        query=request.query, category=request.category, limit=request.limit
+        query=request.query,
+        category=request.category,
+        limit=request.limit,
+        distance_threshold=request.distance_threshold,
     )
 
 

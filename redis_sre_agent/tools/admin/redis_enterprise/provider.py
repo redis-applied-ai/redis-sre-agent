@@ -579,13 +579,24 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             if fields:
                 params["fields"] = fields
 
-            response = await client.get("/v1/bdbs", params=params)
-            response.raise_for_status()
+            try:
+                response = await client.get("/v1/bdbs", params=params)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # Some Redis Enterprise versions do not accept 'fields' on this endpoint
+                if e.response.status_code in (406, 400) and fields:
+                    logger.warning(
+                        f"list_databases(fields={fields}) failed with {e.response.status_code}; retrying without fields"
+                    )
+                    response = await client.get("/v1/bdbs")
+                    response.raise_for_status()
+                else:
+                    raise
 
             databases = response.json()
             return {
                 "status": "success",
-                "count": len(databases),
+                "count": len(databases) if isinstance(databases, list) else 1,
                 "databases": databases,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
@@ -1054,7 +1065,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         logger.info(f"Getting database {uid} alerts")
         try:
             client = self.get_client()
-            response = await client.get(f"/v1/bdbs/{uid}/alerts")
+            # Per docs, database alerts endpoints live under /v1/bdbs/alerts/{uid}
+            response = await client.get(f"/v1/bdbs/alerts/{uid}")
             response.raise_for_status()
 
             return {

@@ -28,21 +28,30 @@ Write like you're updating a colleague on what you found. Use natural language:
 
 Structure your response with clear headers and formatting:
 
-# Initial Assessment
+~~~
+## Initial Assessment
 Brief summary of what you found
 
-# What I'm Seeing
+## What I'm Seeing
 Key findings from diagnostics, with **bold** for important metrics
 
-# My Recommendation
-Clear action plan with:
+## My Recommendation
+Start your recommendation with a summary. If there are multiple issues,
+quickly summarize them all before diving into details.
+
+Action plans should be clear with:
 - Numbered steps for immediate actions
 - **Bold text** for critical items
 - Code blocks for commands when helpful
 
-# Supporting Info
+### Break multiple plans (if there are multiple problems/topics) into sub-headers
+- This is where a sub-section plan should go
+- Using the same formatting rules
+
+## Supporting Info
 - Where you got your recommendations (cite runbooks/docs)
 - Key diagnostic evidence that supports your analysis
+~~~
 
 ## Formatting Requirements
 

@@ -244,3 +244,48 @@ class ToolManager:
                 f"Available tools ({len(available_tools)}): {available_tools[:10]}..."
             )
         return await provider.resolve_tool_call(tool_name, args)
+
+    async def execute_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Any]:
+        """Execute a batch of tool calls returned by an LLM.
+
+        Supports both LangChain-normalized tool_calls (with 'name' and 'args') and
+        OpenAI-style tool_calls (with 'function': {'name', 'arguments'}).
+        """
+        results: List[Any] = []
+        for tc in tool_calls or []:
+            try:
+                # Extract tool name
+                name = tc.get("name")
+                if not name and isinstance(tc.get("function"), dict):
+                    name = tc["function"].get("name")
+
+                # Extract arguments
+                args = tc.get("args")
+                if args is None and isinstance(tc.get("function"), dict):
+                    arguments = tc["function"].get("arguments")
+                    if isinstance(arguments, str):
+                        try:
+                            import json
+
+                            args = json.loads(arguments or "{}")
+                        except Exception:
+                            args = {}
+                    elif isinstance(arguments, dict):
+                        args = arguments
+
+                if not isinstance(args, dict):
+                    # Last resort: empty args
+                    args = {}
+
+                if not name:
+                    logger.warning(f"Tool call missing name: {tc}")
+                    results.append({"status": "failed", "error": "missing tool name"})
+                    continue
+
+                # Execute the tool via routing
+                result = await self.resolve_tool_call(name, args)
+                results.append(result)
+            except Exception as e:
+                logger.exception(f"Tool call execution failed for {tc}")
+                results.append({"status": "failed", "error": str(e)})
+        return results

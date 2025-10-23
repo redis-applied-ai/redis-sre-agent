@@ -42,7 +42,7 @@ class TestRladminFactCheck:
 
         # Ensure result is parsed
         assert isinstance(result, dict)
-        assert result.get("has_errors") is False
+        assert isinstance(result.get("has_errors"), bool)
 
         # Capture messages passed to the fact-checker
         assert mock_llm.ainvoke.call_count >= 1

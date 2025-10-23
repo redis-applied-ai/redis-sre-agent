@@ -184,6 +184,7 @@ class TestAgentWorkflow:
             "iteration_count",
             "max_iterations",
             "instance_context",  # Added in the new implementation
+            "signals_envelopes",
         ]
 
         # AgentState is a TypedDict, so we can check __annotations__

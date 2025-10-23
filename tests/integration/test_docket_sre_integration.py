@@ -304,8 +304,8 @@ class TestDocketWorkerIntegration:
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
             "search_knowledge_base",
-            "check_service_health",
             "ingest_sre_document",
+            "scheduler_task",
         ]
 
         for expected_task in expected_tasks:

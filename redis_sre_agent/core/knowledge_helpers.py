@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from redisvl.query import VectorQuery, VectorRangeQuery
 from ulid import ULID
 
 from redis_sre_agent.core.keys import RedisKeys
@@ -22,6 +23,7 @@ async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
     limit: int = 5,
+    distance_threshold: float = 0.02,
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base (core implementation).
 
@@ -32,6 +34,7 @@ async def search_knowledge_base_helper(
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
         limit: Maximum number of results
+        distance_threshold: Minimum score threshold for results
 
     Returns:
         Dictionary with search results including task_id, query, results, etc.
@@ -46,37 +49,25 @@ async def search_knowledge_base_helper(
     query_vector = (await vectorizer.aembed_many([query]))[0]
 
     # Build vector query
-    from redisvl.query import VectorQuery
-
-    vector_query = VectorQuery(
-        vector=query_vector,
-        vector_field_name="vector",
-        return_fields=[
-            "id",
-            "document_hash",
-            "chunk_index",
-            "title",
-            "content",
-            "source",
-            "category",
-            "severity",
-        ],
-        num_results=limit,
-    )
-
-    # Build search filters
-    if category:
-        vector_query.set_filter(f"@category:{{{category}}}")
-
-    # Perform vector search
-    results = await index.query(vector_query)
-
-    # If we got 0 results with a category filter, retry without the filter
-    if len(results) == 0 and category:
-        logger.info(
-            f"No results found with category '{category}', retrying without category filter"
+    if distance_threshold is not None:
+        vector_query = VectorRangeQuery(
+            vector=query_vector,
+            vector_field_name="vector",
+            return_fields=[
+                "id",
+                "document_hash",
+                "chunk_index",
+                "title",
+                "content",
+                "source",
+                "category",
+                "severity",
+            ],
+            num_results=limit,
+            distance_threshold=distance_threshold,
         )
-        vector_query_no_filter = VectorQuery(
+    else:
+        vector_query = VectorQuery(
             vector=query_vector,
             vector_field_name="vector",
             return_fields=[
@@ -91,7 +82,21 @@ async def search_knowledge_base_helper(
             ],
             num_results=limit,
         )
-        results = await index.query(vector_query_no_filter)
+
+    # Build search filters
+    if category:
+        vector_query.set_filter(f"@category:{{{category}}}")
+
+    # Perform vector search
+    results = await index.query(vector_query)
+
+    # If we got 0 results with a category filter, retry without the filter
+    if len(results) == 0 and category:
+        logger.info(
+            f"No results found with category '{category}', retrying without category filter"
+        )
+        vector_query.set_filter(None)
+        results = await index.query(vector_query)
         logger.info(f"Retry without category filter found {len(results)} results")
 
     search_result = {
@@ -110,7 +115,18 @@ async def search_knowledge_base_helper(
                 "content": doc.get("content", ""),
                 "source": doc.get("source", ""),
                 "category": doc.get("category", ""),
-                "score": doc.get("score", 0.0),
+                # RedisVL returns distance when return_score=True (default). Some versions
+                # expose it as 'score' and others as 'vector_distance' or 'distance'.
+                # Normalize to float.
+                "score": (lambda _v: (float(_v) if _v is not None else 0.0))(
+                    doc.get("score")
+                    if doc.get("score") is not None
+                    else (
+                        doc.get("vector_distance")
+                        if doc.get("vector_distance") is not None
+                        else doc.get("distance")
+                    )
+                ),
             }
             for doc in results
         ],

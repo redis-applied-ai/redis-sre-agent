@@ -1,30 +1,10 @@
-#!/usr/bin/env python3
 """
-Redis SRE Agent - Interactive Demo
-
-This comprehensive demo showcases the Redis SRE Agent's capabilities across multiple scenarios:
-1. Memory Pressure Analysis - Load Redis and diagnose memory issues
-2. Connection Issues Simulation - Simulate and resolve connection problems
-3. Performance Degradation - Analyze slow operations and optimization
-4. Full Health Check - Complete diagnostic suite with agent consultation
-5. Redis Enterprise Buffer Configuration - Buffer tuning issues
-6. Redis Enterprise Node Maintenance Mode - Node stuck in maintenance
-7. Redis Enterprise Lua Script Latency - Problematic Lua script causing high latency
-
-Usage:
-    python demo_scenarios.py [--scenario <name>] [--auto-run] [--ui]
-
-Options:
-    --scenario: Run specific scenario (memory, connections, performance, health, enterprise,
-                enterprise_maintenance, enterprise_lua)
-    --auto-run: Run all scenarios automatically without user input
-    --ui: Use web UI instead of CLI for agent interaction
+Redis SRE Agent - Interactive Demos
 """
 
 import argparse
 import asyncio
 import logging
-import os
 import random
 import time
 import warnings
@@ -131,17 +111,65 @@ class RedisSREDemo:
         self.redis_port: Optional[int] = None
         self.redis_url: Optional[str] = None
         self.ui_mode = ui_mode
-        self.scenarios = {
-            "memory": self.memory_pressure_scenario,
-            "network": self.network_saturation_scenario,
-            "connections": self.connection_issues_scenario,
-            "performance": self.performance_scenario,
-            "health": self.full_health_check,
-            "enterprise": self.redis_enterprise_scenario,
-            "enterprise_maintenance": self.redis_enterprise_maintenance_scenario,
-            "enterprise_lua": self.redis_enterprise_lua_latency_scenario,
+        # Demo Tracker scenarios (CLI demos only)
+        self.menu_items = [
+            ("1.1", "Redis Slow Due to Host Memory Pressure", self.scenario_1_1),
+            ("1.2", "Redis Network Saturation", self.scenario_1_2),
+            ("2.1", "Node in Maintenance Mode (Enterprise)", self.scenario_2_1),
+            ("2.2", "Cluster Rebalancing in Progress", self.scenario_2_2),
+            ("3.1", "Memory Limit Reached", self.scenario_3_1),
+            ("3.2", "Connection Exhaustion", self.scenario_3_2),
+            ("3.3", "Slow Commands", self.scenario_3_3),
+            ("3.4", "Replication Lag", self.scenario_3_4),
+            ("4.1", "Master Shard Failover", self.scenario_4_1),
+            ("4.2", "Shard CPU from Expensive Ops", self.scenario_4_2),
+            ("4.3", "Unbalanced Shards", self.scenario_4_3),
+            ("5.1", "Redis OOM Errors (Logs)", self.scenario_5_1),
+            ("5.2", "Client Connection Errors (Logs)", self.scenario_5_2),
+            ("6.1", "Unauthorized Access Attempts", self.scenario_6_1),
+            ("6.2", "Dangerous Commands Enabled", self.scenario_6_2),
+        ]
+        # ID -> function map for --scenario handling
+        self.scenarios = {sid: func for (sid, _label, func) in self.menu_items}
+        # Static short names (exact match; case-insensitive at lookup)
+        self.short_names = {
+            "1.1": "host-memory-pressure",
+            "1.2": "redis-network-saturation",
+            "2.1": "maintenance-mode",
+            "2.2": "cluster-rebalancing",
+            "3.1": "memory-limit",
+            "3.2": "connection-exhaustion",
+            "3.3": "slow-commands",
+            "3.4": "replication-lag",
+            "4.1": "master-failover",
+            "4.2": "shard-cpu",
+            "4.3": "unbalanced-shards",
+            "5.1": "oom-errors",
+            "5.2": "client-connection-errors",
+            "6.1": "unauthorized-access",
+            "6.2": "dangerous-commands",
         }
+        self.shortname_to_func = {
+            v.lower(): self.scenarios[k] for k, v in self.short_names.items() if k in self.scenarios
+        }
+
+        # Finalize demo logging configuration
         self._setup_demo_logging()
+
+    def get_scenario_func(self, selector: str):
+        if not selector:
+            return None
+        key = selector.strip().lower()
+        if key in {"all", "*"}:
+            return "__ALL__"
+        # Exact ID match
+        if key in self.scenarios:
+            return self.scenarios[key]
+        # Exact short-name match
+        func = self.shortname_to_func.get(key)
+        if func:
+            return func
+        return None
 
     def _setup_demo_logging(self):
         """Configure logging for demo to reduce noise."""
@@ -208,40 +236,63 @@ class RedisSREDemo:
         return True
 
     async def _register_demo_instance(self):
-        """Register the demo Redis instance with the agent's instance registry."""
+        """Register or update the OSS demo Redis instance for the agent (docker hosts/ports)."""
         try:
+            from urllib.parse import urlparse
+
+            # Agent-facing URL inside docker-compose (worker/API use this)
+            agent_url = "redis://redis-demo:6379/0"
+
             # Get existing instances
             instances = await get_instances_from_redis()
 
-            # Check if demo instance already exists
             demo_instance_name = "Demo Redis (Scenarios)"
-            existing_demo = None
-            for inst in instances:
-                if inst.name == demo_instance_name:
-                    existing_demo = inst
-                    break
+            target = None
 
-            if existing_demo:
-                # Update the connection URL in case it changed
-                existing_demo.connection_url = self.redis_url
+            # Find an existing instance by name OR by URL host/port (handles older registrations)
+            for inst in instances:
+                try:
+                    if inst.name == demo_instance_name:
+                        target = inst
+                        break
+                    url = inst.connection_url.get_secret_value()
+                    parsed = urlparse(url)
+                    hostport = (
+                        f"{parsed.hostname}:{parsed.port}"
+                        if parsed.hostname and parsed.port
+                        else ""
+                    )
+                    if hostport in {"redis-demo:6379", "localhost:7844", "127.0.0.1:7844"}:
+                        target = inst
+                        break
+                except Exception:
+                    continue
+
+            if target:
+                target.name = demo_instance_name
+                target.connection_url = agent_url
+                target.environment = getattr(target, "environment", None) or "development"
+                target.usage = getattr(target, "usage", None) or "demo"
                 await save_instances_to_redis(instances)
-                print("✅ Updated existing demo instance registration")
+                print("✅ Updated demo instance registration (redis-demo:6379)")
             else:
-                # Create new demo instance
                 from datetime import datetime
 
                 demo_instance = RedisInstance(
                     id=f"redis-demo-{int(datetime.now().timestamp())}",
                     name=demo_instance_name,
-                    connection_url=self.redis_url,
+                    connection_url=agent_url,
                     environment="development",
                     usage="demo",
-                    description="Demo Redis instance for scenario testing. This instance is used by demo_scenarios.py to showcase the agent's capabilities.",
-                    notes="Automatically registered by demo_scenarios.py. Data is cleared between scenario runs.",
+                    description=(
+                        "Demo Redis instance for scenario testing. Used by demo_scenarios.py; "
+                        "reachable as redis-demo:6379 from agent."
+                    ),
+                    notes="Registered by demo_scenarios.py. Data is cleared between runs.",
                 )
                 instances.append(demo_instance)
                 await save_instances_to_redis(instances)
-                print("✅ Registered demo instance with agent")
+                print("✅ Registered demo instance with agent (redis-demo:6379)")
 
         except Exception as e:
             print(f"⚠️  Warning: Could not register demo instance: {e}")
@@ -327,7 +378,8 @@ class RedisSREDemo:
         print(f"🌐 UI MODE: {scenario_name} scenario is now active!")
         print("=" * 80)
         print(f"📊 Scenario: {scenario_description}")
-        print(f"🔗 Redis Instance: localhost:{self.redis_port}")
+        print("🔗 Redis Instance (agent): redis-demo:6379")
+        print(f"🔗 Redis Instance (host): localhost:{self.redis_port}")
         print("🌐 Web UI: http://localhost:3002")
         print("🔧 API: http://localhost:8000")
         print()
@@ -378,31 +430,768 @@ class RedisSREDemo:
             print("\n💻 CLI MODE: Scenarios will run agent queries directly in terminal")
 
         print("\nAvailable scenarios:")
-        print("1. 🧠 Memory Pressure Analysis - Simulate and diagnose memory issues")
-        print("2. 🔗 Connection Issues - Analyze connection limits and timeouts")
-        print("3. ⚡ Performance Analysis - Detect slow operations and bottlenecks")
-        print("4. 🏥 Full Health Check - Complete diagnostic with agent consultation")
-        print("5. 🏢 Redis Enterprise - Buffer configuration and tuning issues")
-        print("6. 🔧 Redis Enterprise - Node in Maintenance Mode")
-        print("7. 🐌 Redis Enterprise - Lua Script High Latency")
-        print("8. 🚀 Run All Scenarios - Complete demonstration")
+        for idx, (sid, label, _func) in enumerate(self.menu_items, start=1):
+            print(f"{idx}. {label} ({sid})")
+        print(f"{len(self.menu_items) + 1}. 🚀 Run All Scenarios - Complete demonstration")
         print("0. 🚪 Exit")
-        print("\nAdditional CLI-only scenario:")
-        print("- 🌐 Redis Network Saturation (run with --scenario network)")
 
+        max_choice = str(len(self.menu_items) + 1)
+        valid = ["0"] + [str(i) for i in range(1, len(self.menu_items) + 2)]
         while True:
             try:
-                choice = input("\nSelect scenario (0-8): ").strip()
-                if choice in ["0", "1", "2", "3", "4", "5", "6", "7", "8"]:
+                choice = input(f"\nSelect scenario (0-{max_choice}): ").strip()
+                if choice in valid:
                     return choice
                 else:
-                    print("❌ Invalid choice, please select 0-8")
+                    print(f"❌ Invalid choice, please select 0-{max_choice}")
             except KeyboardInterrupt:
                 print("\n👋 Demo interrupted by user")
                 return "0"
 
+    # ---------- Demo Tracker scenario wrappers (CLI) ----------
+    # Each wrapper maps an ID to an underlying implementation or a stub.
+    async def scenario_1_1(self):
+        """1.1 Redis Slow Due to Host Memory Pressure"""
+        # Temporarily reuse memory_pressure_scenario; this seeds host mem metrics/logs.
+        await self.memory_pressure_scenario()
+
+    async def scenario_1_2(self):
+        """1.2 Redis Network Saturation"""
+        await self.network_saturation_scenario()
+
+    async def scenario_2_1(self):
+        """2.1 Node in Maintenance Mode (Enterprise)"""
+        await self.redis_enterprise_maintenance_scenario()
+
+    async def scenario_2_2(self):
+        """2.2 Cluster Rebalancing in Progress (Enterprise)"""
+        self.print_header("2.2 Cluster Rebalancing in Progress", "🔧")
+
+        # Ensure Enterprise instance is registered so the agent can use admin tools
+        await self._register_enterprise_instance(
+            name="Redis Enterprise Demo",
+            connection_url="redis://redis-enterprise-node1:12000/0",
+            admin_url="https://redis-enterprise-node1:9443",
+            admin_username="admin@redis.com",
+            admin_password="admin",
+        )
+
+        self.print_step(1, "Verifying Redis Enterprise cluster availability")
+        import subprocess
+
+        try:
+            status = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "redis-enterprise-node1",
+                    "rladmin",
+                    "status",
+                    "nodes",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if status.returncode == 0:
+                print("   ✅ Cluster reachable. rladmin status (truncated):")
+                print("   " + "\n   ".join(status.stdout.splitlines()[:12]))
+            else:
+                print("   ⚠️  rladmin status failed; proceeding with synthetic evidence")
+        except Exception as e:
+            print(f"   ⚠️  Could not run rladmin: {e}")
+
+        self.print_step(2, "Seeding 'rebalance in progress' evidence (metrics + logs)")
+        try:
+            # Metric that dashboards/queries can surface
+            metrics_text = 're_rebalance_in_progress{db="demo"} 1\n'
+            if pushgateway_push("demo-scenarios", "redis-enterprise", metrics_text):
+                print("   📊 Pushed re_rebalance_in_progress=1 to Pushgateway")
+
+            # Log line for Loki to make the state obvious in runbooks
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "2.2",
+                    "component": "rebalance",
+                    "level": "info",
+                },
+                [
+                    "redis-enterprise: rebalance started for database 'demo' (demo)",
+                    "redis-enterprise: moving shards to improve balance (demo)",
+                ],
+            )
+        except Exception as e:
+            print(f"   ⚠️  Evidence seeding failed: {e}")
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Enterprise Cluster Rebalancing",
+                "Synthetic 'rebalance in progress' state seeded; use admin-status tools to verify.",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                "Our Redis Enterprise cluster may be rebalancing. Please verify via admin API/rladmin, "
+                "check shard movements and actions list, and summarize expected impact and guidance."
+            )
+
+        # Cleanup: mark rebalance completed in evidence stream
+        self.print_step(3, "Marking rebalance complete in demo evidence")
+        try:
+            metrics_text = 're_rebalance_in_progress{db="demo"} 0\n'
+            pushgateway_push("demo-scenarios", "redis-enterprise", metrics_text)
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "2.2",
+                    "component": "rebalance",
+                    "level": "info",
+                },
+                ["redis-enterprise: rebalance completed for database 'demo' (demo)"],
+            )
+        except Exception:
+            pass
+
+    async def scenario_3_1(self):
+        """3.1 Memory Limit Reached"""
+        await self.memory_pressure_scenario()
+
+    async def scenario_3_2(self):
+        """3.2 Connection Exhaustion"""
+        await self.connection_issues_scenario()
+
+    async def scenario_3_3(self):
+        """3.3 Slow Commands"""
+        await self.performance_scenario()
+
+    async def scenario_3_4(self):
+        """3.4 Replication Lag (Synthetic evidence path)"""
+        self.print_header("3.4 Replication Lag", "🔧")
+
+        self.print_step(1, "Seeding replication lag metrics and log lines")
+        try:
+            # Metrics approximating lag on a replica
+            metrics_text = (
+                'demo_replication_lag_seconds{replica="redis-replica"} 12\n'
+                'demo_replica_link_status{replica="redis-replica",status="down"} 1\n'
+            )
+            if pushgateway_push("demo-scenarios", "redis-demo", metrics_text):
+                print("   📊 Pushed replication lag metrics to Pushgateway")
+
+            # Loki log lines to indicate link issues
+            loki_push(
+                {
+                    "service": "redis-demo",
+                    "scenario": "3.4",
+                    "component": "replication",
+                    "level": "warn",
+                },
+                [
+                    "redis-replica: master_link_status: down (demo)",
+                    "redis-replica: master_last_io_seconds_ago=12 (demo)",
+                ],
+            )
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Failed to seed replication evidence: {e}")
+
+        # Optional: attempt brief load to make primary stats non-zero
+        self.print_step(2, "Generating small primary write burst for realism")
+        try:
+            pipe = self.redis_client.pipeline()
+            for i in range(200):
+                pipe.set(f"demo:repl:{i}", "x" * 256)
+            pipe.execute()
+        except Exception:
+            pass
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Replication Lag",
+                "Replica shows link down and lag per demo evidence; ask agent to verify via INFO replication.",
+            )
+            return
+
+        await self._run_diagnostics_and_agent_query(
+            "We suspect replication lag or link issues on a Redis replica for the demo instance. "
+            "Use INFO replication and any available metrics/logs to confirm and propose mitigations."
+        )
+
+        # Cleanup
+        self.print_step(3, "Cleanup demo replication keys and reset evidence")
+        try:
+            demo_keys = self.redis_client.keys("demo:repl:*")
+            if demo_keys:
+                self.redis_client.delete(*demo_keys)
+        except Exception:
+            pass
+        try:
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-demo",
+                'demo_replication_lag_seconds{replica="redis-replica"} 0\n',
+            )
+            loki_push(
+                {
+                    "service": "redis-demo",
+                    "scenario": "3.4",
+                    "component": "replication",
+                    "level": "info",
+                },
+                ["redis-replica: link restored and lag cleared (demo)"],
+            )
+        except Exception:
+            pass
+
+    async def scenario_4_1(self):
+        """4.1 Master Shard Failover (Enterprise)"""
+        self.print_header("4.1 Master Shard Failover", "🔧")
+
+        # Register Enterprise instance so the agent can use admin tools if available
+        await self._register_enterprise_instance(
+            name="Redis Enterprise Demo",
+            connection_url="redis://redis-enterprise-node1:12000/0",
+            admin_url="https://redis-enterprise-node1:9443",
+            admin_username="admin@redis.com",
+            admin_password="admin",
+        )
+
+        self.print_step(1, "Checking cluster status (no destructive actions)")
+        import subprocess
+
+        try:
+            status = subprocess.run(
+                ["docker", "exec", "redis-enterprise-node1", "rladmin", "status", "shards"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if status.returncode == 0:
+                print("   \u2705 rladmin status shards (truncated):")
+                print("   " + "\n   ".join(status.stdout.splitlines()[:20]))
+            else:
+                print("   \u26a0\ufe0f  rladmin status failed; proceeding with synthetic evidence")
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Could not run rladmin: {e}")
+
+        self.print_step(2, "Seeding failover evidence (metrics + logs)")
+        try:
+            # Demo counter and a state flag
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-enterprise",
+                'demo_failover_events_total{db="demo"} 1\n',  # event count
+            )
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-enterprise",
+                'demo_failover_state{db="demo",status="in_progress"} 1\n',
+            )
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "4.1",
+                    "component": "failover",
+                    "level": "info",
+                },
+                [
+                    "redis-enterprise: failover initiated for shard 1 (demo)",
+                    "redis-enterprise: promoting replica to master (demo)",
+                ],
+            )
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Evidence seeding failed: {e}")
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Master Shard Failover",
+                "Synthetic failover event seeded; use admin-status tools to verify current shard roles.",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                "We suspect a master shard failover occurred in the Redis Enterprise demo cluster. "
+                "Verify via admin API/rladmin (list_shards, get_shard) and summarize current roles and impact."
+            )
+
+        # Cleanup: mark state as completed
+        self.print_step(3, "Marking failover complete in demo evidence")
+        try:
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-enterprise",
+                'demo_failover_state{db="demo",status="in_progress"} 0\n',
+            )
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "4.1",
+                    "component": "failover",
+                    "level": "info",
+                },
+                ["redis-enterprise: failover completed for shard 1 (demo)"],
+            )
+        except Exception:
+            pass
+
+    async def scenario_4_2(self):
+        """4.2 Shard CPU from Expensive Ops (Enterprise)"""
+        self.print_header("4.2 Shard CPU from Expensive Ops", "🔧")
+
+        # Attempt a light workload on Enterprise DB if available (kept small)
+        enterprise_client = None
+        try:
+            import redis
+
+            enterprise_client = redis.from_url("redis://localhost:12000/0")
+            enterprise_client.ping()
+            print("   \u2705 Connected to Redis Enterprise DB for light workload")
+        except Exception as e:
+            print(
+                f"   \u26a0\ufe0f  Enterprise DB not reachable, proceeding with synthetic evidence only: {e}"
+            )
+
+        self.print_step(1, "Seeding high shard CPU evidence (metrics + logs)")
+        try:
+            # Push demo CPU metrics emphasizing a single shard/node
+            metrics_text = (
+                'demo_shard_cpu_busy_percent{node="node2",shard="1"} 92\n'
+                'demo_node_cpu_busy_percent{node="node2"} 88\n'
+            )
+            pushgateway_push("demo-scenarios", "redis-enterprise", metrics_text)
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "4.2",
+                    "component": "cpu",
+                    "level": "warn",
+                },
+                [
+                    "redis-enterprise: high CPU observed for shard 1 on node2 (demo)",
+                    "redis-enterprise: expensive operations suspected (demo)",
+                ],
+            )
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Failed to push CPU evidence: {e}")
+
+        # Optional: run a very small CPU-heavy Lua once to create a hint in slowlog
+        if enterprise_client is not None:
+            try:
+                slow_lua = """
+                local it = 15000
+                local r = 0
+                for i=1,it do for j=1,50 do r = (r + (i*j)) % 1000 end end
+                return r
+                """
+                enterprise_client.eval(slow_lua, 0)
+                print("   \u2705 Executed minimal CPU-heavy Lua once for realism")
+            except Exception:
+                pass
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Shard CPU from Expensive Ops",
+                "Synthetic high CPU evidence seeded; use admin node stats and Prom to verify.",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                "Redis Enterprise shard appears CPU constrained due to expensive operations. "
+                "Correlate admin node stats, shard placement, and metrics; propose mitigations."
+            )
+
+        # Cleanup baseline
+        self.print_step(2, "Resetting CPU evidence to baseline")
+        try:
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-enterprise",
+                'demo_shard_cpu_busy_percent{node="node2",shard="1"} 5\n',
+            )
+            pushgateway_push(
+                "demo-scenarios", "redis-enterprise", 'demo_node_cpu_busy_percent{node="node2"} 5\n'
+            )
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "4.2",
+                    "component": "cpu",
+                    "level": "info",
+                },
+                ["redis-enterprise: CPU pressure alleviated (demo)"],
+            )
+        except Exception:
+            pass
+
+    async def scenario_4_3(self):
+        """4.3 Unbalanced Shards (Enterprise)"""
+        self.print_header("4.3 Unbalanced Shards", "🔧")
+
+        self.print_step(1, "Checking shard placement (if available)")
+        import subprocess
+
+        try:
+            status = subprocess.run(
+                ["docker", "exec", "redis-enterprise-node1", "rladmin", "status", "shards"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if status.returncode == 0:
+                print("   \u2705 rladmin status shards (truncated):")
+                print("   " + "\n   ".join(status.stdout.splitlines()[:20]))
+            else:
+                print("   \u26a0\ufe0f  rladmin status failed; proceeding with synthetic evidence")
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Could not run rladmin: {e}")
+
+        self.print_step(2, "Seeding unbalanced shard distribution evidence")
+        try:
+            # Push imbalance score and per-node shard counts
+            metrics_text = (
+                'demo_shard_imbalance_score{db="demo"} 0.78\n'
+                'demo_shards_on_node{node="node2"} 10\n'
+                'demo_shards_on_node{node="node3"} 2\n'
+            )
+            pushgateway_push("demo-scenarios", "redis-enterprise", metrics_text)
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "4.3",
+                    "component": "placement",
+                    "level": "info",
+                },
+                [
+                    "redis-enterprise: shard distribution skew detected (demo)",
+                    "redis-enterprise: consider rebalance to even shard placement (demo)",
+                ],
+            )
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Failed to push shard skew evidence: {e}")
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Unbalanced Shards",
+                "Synthetic skew metrics seeded; use admin shard listing and actions to recommend rebalance.",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                "Shard placement appears unbalanced across nodes. Use admin API/rladmin to confirm shard counts and "
+                "recommend a rebalance plan and expected impact."
+            )
+
+        # Cleanup baseline
+        self.print_step(3, "Resetting shard skew evidence to baseline")
+        try:
+            pushgateway_push(
+                "demo-scenarios", "redis-enterprise", 'demo_shard_imbalance_score{db="demo"} 0.05\n'
+            )
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "4.3",
+                    "component": "placement",
+                    "level": "info",
+                },
+                ["redis-enterprise: shard distribution normalized (demo)"],
+            )
+        except Exception:
+            pass
+
+    async def scenario_5_1(self):
+        """5.1 Redis OOM Errors (Logs-focused variant of memory pressure)"""
+        self.print_header("5.1 Redis OOM Errors (Logs)", "🧠")
+
+        self.print_step(1, "Configuring low memory limit to provoke OOM on write")
+        try:
+            self.redis_client.config_set("maxmemory", str(30 * 1024 * 1024))  # 30MB
+            self.redis_client.config_set("maxmemory-policy", "noeviction")
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Could not set memory limit: {e}")
+
+        self.print_step(2, "Loading data to ~95% of limit, then forcing an OOM")
+        info = self.redis_client.info("memory")
+        maxmemory = int(info.get("maxmemory", 30 * 1024 * 1024) or 30 * 1024 * 1024)
+        target = int(maxmemory * 0.95)
+        key_size = 4096
+        loaded = 0
+        pipe = self.redis_client.pipeline()
+        try:
+            i = 0
+            while True:
+                if loaded >= target:
+                    break
+                pipe.set(f"demo:oom:{i}", "x" * (key_size - 16))
+                if i % 100 == 0:
+                    pipe.execute()
+                    pipe = self.redis_client.pipeline()
+                    info = self.redis_client.info("memory")
+                    loaded = int(info.get("used_memory", 0))
+                i += 1
+            pipe.execute()
+        except Exception:
+            # Ignore mid-load errors; proceed to OOM attempt
+            pass
+
+        # Attempt a write expected to fail with OOM
+        self.print_step(3, "Triggering an OOM and capturing the error for logs")
+        oom_msg = None
+        try:
+            self.redis_client.set("demo:oom:final", "y" * (key_size * 8))
+        except Exception as e:
+            oom_msg = str(e)
+            print(f"   🚨 OOM encountered as expected: {oom_msg}")
+
+        # Push Loki log lines emphasizing OOM
+        self.print_step(4, "Pushing OOM error lines to Loki and metric to Pushgateway")
+        try:
+            if oom_msg is None:
+                oom_msg = "OOM command not allowed when used memory > 'maxmemory' (demo)"
+            loki_push(
+                {
+                    "service": "redis-demo",
+                    "scenario": "5.1",
+                    "component": "memory",
+                    "level": "error",
+                },
+                [
+                    f"redis: {oom_msg}",
+                    "redis: client experienced memory limit violation (demo)",
+                ],
+            )
+            pushgateway_push(
+                "demo-scenarios", "redis-demo", 'demo_oom_events_total{instance="redis-demo"} 1\n'
+            )
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Failed to push OOM evidence: {e}")
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Redis OOM Errors",
+                "Redis configured with low maxmemory; OOM log lines available in Loki (demo)",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                "Users report write failures due to OOM conditions. Analyze memory settings and logs to "
+                "confirm the OOM and propose remediation (policy, key TTLs, memory optimization)."
+            )
+
+        # Cleanup
+        self.print_step(5, "Cleaning demo keys and restoring memory settings")
+        try:
+            keys = self.redis_client.keys("demo:oom:*")
+            if keys:
+                self.redis_client.delete(*keys)
+            self.redis_client.config_set("maxmemory", "0")
+            self.redis_client.config_set("maxmemory-policy", "noeviction")
+            # Baseline evidence
+            pushgateway_push(
+                "demo-scenarios", "redis-demo", 'demo_oom_events_total{instance="redis-demo"} 0\n'
+            )
+            loki_push(
+                {
+                    "service": "redis-demo",
+                    "scenario": "5.1",
+                    "component": "memory",
+                    "level": "info",
+                },
+                ["redis: OOM condition cleared and memory settings restored (demo)"],
+            )
+        except Exception:
+            pass
+
+    async def scenario_5_2(self):
+        """5.2 Client Connection Errors (Logs)"""
+        # Reuse connection issues (already seeds logs) for now
+        await self.connection_issues_scenario()
+
+    async def scenario_6_1(self):
+        """6.1 Unauthorized Access Attempts (ACL + logs)"""
+        self.print_header("6.1 Unauthorized Access Attempts", "🔧")
+
+        self.print_step(1, "Creating a limited ACL user and provoking denied commands")
+        limited_user = "demo_limited"
+        limited_pass = "limitedpass"
+        created_user = False
+        try:
+            # Reset/create a limited user that can only GET, no SET
+            self.redis_client.execute_command(
+                "ACL", "SETUSER", limited_user, "on", "reset", f">{limited_pass}", "~*", "+get"
+            )
+            created_user = True
+            print("   ✅ Created ACL user 'demo_limited' with +get only")
+        except Exception as e:
+            print(f"   ⚠️  Could not create limited user: {e}")
+
+        # Attempt unauthorized operations with the limited user
+        denied_msgs = []
+        if created_user:
+            try:
+                client = redis.Redis(
+                    host="localhost",
+                    port=self.redis_port,
+                    username=limited_user,
+                    password=limited_pass,
+                    decode_responses=True,
+                    socket_connect_timeout=2,
+                    socket_timeout=2,
+                )
+                client.ping()
+                try:
+                    client.set("demo:acl:test", "x")
+                except Exception as e:
+                    msg = str(e)
+                    denied_msgs.append(msg)
+                    print(f"   🚫 Unauthorized SET denied as expected: {msg}")
+                try:
+                    client.config_get("maxmemory")
+                except Exception as e:
+                    msg = str(e)
+                    denied_msgs.append(msg)
+                    print(f"   🚫 Unauthorized CONFIG denied as expected: {msg}")
+            except Exception as e:
+                print(f"   ⚠️  Could not connect as limited user: {e}")
+
+        self.print_step(2, "Reading ACL LOG (best-effort) and pushing Loki/metrics evidence")
+        acl_entries = []
+        try:
+            # Read a few ACL log entries to see the violations
+            acl_entries = self.redis_client.execute_command("ACL", "LOG", 5)
+            # Normalize entries to strings for display/push
+            acl_lines = []
+            if isinstance(acl_entries, list):
+                for entry in acl_entries:
+                    try:
+                        user = entry.get("user", "?") if hasattr(entry, "get") else "?"
+                        reason = entry.get("reason", "?") if hasattr(entry, "get") else "?"
+                        cmd = entry.get("cmd", "?") if hasattr(entry, "get") else "?"
+                        acl_lines.append(f"ACL LOG: user={user} reason={reason} cmd={cmd}")
+                    except Exception:
+                        pass
+            # Push Loki lines summarizing unauthorized attempts
+            lines = [
+                "redis: unauthorized command attempt detected (demo)",
+            ]
+            lines.extend([f"redis: {m}" for m in denied_msgs[:2]])
+            lines.extend(acl_lines[:2])
+            loki_push(
+                {"service": "redis-demo", "scenario": "6.1", "component": "auth", "level": "warn"},
+                lines or ["redis: unauthorized access attempts observed (demo)"],
+            )
+            # Metric for count of unauthorized attempts (demo)
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-demo",
+                f'demo_unauthorized_attempts_total{{instance="redis-demo"}} {max(1, len(denied_msgs))}\n',
+            )
+        except Exception as e:
+            print(f"   ⚠️  Could not read ACL LOG or push evidence: {e}")
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Unauthorized Access Attempts",
+                "ACL user with restricted permissions triggered denied commands; Loki lines and a metric were pushed.",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                "Investigate recent unauthorized Redis access attempts. Review ACL LOG and recommend access controls, "
+                "password policies, and monitoring alerts."
+            )
+
+        # Cleanup
+        self.print_step(3, "Cleaning up ACL user and resetting evidence")
+        try:
+            if created_user:
+                self.redis_client.execute_command("ACL", "DELUSER", limited_user)
+                print("   🧹 Removed ACL user 'demo_limited'")
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-demo",
+                'demo_unauthorized_attempts_total{instance="redis-demo"} 0\n',
+            )
+            loki_push(
+                {"service": "redis-demo", "scenario": "6.1", "component": "auth", "level": "info"},
+                ["redis: unauthorized access alerts cleared (demo)"],
+            )
+        except Exception:
+            pass
+
+    async def scenario_6_2(self):
+        """6.2 Dangerous Commands Enabled (Enterprise)"""
+        self.print_header("6.2 Dangerous Commands Enabled", "🛠️")
+
+        # Register Enterprise instance for agent admin checks
+        await self._register_enterprise_instance(
+            name="Redis Enterprise Demo",
+            connection_url="redis://redis-enterprise-node1:12000/0",
+            admin_url="https://redis-enterprise-node1:9443",
+            admin_username="admin@redis.com",
+            admin_password="admin",
+        )
+
+        self.print_step(1, "Seeding evidence that disabled_commands may be unsafe/empty")
+        try:
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-enterprise",
+                'demo_dangerous_commands_enabled{db="demo"} 1\n',
+            )
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "6.2",
+                    "component": "config",
+                    "level": "warn",
+                },
+                [
+                    "redis-enterprise: database 'demo' disabled_commands is empty (demo)",
+                    "redis-enterprise: destructive commands may be enabled (demo)",
+                ],
+            )
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Failed to push dangerous-commands evidence: {e}")
+
+        # UI vs CLI handling
+        if self.ui_mode:
+            self._wait_for_ui_interaction(
+                "Dangerous Commands Enabled",
+                "Synthetic config risk seeded; ask agent to check admin API for disabled_commands and recommend safe defaults.",
+            )
+        else:
+            await self._run_diagnostics_and_agent_query(
+                "Review the Redis Enterprise database configuration: identify whether disabled_commands is empty "
+                "and propose a recommended safe list (e.g., FLUSHALL, FLUSHDB, KEYS, DEBUG, CONFIG, SCRIPT, EVAL, MIGRATE)."
+            )
+
+        # Cleanup baseline
+        self.print_step(2, "Resetting dangerous-commands evidence to baseline")
+        try:
+            pushgateway_push(
+                "demo-scenarios",
+                "redis-enterprise",
+                'demo_dangerous_commands_enabled{db="demo"} 0\n',
+            )
+            loki_push(
+                {
+                    "service": "redis-enterprise",
+                    "scenario": "6.2",
+                    "component": "config",
+                    "level": "info",
+                },
+                ["redis-enterprise: recommended disabled_commands applied (demo)"],
+            )
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------
+
     async def memory_pressure_scenario(self):
         """Run memory pressure analysis scenario."""
+
         self.print_header("Memory Pressure Analysis Scenario", "🧠")
 
         # Get baseline memory info
@@ -596,7 +1385,7 @@ class RedisSREDemo:
                 f'node_memory_MemAvailable_bytes{{instance="demo-host"}} {int(6e9)}\n'  # recover to 6 GB free
             )
             if pushgateway_push("demo-scenarios", "demo-host", metrics_text):
-                print("   \ud83d\udcca Pushed baseline host memory metrics to Pushgateway")
+                print("   📊 Pushed baseline host memory metrics to Pushgateway")
             loki_push(
                 {
                     "service": "redis-demo",
@@ -1730,7 +2519,15 @@ class RedisSREDemo:
                     for inst in instances:
                         if inst.name == "Demo Redis (Scenarios)":
                             return inst
-                    # Fallback: match by URL to the demo port we set up
+                    # Secondary: match by docker internal URL
+                    agent_url = "redis://redis-demo:6379/0"
+                    for inst in instances:
+                        try:
+                            if inst.connection_url.get_secret_value() == agent_url:
+                                return inst
+                        except Exception:
+                            continue
+                    # Fallback: match by host view URL (localhost:7844)
                     for inst in instances:
                         try:
                             if (
@@ -1870,32 +2667,26 @@ class RedisSREDemo:
             if choice == "0":
                 print("\n👋 Thank you for trying the Redis SRE Agent demo!")
                 break
-            elif choice == "1":
-                await self.memory_pressure_scenario()
-            elif choice == "2":
-                await self.connection_issues_scenario()
-            elif choice == "3":
-                await self.performance_scenario()
-            elif choice == "4":
-                await self.full_health_check()
-            elif choice == "5":
-                await self.redis_enterprise_scenario()
-            elif choice == "6":
-                await self.redis_enterprise_maintenance_scenario()
-            elif choice == "7":
-                await self.redis_enterprise_lua_latency_scenario()
-            elif choice == "8":
+            elif choice == str(len(self.menu_items) + 1):
                 print("\n🚀 Running all scenarios...")
-                for name, scenario_func in self.scenarios.items():
-                    print(f"\n{'=' * 15} {name.title()} Scenario {'=' * 15}")
+                for idx, (sid, label, scenario_func) in enumerate(self.menu_items, start=1):
+                    print(f"\n{'=' * 10} {sid} - {label} {'=' * 10}")
                     await scenario_func()
-                    if name != list(self.scenarios.keys())[-1]:
-                        print("\n⏸️  Pausing 3 seconds before next scenario...")
-                        time.sleep(3)
+                    if idx < len(self.menu_items):
+                        print("\n⏸️  Pausing 2 seconds before next scenario...")
+                        time.sleep(2)
                 print("\n✅ All scenarios completed!")
+            else:
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(self.menu_items):
+                        _sid, _label, func = self.menu_items[idx]
+                        await func()
+                except Exception as e:
+                    print(f"❌ Failed to run scenario: {e}")
 
             # Ask if user wants to continue
-            if choice in ["1", "2", "3", "4", "5", "6", "7", "8"]:
+            if choice in [str(i) for i in range(1, len(self.menu_items) + 2)]:
                 print("\n" + "-" * 60)
                 try:
                     continue_choice = (
@@ -1914,17 +2705,10 @@ async def main():
     parser = argparse.ArgumentParser(description="Redis SRE Agent Interactive Demo")
     parser.add_argument(
         "--scenario",
-        choices=[
-            "memory",
-            "network",
-            "connections",
-            "performance",
-            "health",
-            "enterprise",
-            "enterprise_maintenance",
-            "enterprise_lua",
-        ],
-        help="Run a specific scenario",
+        help=(
+            "Run a specific scenario by ID (e.g., '3.2') or short name "
+            "(e.g., 'connection exhaustion', 'redis network saturation', or 'all')"
+        ),
     )
     parser.add_argument(
         "--auto-run", action="store_true", help="Run all scenarios automatically without user input"
@@ -1935,15 +2719,65 @@ async def main():
 
     args = parser.parse_args()
 
-    # Check for OpenAI API key (only needed for CLI mode)
-    if not args.ui and not os.getenv("OPENAI_API_KEY"):
-        print("⚠️  Warning: OPENAI_API_KEY not set. Agent queries may fail.")
-        print("   Set this environment variable to enable full agent functionality.")
-        print()
-
-    # Run the demo
     demo = RedisSREDemo(ui_mode=args.ui)
-    await demo.run_interactive_demo(auto_run=args.auto_run, specific_scenario=args.scenario)
+
+    # If a specific scenario is requested, run it then exit
+    if args.scenario:
+        func = demo.get_scenario_func(args.scenario)
+        if func == "__ALL__":
+            if not await demo.setup_redis_connection():
+                return
+            for _sid, _label, f in demo.menu_items:
+                await f()
+            return
+        if callable(func):
+            if not await demo.setup_redis_connection():
+                return
+            await func()
+            return
+        print(f"Unknown scenario selector: {args.scenario}")
+        # Show some examples to help the user
+        print("Try one of:")
+        print(" - 1.1")
+        print(" - redis network saturation")
+        print(" - connection exhaustion")
+        return
+
+    # Auto-run all if requested
+    if args.auto_run:
+        if not await demo.setup_redis_connection():
+            return
+        for _sid, _label, func in demo.menu_items:
+            await func()
+        return
+
+    # Otherwise run interactive menu (CLI)
+    if not await demo.setup_redis_connection():
+        return
+    while True:
+        choice = demo.show_main_menu()
+        # Dispatch handled inside demo loop (requires instance methods) via show_main_menu consumer above
+        # We re-use the same logic by delegating to the instance method handler
+        # Simulate one cycle by mapping choice into the same handler code
+        if choice == "0":
+            print("\n\U0001f44b Thank you for trying the Redis SRE Agent demo!")
+            break
+        elif choice == str(len(demo.menu_items) + 1):
+            print("\n\U0001f680 Running all scenarios...")
+            for idx, (_sid, label, func) in enumerate(demo.menu_items, start=1):
+                print(f"\n{'=' * 10} {label} {'=' * 10}")
+                await func()
+                if idx < len(demo.menu_items):
+                    print("\n\u23f8\ufe0f  Pausing 2 seconds before next scenario...")
+                    time.sleep(2)
+        else:
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(demo.menu_items):
+                    _sid, _label, func = demo.menu_items[idx]
+                    await func()
+            except Exception as e:
+                print(f"\u274c Failed to run scenario: {e}")
 
 
 if __name__ == "__main__":

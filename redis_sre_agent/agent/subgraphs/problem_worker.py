@@ -12,13 +12,16 @@ and passing only knowledge_* tools.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from ..helpers import parse_json_maybe_fenced
+from ..helpers import log_preflight_messages, parse_json_maybe_fenced, sanitize_messages_for_llm
+
+logger = logging.getLogger(__name__)
 
 
 class PState(TypedDict, total=False):
@@ -42,16 +45,27 @@ def build_problem_worker(knowledge_llm, knowledge_tools: List[Any], max_tool_ste
     tool_node = ToolNode(knowledge_tools)
 
     async def llm_node(state: PState) -> PState:
-        resp = await knowledge_llm.ainvoke(state.get("messages", []))
+        msgs = sanitize_messages_for_llm(state.get("messages", []))
+        # Preflight log (centralized)
+        log_preflight_messages(msgs, label="ProblemWorker preflight LLM", logger=logger)
+        resp = await knowledge_llm.ainvoke(msgs)
         return {
-            "messages": state.get("messages", []) + [resp],
+            "messages": msgs + [resp],
             "budget": int(state.get("budget", max_tool_steps)),
         }
 
     async def tools_node(state: PState) -> PState:
         # Execute allowed tools through ToolNode; decrement budget safely
-        out = await tool_node.ainvoke({"messages": state.get("messages", [])})
-        messages = out.get("messages", state.get("messages", []))
+        prev = state.get("messages", [])
+        # Preflight log (centralized)
+        log_preflight_messages(prev, label="ProblemWorker preflight ToolNode", logger=logger)
+        out = await tool_node.ainvoke({"messages": prev})
+        out_msgs = out.get("messages", [])
+        # Append only ToolMessages to preserve full prior window
+        from langchain_core.messages import ToolMessage as _TM  # noqa: N814
+
+        delta = [m for m in out_msgs if isinstance(m, _TM)]
+        messages = prev + delta if delta else prev
         budget = max(0, int(state.get("budget", max_tool_steps)) - 1)
         return {"messages": messages, "budget": budget}
 
@@ -68,7 +82,9 @@ def build_problem_worker(knowledge_llm, knowledge_tools: List[Any], max_tool_ste
         return "tools" if (has_calls and budget_left) else "synth"
 
     def synth_node(state: PState) -> PState:
-        # Parse plan JSON from the last AI message; tolerate fenced JSON
+        # Synthesize a result from the last AI message.
+        # Prefer natural language output; if JSON is present, parse it, but always
+        # include the full narrative so callers can use it directly.
         msgs = state.get("messages", [])
         last_ai: Optional[AIMessage] = None
         for m in reversed(msgs):
@@ -78,12 +94,16 @@ def build_problem_worker(knowledge_llm, knowledge_tools: List[Any], max_tool_ste
         content = (getattr(last_ai, "content", "") or "").strip()
         plan: Dict[str, Any] = {}
         try:
-            plan = parse_json_maybe_fenced(content)
-            if not isinstance(plan, dict):
-                plan = {"raw": plan}
+            parsed = parse_json_maybe_fenced(content)
+            plan = parsed if isinstance(parsed, dict) else {}
         except Exception:
-            # Fall back to empty plan; parent can handle failure
-            plan = {"summary": "planning_failed", "raw": content[:2000]}
+            # Parsing failed; emit a structured fallback
+            plan = {"summary": "planning_failed", "raw": content}
+        # Always carry the narrative; ensure we have a summary string
+        plan["narrative"] = content
+        if not isinstance(plan.get("summary"), str) or not plan.get("summary"):
+            # Use the first ~1000 chars of the narrative as summary
+            plan["summary"] = content[:1000]
         return {"messages": msgs, "budget": int(state.get("budget", 0)), "result": plan}
 
     g = StateGraph(PState)

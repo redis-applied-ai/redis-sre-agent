@@ -136,7 +136,8 @@ class TaskManager:
             def _decode(v):
                 return v.decode() if isinstance(v, bytes) else v
 
-            md = {_decode(k): _decode(v) for k, v in (md_raw or {}).items()}
+            safe_md_raw = md_raw if isinstance(md_raw, dict) else {}
+            md = {_decode(k): _decode(v) for k, v in safe_md_raw.items()}
 
             status_s = _decode(status) if status else ""
             subject = md.get("subject", "")

@@ -62,6 +62,10 @@ async def create_task(
         subject=message,
     )
 
+    # Mark task/thread as queued before scheduling
+    await thread_manager.update_thread_status(thread_id, ThreadStatus.QUEUED)
+    await tm.update_task_status(task_id, ThreadStatus.QUEUED)
+
     # Queue processing and pass the task_id so the worker reuses it
     async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
         task_func = docket.add(process_agent_turn)
@@ -69,10 +73,6 @@ async def create_task(
             thread_id=thread_id, message=message, context=context or {}, task_id=task_id
         )
         logger.info(f"Queued agent task {task_id} for thread {thread_id}")
-
-    # Ensure thread shows as queued now
-    await thread_manager.update_thread_status(thread_id, ThreadStatus.QUEUED)
-    await tm.update_task_status(task_id, ThreadStatus.QUEUED)
 
     return {
         "task_id": task_id,

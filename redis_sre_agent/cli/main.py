@@ -460,7 +460,7 @@ def thread():
 
 @thread.command("list")
 @click.option("--user-id", help="Filter by user ID")
-@click.option("--limit", "-l", default=50, help="Number of threads to show")
+@click.option("--limit", "-l", default=10, help="Number of threads to show")
 @click.option(
     "--tz",
     required=False,

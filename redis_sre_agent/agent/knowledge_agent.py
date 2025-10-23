@@ -11,7 +11,7 @@ knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -113,12 +113,54 @@ class KnowledgeOnlyAgent:
 
             # Add system message if this is the first interaction
             if len(messages) == 1 and isinstance(messages[0], HumanMessage):
-                system_message = AIMessage(content=KNOWLEDGE_SYSTEM_PROMPT)
+                system_message = SystemMessage(content=KNOWLEDGE_SYSTEM_PROMPT)
                 messages = [system_message] + messages
 
             # Generate response with knowledge tools
+            # Sanitize message order to avoid sending orphan tool messages to OpenAI
+            def _sanitize_messages_for_llm(msgs: list[BaseMessage]) -> list[BaseMessage]:
+                if not msgs:
+                    return msgs
+                from langchain_core.messages import ToolMessage as _TM  # noqa: N814
+
+                seen_tool_ids = set()
+                clean: list[BaseMessage] = []
+                for m in msgs:
+                    if isinstance(m, AIMessage):
+                        try:
+                            for tc in getattr(m, "tool_calls", []) or []:
+                                if isinstance(tc, dict):
+                                    tid = tc.get("id") or tc.get("tool_call_id")
+                                    if tid:
+                                        seen_tool_ids.add(tid)
+                        except Exception:
+                            pass
+                        clean.append(m)
+                    elif isinstance(m, _TM) or getattr(m, "type", "") == "tool":
+                        tid = getattr(m, "tool_call_id", None)
+                        if tid and tid in seen_tool_ids:
+                            clean.append(m)
+                        else:
+                            continue
+                    else:
+                        clean.append(m)
+                while clean and (
+                    isinstance(clean[0], _TM) or getattr(clean[0], "type", "") == "tool"
+                ):
+                    clean = clean[1:]
+                return clean
+
+            messages = _sanitize_messages_for_llm(messages)
+
             try:
                 response = await llm_with_tools.ainvoke(messages)
+                # Coerce non-Message responses (e.g., simple mocks) into AIMessage
+                if not isinstance(response, BaseMessage):
+                    content = getattr(response, "content", None)
+                    tool_calls = getattr(response, "tool_calls", None)
+                    response = AIMessage(
+                        content=str(content) if content is not None else "", tool_calls=tool_calls
+                    )
 
                 # Update iteration count
                 state["iteration_count"] = iteration_count + 1

@@ -8,7 +8,6 @@ from docket import ConcurrencyLimit, Docket, Perpetual, Retry
 from ulid import ULID
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
     search_knowledge_base_helper,
@@ -41,6 +40,7 @@ async def search_knowledge_base(
     query: str,
     category: Optional[str] = None,
     limit: int = 5,
+    distance_threshold: Optional[float] = None,
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
     """
@@ -53,100 +53,19 @@ async def search_knowledge_base(
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
         limit: Maximum number of results
+        distance_threshold: Optional cosine distance threshold. If provided, overrides backend default.
         retry: Retry configuration
 
     Returns:
         Dictionary with search results
     """
     try:
-        return await search_knowledge_base_helper(query=query, category=category, limit=limit)
+        kwargs = {"query": query, "category": category, "limit": limit}
+        if distance_threshold is not None:
+            kwargs["distance_threshold"] = distance_threshold
+        return await search_knowledge_base_helper(**kwargs)
     except Exception as e:
         logger.error(f"Knowledge search failed (attempt {retry.attempt}): {e}")
-        raise
-
-
-@sre_task
-async def check_service_health(
-    service_name: str,
-    endpoints: List[str],
-    timeout: int = 30,
-    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=3)),
-) -> Dict[str, Any]:
-    """
-    Check health status of a service and its endpoints.
-
-    Args:
-        service_name: Name of the service to check
-        endpoints: List of health check endpoints
-        timeout: Request timeout in seconds
-        retry: Retry configuration
-    """
-    try:
-        logger.info(f"Checking health for service: {service_name}")
-
-        # Perform HTTP health checks
-        # NOTE: For Redis-specific diagnostics, use get_detailed_redis_diagnostics()
-        # with an explicit redis_url parameter instead of this generic health check.
-        import aiohttp
-
-        health_results = []
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-            for endpoint in endpoints:
-                start_time = datetime.now()
-
-                try:
-                    async with session.get(endpoint) as response:
-                        response_time = (datetime.now() - start_time).total_seconds() * 1000
-
-                        health_check = {
-                            "endpoint": endpoint,
-                            "status": "healthy" if response.status < 400 else "unhealthy",
-                            "response_time_ms": round(response_time, 2),
-                            "status_code": response.status,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }
-
-                except Exception as e:
-                    health_check = {
-                        "endpoint": endpoint,
-                        "status": "unhealthy",
-                        "response_time_ms": None,
-                        "status_code": None,
-                        "error": str(e),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-
-                health_results.append(health_check)
-
-        overall_status = (
-            "healthy"
-            if all(result["status"] == "healthy" for result in health_results)
-            else "unhealthy"
-        )
-
-        result = {
-            "task_id": str(ULID()),
-            "service_name": service_name,
-            "overall_status": overall_status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "endpoints_checked": len(endpoints),
-            "health_checks": health_results,
-        }
-
-        # Store result in Redis (serialize complex data)
-        import json
-
-        client = get_redis_client()
-        result_key = RedisKeys.health_result(result["task_id"])
-        await client.set(result_key, json.dumps(result))
-        await client.expire(result_key, 1800)  # 30 minutes TTL
-
-        logger.info(f"Health check completed: {service_name} is {overall_status}")
-        return result
-
-    except Exception as e:
-        logger.error(f"Health check failed for {service_name} (attempt {retry.attempt}): {e}")
         raise
 
 
