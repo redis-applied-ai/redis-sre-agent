@@ -36,6 +36,7 @@ def build_recommendation_worker(
     knowledge_tool_adapters: List[Any],
     *,
     max_tool_steps: int = 3,
+    memoize=None,
 ):
     """Build a compiled subgraph for per-topic recommendations.
 
@@ -43,6 +44,7 @@ def build_recommendation_worker(
         base_llm: Chat model used for both research and structured synthesis.
         knowledge_tool_adapters: Tools limited to knowledge_* (search/retrieval) operations.
         max_tool_steps: Budget for knowledge tool calls.
+        memoize: Optional memoization callback with signature (tag, llm, messages) -> result
 
     Returns:
         A compiled runnable that accepts a dict state with keys:
@@ -58,7 +60,10 @@ def build_recommendation_worker(
         messages = sanitize_messages_for_llm(state.get("messages", []))
         # Preflight log (centralized)
         log_preflight_messages(messages, label="RecWorker preflight LLM", logger=logger)
-        resp = await base_llm.ainvoke(messages)
+        if memoize:
+            resp = await memoize("rec_worker_llm", base_llm, messages)
+        else:
+            resp = await base_llm.ainvoke(messages)
         out: RecState = {
             "messages": messages + [resp],
             "budget": int(state.get("budget", max_tool_steps)),
@@ -130,7 +135,10 @@ def build_recommendation_worker(
                 "Evidence (JSON):\n" + str(evidence)
             )
         )
-        rec = await structured_llm.ainvoke([sys, human])
+        if memoize:
+            rec = await memoize("rec_worker_synth", structured_llm, [sys, human])
+        else:
+            rec = await structured_llm.ainvoke([sys, human])
         # rec is already a pydantic model or compatible dict
         if isinstance(rec, dict):
             result = rec

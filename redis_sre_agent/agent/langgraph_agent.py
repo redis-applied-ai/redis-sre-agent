@@ -427,6 +427,7 @@ class SRELangGraphAgent:
         initial_assessment_lines: List[str],
         per_topic_recommendations: List[Dict[str, Any]],
         instance_ctx: Optional[Dict[str, Any]],
+        safety_and_fact_check_notes: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         Compose operator-facing Markdown using a small/fast LLM and a strict template.
@@ -437,6 +438,8 @@ class SRELangGraphAgent:
             "per_topic_recommendations": per_topic_recommendations or [],
             "instance": instance_ctx or {},
         }
+        if safety_and_fact_check_notes:
+            payload["safety_and_fact_check_notes"] = safety_and_fact_check_notes
 
         composer_llm = ChatOpenAI(
             model=self.settings.openai_model_mini,
@@ -472,6 +475,8 @@ Produce a SINGLE consolidated Markdown document with ONE set of top-level headin
 
 ## Supporting Info
 
+## Safety and Fact Checking (include ONLY if 'safety_and_fact_check_notes' is non-empty)
+
 Consolidation rules (no new facts; deduplication is encouraged):
 - Initial Assessment: Synthesize a single brief summary from all
 'initial_assessment_lines'. Combine overlapping lines and remove duplicates.
@@ -481,7 +486,8 @@ Consolidation rules (no new facts; deduplication is encouraged):
   - Within each sub-heading, preserve the original step order, remove duplicate
     steps, and collapse identical commands/API examples. Do not invent new steps.
 - Supporting Info: Combine and de-duplicate citations/sources.
-- If a section would be empty, include the heading with a short, neutral sentence.
+- Safety and Fact Checking: If provided, summarize 'safety_and_fact_check_notes' as bullet points. Keep it concise and do NOT alter previous sections.
+- If a section would be empty, include the heading with a short, neutral sentence — EXCEPT omit the 'Safety and Fact Checking' section entirely when 'safety_and_fact_check_notes' is empty.
 
 Return Markdown only.
 
@@ -1039,6 +1045,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         knowledge_llm,
                         knowledge_adapters,
                         max_tool_steps=self.settings.max_tool_calls_per_stage,
+                        memoize=self._ainvoke_memo,
                     )
                     env_by_key = {
                         e.get("tool_key"): e for e in (state.get("signals_envelopes") or [])
@@ -2030,204 +2037,94 @@ Please review this Redis SRE agent response for factual accuracy, command validi
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
-        """Process a query with fact-checking and potential retry.
+        """Process a query once, then attach Safety and Fact-Checking notes.
 
-        Args:
-            query: User's SRE question or request
-            session_id: Session identifier for conversation context
-            user_id: User identifier
-            max_iterations: Maximum number of workflow iterations
-            context: Additional context including instance_id if specified
-            progress_callback: Optional callback for progress updates
-
-        # Skip safety/fact-check entirely if out of Redis scope
-        if not (self._is_redis_scoped(query) or self._is_redis_scoped(response)):
-            logger.info("Skipping safety/fact-check (out of Redis scope)")
-            return response
-
-            conversation_history: Optional conversation history for context
-
-        Returns:
-            Agent's response as a string
+        No corrective re-runs are performed. The operator can review the notes.
         """
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
+        try:
+            # Produce the primary response via the full workflow
+            response = await self.process_query(
+                query,
+                session_id,
+                user_id,
+                max_iterations,
+                context,
+                progress_callback,
+                conversation_history,
+            )
 
-        # First attempt - normal processing
-        response = await self.process_query(
-            query,
-            session_id,
-            user_id,
-            max_iterations,
-            context,
-            progress_callback,
-            conversation_history,
-        )
-        # Track correction attempts across safety/fact-check
-        rejections = 0
-        max_rejections = int(self.settings.max_rejections)
-
-        # Safety evaluation - check for dangerous recommendations
-        safety_result = await self._safety_evaluate_response(query, response)
-
-        if not safety_result.get("safe", True):
-            logger.warning(f"Safety evaluation failed: {safety_result}")
-
-            risk_level = safety_result.get("risk_level", "medium")
-            violations = safety_result.get("violations", [])
-
-            # Only trigger corrections for medium risk and above
-            if risk_level in ["medium", "high", "critical"]:
-                logger.error(f"SAFETY VIOLATION DETECTED (risk: {risk_level}): {violations}")
-
-                correction_guidance = safety_result.get("corrective_guidance", "")
-                safety_result.get("reasoning", "")
-
-                if correction_guidance or violations:
-                    try:
-                        # Enforce a single correction attempt if configured
-                        if rejections >= max_rejections:
-                            return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
-                        rejections += 1
-
-                        # Create comprehensive correction query with full safety context
-                        safety_json = json.dumps(safety_result, indent=2)
-
-                        correction_query = f"""INTERNAL SAFETY CORRECTION - DO NOT MENTION THIS TO THE USER
-
-The user asked: {query}
-
-A safety evaluator identified problems with your previous response:
-{safety_json}
-
-Your task:
-1. Generate a NEW, COMPLETE response to the user's original query
-2. Address each specific violation listed in the safety evaluation
-3. Provide safer alternatives that achieve the same operational goals
-4. Include appropriate warnings about any remaining risks
-5. Ensure logical consistency between your usage pattern analysis and recommendations
-
-SPECIFIC GUIDANCE:
-- If flagged for persistence changes: Suggest gradual migration steps with data backup
-- If flagged for eviction policies: Recommend investigation before policy changes
-- If flagged for restarts: Include steps to ensure data persistence before restart
-- If flagged for contradictions: Align recommendations with your usage pattern analysis
-
-CRITICAL: Your response must be directed at the USER, not at the safety evaluator. Do not say things like "I've addressed the safety concerns" or "as noted in the evaluation". Just provide a safe, helpful response to their original question as if this is your first response."""
-
-                        # Retry the safety correction with backoff
-                        async def _safety_correction():
-                            return await self.process_query(
-                                correction_query,
-                                session_id,
-                                user_id,
-                                max_iterations,
-                                context,
-                                progress_callback,
-                                conversation_history,
-                            )
-
-                        corrected_response = await self._retry_with_backoff(
-                            _safety_correction,
-                            max_retries=self.settings.llm_max_retries,
-                            initial_delay=self.settings.llm_initial_delay,
-                            backoff_factor=self.settings.llm_backoff_factor,
-                        )
-
-                        # Verify the correction is safer
-                        safety_recheck = await self._safety_evaluate_response(
-                            query, corrected_response, is_correction_recheck=True
-                        )
-                        if safety_recheck.get("safe", True):
-                            logger.info("Response corrected after safety evaluation")
-                            return corrected_response
-                        else:
-                            logger.error(
-                                f"Correction still unsafe - recheck violations: {safety_recheck.get('violations', [])}"
-                            )
-                            logger.error(
-                                f"Recheck risk level: {safety_recheck.get('risk_level', 'unknown')}"
-                            )
-                            # If the correction attempt reduced the risk level, accept it even if not perfect
-                            original_risk = safety_result.get("risk_level", "high")
-                            recheck_risk = safety_recheck.get("risk_level", "high")
-                            risk_levels = {"low": 1, "medium": 2, "high": 3, "critical": 4}
-
-                            if risk_levels.get(recheck_risk, 3) <= risk_levels.get(
-                                original_risk, 3
-                            ):
-                                logger.info("Correction reduced risk level - accepting response")
-                                return corrected_response
-                            else:
-                                return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks. Please consult with a Redis expert before proceeding."
-
-                    except Exception as correction_error:
-                        logger.error(f"Error during safety correction: {correction_error}")
-                        return "⚠️ SAFETY ALERT: This request requires manual review due to potential data loss risks."
-            else:
-                # Low risk violations - log but don't correct
-                logger.info(f"Low-risk safety issues noted (risk: {risk_level}): {violations}")
-
-        # Fact-check the response (if it passed safety evaluation)
-        fact_check_result = await self._fact_check_response(response)
-
-        if fact_check_result.get("has_errors") and not fact_check_result.get("fact_check_error"):
-            logger.warning("Fact-check identified errors in agent response")
-
-            # Create detailed research query with full fact-check context
-            fact_check_details = fact_check_result.get("errors", [])
-            research_topics = fact_check_result.get("suggested_research", [])
-
-            if research_topics or fact_check_details:
-                # Include the full fact-check JSON for context
-                fact_check_json = json.dumps(fact_check_result, indent=2)
-
-                research_query = f"""INTERNAL CORRECTION TASK - DO NOT MENTION THIS TO THE USER
-
-The user asked: {query}
-
-A fact-checker identified these technical errors in your previous response:
-{fact_check_json}
-
-Your task:
-1. Research the identified topics using search_knowledge_base tool
-2. Generate a NEW, COMPLETE response to the user's original query
-3. Incorporate the corrections silently - DO NOT apologize or mention the fact-checker
-4. Address the user directly as if this is your first response
-5. Ensure all Redis concepts, metrics, and recommendations are technically accurate
-
-IMPORTANT: Your response must be directed at the USER, not at the fact-checker. Do not say things like "I've corrected the errors" or "as you pointed out". Just provide a corrected, helpful response to their original question."""
-
-                logger.info("Initiating corrective research query with full fact-check context")
-                try:
-                    # Enforce a single correction attempt if configured
-                    if rejections >= max_rejections:
-                        return response
-                    rejections += 1
-
-                    # Process the corrective query with retry logic
-                    async def _fact_check_correction():
-                        return await self.process_query(
-                            research_query, session_id, user_id, max_iterations, context=context
-                        )
-
-                    corrected_response = await self._retry_with_backoff(
-                        _fact_check_correction,
-                        max_retries=self.settings.llm_max_retries,
-                        initial_delay=self.settings.llm_initial_delay,
-                        backoff_factor=self.settings.llm_backoff_factor,
-                    )
-
-                    # Return the corrected response without exposing internal fact-checking
-                    return corrected_response
-                except Exception as correction_error:
-                    logger.error(f"Error during correction attempt: {correction_error}")
-                    # Fall back to original response rather than failing
+            # Skip safety/fact-check entirely if out of Redis scope
+            try:
+                if not (self._is_redis_scoped(query) or self._is_redis_scoped(response)):
+                    logger.info("Skipping safety/fact-check (out of Redis scope)")
                     return response
-        elif fact_check_result.get("fact_check_error"):
-            logger.info("Fact-check completed: Using original response (fact-check unavailable)")
+            except Exception:
+                # If scope detection fails, proceed with notes
+                pass
 
-        return response
+            # Collect notes (no corrections)
+            safety_result = await self._safety_evaluate_response(query, response)
+            fact_check_result = await self._fact_check_response(response)
+
+            # Build a concise notes section
+            def _fmt_safety(s: Dict[str, Any]) -> List[str]:
+                lines: List[str] = []
+                if not s:
+                    return ["Safety evaluation unavailable."]
+                lines.append(f"Result: {'SAFE' if s.get('safe', True) else 'UNSAFE'}")
+                if "risk_level" in s:
+                    lines.append(f"Risk level: {s.get('risk_level')}")
+                v = s.get("violations") or []
+                if v:
+                    lines.append("Violations:")
+                    for item in v[:10]:
+                        lines.append(f"- {str(item)[:400]}")
+                cg = s.get("corrective_guidance")
+                if cg:
+                    lines.append(f"Guidance: {str(cg)[:600]}")
+                rsn = s.get("reasoning")
+                if rsn:
+                    lines.append(f"Notes: {str(rsn)[:600]}")
+                return lines or ["No material safety issues detected."]
+
+            def _fmt_fact(f: Dict[str, Any]) -> List[str]:
+                lines: List[str] = []
+                if not f:
+                    return ["Fact-check unavailable."]
+                lines.append(f"Errors: {'YES' if f.get('has_errors') else 'NO'}")
+                errs = f.get("errors") or []
+                if errs:
+                    lines.append("Issues:")
+                    for e in errs[:10]:
+                        claim = (e or {}).get("claim")
+                        issue = (e or {}).get("issue")
+                        lines.append(f"- {str(claim)[:120]}: {str(issue)[:400]}")
+                notes = f.get("validation_notes")
+                if notes:
+                    lines.append(f"Notes: {str(notes)[:600]}")
+                return lines or ["No material fact-check issues detected."]
+
+            safety_lines = _fmt_safety(safety_result)
+            fact_lines = _fmt_fact(fact_check_result)
+            notes_md = [
+                "## Safety and Fact Checking",
+                "",
+                "### Safety",
+                *safety_lines,
+                "",
+                "### Fact Check",
+                *fact_lines,
+            ]
+            appended = response + "\n\n" + "\n".join(notes_md)
+            return appended
+        finally:
+            # Clear LLM memo cache for this run
+            try:
+                self._end_run_cache()
+            except Exception:
+                pass
 
     async def _retry_with_backoff(
         self, func, max_retries: int = 3, initial_delay: float = 1.0, backoff_factor: float = 2.0
