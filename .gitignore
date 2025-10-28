@@ -123,3 +123,4 @@ pnpm-debug.log*
 ui/dist/
 ui/.vite/
 ui/tsconfig.tsbuildinfo
+.difflow
