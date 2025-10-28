@@ -7,12 +7,15 @@ them as tools for the LLM to use.
 import logging
 from typing import Any, Dict, List, Optional
 
-from redis_sre_agent.core.tasks import (
+from redis_sre_agent.core.docket_tasks import (
     ingest_sre_document as _ingest_sre_document,
 )
-from redis_sre_agent.core.tasks import (
-    search_knowledge_base as _search_knowledge_base,
+from redis_sre_agent.core.knowledge_helpers import (
+    get_all_document_fragments,
+    get_related_document_fragments,
+    search_knowledge_base_helper,
 )
+from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.protocols import ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
@@ -68,10 +71,20 @@ class KnowledgeBaseToolProvider(ToolProvider):
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum number of results to return (default: 5)",
-                            "default": 5,
+                            "description": "Maximum number of results to return (default: 10)",
+                            "default": 10,
                             "minimum": 1,
                             "maximum": 20,
+                        },
+                        "distance_threshold": {
+                            "type": "number",
+                            "description": (
+                                "Optional semantic distance threshold (cosine distance).\n"
+                                "When provided, a range query is used to filter by distance.\n"
+                                "Omit to use the default threshold from the backend (on by default).\n"
+                                "Set to null/not provided to avoid passing threshold and keep default;\n"
+                                "set explicitly to a number to override; set to 0.0-2.0 range typical."
+                            ),
                         },
                     },
                     "required": ["query"],
@@ -126,7 +139,63 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "required": ["title", "content", "source", "category"],
                 },
             ),
+            ToolDefinition(
+                name=self._make_tool_name("get_all_fragments"),
+                description=(
+                    "Retrieve all fragments/chunks of a specific document from the knowledge base. "
+                    "Use this when you need to see the complete content of a document that was "
+                    "found via search. Requires the document_hash from a search result."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "document_hash": {
+                            "type": "string",
+                            "description": "Hash of the document to retrieve (from search results)",
+                        },
+                    },
+                    "required": ["document_hash"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_related_fragments"),
+                description=(
+                    "Find related document fragments based on a specific fragment. "
+                    "Use this to explore related content or find additional context "
+                    "around a specific piece of information."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "document_hash": {
+                            "type": "string",
+                            "description": "Hash of the source document",
+                        },
+                        "chunk_index": {
+                            "type": "integer",
+                            "description": "Index of the chunk to find related content for",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of related fragments to return (default: 10)",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 20,
+                        },
+                    },
+                    "required": ["document_hash", "chunk_index"],
+                },
+            ),
         ]
+
+    def _operation_from_tool(self, tool_name: str) -> str:
+        parts = tool_name.split("_")
+        if len(parts) >= 3:
+            return "_".join(parts[2:])
+        return tool_name
+
+    def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        return self._operation_from_tool(tool_name)
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Execute a knowledge base tool call.
@@ -134,23 +203,26 @@ class KnowledgeBaseToolProvider(ToolProvider):
         The tool_name includes the provider name and instance hash that we created,
         so we just need to match the operation suffix.
         """
-        # Remove the provider prefix and hash to get the operation name
-        # Format: knowledge_{hash}_search -> search
-        parts = tool_name.split("_")
-        if len(parts) >= 3:
-            operation = "_".join(parts[2:])  # Everything after provider_hash
-        else:
-            operation = tool_name
+        operation = self._operation_from_tool(tool_name)
 
         if operation == "search":
             return await self.search(**args)
         elif operation == "ingest":
             return await self.ingest(**args)
+        elif operation == "get_all_fragments":
+            return await self.get_all_fragments(**args)
+        elif operation == "get_related_fragments":
+            return await self.get_related_fragments(**args)
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
+    @status_update("I'm searching the knowledge base for {query}.")
     async def search(
-        self, query: str, category: Optional[str] = None, limit: int = 5
+        self,
+        query: str,
+        category: Optional[str] = None,
+        limit: int = 10,
+        distance_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search the knowledge base.
 
@@ -158,12 +230,21 @@ class KnowledgeBaseToolProvider(ToolProvider):
             query: Search query
             category: Optional category filter
             limit: Maximum number of results
+            distance_threshold: Optional cosine distance threshold. If provided, overrides the backend default.
 
         Returns:
             Search results with relevant knowledge base content
         """
-        logger.info(f"Knowledge base search: {query} (category={category}, limit={limit})")
-        return await _search_knowledge_base(query=query, category=category, limit=limit)
+        logger.info(
+            f"Knowledge base search: {query} (category={category}, limit={limit}, distance_threshold={distance_threshold})"
+        )
+        kwargs = {
+            "query": query,
+            "category": category,
+            "limit": limit,
+            "distance_threshold": distance_threshold,
+        }
+        return await search_knowledge_base_helper(**kwargs)
 
     async def ingest(
         self,
@@ -200,3 +281,31 @@ class KnowledgeBaseToolProvider(ToolProvider):
             kwargs["product_labels"] = product_labels
 
         return await _ingest_sre_document(**kwargs)
+
+    async def get_all_fragments(self, document_hash: str) -> Dict[str, Any]:
+        """Get all fragments of a document.
+
+        Args:
+            document_hash: Hash of the document
+
+        Returns:
+            Dictionary with all document fragments
+        """
+        logger.info(f"Getting all fragments for document: {document_hash}")
+        return await get_all_document_fragments(document_hash)
+
+    async def get_related_fragments(
+        self, document_hash: str, chunk_index: int, limit: int = 10
+    ) -> Dict[str, Any]:
+        """Get related fragments for a specific chunk.
+
+        Args:
+            document_hash: Hash of the document
+            chunk_index: Index of the chunk
+            limit: Maximum number of related fragments
+
+        Returns:
+            Dictionary with related fragments
+        """
+        logger.info(f"Getting related fragments for document {document_hash}, chunk {chunk_index}")
+        return await get_related_document_fragments(document_hash, chunk_index, limit)

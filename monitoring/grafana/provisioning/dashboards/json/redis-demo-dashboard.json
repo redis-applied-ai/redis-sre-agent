@@ -1,0 +1,117 @@
+{
+  "id": null,
+  "uid": "redis-demo",
+  "title": "Redis Demo Metrics",
+  "tags": ["redis", "demo"],
+  "timezone": "",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(redis_up{job=\"redis\"}, instance)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": ["All"] }
+      },
+      {
+        "name": "db",
+        "label": "Database",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(redis_db_keys{job=\"redis\"}, db)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": ["All"] }
+      }
+    ]
+  },
+  "panels": [
+    { "type": "stat", "title": "Redis Up", "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "max by(instance) (redis_up{job=\"redis\", instance=~\"$instance\"})", "legendFormat": "{{instance}}" } ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "horizontal", "colorMode": "value", "graphMode": "none", "justifyMode": "auto" },
+      "fieldConfig": { "defaults": { "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }, "unit": "none" }, "overrides": [] }
+    },
+    { "type": "timeseries", "title": "Connected Clients", "gridPos": { "x": 6, "y": 0, "w": 9, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "redis_connected_clients{job=\"redis\", instance=~\"$instance\"}", "legendFormat": "{{instance}}" } ],
+      "fieldConfig": { "defaults": { "unit": "clients" }, "overrides": [] }
+    },
+    { "type": "timeseries", "title": "Instant Ops/sec", "gridPos": { "x": 15, "y": 0, "w": 9, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "redis_instantaneous_ops_per_sec{job=\"redis\", instance=~\"$instance\"}", "legendFormat": "{{instance}}" } ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    },
+
+    { "type": "timeseries", "title": "Commands Throughput (ops/s)", "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "rate(redis_commands_processed_total{job=\"redis\", instance=~\"$instance\"}[5m])", "legendFormat": "{{instance}}" } ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    },
+    { "type": "timeseries", "title": "Top Commands (ops/s)", "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "topk(10, sum by (cmd) (rate(redis_commands_total{job=\"redis\", instance=~\"$instance\"}[5m])))", "legendFormat": "{{cmd}}" } ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    },
+
+    { "type": "timeseries", "title": "Memory Used", "gridPos": { "x": 0, "y": 16, "w": 8, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "redis_memory_used_bytes{job=\"redis\", instance=~\"$instance\"}", "legendFormat": "{{instance}}" } ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    },
+    { "type": "timeseries", "title": "Mem Fragmentation Ratio", "gridPos": { "x": 8, "y": 16, "w": 8, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "redis_mem_fragmentation_ratio{job=\"redis\", instance=~\"$instance\"}", "legendFormat": "{{instance}}" } ]
+    },
+    { "type": "bargauge", "title": "Top Slow Commands (avg ms over 5m)", "gridPos": { "x": 16, "y": 16, "w": 8, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "topk(10, 1000 * (rate(redis_command_call_duration_seconds_sum{job=\"redis\", instance=~\"$instance\"}[5m]) / rate(redis_command_call_duration_seconds_count{job=\"redis\", instance=~\"$instance\"}[5m])))", "legendFormat": "{{cmd}}" } ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+
+    { "type": "timeseries", "title": "Cache Hit Ratio", "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "(rate(redis_keyspace_hits_total{job=\"redis\", instance=~\"$instance\"}[5m]) / (rate(redis_keyspace_hits_total{job=\"redis\", instance=~\"$instance\"}[5m]) + rate(redis_keyspace_misses_total{job=\"redis\", instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}}" } ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    { "type": "timeseries", "title": "Hits vs Misses (rate)", "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [
+        { "expr": "rate(redis_keyspace_hits_total{job=\"redis\", instance=~\"$instance\"}[5m])", "legendFormat": "hits" },
+        { "expr": "rate(redis_keyspace_misses_total{job=\"redis\", instance=~\"$instance\"}[5m])", "legendFormat": "misses" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    },
+
+    { "type": "timeseries", "title": "Keys per DB", "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "sum by (db) (redis_db_keys{job=\"redis\", instance=~\"$instance\", db=~\"$db\"})", "legendFormat": "{{db}}" } ]
+    },
+    { "type": "timeseries", "title": "Avg TTL per DB (s)", "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "avg by (db) (redis_db_avg_ttl_seconds{job=\"redis\", instance=~\"$instance\", db=~\"$db\"})", "legendFormat": "{{db}}" } ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+
+    { "type": "timeseries", "title": "CPU Usage (cores)", "gridPos": { "x": 0, "y": 40, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [ { "expr": "irate(redis_cpu_sys_seconds_total{job=\"redis\", instance=~\"$instance\"}[5m]) + irate(redis_cpu_user_seconds_total{job=\"redis\", instance=~\"$instance\"}[5m])", "legendFormat": "{{instance}}" } ],
+      "fieldConfig": { "defaults": { "unit": "cores" }, "overrides": [] }
+    },
+    { "type": "timeseries", "title": "Network (bytes/s)", "gridPos": { "x": 12, "y": 40, "w": 12, "h": 8 }, "datasource": "Prometheus",
+      "targets": [
+        { "expr": "rate(redis_net_input_bytes_total{job=\"redis\", instance=~\"$instance\"}[5m])", "legendFormat": "in" },
+        { "expr": "rate(redis_net_output_bytes_total{job=\"redis\", instance=~\"$instance\"}[5m])", "legendFormat": "out" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "type": "dashboard",
+        "name": "Annotations & Alerts",
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "enable": true
+      }
+    ]
+  }
+}

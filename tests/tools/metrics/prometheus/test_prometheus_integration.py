@@ -55,6 +55,18 @@ def prometheus_env(prometheus_container, monkeypatch):
 async def test_prometheus_provider_loads_via_tool_manager(prometheus_env):
     """Test that Prometheus provider loads correctly via ToolManager."""
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
+
+    # Create a test Redis instance
+    test_instance = RedisInstance(
+        id="test-instance",
+        name="Test Redis",
+        connection_url="redis://localhost:6379",
+        environment="test",
+        usage="cache",
+        description="Test instance",
+        instance_type="oss_single",
+    )
 
     # Create settings with Prometheus provider configured
     settings = Settings()
@@ -69,7 +81,7 @@ async def test_prometheus_provider_loads_via_tool_manager(prometheus_env):
     config_module.settings = settings
 
     try:
-        async with ToolManager() as manager:
+        async with ToolManager(redis_instance=test_instance) as manager:
             tools = manager.get_tools()
 
             # Should have knowledge base tools + Prometheus tools
@@ -95,6 +107,18 @@ async def test_prometheus_provider_loads_via_tool_manager(prometheus_env):
 async def test_prometheus_tool_execution_via_manager(prometheus_env, monkeypatch):
     """Test executing Prometheus tools through ToolManager."""
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
+
+    # Create a test Redis instance
+    test_instance = RedisInstance(
+        id="test-instance",
+        name="Test Redis",
+        connection_url="redis://localhost:6379",
+        environment="test",
+        usage="cache",
+        description="Test instance",
+        instance_type="oss_single",
+    )
 
     settings = Settings()
     settings.tool_providers = [
@@ -107,7 +131,7 @@ async def test_prometheus_tool_execution_via_manager(prometheus_env, monkeypatch
     config_module.settings = settings
 
     try:
-        async with ToolManager() as manager:
+        async with ToolManager(redis_instance=test_instance) as manager:
             tools = manager.get_tools()
 
             # Find the query tool
@@ -138,8 +162,8 @@ async def test_prometheus_tool_execution_via_manager(prometheus_env, monkeypatch
 @pytest.mark.asyncio
 async def test_prometheus_with_redis_instance(prometheus_env, monkeypatch):
     """Test Prometheus provider with Redis instance context."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     settings = Settings()
     settings.tool_providers = [
@@ -158,6 +182,7 @@ async def test_prometheus_with_redis_instance(prometheus_env, monkeypatch):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     try:
@@ -194,6 +219,18 @@ async def test_prometheus_provider_config_from_env(prometheus_env):
 async def test_multiple_providers_coexist(prometheus_env, monkeypatch):
     """Test that Prometheus provider works alongside other providers."""
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
+
+    # Create a test Redis instance
+    test_instance = RedisInstance(
+        id="test-instance",
+        name="Test Redis",
+        connection_url="redis://localhost:6379",
+        environment="test",
+        usage="cache",
+        description="Test instance",
+        instance_type="oss_single",
+    )
 
     settings = Settings()
     settings.tool_providers = [
@@ -206,7 +243,7 @@ async def test_multiple_providers_coexist(prometheus_env, monkeypatch):
     config_module.settings = settings
 
     try:
-        async with ToolManager() as manager:
+        async with ToolManager(redis_instance=test_instance) as manager:
             tools = manager.get_tools()
 
             # Should have both knowledge base and Prometheus tools

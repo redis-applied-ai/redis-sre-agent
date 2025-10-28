@@ -39,9 +39,11 @@ async def test_tool_manager_knowledge_tools():
         redis_cli_tools = [n for n in tool_names if "redis_cli_" in n]
 
         # Knowledge tools (always loaded)
-        assert len(knowledge_tools) == 2  # search and ingest
+        assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
         assert any("search" in n for n in knowledge_tools)
         assert any("ingest" in n for n in knowledge_tools)
+        assert any("get_all_fragments" in n for n in knowledge_tools)
+        assert any("get_related_fragments" in n for n in knowledge_tools)
 
         # Instance-specific tools should NOT be loaded without an instance
         assert len(prometheus_tools) == 0
@@ -51,7 +53,7 @@ async def test_tool_manager_knowledge_tools():
 @pytest.mark.asyncio
 async def test_tool_manager_with_instance():
     """Test that instance-specific tools are loaded when instance is provided."""
-    from redis_sre_agent.api.instances import RedisInstance
+    from redis_sre_agent.core.instances import RedisInstance
 
     # Create a test instance
     test_instance = RedisInstance(
@@ -74,11 +76,11 @@ async def test_tool_manager_with_instance():
         redis_cli_tools = [n for n in tool_names if "redis_cli_" in n]
 
         # Knowledge tools (always loaded)
-        assert len(knowledge_tools) == 2  # search and ingest
+        assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
 
         # Instance-specific tools should be loaded
         assert len(prometheus_tools) == 3  # query, query_range, search_metrics
-        assert len(redis_cli_tools) == 13  # All diagnostic tools (updated count)
+        assert len(redis_cli_tools) == 11  # All diagnostic tools
 
 
 @pytest.mark.asyncio

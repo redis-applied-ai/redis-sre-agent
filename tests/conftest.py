@@ -35,7 +35,7 @@ def mock_redis_infrastructure():
             "redis_sre_agent.core.redis.initialize_redis_infrastructure",
             side_effect=mock_initialize,
         ),
-        patch("redis_sre_agent.core.tasks.register_sre_tasks", side_effect=mock_register),
+        patch("redis_sre_agent.core.docket_tasks.register_sre_tasks", side_effect=mock_register),
         patch("redis_sre_agent.core.redis.cleanup_redis_connections", side_effect=mock_cleanup),
     ):
         yield
@@ -100,8 +100,9 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """Add skip markers to tests based on configuration."""
-    # Skip marker for API tests that require OpenAI
+    # Skip markers
     skip_api = pytest.mark.skip(reason="Use --run-api-tests to run tests that make real API calls")
+    skip_integration = pytest.mark.skip(reason="Use --run-api-tests to run integration tests")
 
     for item in items:
         # Skip tests that require OpenAI API calls unless --run-api-tests flag is set
@@ -110,9 +111,12 @@ def pytest_collection_modifyitems(config, items):
         ) and not config.getoption("--run-api-tests"):
             item.add_marker(skip_api)
 
-        # Integration tests need the redis_container fixture
+        # Require --run-api-tests for integration tests and attach redis container fixture
         if "integration" in item.keywords:
-            # Add redis_container as a fixture dependency
+            if not config.getoption("--run-api-tests"):
+                item.add_marker(skip_integration)
+                continue
+            # Add redis_container as a fixture dependency only when running integration
             item.fixturenames.append("redis_container")
 
 
@@ -163,16 +167,23 @@ def sample_sre_data() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def mock_vectorizer():
-    """Mock OpenAI text vectorizer."""
+    """Mock OpenAI text vectorizer with async embedding methods."""
     with patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_class:
-        mock_instance = Mock()
-        mock_instance.embed_many.return_value = [
-            [0.1] * 1536,  # Mock embedding vector
-            [0.2] * 1536,
-            [0.3] * 1536,
-        ]
-        mock_class.return_value = mock_instance
-        yield mock_instance
+        mv = Mock()
+        # Async methods used by implementation
+        mv.aembed_many = AsyncMock(
+            return_value=[
+                [0.1] * 1536,  # Mock embedding vector
+                [0.2] * 1536,
+                [0.3] * 1536,
+            ]
+        )
+        mv.aembed = AsyncMock(return_value=[0.1] * 1536)
+        # Keep sync methods for any legacy/test expectations
+        mv.embed_many = AsyncMock(return_value=mv.aembed_many.return_value)
+        mv.embed = AsyncMock(return_value=[0.1] * 1536)
+        mock_class.return_value = mv
+        yield mv
 
 
 @pytest.fixture
@@ -251,12 +262,12 @@ def app_with_mocks():
         patch("redis_sre_agent.core.redis.Redis") as mock_redis,
         patch("redis_sre_agent.core.redis.OpenAITextVectorizer") as mock_vectorizer,
         patch("redis_sre_agent.core.redis.AsyncSearchIndex") as mock_index,
-        patch("redis_sre_agent.core.tasks.test_task_system", return_value=True),
+        patch("redis_sre_agent.core.docket_tasks.test_task_system", return_value=True),
         patch(
             "redis_sre_agent.core.redis.initialize_redis_infrastructure",
             side_effect=mock_initialize,
         ),
-        patch("redis_sre_agent.core.tasks.register_sre_tasks", side_effect=mock_register),
+        patch("redis_sre_agent.core.docket_tasks.register_sre_tasks", side_effect=mock_register),
         patch("redis_sre_agent.core.redis.cleanup_redis_connections", new_callable=AsyncMock),
     ):
         # Configure mocks
@@ -317,7 +328,7 @@ def worker_id(request):
     return workerinput.get("workerid", "master")
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def redis_container(worker_id):
     """
     If using xdist, create a unique Compose project for each xdist worker by
@@ -356,8 +367,8 @@ def redis_container(worker_id):
     # Force reload of modules to pick up new settings
     import importlib
 
+    from redis_sre_agent.core import docket_tasks as tasks_module
     from redis_sre_agent.core import redis as redis_module
-    from redis_sre_agent.core import tasks as tasks_module
 
     importlib.reload(redis_module)
     importlib.reload(tasks_module)

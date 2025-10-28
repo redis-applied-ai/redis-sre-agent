@@ -9,7 +9,7 @@ import pytest
 
 from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
-from redis_sre_agent.core.thread_state import ThreadUpdate
+from redis_sre_agent.core.threads import ThreadUpdate
 
 
 class TestProgressCallbackValidation:
@@ -96,7 +96,7 @@ class TestProgressCallbackValidation:
 
         # Test with unknown tool (should return default message)
         reflection = agent._generate_completion_reflection("unknown_tool", {})
-        assert reflection == "✅ unknown tool completed"
+        assert reflection == "I've completed unknown tool."
         assert reflection is not None
 
         # Test with get_detailed_redis_diagnostics success
@@ -117,5 +117,8 @@ class TestProgressCallbackValidation:
         reflection = agent._generate_completion_reflection(
             "get_detailed_redis_diagnostics", redis_result_fail
         )
-        assert reflection == "❌ Unable to collect Redis diagnostics"
+        assert (
+            reflection
+            == "I wasn't able to collect the diagnostics. Let me try a different approach..."
+        )
         assert reflection is not None

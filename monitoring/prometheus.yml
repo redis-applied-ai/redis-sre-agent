@@ -29,7 +29,10 @@ scrape_configs:
   # Redis metrics via redis_exporter
   - job_name: 'redis'
     static_configs:
-      - targets: ['redis-exporter:9121']
+      - targets:
+          - 'redis-exporter:9121'           # redis-demo
+          - 'redis-exporter-agent:9121'     # agent operational redis
+          - 'redis-enterprise-exporter:9121' # optional, if DB exists on 12000
     metrics_path: /metrics
     scrape_interval: 15s
     scrape_timeout: 10s
@@ -40,6 +43,42 @@ scrape_configs:
       - targets: ['node-exporter:9100']
     metrics_path: /metrics
     scrape_interval: 15s
+    metric_relabel_configs:
+      - source_labels: ['__name__']
+        regex: 'node_(memory|vmstat|pressure_memory).*'
+        action: drop
+
+
+
+  # Inject Pushgateway demo series into the 'node' job labels via honor_labels
+  # This allows the demo host ('demo-host') to appear as if reported by node_exporter
+  # so the agent's host metrics queries (which prefer node job) will include them.
+  - job_name: 'node-push'
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    metric_relabel_configs:
+      # Keep only metrics from the demo grouping (job="node", instance="demo-host")
+      - source_labels: ['job','instance']
+        regex: 'node;demo-host'
+        action: keep
+
+
+  # Redis Enterprise node metrics (local demo cluster)
+  - job_name: 'redis-enterprise-nodes'
+    scheme: https
+    metrics_path: /metrics
+    tls_config:
+      insecure_skip_verify: true  # Local demo certs
+    static_configs:
+      - targets:
+          - 'redis-enterprise-node1:9443'
+          - 'redis-enterprise-node2:9443'
+          - 'redis-enterprise-node3:9443'
+    scrape_interval: 30s
+    scrape_timeout: 10s
 
   # SRE Agent application metrics (if implemented)
   - job_name: 'sre-agent'
@@ -53,5 +92,27 @@ scrape_configs:
   - job_name: 'grafana'
     static_configs:
       - targets: ['grafana:3000']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+
+  # Loki metrics for Log Volume and health
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Pushgateway (for demo metrics pushed by examples/demo_scenarios.py)
+  - job_name: 'pushgateway'
+    static_configs:
+      - targets: ['pushgateway:9091']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Promtail metrics (optional)
+  - job_name: 'promtail'
+    static_configs:
+      - targets: ['promtail:9080']
     metrics_path: /metrics
     scrape_interval: 30s

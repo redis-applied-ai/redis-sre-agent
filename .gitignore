@@ -73,7 +73,6 @@ test_storage/
 
 # Logging
 *.log
-logs/
 
 # Data
 data/
@@ -100,6 +99,10 @@ reference_code/
 artifacts/*/
 !artifacts/.gitkeep
 
+
+# Generated local maps
+map.json
+
 # Temporary
 tmp/
 temp/
@@ -119,3 +122,4 @@ pnpm-debug.log*
 ui/dist/
 ui/.vite/
 ui/tsconfig.tsbuildinfo
+.difflow

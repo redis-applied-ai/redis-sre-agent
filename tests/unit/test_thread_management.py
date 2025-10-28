@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from redis_sre_agent.core.tasks import extract_action_items_from_response, process_agent_turn
-from redis_sre_agent.core.thread_state import (
+from redis_sre_agent.core.docket_tasks import extract_action_items_from_response, process_agent_turn
+from redis_sre_agent.core.threads import (
     ThreadActionItem,
     ThreadManager,
     ThreadMetadata,
@@ -82,7 +82,6 @@ class TestThreadManager:
         # Mock Redis data
         thread_manager._redis_client.exists.return_value = True
         thread_manager._redis_client.get.side_effect = [
-            b"in_progress",  # status
             None,  # action_items
             None,  # result
             None,  # error
@@ -112,7 +111,6 @@ class TestThreadManager:
         state = await thread_manager.get_thread_state("test_thread")
 
         assert state is not None
-        assert state.status == ThreadStatus.IN_PROGRESS
         assert len(state.updates) == 1
         assert state.updates[0].message == "Test update"
         assert state.metadata.user_id == "test_user"
@@ -123,7 +121,6 @@ class TestThreadManager:
         result = await thread_manager.update_thread_status("test_thread", ThreadStatus.DONE)
 
         assert result is True
-        thread_manager._redis_client.set.assert_called()
         thread_manager._redis_client.hset.assert_called()
 
     @pytest.mark.asyncio
@@ -195,10 +192,10 @@ class TestProcessAgentTurn:
     async def test_process_agent_turn_success(self):
         """Test successful agent turn processing."""
         with (
-            patch("redis_sre_agent.core.tasks.get_redis_client") as mock_get_redis,
-            patch("redis_sre_agent.core.tasks.ThreadManager") as mock_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_manager_class,
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
-            patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
+            patch("redis_sre_agent.core.docket_tasks.run_agent_with_progress") as mock_run_agent,
             patch(
                 "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
             ) as mock_get_knowledge_agent,
@@ -213,7 +210,6 @@ class TestProcessAgentTurn:
             mock_manager_class.return_value = mock_manager
             mock_manager.get_thread_state.return_value = ThreadState(
                 thread_id="test_thread",
-                status=ThreadStatus.QUEUED,
                 context={"messages": []},
                 metadata=ThreadMetadata(),
             )
@@ -262,8 +258,8 @@ class TestProcessAgentTurn:
     async def test_process_agent_turn_thread_not_found(self):
         """Test agent turn processing with non-existent thread."""
         with (
-            patch("redis_sre_agent.core.tasks.get_redis_client") as mock_get_redis,
-            patch("redis_sre_agent.core.tasks.ThreadManager") as mock_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_manager_class,
         ):
             mock_redis = AsyncMock()
             mock_get_redis.return_value = mock_redis
@@ -282,9 +278,10 @@ class TestProcessAgentTurn:
     async def test_process_agent_turn_agent_error(self):
         """Test agent turn processing with agent error."""
         with (
-            patch("redis_sre_agent.core.tasks.ThreadManager") as mock_thread_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_thread_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.TaskManager") as mock_task_manager_class,
             patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
-            patch("redis_sre_agent.core.tasks.run_agent_with_progress") as mock_run_agent,
+            patch("redis_sre_agent.core.docket_tasks.run_agent_with_progress") as mock_run_agent,
             patch(
                 "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
             ) as mock_get_knowledge_agent,
@@ -294,7 +291,6 @@ class TestProcessAgentTurn:
             mock_manager = AsyncMock()
             mock_manager.get_thread_state.return_value = ThreadState(
                 thread_id="test_thread",
-                status=ThreadStatus.QUEUED,
                 context={"messages": []},
                 metadata=ThreadMetadata(),
             )
@@ -302,6 +298,15 @@ class TestProcessAgentTurn:
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_error.return_value = True
             mock_thread_manager_class.return_value = mock_manager
+
+            # Mock task manager to avoid real Redis writes
+            mock_task_manager = AsyncMock()
+            mock_task_manager.create_task.return_value = "task-1"
+            mock_task_manager.update_task_status.return_value = True
+            mock_task_manager.add_task_update.return_value = True
+            mock_task_manager.set_task_error.return_value = True
+            mock_task_manager.get_task_state.return_value = None
+            mock_task_manager_class.return_value = mock_task_manager
 
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
@@ -423,14 +428,12 @@ class TestThreadStateModels:
         """Test ThreadState model creation."""
         state = ThreadState(
             thread_id="test_thread",
-            status=ThreadStatus.IN_PROGRESS,
             context={"query": "test"},
             updates=[ThreadUpdate(message="Test update")],
             action_items=[ThreadActionItem(title="Test", description="Test")],
         )
 
         assert state.thread_id == "test_thread"
-        assert state.status == ThreadStatus.IN_PROGRESS
         assert state.context["query"] == "test"
         assert len(state.updates) == 1
         assert len(state.action_items) == 1

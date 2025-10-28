@@ -1,7 +1,7 @@
 """Unit tests for schedule storage functionality."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -191,8 +191,21 @@ class TestScheduleQueries:
             "next_run_at": (current_time + timedelta(hours=1)).isoformat(),
         }
 
-        with patch("redis_sre_agent.core.schedule_storage.list_schedules") as mock_list:
+        with (
+            patch("redis_sre_agent.core.schedule_storage.list_schedules") as mock_list,
+            patch("redis_sre_agent.core.schedule_storage.get_schedules_index") as mock_get_index,
+        ):
             mock_list.return_value = [future_schedule]
+            mock_index = MagicMock()
+            mock_index.__aenter__.return_value = mock_index
+            mock_index.__aexit__.return_value = None
+
+            # Ensure index path returns no results for isolation
+            async def _q(_):
+                return []
+
+            mock_index.query = _q
+            mock_get_index.return_value = mock_index
 
             result = await find_schedules_needing_runs(current_time)
 
@@ -211,8 +224,20 @@ class TestScheduleQueries:
             "next_run_at": (current_time - timedelta(minutes=30)).isoformat(),
         }
 
-        with patch("redis_sre_agent.core.schedule_storage.list_schedules") as mock_list:
+        with (
+            patch("redis_sre_agent.core.schedule_storage.list_schedules") as mock_list,
+            patch("redis_sre_agent.core.schedule_storage.get_schedules_index") as mock_get_index,
+        ):
             mock_list.return_value = [disabled_schedule]
+            mock_index = MagicMock()
+            mock_index.__aenter__.return_value = mock_index
+            mock_index.__aexit__.return_value = None
+
+            async def _q(_):
+                return []
+
+            mock_index.query = _q
+            mock_get_index.return_value = mock_index
 
             result = await find_schedules_needing_runs(current_time)
 

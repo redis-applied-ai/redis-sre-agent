@@ -6,14 +6,14 @@ the agent's tools connect to THAT instance, not the application's Redis.
 
 import pytest
 
-from redis_sre_agent.api.instances import (
+from redis_sre_agent.core.docket_tasks import process_agent_turn
+from redis_sre_agent.core.instances import (
     RedisInstance,
     get_instances_from_redis,
     save_instances_to_redis,
 )
 from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.tasks import process_agent_turn
-from redis_sre_agent.core.thread_state import ThreadManager
+from redis_sre_agent.core.threads import ThreadManager
 
 
 @pytest.fixture
@@ -36,6 +36,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
         environment="production",
         usage="cache",
         description="Test Redis Enterprise instance",
+        instance_type="redis_enterprise",
     )
 
     # Store instance using the correct API format
@@ -194,15 +195,24 @@ async def test_instance_context_passed_to_agent(thread_manager, async_redis_clie
         environment="test",
         usage="cache",
         description="Test instance for context passing",
+        instance_type="oss_single",
     )
 
     instance_key = RedisKeys.instance(test_instance.id)
+    # Extract secret value from SecretStr for Redis storage
+    from pydantic import SecretStr
+
+    connection_url_value = (
+        test_instance.connection_url.get_secret_value()
+        if isinstance(test_instance.connection_url, SecretStr)
+        else test_instance.connection_url
+    )
     await async_redis_client.hset(
         instance_key,
         mapping={
             "id": test_instance.id,
             "name": test_instance.name,
-            "connection_url": test_instance.connection_url,
+            "connection_url": connection_url_value,
             "environment": test_instance.environment,
             "usage": test_instance.usage,
             "description": test_instance.description,

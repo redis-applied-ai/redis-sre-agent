@@ -1,5 +1,7 @@
 """Tests for Redis CLI diagnostics tool provider."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from testcontainers.redis import RedisContainer
 
@@ -37,7 +39,7 @@ async def test_create_tool_schemas(redis_url):
     async with RedisCliToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
 
-        assert len(schemas) == 13  # All 13 diagnostic tools (10 original + 3 new)
+        assert len(schemas) == 11  # All 11 diagnostic tools
 
         # Check tool names
         tool_names = [schema.name for schema in schemas]
@@ -46,8 +48,7 @@ async def test_create_tool_schemas(redis_url):
         assert any("acl_log" in name for name in tool_names)
         assert any("config_get" in name for name in tool_names)
         assert any("client_list" in name for name in tool_names)
-        assert any("memory_doctor" in name for name in tool_names)
-        assert any("latency_doctor" in name for name in tool_names)
+        # NOTE: memory_doctor and latency_doctor removed (not available in Redis Cloud)
         assert any("sample_keys" in name for name in tool_names)
         assert any("search_indexes" in name for name in tool_names)
         assert any("search_index_info" in name for name in tool_names)
@@ -163,7 +164,7 @@ async def test_resolve_tool_call_slowlog(redis_url):
 @pytest.mark.asyncio
 async def test_provider_with_redis_instance(redis_url):
     """Test that provider works with a Redis instance context."""
-    from redis_sre_agent.api.instances import RedisInstance
+    from redis_sre_agent.core.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
@@ -172,6 +173,7 @@ async def test_provider_with_redis_instance(redis_url):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     async with RedisCliToolProvider(redis_instance=redis_instance) as provider:
@@ -503,3 +505,86 @@ async def test_search_index_info_error_handling():
         assert "error" in result
         assert result["index_name"] == "test_index"
         assert "note" in result
+
+
+@pytest.mark.asyncio
+async def test_system_hosts_cluster_parsing():
+    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+        cluster_nodes = (
+            "a1 10.0.0.1:6379@16379 master - 0 0 1 connected 0-5460\n"
+            "b2 10.0.0.2:6379@16379 slave a1 0 0 2 connected\n"
+            "c3 [2001:db8::1]:6379@16379 master - 0 0 3 connected 5461-10922\n"
+        )
+        fake_client = AsyncMock()
+        fake_client.cluster = AsyncMock(return_value=cluster_nodes)
+        with patch.object(provider, "get_client", return_value=fake_client):
+            hosts = await provider.system_hosts()
+            hs = {(h.host, h.port, h.role) for h in hosts}
+            assert ("10.0.0.1", 6379, "cluster-master") in hs
+            assert ("10.0.0.2", 6379, "cluster-replica") in hs
+            assert ("2001:db8::1", 6379, "cluster-master") in hs
+
+
+@pytest.mark.asyncio
+async def test_system_hosts_replication_parsing():
+    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+        fake_client = AsyncMock()
+        # cluster nodes not available
+        fake_client.cluster = AsyncMock(side_effect=Exception("no cluster"))
+        fake_client.info = AsyncMock(
+            side_effect=lambda section=None: {
+                "role": "master",
+                "connected_slaves": 2,
+                "slave0": "ip=10.0.0.2,port=6380,state=online",
+                "slave1": {"ip": "10.0.0.3", "port": 6381},
+            }
+        )
+        with patch.object(provider, "get_client", return_value=fake_client):
+            hosts = await provider.system_hosts()
+            hs = {(h.host, h.port, h.role) for h in hosts}
+            assert ("10.0.0.2", 6380, "replica") in hs
+            assert ("10.0.0.3", 6381, "replica") in hs
+
+
+@pytest.mark.asyncio
+async def test_system_hosts_single_uses_laddr():
+    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+        fake_client = AsyncMock()
+        fake_client.cluster = AsyncMock(side_effect=Exception("no cluster"))
+        fake_client.info = AsyncMock(return_value={"role": "master", "connected_slaves": 0})
+        fake_client.client_id = AsyncMock(return_value=42)
+        fake_client.client_list = AsyncMock(
+            return_value=[{"id": 41}, {"id": 42, "laddr": "127.0.0.1:6379"}]
+        )
+        with patch.object(provider, "get_client", return_value=fake_client):
+            hosts = await provider.system_hosts()
+            assert hosts and hosts[0].host == "127.0.0.1"
+            assert hosts[0].role == "single"
+
+
+@pytest.mark.asyncio
+async def test_system_hosts_handles_errors():
+    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+        fake_client = AsyncMock()
+        fake_client.cluster = AsyncMock(side_effect=Exception("boom"))
+        fake_client.info = AsyncMock(side_effect=Exception("boom"))
+        fake_client.client_id = AsyncMock(side_effect=Exception("boom"))
+        with patch.object(provider, "get_client", return_value=fake_client):
+            hosts = await provider.system_hosts()
+            assert isinstance(hosts, list)
+
+
+@pytest.mark.asyncio
+async def test_system_hosts_fallbacks_to_connection_url():
+    async with RedisCliToolProvider(connection_url="redis://example-host:6380") as provider:
+        fake_client = AsyncMock()
+        fake_client.cluster = AsyncMock(side_effect=Exception("no cluster"))
+        fake_client.info = AsyncMock(side_effect=Exception("no info"))
+        fake_client.client_id = AsyncMock(side_effect=Exception("no id"))
+        fake_client.client_list = AsyncMock(side_effect=Exception("no list"))
+        with patch.object(provider, "get_client", return_value=fake_client):
+            hosts = await provider.system_hosts()
+            assert len(hosts) == 1
+            assert hosts[0].host == "example-host"
+            assert hosts[0].port == 6380
+            assert hosts[0].role == "single"

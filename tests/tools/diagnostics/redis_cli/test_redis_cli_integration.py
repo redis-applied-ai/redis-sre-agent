@@ -22,8 +22,8 @@ def redis_url(redis_container):
 @pytest.mark.asyncio
 async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
     """Test that Redis CLI provider loads correctly via ToolManager."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
@@ -32,6 +32,7 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     # Create settings with Redis CLI provider configured
@@ -56,8 +57,8 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
 
             # Check for Redis CLI tools
             redis_cli_tools = [n for n in tool_names if "redis_cli" in n]
-            assert len(redis_cli_tools) == 10, (
-                f"Expected 10 Redis CLI tools, got {len(redis_cli_tools)}"
+            assert len(redis_cli_tools) == 11, (
+                f"Expected 11 Redis CLI tools, got {len(redis_cli_tools)}"
             )
 
             # Check for specific tools
@@ -66,8 +67,7 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
             assert any("acl_log" in n for n in redis_cli_tools)
             assert any("config_get" in n for n in redis_cli_tools)
             assert any("client_list" in n for n in redis_cli_tools)
-            assert any("memory_doctor" in n for n in redis_cli_tools)
-            assert any("latency_doctor" in n for n in redis_cli_tools)
+            # NOTE: memory_doctor and latency_doctor removed (not available in Redis Cloud)
             assert any("cluster_info" in n for n in redis_cli_tools)
             assert any("replication_info" in n for n in redis_cli_tools)
             assert any("memory_stats" in n for n in redis_cli_tools)
@@ -79,8 +79,8 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
 @pytest.mark.asyncio
 async def test_redis_cli_tool_execution_via_manager(redis_url):
     """Test executing Redis CLI tools via ToolManager."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
@@ -89,6 +89,7 @@ async def test_redis_cli_tool_execution_via_manager(redis_url):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     settings = Settings()
@@ -126,8 +127,8 @@ async def test_redis_cli_tool_execution_via_manager(redis_url):
 @pytest.mark.asyncio
 async def test_redis_cli_with_redis_instance(redis_url):
     """Test Redis CLI provider with Redis instance context."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     settings = Settings()
     settings.tool_providers = [
@@ -146,6 +147,7 @@ async def test_redis_cli_with_redis_instance(redis_url):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     try:
@@ -156,7 +158,7 @@ async def test_redis_cli_with_redis_instance(redis_url):
 
             # Tools should be scoped to the Redis instance
             redis_cli_tools = [t for t in tools if "redis_cli" in t.name]
-            assert len(redis_cli_tools) == 10
+            assert len(redis_cli_tools) == 11
 
             # Tool names should include instance hash
             tool_name = redis_cli_tools[0].name
@@ -175,8 +177,8 @@ async def test_redis_cli_with_redis_instance(redis_url):
 @pytest.mark.asyncio
 async def test_multiple_providers_coexist(redis_url, monkeypatch):
     """Test that Redis CLI provider works alongside other providers."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     # Configure both Prometheus and Redis CLI providers
     settings = Settings()
@@ -195,6 +197,7 @@ async def test_multiple_providers_coexist(redis_url, monkeypatch):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     import redis_sre_agent.core.config as config_module
@@ -215,7 +218,7 @@ async def test_multiple_providers_coexist(redis_url, monkeypatch):
 
             assert len(knowledge_tools) > 0, "Knowledge base tools should be loaded"
             assert len(prometheus_tools) == 3, "Prometheus tools should be loaded"
-            assert len(redis_cli_tools) == 10, "Redis CLI tools should be loaded"
+            assert len(redis_cli_tools) == 11, "Redis CLI tools should be loaded"
 
     finally:
         config_module.settings = original_settings

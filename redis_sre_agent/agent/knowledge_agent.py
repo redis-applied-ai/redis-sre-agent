@@ -3,81 +3,23 @@ Knowledge-only SRE Agent optimized for general questions and knowledge base sear
 
 This agent is designed for queries that don't require specific Redis instance access,
 focusing on general SRE guidance, best practices, and knowledge base search.
+
+This agent uses the same ToolManager system as the main agent, but only loads
+knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus).
 """
 
 import logging
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.core.knowledge_helpers import (
-    get_all_document_fragments,
-    get_related_document_fragments,
-    ingest_sre_document_helper,
-    search_knowledge_base_helper,
-)
+from redis_sre_agent.tools.manager import ToolManager
 
 logger = logging.getLogger(__name__)
-
-
-# Tool wrappers with LLM-friendly docstrings
-# These call the helpers directly (not the tasks) to avoid retry parameter issues
-async def search_knowledge_base(
-    query: str,
-    category: Optional[str] = None,
-    limit: int = 5,
-) -> Dict[str, Any]:
-    """Search the SRE knowledge base for relevant information.
-
-    Use this tool to find solutions to problems, understand Redis features, or get
-    guidance on SRE best practices. The knowledge base contains runbooks, Redis
-    documentation, troubleshooting guides, and SRE procedures.
-
-    Args:
-        query: Search query string describing what you're looking for
-        category: Optional category filter (incident, maintenance, monitoring, etc.)
-        limit: Maximum number of results to return (default: 5)
-
-    Returns:
-        Dictionary with search results including titles, content snippets, and sources
-    """
-    return await search_knowledge_base_helper(query=query, category=category, limit=limit)
-
-
-async def ingest_sre_document(
-    title: str,
-    content: str,
-    source: str,
-    category: str = "general",
-    severity: str = "info",
-) -> Dict[str, Any]:
-    """Ingest a document into the SRE knowledge base.
-
-    Use this tool to add new runbooks, documentation, or troubleshooting guides
-    to the knowledge base so they can be searched and referenced later.
-
-    Args:
-        title: Document title (should be descriptive and searchable)
-        content: Full document content
-        source: Source of the document (e.g., "user-provided", "incident-123")
-        category: Document category (incident, runbook, monitoring, general, etc.)
-        severity: Document severity level (info, warning, critical)
-
-    Returns:
-        Dictionary with ingestion result including document_id and status
-    """
-    return await ingest_sre_document_helper(
-        title=title,
-        content=content,
-        source=source,
-        category=category,
-        severity=severity,
-    )
 
 
 # Knowledge-focused system prompt
@@ -110,6 +52,10 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 - Include relevant examples and use cases
 - Suggest follow-up questions or related topics when helpful
 
+## Command Guidance:
+- When suggesting actions involving commands, use real user-facing CLI commands or API requests.
+- Do NOT reference internal agent tool names (e.g., "run get_cluster_info"). Instead, show an equivalent `redis-cli` command or a `curl` example for a REST API where appropriate.
+
 Remember: You are the knowledge specialist - make the most of the available documentation and provide educational, actionable guidance."""
 
 
@@ -125,9 +71,13 @@ class KnowledgeAgentState(TypedDict):
 
 
 class KnowledgeOnlyAgent:
-    """LangGraph-based Knowledge-only SRE Agent optimized for general questions."""
+    """LangGraph-based Knowledge-only SRE Agent optimized for general questions.
 
-    def __init__(self, progress_callback=None):
+    This agent uses ToolManager to load only knowledge-related tools (no instance-specific tools).
+    It's designed for general Q&A when no Redis instance is specified.
+    """
+
+    def __init__(self, progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None):
         """Initialize the Knowledge-only SRE agent."""
         self.settings = settings
         self.progress_callback = progress_callback
@@ -138,24 +88,23 @@ class KnowledgeOnlyAgent:
             openai_api_key=self.settings.openai_api_key,
         )
 
-        # Knowledge-focused tools only
-        self.knowledge_tools = [
-            search_knowledge_base,
-            ingest_sre_document,
-            get_all_document_fragments,
-            get_related_document_fragments,
-        ]
+        # Tools will be loaded per-query using ToolManager (without redis_instance)
+        # This loads only the always-on providers (knowledge, utilities)
+        self.llm_with_tools = self.llm  # Will be rebound with tools per query
 
-        # Bind tools to LLM
-        self.llm_with_tools = self.llm.bind_tools(self.knowledge_tools)
+        logger.info("Knowledge-only agent initialized (tools loaded per-query)")
 
-        # Build the workflow
-        self.workflow = self._build_workflow()
+    def _build_workflow(self, tool_mgr: ToolManager) -> StateGraph:
+        """Build the LangGraph workflow for knowledge-only queries.
 
-        logger.info("Knowledge-only SRE agent initialized")
+        Args:
+            tool_mgr: ToolManager instance with knowledge tools loaded
+        """
 
-    def _build_workflow(self) -> StateGraph:
-        """Build the LangGraph workflow for knowledge-only queries."""
+        # Bind tools to LLM for this workflow
+        tools = tool_mgr.get_tools()
+        tool_schemas = [tool.to_openai_schema() for tool in tools]
+        llm_with_tools = self.llm.bind_tools(tool_schemas)
 
         async def agent_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
             """Main agent node for knowledge queries."""
@@ -164,12 +113,54 @@ class KnowledgeOnlyAgent:
 
             # Add system message if this is the first interaction
             if len(messages) == 1 and isinstance(messages[0], HumanMessage):
-                system_message = AIMessage(content=KNOWLEDGE_SYSTEM_PROMPT)
+                system_message = SystemMessage(content=KNOWLEDGE_SYSTEM_PROMPT)
                 messages = [system_message] + messages
 
             # Generate response with knowledge tools
+            # Sanitize message order to avoid sending orphan tool messages to OpenAI
+            def _sanitize_messages_for_llm(msgs: list[BaseMessage]) -> list[BaseMessage]:
+                if not msgs:
+                    return msgs
+                from langchain_core.messages import ToolMessage as _TM  # noqa: N814
+
+                seen_tool_ids = set()
+                clean: list[BaseMessage] = []
+                for m in msgs:
+                    if isinstance(m, AIMessage):
+                        try:
+                            for tc in getattr(m, "tool_calls", []) or []:
+                                if isinstance(tc, dict):
+                                    tid = tc.get("id") or tc.get("tool_call_id")
+                                    if tid:
+                                        seen_tool_ids.add(tid)
+                        except Exception:
+                            pass
+                        clean.append(m)
+                    elif isinstance(m, _TM) or getattr(m, "type", "") == "tool":
+                        tid = getattr(m, "tool_call_id", None)
+                        if tid and tid in seen_tool_ids:
+                            clean.append(m)
+                        else:
+                            continue
+                    else:
+                        clean.append(m)
+                while clean and (
+                    isinstance(clean[0], _TM) or getattr(clean[0], "type", "") == "tool"
+                ):
+                    clean = clean[1:]
+                return clean
+
+            messages = _sanitize_messages_for_llm(messages)
+
             try:
-                response = await self.llm_with_tools.ainvoke(messages)
+                response = await llm_with_tools.ainvoke(messages)
+                # Coerce non-Message responses (e.g., simple mocks) into AIMessage
+                if not isinstance(response, BaseMessage):
+                    content = getattr(response, "content", None)
+                    tool_calls = getattr(response, "tool_calls", None)
+                    response = AIMessage(
+                        content=str(content) if content is not None else "", tool_calls=tool_calls
+                    )
 
                 # Update iteration count
                 state["iteration_count"] = iteration_count + 1
@@ -209,7 +200,7 @@ class KnowledgeOnlyAgent:
                 return state
 
         async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
-            """Execute tools with error handling to prevent malformed messages."""
+            """Execute tools with error handling using ToolManager."""
             messages = state["messages"]
             last_message = messages[-1] if messages else None
 
@@ -219,14 +210,55 @@ class KnowledgeOnlyAgent:
                 return state
 
             try:
-                # Execute tools using ToolNode
-                tool_node = ToolNode(self.knowledge_tools)
-                result_state = await tool_node.ainvoke(state)
-                return result_state
+                # Execute tools using ToolManager
+                tool_results = await tool_mgr.execute_tool_calls(last_message.tool_calls)
+
+                # Convert results to ToolMessage format expected by LangGraph
+                from langchain_core.messages import ToolMessage
+
+                tool_messages = []
+                for tool_call, result in zip(last_message.tool_calls, tool_results):
+                    # Record knowledge sources when a knowledge search tool returns results
+                    try:
+                        tool_name = str(tool_call.get("name", ""))
+                        if tool_name.startswith("knowledge_") and "search" in tool_name:
+                            if isinstance(result, dict):
+                                res_list = result.get("results") or []
+                                fragments = []
+                                for doc in res_list:
+                                    if isinstance(doc, dict):
+                                        fragments.append(
+                                            {
+                                                "id": doc.get("id"),
+                                                "document_hash": doc.get("document_hash"),
+                                                "chunk_index": doc.get("chunk_index"),
+                                                "title": doc.get("title"),
+                                                "source": doc.get("source"),
+                                            }
+                                        )
+                                if fragments and self.progress_callback:
+                                    await self.progress_callback(
+                                        f"Found {len(fragments)} knowledge fragments",  # message
+                                        "knowledge_sources",  # update_type
+                                        {"fragments": fragments},  # metadata
+                                    )
+                    except Exception:
+                        # Don't let telemetry failures break tool handling
+                        pass
+
+                    tool_messages.append(
+                        ToolMessage(
+                            content=str(result),
+                            tool_call_id=tool_call["id"],
+                        )
+                    )
+
+                state["messages"] = messages + tool_messages
+                return state
+
             except Exception as e:
                 logger.error(f"Tool execution failed: {e}")
-                # Instead of adding a tool message (which would be malformed),
-                # add an AI message explaining the error
+                # Add an AI message explaining the error
                 error_message = AIMessage(
                     content=f"I encountered an error while searching the knowledge base: {str(e)}. "
                     "This may be because Redis is not available. Please ensure Redis is running, "
@@ -300,6 +332,13 @@ class KnowledgeOnlyAgent:
         if progress_callback:
             self.progress_callback = progress_callback
 
+        # Create ToolManager with only knowledge tools (no redis_instance)
+        tool_mgr = ToolManager(redis_instance=None)
+        logger.info(f"Loaded {len(tool_mgr.get_tools())} knowledge tools")
+
+        # Build workflow with tools
+        workflow = self._build_workflow(tool_mgr)
+
         # Create initial state with conversation history
         initial_messages = []
         if conversation_history:
@@ -319,7 +358,7 @@ class KnowledgeOnlyAgent:
         # Create MemorySaver for this query
         # Conversation history is managed by ThreadManager and passed via messages
         checkpointer = MemorySaver()
-        app = self.workflow.compile(checkpointer=checkpointer)
+        app = workflow.compile(checkpointer=checkpointer)
 
         # Configure thread for session persistence
         thread_config = {"configurable": {"thread_id": session_id}}
@@ -364,6 +403,44 @@ class KnowledgeOnlyAgent:
                 )
 
             return error_response
+
+    async def process_query_with_fact_check(
+        self,
+        query: str,
+        session_id: str,
+        user_id: str,
+        max_iterations: int = 5,
+        context: Optional[Dict[str, Any]] = None,
+        progress_callback=None,
+        conversation_history: Optional[List[BaseMessage]] = None,
+    ) -> str:
+        """Process a query with the same signature as the main agent.
+
+        This method exists for compatibility with the task system that expects
+        both agents to have the same interface. For the knowledge-only agent,
+        we don't need fact-checking since it only provides general guidance.
+
+        Args:
+            query: User's question or request
+            session_id: Session identifier
+            user_id: User identifier
+            max_iterations: Maximum number of agent iterations
+            context: Additional context (ignored for knowledge-only agent)
+            progress_callback: Optional callback for progress updates
+            conversation_history: Optional list of previous messages for context
+
+        Returns:
+            Agent's response as a string
+        """
+        # Simply delegate to process_query (no fact-checking needed for knowledge queries)
+        return await self.process_query(
+            query=query,
+            user_id=user_id,
+            session_id=session_id,
+            max_iterations=max_iterations,
+            progress_callback=progress_callback,
+            conversation_history=conversation_history,
+        )
 
 
 # Singleton instance for reuse

@@ -4,6 +4,7 @@ This provider uses the prometheus-api-client library to query Prometheus metrics
 It provides tools for instant queries, range queries, and metric discovery.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -13,8 +14,8 @@ from prometheus_api_client.utils import parse_datetime
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from redis_sre_agent.api.instances import RedisInstance
-from redis_sre_agent.tools.protocols import ToolProvider
+from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,8 @@ class PrometheusConfig(BaseSettings):
 
 
 class PrometheusToolProvider(ToolProvider):
+    # Declare capabilities so orchestrators can obtain a metrics provider via ToolManager
+    capabilities = {ToolCapability.METRICS}
     """Prometheus metrics provider using prometheus-api-client.
 
     Provides tools for querying Prometheus metrics, including:
@@ -340,6 +343,15 @@ class PrometheusToolProvider(ToolProvider):
                 filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
             else:
                 filtered_metrics = all_metrics
+
+            # Retry once if Prometheus just started and metrics aren't populated yet
+            if pattern and not filtered_metrics:
+                try:
+                    await asyncio.sleep(1)
+                    all_metrics = client.all_metrics()
+                    filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
+                except Exception:
+                    pass
 
             # If label filters provided, further filter by querying series
             if label_filters:

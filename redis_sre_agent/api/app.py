@@ -12,7 +12,8 @@ from redis_sre_agent.api.knowledge import router as knowledge_router
 from redis_sre_agent.api.metrics import router as metrics_router
 from redis_sre_agent.api.middleware import setup_middleware
 from redis_sre_agent.api.schedules import router as schedules_router
-from redis_sre_agent.api.tasks import router as tasks_router
+from redis_sre_agent.api.tasks_api import router as tasks_api_router
+from redis_sre_agent.api.threads import router as threads_router
 from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import cleanup_redis_connections, initialize_redis_infrastructure
@@ -54,7 +55,7 @@ async def lifespan(app: FastAPI):
         # Register SRE tasks with Docket
         # Note: The scheduler task is started by the worker, not the API
         try:
-            from redis_sre_agent.core.tasks import register_sre_tasks
+            from redis_sre_agent.core.docket_tasks import register_sre_tasks
 
             await register_sre_tasks()
             logger.info("✅ SRE tasks registered with Docket")
@@ -65,7 +66,7 @@ async def lifespan(app: FastAPI):
         _app_startup_state = redis_status
 
         # Log configuration (mask Redis URL credentials)
-        from redis_sre_agent.api.instances import mask_redis_url
+        from redis_sre_agent.core.instances import mask_redis_url
 
         logger.info(f"Redis URL: {mask_redis_url(settings.redis_url.get_secret_value())}")
         logger.info(f"Embedding model: {settings.embedding_model}")
@@ -116,8 +117,11 @@ app.include_router(health_router, prefix="/api/v1", tags=["Health"])
 app.include_router(metrics_router, prefix="/api/v1", tags=["Metrics"])
 app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
 app.include_router(knowledge_router, tags=["Knowledge"])
+# Mount the Threads/Tasks APIs under /api/v1
+app.include_router(threads_router, prefix="/api/v1", tags=["Threads"])
+app.include_router(tasks_api_router, prefix="/api/v1", tags=["Tasks"])
+
 app.include_router(schedules_router, tags=["Schedules"])
-app.include_router(tasks_router, prefix="/api/v1", tags=["Tasks"])
 app.include_router(websockets_router, prefix="/api/v1", tags=["WebSockets"])
 
 

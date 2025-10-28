@@ -1,0 +1,41 @@
+{
+  "uid": "redis-demo-logs",
+  "title": "Redis Demo Logs",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "overwrite": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "redis-demo logs",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 20, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=\"redis-demo\"}" }
+      ]
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "type": "dashboard",
+        "name": "Annotations & Alerts",
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)"
+      }
+    ]
+  }
+}

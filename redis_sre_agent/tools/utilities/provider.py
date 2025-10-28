@@ -7,6 +7,9 @@ and timezone conversions that the agent can use when analyzing data or respondin
 import ast
 import logging
 import operator
+import socket
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -146,6 +149,27 @@ class UtilitiesToolProvider(ToolProvider):
                     "required": ["datetime_str", "from_timezone", "to_timezone"],
                 },
             ),
+            ToolDefinition(
+                name=self._make_tool_name("http_head"),
+                description=(
+                    "Perform an HTTP HEAD request to validate a URL exists and is reachable. "
+                    "Returns status code, ok flag (2xx/3xx), and final URL after redirects."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "Absolute URL to validate (http or https)",
+                        },
+                        "timeout": {
+                            "type": "number",
+                            "description": "Timeout in seconds (default 2.0)",
+                        },
+                    },
+                    "required": ["url"],
+                },
+            ),
         ]
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
@@ -171,6 +195,9 @@ class UtilitiesToolProvider(ToolProvider):
                 from_timezone=args["from_timezone"],
                 to_timezone=args["to_timezone"],
             )
+        elif operation == "head":
+            return await self.http_head(url=args["url"], timeout=args.get("timeout", 2.0))
+
         else:
             raise ValueError(f"Unknown operation: {operation}")
 
@@ -360,6 +387,7 @@ class UtilitiesToolProvider(ToolProvider):
                 dt = from_tz.localize(dt)
             else:
                 # If it has timezone info, convert to source timezone first
+
                 dt = dt.astimezone(from_tz)
 
             # Convert to target timezone
@@ -446,6 +474,53 @@ class UtilitiesToolProvider(ToolProvider):
             raise ValueError(f"Unknown time unit: {unit}")
 
         return unit_map[unit]
+
+    async def http_head(self, url: str, timeout: Optional[float] = 2.0) -> Dict[str, Any]:
+        """Perform an HTTP HEAD request to validate a URL.
+
+        Returns dict with: ok (bool), status (int|None), final_url (str|None), error (optional)
+        """
+        try:
+            if not (
+                isinstance(url, str) and (url.startswith("http://") or url.startswith("https://"))
+            ):
+                return {
+                    "success": False,
+                    "ok": False,
+                    "status": None,
+                    "final_url": None,
+                    "error": "invalid_url",
+                }
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=timeout or 2.0) as resp:
+                status = getattr(resp, "status", None)
+                final_url = getattr(resp, "url", None)
+                ok = bool(status) and 200 <= int(status) < 400
+                return {
+                    "success": True,
+                    "ok": ok,
+                    "status": int(status or 0),
+                    "final_url": final_url,
+                }
+        except urllib.error.HTTPError as e:
+            try:
+                code = int(getattr(e, "code", 0) or 0)
+            except Exception:
+                code = 0
+            return {
+                "success": True,
+                "ok": 200 <= code < 400,
+                "status": code,
+                "final_url": getattr(e, "url", None),
+            }
+        except (urllib.error.URLError, socket.timeout, ValueError) as e:
+            return {
+                "success": False,
+                "ok": False,
+                "status": None,
+                "final_url": None,
+                "error": str(e),
+            }
 
     def _format_timedelta(self, delta: timedelta) -> str:
         """Format a timedelta in a human-readable way.

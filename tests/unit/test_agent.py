@@ -184,6 +184,7 @@ class TestAgentWorkflow:
             "iteration_count",
             "max_iterations",
             "instance_context",  # Added in the new implementation
+            "signals_envelopes",
         ]
 
         # AgentState is a TypedDict, so we can check __annotations__
@@ -246,22 +247,3 @@ class TestAgentRetryLogic:
             await agent._retry_with_backoff(always_failing_func, max_retries=2, initial_delay=0.01)
 
         assert call_count == 3  # Initial attempt + 2 retries
-
-    async def test_safety_evaluator_handles_errors_gracefully(self, mock_settings, mock_llm):
-        """Test safety evaluator handles errors gracefully and returns safe fallback."""
-        agent = SRELangGraphAgent()
-
-        # Mock LLM that returns unparseable content
-        mock_response = MagicMock()
-        mock_response.content = "unparseable content"
-
-        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-        agent.llm = mock_llm
-
-        result = await agent._safety_evaluate_response("test query", "test response")
-
-        # Should return safe=False for JSON parsing errors, indicating manual review needed
-        assert result["safe"] is False
-        assert len(result["violations"]) > 0
-        # Verify LLM was called (retry mechanism should work)
-        assert mock_llm.ainvoke.call_count >= 1

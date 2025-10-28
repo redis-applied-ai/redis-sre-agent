@@ -6,21 +6,22 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
-    from redis_sre_agent.models.provider_config import DeploymentProvidersConfig
+    pass
 
 # Load environment variables from .env file if it exists
 # In Docker/production, environment variables are set directly
-try:
-    from pathlib import Path
+from pathlib import Path
 
-    from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-    # Only load .env if it exists (for local development)
-    env_file = Path(".env")
-    if env_file.exists():
-        load_dotenv(dotenv_path=env_file)
-except ImportError:
-    pass  # dotenv not installed
+ENV_FILE_OPT: str | None = None
+TWENTY_MINUTES_IN_SECONDS = 1200
+
+# Only load .env if it exists (for local development)
+_env_path = Path(".env")
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+    ENV_FILE_OPT = str(_env_path)
 
 
 class Settings(BaseSettings):
@@ -31,28 +32,13 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Only hint an env file to pydantic if it actually exists
+        env_file=ENV_FILE_OPT,
         env_file_encoding="utf-8",
         extra="ignore",
         # Don't error if .env file is missing (Docker/production use env vars directly)
         env_ignore_empty=True,
     )
-
-    # ============================================================================
-    # Provider Configuration (NEW)
-    # ============================================================================
-    # Providers are now configured via DeploymentProvidersConfig
-    # This will be initialized from environment variables
-    _providers: Optional["DeploymentProvidersConfig"] = None
-
-    @property
-    def providers(self) -> "DeploymentProvidersConfig":
-        """Get provider configuration (lazy-loaded from environment)."""
-        if self._providers is None:
-            from ..models.provider_config import DeploymentProvidersConfig
-
-            self._providers = DeploymentProvidersConfig.from_env()
-        return self._providers
 
     # Application
     app_name: str = "Redis SRE Agent"
@@ -71,8 +57,13 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = Field(description="OpenAI API key")
-    openai_model: str = Field(default="o4-mini", description="OpenAI model for agent reasoning")
-    openai_model_mini: str = Field(default="o4-mini", description="OpenAI model for tools")
+    openai_model: str = Field(default="gpt-5", description="OpenAI model for agent reasoning")
+    openai_model_mini: str = Field(
+        default="gpt-5-mini", description="OpenAI model for knowledge/search and utility tasks"
+    )
+    openai_model_nano: str = Field(
+        default="gpt-5-nano", description="OpenAI model for very simple classification/triage"
+    )
 
     # Vector Search
     embedding_model: str = Field(
@@ -83,11 +74,29 @@ class Settings(BaseSettings):
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
     max_task_retries: int = Field(default=3, description="Maximum task retries")
-    task_timeout: int = Field(default=300, description="Task timeout in seconds")
+    task_timeout: int = Field(
+        default=TWENTY_MINUTES_IN_SECONDS, description="Task timeout in seconds"
+    )
 
     # Agent
     max_iterations: int = Field(
-        default=25, description="Maximum agent iterations (increased for complex investigations)"
+        default=50,
+        description="Maximum reasoning iterations (LLM message cycles) for the main agent",
+    )
+    max_tool_calls_per_stage: int = Field(
+        default=3,
+        description="Maximum knowledge/tool calls per subgraph stage (e.g., per-topic research budget)",
+    )
+    max_recommendation_topics: int = Field(
+        default=3,
+        description="Maximum number of topics to run recommendation workers for",
+    )
+    max_rejections: int = Field(
+        default=1,
+        description="Maximum number of correction attempts triggered by safety or fact-checking per query",
+    )
+    recursion_limit: int = Field(
+        default=100, description="LangGraph recursion limit for complex workflows"
     )
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
 
@@ -97,6 +106,9 @@ class Settings(BaseSettings):
         default=1.0, description="Initial delay for LLM retries (seconds)"
     )
     llm_backoff_factor: float = Field(default=2.0, description="Backoff factor for LLM retries")
+
+    # LLM Request Timeout (seconds)
+    llm_timeout: float = Field(default=180.0, description="HTTP timeout for LLM requests (seconds)")
 
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")
@@ -112,6 +124,8 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider",
             "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider",
+            "redis_sre_agent.tools.logs.loki.provider.LokiToolProvider",
+            "redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider",
         ],
         description="Enabled tool providers (fully qualified class paths). "
         "Example: redis_sre_agent.tools.metrics.prometheus.PrometheusToolProvider",

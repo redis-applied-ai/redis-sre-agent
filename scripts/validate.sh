@@ -67,9 +67,9 @@ main() {
     log "Checking core services..."
 
     # Check SRE Agent API
-    if check_service "SRE Agent API" "http://localhost:8000/health"; then
+    if check_service "SRE Agent API" "http://localhost:8000/api/v1/health"; then
         # Check detailed health
-        local health_status=$(curl -s "http://localhost:8000/health" | jq -r '.redis_connection // "unknown"' 2>/dev/null || echo "unknown")
+        local health_status=$(curl -s "http://localhost:8000/api/v1/health" | jq -r '.redis_connection // "unknown"' 2>/dev/null || echo "unknown")
         if [ "$health_status" = "available" ]; then
             success "SRE Agent health check passed"
         else

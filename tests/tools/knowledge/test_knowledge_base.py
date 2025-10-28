@@ -20,7 +20,7 @@ def test_knowledge_provider_tool_schemas():
     schemas = provider.create_tool_schemas()
 
     # Should have 2 tools
-    assert len(schemas) == 2
+    assert len(schemas) == 4  # search, ingest, get_all_fragments, get_related_fragments
 
     # All should be ToolDefinition objects
     for schema in schemas:
@@ -48,8 +48,10 @@ def test_knowledge_provider_search_schema():
     assert "query" in search_schema.parameters["required"]
 
     # Check optional fields
-    assert "category" in search_schema.parameters["properties"]
-    assert "limit" in search_schema.parameters["properties"]
+    props = search_schema.parameters["properties"]
+    assert "category" in props
+    assert "limit" in props
+    assert "distance_threshold" in props
 
 
 def test_knowledge_provider_ingest_schema():
@@ -105,4 +107,4 @@ async def test_knowledge_provider_context_manager():
 
         # Should be able to create schemas
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 2
+        assert len(schemas) == 4  # search, ingest, get_all_fragments, get_related_fragments

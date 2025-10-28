@@ -17,7 +17,7 @@ import statistics
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from redis_sre_agent.core.tasks import search_knowledge_base
+from redis_sre_agent.core.docket_tasks import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 
@@ -494,3 +494,39 @@ def get_redis_retrieval_test_cases() -> List[RetrievalTestCase]:
     ]
 
     return test_cases
+
+
+def get_rladmin_retrieval_test_cases() -> List[RetrievalTestCase]:
+    """Small set of retrieval test cases focused on rladmin commands."""
+    return [
+        RetrievalTestCase(
+            query="rladmin failover database shards",
+            relevant_docs=["rladmin failover"],
+            description="Finds the rladmin command to fail over primary shards to replicas",
+            difficulty="easy",
+        ),
+        RetrievalTestCase(
+            query="rladmin bind endpoint policy",
+            relevant_docs=["rladmin bind"],
+            description="Finds docs about managing endpoint proxy policy using rladmin bind",
+            difficulty="medium",
+        ),
+    ]
+
+
+def get_admin_api_retrieval_test_cases() -> List[RetrievalTestCase]:
+    """Small set of retrieval test cases focused on Redis Enterprise Admin API."""
+    return [
+        RetrievalTestCase(
+            query="redis enterprise admin api get databases",
+            relevant_docs=["Database requests"],
+            description="Should retrieve the bdbs index page documenting GET /v1/bdbs",
+            difficulty="easy",
+        ),
+        RetrievalTestCase(
+            query="redis enterprise admin api get nodes",
+            relevant_docs=["Node requests", "Nodes"],
+            description="Should retrieve the nodes index page documenting GET /v1/nodes",
+            difficulty="easy",
+        ),
+    ]

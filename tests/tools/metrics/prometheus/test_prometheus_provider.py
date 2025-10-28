@@ -200,7 +200,7 @@ async def test_query_nonexistent_metric(prometheus_config):
 @pytest.mark.asyncio
 async def test_provider_with_redis_instance(prometheus_config):
     """Test that provider works with a Redis instance context."""
-    from redis_sre_agent.api.instances import RedisInstance
+    from redis_sre_agent.core.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
@@ -209,6 +209,7 @@ async def test_provider_with_redis_instance(prometheus_config):
         environment="test",
         usage="cache",
         description="Test Redis instance",
+        instance_type="oss_single",
     )
 
     async with PrometheusToolProvider(
@@ -289,3 +290,40 @@ async def test_query_range_invalid_end_time(prometheus_config):
         assert result["query"] == "up"
         assert result["start_time"] == "5m"
         assert result["end_time"] == "invalid_time_format"
+
+
+@pytest.mark.asyncio
+async def test_search_metrics_with_label_filters_success(prometheus_config):
+    """Search with label filters should return metrics that match labels.
+
+    Prometheus self-scrape uses job="prometheus" and instance="localhost:9090".
+    """
+    async with PrometheusToolProvider(config=prometheus_config) as provider:
+        result = await provider.search_metrics(pattern="up", label_filters={"job": "prometheus"})
+
+        assert result["status"] == "success"
+        assert "metrics" in result
+        # The 'up' metric should be present when filtered by job
+        assert "up" in result["metrics"]
+
+
+@pytest.mark.asyncio
+async def test_search_metrics_with_label_filters_no_match(prometheus_config):
+    """Label filters that don't match should return an empty list (but success)."""
+    async with PrometheusToolProvider(config=prometheus_config) as provider:
+        result = await provider.search_metrics(
+            pattern="up", label_filters={"job": "does_not_exist"}
+        )
+
+        assert result["status"] == "success"
+        assert result["metrics"] == []
+        assert result["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_tool_call_unknown_operation(prometheus_config):
+    """Unknown operation should raise ValueError from resolve_tool_call."""
+    async with PrometheusToolProvider(config=prometheus_config) as provider:
+        bad_tool = provider._make_tool_name("unknown_op")
+        with pytest.raises(ValueError):
+            await provider.resolve_tool_call(tool_name=bad_tool, args={})

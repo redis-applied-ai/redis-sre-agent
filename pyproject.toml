@@ -20,7 +20,7 @@ dependencies = [
     "openai>=1.0.0",
     # Redis and vector search
     "redis>=4.5.0",
-    "redisvl>=0.6.0,<0.8.0",
+    "redisvl>=0.9.0,<1.0",
     "sentence-transformers>=2.2.2",
     # Background tasks (Docket instead of Prefect)
     "pydocket>=0.7.0",
@@ -51,6 +51,7 @@ dependencies = [
     # Optional integrations (remove Slack, add monitoring tools)
     "boto3>=1.34.0", # For AWS integrations
     "prometheus-api-client>=0.6.0",
+    "rich>=14.1.0",
 ]
 
 [project.scripts]
@@ -81,6 +82,8 @@ dev-dependencies = [
     "pre-commit>=3.6.0",
     "safety>=3.0.0",
     "bandit>=1.7.0",
+    # OpenAPI client generator
+    "openapi-python-client>=0.21.0",
 ]
 
 [tool.pytest.ini_options]
@@ -99,6 +102,12 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+extend-exclude = [
+    "redis-docs",
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client",
+    "source_documents",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]

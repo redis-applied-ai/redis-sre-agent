@@ -1,8 +1,7 @@
 """Redis connection management - no caching to avoid event loop issues."""
 
-import asyncio
 import logging
-from typing import Any, Callable, List, Optional
+from typing import Optional
 
 from redis.asyncio import Redis
 from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
@@ -17,6 +16,11 @@ logger = logging.getLogger(__name__)
 SRE_KNOWLEDGE_INDEX = "sre_knowledge"
 METRICS_INDEX = "sre_metrics"
 SRE_SCHEDULES_INDEX = "sre_schedules"
+
+# Threads index
+SRE_THREADS_INDEX = "sre_threads"
+# Tasks index
+SRE_TASKS_INDEX = "sre_tasks"
 
 # Schema definitions
 SRE_KNOWLEDGE_SCHEMA = {
@@ -137,6 +141,38 @@ SRE_SCHEDULES_SCHEMA = {
     ],
 }
 
+SRE_THREADS_SCHEMA = {
+    "index": {
+        "name": SRE_THREADS_INDEX,
+        "prefix": f"{SRE_THREADS_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "subject", "type": "text"},
+        {"name": "user_id", "type": "tag"},
+        {"name": "instance_id", "type": "tag"},
+        {"name": "priority", "type": "numeric"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "updated_at", "type": "numeric"},
+    ],
+}
+
+SRE_TASKS_SCHEMA = {
+    "index": {
+        "name": SRE_TASKS_INDEX,
+        "prefix": f"{SRE_TASKS_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "status", "type": "tag"},
+        {"name": "subject", "type": "text"},
+        {"name": "user_id", "type": "tag"},
+        {"name": "thread_id", "type": "tag"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "updated_at", "type": "numeric"},
+    ],
+}
+
 
 def get_redis_client(url: Optional[str] = None) -> Redis:
     """Get Redis client (creates fresh client to avoid event loop issues)."""
@@ -149,46 +185,25 @@ def get_redis_client(url: Optional[str] = None) -> Redis:
     )
 
 
-class _AsyncVectorizerProxy:
-    """Proxy providing an awaitable embed_many while delegating other attributes."""
-
-    def __init__(self, inner: Any):
-        self._inner = inner
-
-    async def embed_many(self, texts: List[str], **kwargs):
-        # Prefer embed_many if available, else try known sync methods
-        method: Optional[Callable[..., Any]] = None
-        for name in ("embed_many", "embed_texts", "embed"):
-            if hasattr(self._inner, name):
-                method = getattr(self._inner, name)
-                break
-        if method is None:
-            raise AttributeError("Vectorizer has no embedding method")
-        return await asyncio.to_thread(method, texts, **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
-
-    def __eq__(self, other: Any) -> bool:
-        # Allow equality checks against the inner mock used in unit tests
-        return other is self._inner or other == self._inner
-
-
 def get_vectorizer() -> OpenAITextVectorizer:
-    """Get OpenAI vectorizer with Redis caching (creates fresh to avoid event loop issues).
+    """Get OpenAI vectorizer with Redis-backed embeddings cache.
 
-    Additionally, make ``embed_many`` awaitable on the instance so callers can
-    use ``await vectorizer.embed_many([...])``. This preserves backward
-    compatibility for unit tests that expect the raw OpenAITextVectorizer
-    instance while enabling async integration tests to ``await`` the call.
+    Returns the native vectorizer; callers should use aembed/aembed_many.
     """
-    cache = EmbeddingsCache(redis_url=settings.redis_url.get_secret_value())
-    inner = OpenAITextVectorizer(
+    # Build Redis URL with password if needed (ensure cache can auth)
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    # Name the cache to keep a stable key namespace
+    cache = EmbeddingsCache(name="sre_embeddings_cache", redis_url=redis_url)
+
+    return OpenAITextVectorizer(
         model=settings.embedding_model,
         cache=cache,
         api_config={"api_key": settings.openai_api_key},
     )
-    return _AsyncVectorizerProxy(inner)
 
 
 async def get_knowledge_index() -> AsyncSearchIndex:
@@ -211,6 +226,37 @@ async def get_knowledge_index() -> AsyncSearchIndex:
     # Create index with the shared client
     index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
 
+    return index
+
+
+async def get_tasks_index() -> AsyncSearchIndex:
+    """Get SRE tasks index (async)."""
+    from redisvl.schema import IndexSchema
+
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_TASKS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
+async def get_threads_index() -> AsyncSearchIndex:
+    """Get SRE threads/tasks index (async)."""
+    from redisvl.schema import IndexSchema
+
+    # Build Redis URL with password if needed
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_THREADS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
     return index
 
 
@@ -289,6 +335,24 @@ async def create_indices() -> bool:
             logger.info(f"Created schedules index: {SRE_SCHEDULES_INDEX}")
         else:
             logger.info(f"Schedules index already exists: {SRE_SCHEDULES_INDEX}")
+
+        # Create threads index
+        threads_index = await get_threads_index()
+        threads_exists = await threads_index.exists()
+        if not threads_exists:
+            await threads_index.create()
+            logger.info(f"Created threads index: {SRE_THREADS_INDEX}")
+        else:
+            logger.info(f"Threads index already exists: {SRE_THREADS_INDEX}")
+
+        # Create tasks index
+        tasks_index = await get_tasks_index()
+        tasks_exists = await tasks_index.exists()
+        if not tasks_exists:
+            await tasks_index.create()
+            logger.info(f"Created tasks index: {SRE_TASKS_INDEX}")
+        else:
+            logger.info(f"Tasks index already exists: {SRE_TASKS_INDEX}")
 
         return True
     except Exception as e:

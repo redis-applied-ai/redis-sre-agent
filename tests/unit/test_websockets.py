@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.api.websockets import TaskStreamManager
-from redis_sre_agent.core.thread_state import ThreadState, ThreadStatus, ThreadUpdate
+from redis_sre_agent.core.threads import ThreadState, ThreadUpdate
 
 
 class TestTaskStreamManager:
@@ -52,6 +52,32 @@ class TestTaskStreamManager:
 
             # Verify TTL was set
             mock_redis.expire.assert_called_once_with(stream_key, 86400)
+
+    @pytest.mark.asyncio
+    async def test_publish_task_update_with_duplicate_keys(self, stream_manager):
+        """Ensure duplicate 'update_type'/'thread_id' keys in data don't break publish."""
+        mock_redis = AsyncMock(spec=Redis)
+        mock_redis.xadd = AsyncMock(return_value=b"1234567890-1")
+        mock_redis.expire = AsyncMock(return_value=True)
+
+        with patch.object(
+            stream_manager, "_get_client", new_callable=AsyncMock, return_value=mock_redis
+        ):
+            data = {
+                "update_type": "progress",  # duplicate with param
+                "thread_id": "wrong_thread",  # duplicate with param
+                "status": "running",
+            }
+            result = await stream_manager.publish_task_update("test_thread", "thread_update", data)
+
+            assert result is True
+
+            # Verify xadd was called and param values override data duplicates
+            call_args = mock_redis.xadd.call_args
+            stream_data = call_args[0][1]
+            assert stream_data["update_type"] == "thread_update"
+            assert stream_data["thread_id"] == "test_thread"
+            assert stream_data["status"] == "running"
 
     @pytest.mark.asyncio
     async def test_publish_task_update_failure(self, stream_manager):
@@ -163,7 +189,6 @@ class TestWebSocketEndpoint:
         # Mock thread state
         mock_thread_state = ThreadState(
             thread_id=thread_id,
-            status=ThreadStatus.IN_PROGRESS,
             updates=[
                 ThreadUpdate(message="Processing...", update_type="progress"),
                 ThreadUpdate(message="Task started", update_type="info"),
@@ -191,7 +216,6 @@ class TestWebSocketEndpoint:
 
                 assert data["update_type"] == "initial_state"
                 assert data["thread_id"] == thread_id
-                assert data["status"] == "in_progress"
                 assert len(data["updates"]) == 2
                 assert data["updates"][0]["message"] == "Processing..."  # Most recent first
 
@@ -244,34 +268,9 @@ class TestThreadManagerIntegration:
     """Test integration between ThreadManager and WebSocket streams."""
 
     @pytest.mark.asyncio
-    async def test_thread_status_update_publishes_stream(self):
-        """Test that thread status updates are published to streams."""
-        from redis_sre_agent.core.thread_state import ThreadManager
-
-        thread_manager = ThreadManager()
-        thread_id = "test_thread"
-
-        mock_redis = AsyncMock()
-        mock_stream_manager = AsyncMock()
-
-        with (
-            patch.object(thread_manager, "_get_client", return_value=mock_redis),
-            patch(
-                "redis_sre_agent.api.websockets.get_stream_manager",
-                return_value=mock_stream_manager,
-            ),
-        ):
-            await thread_manager.update_thread_status(thread_id, ThreadStatus.DONE)
-
-            # Verify stream update was published
-            mock_stream_manager.publish_task_update.assert_called_once_with(
-                thread_id, "status_change", {"status": "done", "message": "Status changed to done"}
-            )
-
-    @pytest.mark.asyncio
     async def test_thread_update_publishes_stream(self):
         """Test that thread updates are published to streams."""
-        from redis_sre_agent.core.thread_state import ThreadManager
+        from redis_sre_agent.core.threads import ThreadManager
 
         thread_manager = ThreadManager()
         thread_id = "test_thread"

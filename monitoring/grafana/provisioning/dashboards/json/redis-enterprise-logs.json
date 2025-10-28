@@ -1,0 +1,95 @@
+{
+  "uid": "redis-enterprise-logs",
+  "title": "Redis Enterprise Nodes Logs",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "overwrite": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "All Redis Enterprise nodes",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=~\"redis-enterprise-node.*\"}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "redis-enterprise-node1 logs",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=\"redis-enterprise-node1\"}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "redis-enterprise-node2 logs",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=\"redis-enterprise-node2\"}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "redis-enterprise-node3 logs",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=\"redis-enterprise-node3\"}" }
+      ]
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "type": "dashboard",
+        "name": "Annotations & Alerts",
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)"
+      }
+    ]
+  }
+}

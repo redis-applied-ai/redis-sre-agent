@@ -16,6 +16,20 @@ A LangGraph-based Redis SRE Agent for intelligent infrastructure monitoring and 
 - **Redis Infrastructure**: Vector search (RedisVL) + task queue + caching + raw metrics storage
 - **FastAPI**: REST endpoints for agent queries and system status
 
+
+## Reasoning flow (topics-based map/reduce)
+
+The agent uses a topics-based fork/join workflow to keep outputs grounded and actionable:
+
+1. Collect diagnostic signals from tools as structured envelopes
+2. Extract distinct topics via structured LLM output (Topic list)
+3. Fork a short, per-topic recommendation worker that may use knowledge_* tools
+4. Compose a final operator-facing Markdown that summarizes findings and organizes per-topic plans
+
+Notes:
+- The final composer accepts both per_topic and per_problem keys (for back-compat), but new paths write to per_topic
+- Action de-duplication can be layered in the reducer as a future enhancement
+
 ## Quick Start
 
 ### Prerequisites
@@ -43,7 +57,7 @@ docker run -d -p 6379:6379 redis:8-alpine
 uv run python scripts/seed.py
 
 # Start worker (Terminal 1)
-uv run python -m redis_sre_agent.worker
+uv run redis-sre-agent worker
 
 # Start API (Terminal 2)
 uv run fastapi dev redis_sre_agent/api/app.py
@@ -66,6 +80,22 @@ curl -X POST http://localhost:8000/api/v1/tasks/triage \\
 
 # Check task status
 curl http://localhost:8000/api/v1/tasks/{thread_id}
+```
+
+
+**CLI (schedule)**:
+
+Use the singular subcommand `schedule`.
+
+```
+# List schedules
+uv run redis-sre-agent schedule list
+
+# Get a schedule by ID
+uv run redis-sre-agent schedule get <schedule_id>
+
+# Show recent runs for a schedule (includes task_id and thread_id)
+uv run redis-sre-agent schedule runs <schedule_id>
 ```
 
 ## Configuration

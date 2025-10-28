@@ -281,7 +281,7 @@ async def _save_runbook(runbook, output_file: Optional[str], topic: str) -> str:
 
 async def _ingest_runbook(runbook):
     """Ingest runbook into the knowledge base."""
-    from redis_sre_agent.core.tasks import ingest_sre_document
+    from redis_sre_agent.core.docket_tasks import ingest_sre_document
 
     await ingest_sre_document(
         title=runbook.title,

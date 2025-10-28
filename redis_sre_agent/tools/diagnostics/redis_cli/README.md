@@ -21,7 +21,7 @@ async with RedisCliToolProvider(connection_url="redis://localhost:6379") as prov
 ### With Redis Instance
 
 ```python
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 
 redis_instance = RedisInstance(
     id="prod-cache",

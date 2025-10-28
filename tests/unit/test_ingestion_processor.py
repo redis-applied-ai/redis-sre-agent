@@ -264,6 +264,9 @@ class TestIngestionPipeline:
                 return b"\x01\x02\x03"  # Mock binary embedding
             return [0.1, 0.2, 0.3]
 
+        mock_vectorizer.aembed_many = AsyncMock(side_effect=mock_embed_many)
+        mock_vectorizer.aembed = AsyncMock(side_effect=mock_embed)
+        # Keep sync-compatible mocks in case other code uses them
         mock_vectorizer.embed_many = AsyncMock(side_effect=mock_embed_many)
         mock_vectorizer.embed = mock_embed
 
@@ -478,7 +481,7 @@ class TestIngestionPipeline:
         assert result == 2  # Two chunks indexed
 
         # Verify embeddings were generated
-        mock_vectorizer.embed_many.assert_called_once_with(
+        mock_vectorizer.aembed_many.assert_called_once_with(
             ["First chunk content", "Second chunk content"]
         )
 
@@ -506,7 +509,7 @@ class TestIngestionPipeline:
         result = await pipeline._index_chunks([], mock_index, mock_vectorizer)
 
         assert result == 0
-        mock_vectorizer.embed_many.assert_not_called()
+        mock_vectorizer.aembed_many.assert_not_called()
         mock_index.load.assert_not_called()
 
     @pytest.mark.asyncio

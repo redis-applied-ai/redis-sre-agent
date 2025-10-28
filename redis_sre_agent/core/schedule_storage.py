@@ -4,9 +4,105 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+from redisvl.query import BaseQuery, FilterQuery
+
 from ..core.redis import get_redis_client, get_schedules_index
+from .keys import RedisKeys
 
 logger = logging.getLogger(__name__)
+
+
+async def _get_schedules(query: Optional[BaseQuery] = None) -> List[Dict]:
+    index = await get_schedules_index()
+
+    # Create a filter query to get all schedules
+    if not query:
+        query = FilterQuery(
+            return_fields=[
+                "id",
+                "name",
+                "description",
+                "interval_type",
+                "interval_value",
+                "redis_instance_id",
+                "instructions",
+                "enabled",
+                "created_at",
+                "updated_at",
+                "last_run_at",
+                "next_run_at",
+            ],
+            filter_expression="*",  # Get all schedules
+            sort_by=("created_at", "DESC"),
+        )
+
+    # Execute the search
+    results = await index.query(query)
+    schedules = []
+
+    for result in results:
+        try:
+            # Convert result to dictionary format
+            if isinstance(result, dict):
+                schedule_data = result.copy()
+            elif hasattr(result, "__dict__"):
+                schedule_data = result.__dict__.copy()
+            else:
+                # Try to access as attributes
+                schedule_data = {}
+                for field in [
+                    "id",
+                    "name",
+                    "description",
+                    "interval_type",
+                    "interval_value",
+                    "redis_instance_id",
+                    "instructions",
+                    "enabled",
+                    "created_at",
+                    "updated_at",
+                    "last_run_at",
+                    "next_run_at",
+                ]:
+                    try:
+                        schedule_data[field] = getattr(result, field, None)
+                    except AttributeError:
+                        schedule_data[field] = None
+
+            # Extract actual schedule ID from Redis key (remove "sre_schedules:" prefix)
+            redis_key = schedule_data.get("id", "")
+            if redis_key.startswith("sre_schedules:"):
+                schedule_data["id"] = redis_key[len("sre_schedules:") :]
+
+            # Convert numeric fields back to datetime strings
+            for field in ["created_at", "updated_at", "last_run_at", "next_run_at"]:
+                if schedule_data.get(field) and schedule_data[field] != 0:
+                    try:
+                        timestamp = float(schedule_data[field])
+                        if timestamp > 0:
+                            dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                            schedule_data[field] = dt.isoformat()
+                        else:
+                            schedule_data[field] = None
+                    except (ValueError, TypeError):
+                        schedule_data[field] = None
+                else:
+                    schedule_data[field] = None
+
+            # Convert boolean and numeric fields
+            schedule_data["enabled"] = schedule_data.get("enabled") == "true"
+            try:
+                schedule_data["interval_value"] = int(schedule_data.get("interval_value", 0))
+            except (ValueError, TypeError):
+                schedule_data["interval_value"] = 0
+
+            schedules.append(schedule_data)
+
+        except Exception as e:
+            logger.error(f"Failed to process schedule result: {e}")
+            continue
+
+    return schedules
 
 
 async def store_schedule(schedule_data: Dict) -> bool:
@@ -93,173 +189,14 @@ async def get_schedule(schedule_id: str) -> Optional[Dict]:
 
 async def list_schedules() -> List[Dict]:
     """List all schedules from Redis using RedisVL."""
-    try:
-        from redisvl.query import FilterQuery
-
-        index = await get_schedules_index()
-
-        # Create a filter query to get all schedules
-        filter_query = FilterQuery(
-            return_fields=[
-                "id",
-                "name",
-                "description",
-                "interval_type",
-                "interval_value",
-                "redis_instance_id",
-                "instructions",
-                "enabled",
-                "created_at",
-                "updated_at",
-                "last_run_at",
-                "next_run_at",
-            ],
-            filter_expression="*",  # Get all schedules
-        )
-
-        # Execute the search
-        results = await index.query(filter_query)
-
-        schedules = []
-
-        for result in results:
-            try:
-                # Convert result to dictionary format
-                if isinstance(result, dict):
-                    schedule_data = result.copy()
-                elif hasattr(result, "__dict__"):
-                    schedule_data = result.__dict__.copy()
-                else:
-                    # Try to access as attributes
-                    schedule_data = {}
-                    for field in [
-                        "id",
-                        "name",
-                        "description",
-                        "interval_type",
-                        "interval_value",
-                        "redis_instance_id",
-                        "instructions",
-                        "enabled",
-                        "created_at",
-                        "updated_at",
-                        "last_run_at",
-                        "next_run_at",
-                    ]:
-                        try:
-                            schedule_data[field] = getattr(result, field, None)
-                        except AttributeError:
-                            schedule_data[field] = None
-
-                # Extract actual schedule ID from Redis key (remove "sre_schedules:" prefix)
-                redis_key = schedule_data.get("id", "")
-                if redis_key.startswith("sre_schedules:"):
-                    schedule_data["id"] = redis_key[len("sre_schedules:") :]
-
-                # Convert numeric fields back to datetime strings
-                for field in ["created_at", "updated_at", "last_run_at", "next_run_at"]:
-                    if schedule_data.get(field) and schedule_data[field] != 0:
-                        try:
-                            timestamp = float(schedule_data[field])
-                            if timestamp > 0:
-                                dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-                                schedule_data[field] = dt.isoformat()
-                            else:
-                                schedule_data[field] = None
-                        except (ValueError, TypeError):
-                            schedule_data[field] = None
-                    else:
-                        schedule_data[field] = None
-
-                # Convert boolean and numeric fields
-                schedule_data["enabled"] = schedule_data.get("enabled") == "true"
-                try:
-                    schedule_data["interval_value"] = int(schedule_data.get("interval_value", 0))
-                except (ValueError, TypeError):
-                    schedule_data["interval_value"] = 0
-
-                schedules.append(schedule_data)
-
-            except Exception as e:
-                logger.error(f"Failed to process schedule result: {e}")
-                continue
-
-        # Sort by created_at descending
-        schedules.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return schedules
-
-    except Exception as e:
-        logger.error(f"Failed to list schedules using RedisVL: {e}")
-        # Fallback to direct Redis approach if RedisVL fails
-        logger.info("Falling back to direct Redis query for list_schedules")
-        return await _list_schedules_fallback()
-
-
-async def _list_schedules_fallback() -> List[Dict]:
-    """Fallback method using direct Redis queries when RedisVL search fails."""
-    try:
-        client = get_redis_client()
-
-        # Get all schedule keys
-        keys = await client.keys("sre_schedules:*")
-        schedules = []
-
-        for key in keys:
-            try:
-                # Get the schedule data
-                data = await client.hgetall(key)
-                if not data:
-                    continue
-
-                # Convert bytes to strings and restore proper types
-                schedule = {}
-                for k, v in data.items():
-                    key_str = k.decode() if isinstance(k, bytes) else k
-                    val_str = v.decode() if isinstance(v, bytes) else v
-                    schedule[key_str] = val_str
-
-                # Convert numeric fields back to datetime strings
-                for field in ["created_at", "updated_at", "last_run_at", "next_run_at"]:
-                    if schedule.get(field) and schedule[field] != "0":
-                        try:
-                            timestamp = float(schedule[field])
-                            if timestamp > 0:
-                                dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-                                schedule[field] = dt.isoformat()
-                            else:
-                                schedule[field] = None
-                        except (ValueError, TypeError):
-                            schedule[field] = None
-                    else:
-                        schedule[field] = None
-
-                # Convert string fields back to proper types
-                schedule["enabled"] = schedule.get("enabled", "true") == "true"
-                try:
-                    schedule["interval_value"] = int(schedule.get("interval_value", 0))
-                except (ValueError, TypeError):
-                    schedule["interval_value"] = 0
-
-                schedules.append(schedule)
-
-            except Exception as e:
-                logger.error(f"Failed to process schedule {key}: {e}")
-                continue
-
-        # Sort by created_at descending
-        schedules.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return schedules
-
-    except Exception as e:
-        logger.error(f"Failed to list schedules (fallback): {e}")
-        return []
+    return await _get_schedules()
 
 
 async def delete_schedule(schedule_id: str) -> bool:
     """Delete a schedule from Redis."""
     try:
         client = get_redis_client()
-        key = f"sre_schedules:{schedule_id}"
+        key = RedisKeys.schedule_key(schedule_id)
 
         result = await client.delete(key)
         if result:
@@ -276,142 +213,32 @@ async def delete_schedule(schedule_id: str) -> bool:
 
 async def find_schedules_needing_runs(current_time: datetime) -> List[Dict]:
     """Find schedules that need to have runs created based on current time."""
-    try:
-        from redisvl.query import FilterQuery
+    current_timestamp = current_time.timestamp()
 
-        index = await get_schedules_index()
-        current_timestamp = current_time.timestamp()
+    # Create a filter query for enabled schedules where next_run_at <= current_time
+    # Using RedisVL FilterQuery for non-vector searches
+    query = FilterQuery(
+        return_fields=[
+            "id",
+            "name",
+            "description",
+            "interval_type",
+            "interval_value",
+            "redis_instance_id",
+            "instructions",
+            "enabled",
+            "created_at",
+            "updated_at",
+            "last_run_at",
+            "next_run_at",
+        ],
+        filter_expression=f"@enabled:{{true}} @next_run_at:[0 {current_timestamp}]",
+    )
 
-        # Create a filter query for enabled schedules where next_run_at <= current_time
-        # Using RedisVL FilterQuery for non-vector searches
-        filter_query = FilterQuery(
-            return_fields=[
-                "id",
-                "name",
-                "description",
-                "interval_type",
-                "interval_value",
-                "redis_instance_id",
-                "instructions",
-                "enabled",
-                "created_at",
-                "updated_at",
-                "last_run_at",
-                "next_run_at",
-            ],
-            filter_expression=f"@enabled:{{true}} @next_run_at:[0 {current_timestamp}]",
-        )
+    schedules_needing_runs = await _get_schedules(query)
+    logger.info(f"Found {len(schedules_needing_runs)} schedules needing runs")
 
-        # Execute the search
-        results = await index.query(filter_query)
-
-        schedules_needing_runs = []
-
-        for result in results:
-            try:
-                # Convert result to dictionary format
-                if isinstance(result, dict):
-                    schedule_data = result.copy()
-                elif hasattr(result, "__dict__"):
-                    schedule_data = result.__dict__.copy()
-                else:
-                    # Try to access as attributes
-                    schedule_data = {}
-                    for field in [
-                        "id",
-                        "name",
-                        "description",
-                        "interval_type",
-                        "interval_value",
-                        "redis_instance_id",
-                        "instructions",
-                        "enabled",
-                        "created_at",
-                        "updated_at",
-                        "last_run_at",
-                        "next_run_at",
-                    ]:
-                        try:
-                            schedule_data[field] = getattr(result, field, None)
-                        except AttributeError:
-                            schedule_data[field] = None
-
-                # Extract actual schedule ID from Redis key (remove "sre_schedules:" prefix)
-                redis_key = schedule_data.get("id", "")
-                if redis_key.startswith("sre_schedules:"):
-                    schedule_data["id"] = redis_key[len("sre_schedules:") :]
-
-                # Convert numeric fields back to datetime strings
-                for field in ["created_at", "updated_at", "last_run_at", "next_run_at"]:
-                    if schedule_data.get(field) and schedule_data[field] != 0:
-                        try:
-                            timestamp = float(schedule_data[field])
-                            if timestamp > 0:
-                                dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-                                schedule_data[field] = dt.isoformat()
-                            else:
-                                schedule_data[field] = None
-                        except (ValueError, TypeError):
-                            schedule_data[field] = None
-                    else:
-                        schedule_data[field] = None
-
-                # Convert boolean and numeric fields
-                schedule_data["enabled"] = schedule_data.get("enabled") == "true"
-                try:
-                    schedule_data["interval_value"] = int(schedule_data.get("interval_value", 0))
-                except (ValueError, TypeError):
-                    schedule_data["interval_value"] = 0
-
-                schedules_needing_runs.append(schedule_data)
-
-            except Exception as e:
-                logger.error(f"Failed to process schedule result: {e}")
-                continue
-
-        logger.info(f"Found {len(schedules_needing_runs)} schedules needing runs")
-        return schedules_needing_runs
-
-    except Exception as e:
-        logger.error(f"Failed to find schedules needing runs using RedisVL: {e}")
-        # Fallback to direct Redis approach if RedisVL fails
-        logger.info("Falling back to direct Redis query")
-        return await _find_schedules_needing_runs_fallback(current_time)
-
-
-async def _find_schedules_needing_runs_fallback(current_time: datetime) -> List[Dict]:
-    """Fallback method using direct Redis queries when RedisVL search fails."""
-    try:
-        # Get all schedules first
-        all_schedules = await list_schedules()
-        current_timestamp = current_time.timestamp()
-
-        schedules_needing_runs = []
-
-        for schedule in all_schedules:
-            # Skip disabled schedules
-            if not schedule.get("enabled", True):
-                continue
-
-            # Check if next_run_at is due
-            next_run_str = schedule.get("next_run_at")
-            if next_run_str:
-                try:
-                    next_run_time = datetime.fromisoformat(next_run_str.replace("Z", "+00:00"))
-                    if next_run_time.timestamp() <= current_timestamp:
-                        schedules_needing_runs.append(schedule)
-                except (ValueError, TypeError):
-                    logger.warning(
-                        f"Invalid next_run_at format for schedule {schedule.get('id')}: {next_run_str}"
-                    )
-                    continue
-
-        logger.info(f"Found {len(schedules_needing_runs)} schedules needing runs (fallback)")
-        return schedules_needing_runs
-
-    except Exception as e:
-        logger.error(f"Failed to find schedules needing runs (fallback): {e}")
-        return []
+    return schedules_needing_runs
 
 
 async def update_schedule_next_run(schedule_id: str, next_run_time: datetime) -> bool:

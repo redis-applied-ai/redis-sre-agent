@@ -7,13 +7,14 @@ and other administrative functions exposed by the Redis Enterprise admin API.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.protocols import ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
@@ -63,6 +64,11 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
 
     The RedisInstance must have instance_type='redis_enterprise' and admin_url set.
     """
+
+    # Also provide DIAGNOSTICS capability so HostTelemetry can use system_hosts()
+    from redis_sre_agent.tools.protocols import ToolCapability
+
+    capabilities = {ToolCapability.DIAGNOSTICS}
 
     def __init__(
         self,
@@ -134,9 +140,27 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 auth=auth,
                 verify=self.config.verify_ssl,
                 timeout=30.0,
+                headers={
+                    # Be explicit to avoid 406 content negotiation issues on some endpoints
+                    "Accept": "application/json",
+                },
             )
             logger.info(f"Connected to Redis Enterprise admin API at {admin_url}")
         return self._client
+
+    def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Parse operation name from full tool name for status updates.
+
+        Overrides the base implementation to handle operations with underscores,
+        matching the provider's tool name scheme: {provider}_{hash}_{operation}.
+        """
+        try:
+            import re
+
+            match = re.search(r"_([0-9a-f]{6})_(.+)$", tool_name)
+            return match.group(2) if match else None
+        except Exception:
+            return None
 
     async def __aenter__(self):
         """Support async context manager (no-op, client is lazily initialized)."""
@@ -317,6 +341,28 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 },
             ),
             ToolDefinition(
+                name=self._make_tool_name("get_logs"),
+                description=(
+                    "Get recent cluster event logs from the Admin API (/v1/logs). "
+                    "Use this for an authoritative history of cluster events (maintenance, DB changes, etc.)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "order": {
+                            "type": "string",
+                            "enum": ["asc", "desc"],
+                            "description": "Sort order (default: desc)",
+                        },
+                        "limit": {"type": "integer", "description": "Max number of log records"},
+                        "offset": {"type": "integer", "description": "Offset for pagination"},
+                        "stime": {"type": "string", "description": "Start time (RFC3339 or epoch)"},
+                        "etime": {"type": "string", "description": "End time (RFC3339 or epoch)"},
+                    },
+                    "required": [],
+                },
+            ),
+            ToolDefinition(
                 name=self._make_tool_name("list_actions"),
                 description=(
                     "List all running, pending, or completed actions in the cluster. "
@@ -346,6 +392,37 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                         },
                     },
                     "required": ["action_uid"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("rebalance_status"),
+                description=(
+                    "Identify Redis Enterprise rebalance-related actions (including fast SMUpdateBDB cases). "
+                    "Returns active and recently-completed rebalance actions. Optionally filter by database. "
+                    "Automates fetching per-action details when needed to distinguish between generic SMUpdateBDB "
+                    "and a true rebalance/reshard/migrate_shard operation."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "db_uid": {
+                            "type": "integer",
+                            "description": "Filter actions for a specific database UID (e.g., 1)",
+                        },
+                        "db_name": {
+                            "type": "string",
+                            "description": "Filter actions for a specific database name (e.g., 'test-db')",
+                        },
+                        "include_recent_completed": {
+                            "type": "boolean",
+                            "description": "Include recently-completed actions (default: true)",
+                        },
+                        "recent_seconds": {
+                            "type": "integer",
+                            "description": "How far back to look for completed actions (seconds, default: 300)",
+                        },
+                    },
+                    "required": [],
                 },
             ),
             ToolDefinition(
@@ -485,10 +562,15 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             return await self.get_database_stats(**args)
         elif operation == "get_cluster_stats":
             return await self.get_cluster_stats(**args)
+        elif operation == "get_logs":
+            return await self.get_logs(**args)
+
         elif operation == "list_actions":
             return await self.list_actions()
         elif operation == "get_action":
             return await self.get_action(**args)
+        elif operation == "rebalance_status":
+            return await self.rebalance_status(**args)
         elif operation == "list_shards":
             return await self.list_shards(**args)
         elif operation == "get_shard":
@@ -502,6 +584,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
+    @status_update("I'm querying the Redis Enterprise Admin API for cluster info.")
     async def get_cluster_info(self) -> Dict[str, Any]:
         """Get cluster information.
 
@@ -542,6 +625,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": error_msg,
             }
 
+    @status_update("I'm listing databases via the Redis Enterprise Admin API.")
     async def list_databases(self, fields: Optional[str] = None) -> Dict[str, Any]:
         """List all databases in the cluster.
 
@@ -558,13 +642,24 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             if fields:
                 params["fields"] = fields
 
-            response = await client.get("/v1/bdbs", params=params)
-            response.raise_for_status()
+            try:
+                response = await client.get("/v1/bdbs", params=params)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # Some Redis Enterprise versions do not accept 'fields' on this endpoint
+                if e.response.status_code in (406, 400) and fields:
+                    logger.warning(
+                        f"list_databases(fields={fields}) failed with {e.response.status_code}; retrying without fields"
+                    )
+                    response = await client.get("/v1/bdbs")
+                    response.raise_for_status()
+                else:
+                    raise
 
             databases = response.json()
             return {
                 "status": "success",
-                "count": len(databases),
+                "count": len(databases) if isinstance(databases, list) else 1,
                 "databases": databases,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
@@ -581,6 +676,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm retrieving database details from the Redis Enterprise Admin API for database {uid}."
+    )
     async def get_database(self, uid: int, fields: Optional[str] = None) -> Dict[str, Any]:
         """Get information about a specific database.
 
@@ -598,8 +696,19 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             if fields:
                 params["fields"] = fields
 
-            response = await client.get(f"/v1/bdbs/{uid}", params=params)
-            response.raise_for_status()
+            try:
+                response = await client.get(f"/v1/bdbs/{uid}", params=params)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # Some Redis Enterprise versions return 406 when 'fields' is not supported on this endpoint
+                if e.response.status_code in (406, 400) and fields:
+                    logger.warning(
+                        f"get_database({uid}) with fields failed ({e.response.status_code}); retrying without fields"
+                    )
+                    response = await client.get(f"/v1/bdbs/{uid}")
+                    response.raise_for_status()
+                else:
+                    raise
 
             return {
                 "status": "success",
@@ -621,6 +730,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update("I'm listing cluster nodes via the Redis Enterprise Admin API.")
     async def list_nodes(self, fields: Optional[str] = None) -> Dict[str, Any]:
         """List all nodes in the cluster.
 
@@ -660,6 +770,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm retrieving node details from the Redis Enterprise Admin API for node {uid}."
+    )
     async def get_node(self, uid: int, fields: Optional[str] = None) -> Dict[str, Any]:
         """Get information about a specific node.
 
@@ -700,6 +813,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update("I'm listing available Redis modules via the Redis Enterprise Admin API.")
     async def list_modules(self) -> Dict[str, Any]:
         """List all available Redis modules.
 
@@ -732,6 +846,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm fetching database performance stats via the Admin API for database {uid} (interval={interval})."
+    )
     async def get_database_stats(self, uid: int, interval: str = "1sec") -> Dict[str, Any]:
         """Get statistics for a specific database.
 
@@ -772,6 +889,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update(
+        "I'm fetching cluster-wide performance stats via the Redis Enterprise Admin API (interval={interval})."
+    )
     async def get_cluster_stats(self, interval: str = "1sec") -> Dict[str, Any]:
         """Get cluster-wide statistics.
 
@@ -785,10 +905,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         try:
             client = self.get_client()
             params = {"interval": interval}
-
             response = await client.get("/v1/cluster/stats", params=params)
             response.raise_for_status()
-
             return {
                 "status": "success",
                 "interval": interval,
@@ -797,17 +915,89 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             }
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error getting cluster stats: {e}")
-            return {
-                "status": "error",
-                "error": f"HTTP {e.response.status_code}: {e.response.text}",
-            }
+            return {"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text}"}
         except Exception as e:
             logger.error(f"Failed to get cluster stats: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-            }
+            return {"status": "error", "error": str(e)}
 
+    def _normalize_time_param(self, value: Optional[str]) -> Optional[str]:
+        """Normalize time parameters for Admin API.
+
+        - "now" -> current UTC ISO8601
+        - integer epoch seconds -> ISO8601 UTC
+        - otherwise, pass through unchanged
+        """
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        if s.lower() == "now":
+            return datetime.now(timezone.utc).isoformat()
+        if s.isdigit():
+            try:
+                return datetime.fromtimestamp(int(s), tz=timezone.utc).isoformat()
+            except Exception:
+                return None
+        return s
+
+    @status_update("I'm fetching cluster event logs via the Redis Enterprise Admin API.")
+    async def get_logs(
+        self,
+        order: str = "desc",
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        stime: Optional[str] = None,
+        etime: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get cluster event logs from /v1/logs.
+
+        Args:
+            order: Sort order (asc|desc)
+            limit: Max records to return
+            offset: Pagination offset
+            stime: Start time (RFC3339 or epoch)
+            etime: End time (RFC3339 or epoch)
+        """
+        logger.info("Getting cluster logs")
+        try:
+            client = self.get_client()
+            params: Dict[str, Any] = {}
+            if order:
+                params["order"] = order
+            if limit is not None:
+                params["limit"] = int(limit)
+            if offset is not None:
+                params["offset"] = int(offset)
+            st = self._normalize_time_param(stime)
+            et = self._normalize_time_param(etime)
+            if st:
+                params["stime"] = st
+            if et:
+                params["etime"] = et
+
+            response = await client.get("/v1/logs", params=params)
+            response.raise_for_status()
+            data = response.json()
+            return {
+                "status": "success",
+                "count": len(data) if isinstance(data, list) else 1,
+                "logs": data,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code if e.response is not None else 0
+            msg = f"HTTP {code}: {e.response.text if e.response is not None else str(e)}"
+            if 500 <= code < 600:
+                logger.warning(f"Admin API /v1/logs unavailable: {msg}")
+                return {"status": "unavailable", "error": msg}
+            logger.warning(f"HTTP error getting cluster logs: {msg}")
+            return {"status": "error", "error": msg}
+        except Exception as e:
+            logger.warning(f"Failed to get cluster logs: {e}")
+            return {"status": "error", "error": str(e)}
+
+    @status_update("I'm listing cluster actions via the Redis Enterprise Admin API.")
     async def list_actions(self) -> Dict[str, Any]:
         """List all actions in the cluster.
 
@@ -841,6 +1031,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm checking the status of action {action_uid} via the Redis Enterprise Admin API."
+    )
     async def get_action(self, action_uid: str) -> Dict[str, Any]:
         """Get information about a specific action.
 
@@ -877,6 +1070,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "action_uid": action_uid,
             }
 
+    @status_update("I'm listing shards and their placement via the Redis Enterprise Admin API.")
     async def list_shards(self, fields: Optional[str] = None) -> Dict[str, Any]:
         """List all shards in the cluster.
 
@@ -911,11 +1105,194 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             }
         except Exception as e:
             logger.error(f"Failed to list shards: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-            }
+            return {"status": "error", "error": str(e)}
 
+    async def system_hosts(self) -> List[Any]:
+        """Discover Enterprise cluster node hosts via Admin API.
+
+        Returns SystemHost entries using /v1/nodes 'addr' field.
+        """
+        from redis_sre_agent.tools.protocols import SystemHost
+
+        try:
+            client = self.get_client()
+            resp = await client.get("/v1/nodes")
+            resp.raise_for_status()
+            nodes = resp.json() or []
+            results: List[SystemHost] = []
+            for n in nodes:
+                try:
+                    addr = n.get("addr") if isinstance(n, dict) else None
+                    if isinstance(addr, str) and addr:
+                        results.append(
+                            SystemHost(
+                                host=addr, role="enterprise-node", labels={"source": "admin_api"}
+                            )
+                        )
+                except Exception:
+                    continue
+            return results
+        except Exception:
+            return []
+
+    def _is_action_rebalance_like(self, action: Dict[str, Any]) -> Tuple[bool, str]:
+        """Heuristically determine if an action is rebalance-related.
+
+        Returns (is_rebalance, reason) where reason explains the match.
+        """
+        try:
+            name = str(action.get("name") or "").lower()
+            if any(k in name for k in ("rebalance", "migrate_shard", "reshard")):
+                return True, f"name={action.get('name')}"
+
+            if "smupdatebdb" in name:
+                # Inspect nested details if present
+                addl = action.get("additional_info") or {}
+                pending = addl.get("pending_ops") or {}
+                for _shard, op in pending.items() if isinstance(pending, dict) else []:
+                    op_name = str((op or {}).get("op_name") or "").lower()
+                    desc = str((op or {}).get("status_description") or "").lower()
+                    if any(key in op_name for key in ("migrate", "reshard", "rebalance")) or any(
+                        key in desc for key in ("migrate", "reshard", "rebalance")
+                    ):
+                        return True, f"SMUpdateBDB pending_ops={op_name or desc}"
+
+                # Some APIs use a flat 'pending_ops' directly
+                pending2 = action.get("pending_ops") or {}
+                for _k, v in pending2.items() if isinstance(pending2, dict) else []:
+                    op_name = str((v or {}).get("op_name") or "").lower()
+                    if any(key in op_name for key in ("migrate", "reshard", "rebalance")):
+                        return True, f"SMUpdateBDB pending_ops={op_name}"
+        except Exception:
+            pass
+        return False, "no-match"
+
+    @status_update(
+        "I'm analyzing cluster actions to detect active or recent rebalances via the Admin API."
+    )
+    async def rebalance_status(
+        self,
+        db_uid: Optional[int] = None,
+        db_name: Optional[str] = None,
+        include_recent_completed: bool = True,
+        recent_seconds: int = 300,
+    ) -> Dict[str, Any]:
+        """Identify rebalance-related actions, including fast SMUpdateBDB cases.
+
+        - Consumes /v2/actions
+        - Optionally fetches /v2/actions/{uid} for ambiguous SMUpdateBDB actions
+        - Optionally filters by database (db_uid or db_name)
+        - Returns active and recently completed (within recent_seconds) results
+        """
+        import time as _time
+
+        try:
+            # Resolve db_uid from db_name when requested
+            resolved_db_uid: Optional[int] = db_uid
+            resolved_db_name: Optional[str] = None
+            if db_name and not resolved_db_uid:
+                dbs = await self.list_databases(fields="uid,name")
+                for db in dbs.get("databases") or []:
+                    if str(db.get("name") or "").lower() == str(db_name).lower():
+                        resolved_db_uid = int(db.get("uid"))
+                        resolved_db_name = db.get("name")
+                        break
+
+            # Fetch actions
+            actions_env = await self.list_actions()
+            actions = actions_env.get("actions") or []
+
+            now = int(_time.time())
+            active: List[Dict[str, Any]] = []
+            recent_completed: List[Dict[str, Any]] = []
+
+            # Helper to extract db_uid from object_name like 'bdb:1'
+            def _extract_db_uid(obj_name: Optional[str]) -> Optional[int]:
+                if not obj_name:
+                    return None
+                try:
+                    s = str(obj_name)
+                    if "bdb:" in s:
+                        return int(s.split("bdb:")[-1].split()[0].strip())
+                except Exception:
+                    return None
+                return None
+
+            # Iterate and classify
+            for a in actions:
+                name = str(a.get("name") or "")
+                status = str(a.get("status") or "").lower()
+                creation_time = a.get("creation_time")  # epoch seconds (int)
+                obj_name = a.get("object_name")
+                action_uid = a.get("action_uid")
+
+                # Filter by db if requested
+                a_db_uid = _extract_db_uid(obj_name)
+                if (
+                    resolved_db_uid is not None
+                    and a_db_uid is not None
+                    and a_db_uid != resolved_db_uid
+                ):
+                    continue
+                # If object_name missing and filter requested, we'll still try to classify (can't filter by db)
+
+                is_reb, reason = self._is_action_rebalance_like(a)
+
+                # If ambiguous SMUpdateBDB without clear ops, fetch details
+                if not is_reb and name.lower().startswith("smupdatebdb") and action_uid:
+                    detail = await self.get_action(action_uid)
+                    if detail.get("status") == "success":
+                        d_action = detail.get("action") or {}
+                        is_reb, reason = self._is_action_rebalance_like(d_action)
+                        if not obj_name:
+                            obj_name = d_action.get("object_name") or obj_name
+                            a_db_uid = _extract_db_uid(obj_name)
+
+                if not is_reb:
+                    continue
+
+                row = {
+                    "action_uid": action_uid,
+                    "name": name,
+                    "status": status,
+                    "progress": a.get("progress"),
+                    "object_name": obj_name,
+                    "db_uid": a_db_uid,
+                    "reason": reason,
+                    "creation_time": creation_time,
+                }
+
+                if status in {"running", "queued", "active", "pending"}:
+                    active.append(row)
+                elif include_recent_completed and status == "completed":
+                    try:
+                        if isinstance(creation_time, (int, float)) and (
+                            now - int(creation_time)
+                        ) <= int(recent_seconds):
+                            recent_completed.append(row)
+                    except Exception:
+                        # If timestamp missing/malformed, skip recent filter
+                        pass
+
+            result: Dict[str, Any] = {
+                "status": "success",
+                "active": active,
+                "recent_completed": recent_completed if include_recent_completed else [],
+                "filter": {
+                    "db_uid": resolved_db_uid,
+                    "db_name": resolved_db_name or db_name,
+                    "recent_seconds": recent_seconds,
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            return result
+        except Exception as e:
+            logger.error(f"Failed to analyze rebalance status: {e}")
+            return {"status": "error", "error": str(e)}
+
+    @status_update(
+        "I'm retrieving shard details from the Redis Enterprise Admin API for shard {uid}."
+    )
     async def get_shard(self, uid: int) -> Dict[str, Any]:
         """Get information about a specific shard.
 
@@ -951,6 +1328,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update("I'm retrieving cluster alert settings via the Redis Enterprise Admin API.")
     async def get_cluster_alerts(self) -> Dict[str, Any]:
         """Get cluster alert settings.
 
@@ -984,6 +1362,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "error": str(e),
             }
 
+    @status_update(
+        "I'm retrieving alert settings via the Redis Enterprise Admin API for database {uid}."
+    )
     async def get_database_alerts(self, uid: int) -> Dict[str, Any]:
         """Get alert configuration for a specific database.
 
@@ -996,7 +1377,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         logger.info(f"Getting database {uid} alerts")
         try:
             client = self.get_client()
-            response = await client.get(f"/v1/bdbs/{uid}/alerts")
+            # Per docs, database alerts endpoints live under /v1/bdbs/alerts/{uid}
+            response = await client.get(f"/v1/bdbs/alerts/{uid}")
             response.raise_for_status()
 
             return {
@@ -1020,6 +1402,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 "uid": uid,
             }
 
+    @status_update(
+        "I'm fetching node performance stats via the Admin API for node {uid} (interval={interval})."
+    )
     async def get_node_stats(self, uid: int, interval: str = "1sec") -> Dict[str, Any]:
         """Get statistics for a specific node.
 

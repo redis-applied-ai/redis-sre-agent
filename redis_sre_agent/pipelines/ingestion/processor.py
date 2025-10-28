@@ -38,6 +38,10 @@ class DocumentProcessor:
                 "enable_semantic_chunking": knowledge_settings.enable_semantic_chunking,
                 "similarity_threshold": knowledge_settings.similarity_threshold,
                 "embedding_model": knowledge_settings.embedding_model,
+                # New defaults for better doc handling
+                "strip_front_matter": True,
+                "whole_doc_threshold": 6000,
+                "whole_api_threshold": 12000,
             }
         else:
             self.config = {
@@ -50,22 +54,65 @@ class DocumentProcessor:
                 "enable_semantic_chunking": False,
                 "similarity_threshold": 0.7,
                 "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+                "strip_front_matter": True,
+                "whole_doc_threshold": 6000,
+                "whole_api_threshold": 12000,
                 **(config or {}),
             }
 
     def chunk_document(self, document: ScrapedDocument) -> List[Dict[str, Any]]:
-        """Split document into chunks for vector storage."""
-        content = document.content
+        """Split document into chunks for vector storage.
 
-        if len(content) <= self.config["chunk_size"]:
-            # Document is small enough, use as single chunk
+        Improvements:
+        - Strip YAML front-matter by default
+        - Keep short docs as a single chunk (threshold)
+        - Fall back to existing length-based chunking otherwise
+        """
+        content = document.content or ""
+
+        # Optional: strip YAML front matter at top of file
+        if self.config.get("strip_front_matter", True) and content.startswith("---"):
+            content, _ = self._strip_yaml_front_matter(content)
+
+        # Guard: skip documents with no body after front-matter stripping
+        if not content.strip():
+            logger.warning(
+                f"Skipping empty document body after front-matter strip: {document.title}"
+            )
+            return []
+
+        # Keep small/medium CLI reference docs whole so usage blocks stay intact
+        whole_threshold = int(self.config.get("whole_doc_threshold", 6000))
+        src = (document.source_url or "").lower()
+        title = (document.title or "").lower()
+        is_cli_doc = (
+            "rladmin" in content.lower()
+            or "rladmin" in title
+            or "cli-utilities" in src
+            or "/rladmin/" in src
+        )
+        if is_cli_doc and len(content) <= whole_threshold:
             return [self._create_chunk(document, content, 0)]
 
-        # Split into overlapping chunks
-        chunks = []
-        chunk_size = self.config["chunk_size"]
-        overlap = self.config["chunk_overlap"]
-        max_chunks = self.config["max_chunks_per_doc"]
+        # Treat RS Admin REST API docs as whole documents (to preserve full examples)
+        is_api_doc = (
+            "/references/rest-api/" in src
+            or "/rest-api/requests/" in src
+            or "/operate/rs/references/rest-api/" in src
+        )
+        whole_api_threshold = int(self.config.get("whole_api_threshold", 12000))
+        if is_api_doc and len(content) <= whole_api_threshold:
+            return [self._create_chunk(document, content, 0)]
+
+        # If not a CLI/API doc, still keep truly small docs as a single chunk
+        if len(content) <= self.config["chunk_size"]:
+            return [self._create_chunk(document, content, 0)]
+
+        # Split into overlapping chunks (legacy behavior)
+        chunks: List[Dict[str, Any]] = []
+        chunk_size = int(self.config["chunk_size"])
+        overlap = int(self.config["chunk_overlap"])
+        max_chunks = int(self.config["max_chunks_per_doc"])
 
         start = 0
         chunk_index = 0
@@ -131,6 +178,30 @@ class DocumentProcessor:
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             },
         }
+
+    def _strip_yaml_front_matter(self, text: str) -> tuple[str, bool]:
+        """Remove YAML front-matter delimited by leading --- blocks.
+
+        Returns:
+            (processed_text, removed) where removed indicates if front-matter was found.
+        """
+        if not text.startswith("---"):
+            return text, False
+
+        try:
+            # Find closing '---' after the first line
+            end_idx = text.find("\n---", 3)
+            if end_idx == -1:
+                return text, False
+            # Include the trailing --- line
+            closing_line_end = end_idx + len("\n---")
+            remainder = text[closing_line_end:]
+            # Trim a single leading newline if present
+            if remainder.startswith("\n"):
+                remainder = remainder[1:]
+            return remainder, True
+        except Exception:
+            return text, False
 
 
 class IngestionPipeline:
@@ -233,6 +304,37 @@ class IngestionPipeline:
 
         # Find all JSON files in category
         json_files = list(category_path.glob("*.json"))
+
+        # Optionally filter to latest-only
+        if self.config.get("latest_only"):
+
+            def include_file(path: Path) -> bool:
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    src = data.get("source_url") or ""
+                    meta = data.get("metadata", {})
+                    rel = str(meta.get("relative_path", ""))
+                    blob = f"{src} {rel}"
+                    import re
+
+                    # Skip versioned paths like /7.8/
+                    if re.search(r"/\d+\.\d+/", blob):
+                        return False
+                    # Prefer latest subtree for Enterprise docs
+                    if "operate/rs" in blob and "/latest/" not in blob:
+                        return False
+                    return True
+                except Exception:
+                    # If in doubt, keep the file
+                    return True
+
+            before = len(json_files)
+            json_files = [p for p in json_files if include_file(p)]
+            logger.info(
+                f"Filtered latest-only: {before} -> {len(json_files)} documents in {category}"
+            )
+
         logger.info(f"Found {len(json_files)} documents in {category}")
 
         # Process documents in parallel batches
@@ -561,7 +663,7 @@ class IngestionPipeline:
             texts = [chunk["content"] for chunk in chunks]
 
             # Generate embeddings
-            embeddings = await vectorizer.embed_many(texts)
+            embeddings = await vectorizer.aembed_many(texts)
 
             # Prepare chunks with embeddings for indexing
             indexed_chunks = []

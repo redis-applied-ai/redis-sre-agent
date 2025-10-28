@@ -11,7 +11,8 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.thread_state import ThreadManager
+from redis_sre_agent.core.task_events import InitialStateEvent, TaskStreamEvent
+from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +45,13 @@ class TaskStreamManager:
             client = await self._get_client()
             stream_key = self._get_stream_key(thread_id)
 
-            # Add timestamp and update type to the data
-            stream_data = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "update_type": update_type,
-                "thread_id": thread_id,
-                **data,
+            # Build typed event with extra fields preserved at top-level
+            # Avoid duplicate keyword errors if callers pass 'update_type' or 'thread_id' in data
+            safe_data = {
+                k: v for k, v in (data or {}).items() if k not in {"update_type", "thread_id"}
             }
+            event = TaskStreamEvent(thread_id=thread_id, update_type=update_type, **safe_data)
+            stream_data = event.model_dump()
 
             # Convert all values to strings for Redis Stream
             stream_data_str = {
@@ -144,7 +145,12 @@ class TaskStreamManager:
                 except (json.JSONDecodeError, TypeError):
                     update_data[key_str] = value_str
 
-            message = json.dumps(update_data)
+            # Validate and serialize via typed event (preserve top-level extras)
+            try:
+                event = TaskStreamEvent(**update_data)
+                message = event.model_dump_json()
+            except Exception:
+                message = json.dumps(update_data)
 
             # Broadcast to all connected clients for this thread
             disconnected_clients = set()
@@ -209,19 +215,16 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
         if len(_active_connections[thread_id]) == 1:
             await _stream_manager.start_consumer(thread_id)
 
-        # Send current thread state immediately
-        current_state = {
-            "update_type": "initial_state",
-            "thread_id": thread_id,
-            "status": thread_state.status.value,
-            "updates": [
-                update.model_dump() for update in thread_state.updates[-10:]
-            ],  # Last 10 updates
-            "result": thread_state.result,
-            "error_message": thread_state.error_message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        await websocket.send_text(json.dumps(current_state))
+        # Send current thread state immediately (no thread status)
+        initial_event = InitialStateEvent(
+            update_type="initial_state",
+            thread_id=thread_id,
+            updates=thread_state.updates[-10:],  # Last 10 updates
+            result=thread_state.result,
+            error_message=thread_state.error_message,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        await websocket.send_text(initial_event.model_dump_json())
 
         # Keep connection alive and handle client messages
         while True:

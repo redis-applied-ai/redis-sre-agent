@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from redis_sre_agent.core.thread_state import ThreadManager, ThreadMetadata, ThreadState
+from redis_sre_agent.core.threads import ThreadManager, ThreadMetadata, ThreadState
 
 
 @pytest.mark.asyncio

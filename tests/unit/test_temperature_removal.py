@@ -97,7 +97,7 @@ class TestTemperatureRemoval:
         from redis_sre_agent.core.config import settings
 
         # Verify we're using reasoning models (o4-mini)
-        assert settings.openai_model == "o4-mini"
-        assert settings.openai_model_mini == "o4-mini"
+        assert settings.openai_model == "gpt-5"
+        assert settings.openai_model_mini == "gpt-5-mini"
 
         # These models don't support temperature, so we shouldn't use it anywhere

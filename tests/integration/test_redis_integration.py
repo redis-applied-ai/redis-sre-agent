@@ -84,7 +84,7 @@ class TestRedisIntegration:
 
         import numpy as np
 
-        from redis_sre_agent.core.tasks import ingest_sre_document
+        from redis_sre_agent.core.docket_tasks import ingest_sre_document
 
         # Mock vectorizer for embedding generation
         # Create a mock that returns bytes (as_buffer=True behavior)
@@ -119,7 +119,7 @@ class TestRedisIntegration:
 
         import numpy as np
 
-        from redis_sre_agent.core.tasks import ingest_sre_document, search_knowledge_base
+        from redis_sre_agent.core.docket_tasks import ingest_sre_document, search_knowledge_base
 
         # Mock vectorizer
         mock_inner = AsyncMock()
@@ -173,7 +173,7 @@ class TestTaskIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
-        from redis_sre_agent.core.tasks import register_sre_tasks, test_task_system
+        from redis_sre_agent.core.docket_tasks import register_sre_tasks, test_task_system
 
         # Test basic connectivity
         result = await test_task_system()
@@ -188,7 +188,7 @@ class TestTaskIntegration:
         if not redis_container:
             pytest.skip("Integration tests not enabled")
 
-        from redis_sre_agent.core.tasks import check_service_health
+        from redis_sre_agent.core.docket_tasks import check_service_health
 
         result = await check_service_health(
             service_name="test-service", endpoints=["http://localhost/health"], timeout=30

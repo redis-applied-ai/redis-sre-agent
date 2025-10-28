@@ -160,13 +160,15 @@ class TestRedisInfrastructure:
         with (
             patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_threads_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
         ):
             result = await create_indices()
 
         assert result is True
-        # Should be called twice - once for knowledge index, once for schedules index
-        assert mock_search_index.exists.call_count == 2
-        assert mock_search_index.create.call_count == 2
+        # Should be called four times - knowledge, schedules, threads, tasks
+        assert mock_search_index.exists.call_count == 4
+        assert mock_search_index.create.call_count == 4
 
     @pytest.mark.asyncio
     async def test_create_indices_existing_index(self, mock_search_index):
@@ -176,12 +178,14 @@ class TestRedisInfrastructure:
         with (
             patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_threads_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
         ):
             result = await create_indices()
 
         assert result is True
-        # Should be called twice - once for knowledge index, once for schedules index
-        assert mock_search_index.exists.call_count == 2
+        # Should be called four times - knowledge, schedules, threads, tasks
+        assert mock_search_index.exists.call_count == 4
         mock_search_index.create.assert_not_called()
 
     @pytest.mark.asyncio

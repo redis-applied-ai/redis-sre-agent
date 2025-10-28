@@ -9,8 +9,8 @@ from fastapi import APIRouter, Response
 from fastapi.responses import PlainTextResponse
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.docket_tasks import test_task_system
 from redis_sre_agent.core.redis import initialize_redis_infrastructure
-from redis_sre_agent.core.tasks import test_task_system
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ async def detailed_health_check():
         status_code = 503
 
     # Mask Redis URL for display
-    from redis_sre_agent.api.instances import mask_redis_url
+    from redis_sre_agent.core.instances import mask_redis_url
 
     masked_redis_url = mask_redis_url(settings.redis_url.get_secret_value())
 

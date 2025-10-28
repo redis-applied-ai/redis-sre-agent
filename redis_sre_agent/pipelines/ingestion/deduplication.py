@@ -27,22 +27,44 @@ class DocumentDeduplicator:
         return f"sre_knowledge_meta:{document_hash}"
 
     async def find_existing_chunks(self, document_hash: str) -> List[str]:
-        """Find all existing chunk keys for a document."""
+        """Find all existing chunk keys for a document.
+
+        Supports both current and legacy key formats to avoid duplicate leftovers
+        after schema changes:
+        - Current: sre_knowledge:{document_hash}:chunk:{index}
+        - Legacy:  sre_knowledge:{document_hash}_{index}
+        """
         try:
             # Get Redis client from the index (already initialized)
             redis_client = self.index.client
 
-            # Search for all chunks with this document hash
-            pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
-            existing_keys = []
+            existing_keys: List[str] = []
 
-            async for key in redis_client.scan_iter(match=pattern):
-                if isinstance(key, bytes):
-                    key = key.decode("utf-8")
-                existing_keys.append(key)
+            # Current key format
+            try:
+                current_pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
+                async for key in redis_client.scan_iter(match=current_pattern):
+                    if isinstance(key, bytes):
+                        key = key.decode("utf-8")
+                    existing_keys.append(key)
+            except Exception as e:
+                logger.debug(f"scan_iter current pattern failed for {document_hash}: {e}")
 
-            logger.debug(f"Found {len(existing_keys)} existing chunks for document {document_hash}")
-            return existing_keys
+            # Legacy key format (pre-deduplicator)
+            try:
+                legacy_pattern = f"{RedisKeys.PREFIX_KNOWLEDGE}:{document_hash}_*"
+                async for key in redis_client.scan_iter(match=legacy_pattern):
+                    if isinstance(key, bytes):
+                        key = key.decode("utf-8")
+                    existing_keys.append(key)
+            except Exception as e:
+                logger.debug(f"scan_iter legacy pattern failed for {document_hash}: {e}")
+
+            # De-duplicate any overlaps just in case
+            unique_keys = list(dict.fromkeys(existing_keys))
+
+            logger.debug(f"Found {len(unique_keys)} existing chunks for document {document_hash}")
+            return unique_keys
 
         except Exception as e:
             logger.error(f"Failed to find existing chunks for {document_hash}: {e}")
@@ -238,7 +260,7 @@ class DocumentDeduplicator:
                     f"Embedding {len(chunks_to_embed)} changed/new chunks "
                     f"(reusing {len(reused_embeddings)} unchanged)"
                 )
-                new_embeddings = await vectorizer.embed_many(chunks_to_embed, as_buffer=True)
+                new_embeddings = await vectorizer.aembed_many(chunks_to_embed, as_buffer=True)
             else:
                 logger.info(f"All {len(prepared_chunks)} chunks unchanged, reusing embeddings")
 

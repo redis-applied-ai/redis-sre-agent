@@ -1,0 +1,77 @@
+{
+  "uid": "application-logs",
+  "title": "Application Logs (sre-agent, sre-worker, redis)",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "overwrite": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "sre-agent logs",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=\"sre-agent\"}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "sre-worker logs",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=\"sre-worker\"}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "redis (operational) logs",
+      "type": "logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        { "refId": "A", "expr": "{service=\"redis\"}" }
+      ]
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "type": "dashboard",
+        "name": "Annotations & Alerts",
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)"
+      }
+    ]
+  }
+}

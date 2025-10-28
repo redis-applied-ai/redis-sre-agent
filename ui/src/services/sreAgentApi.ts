@@ -66,6 +66,12 @@ export interface RedisInstance {
   admin_url?: string;
   admin_username?: string;
   admin_password?: string;
+  // Redis Cloud identifiers
+  redis_cloud_subscription_id?: number;
+  redis_cloud_database_id?: number;
+  // Redis Cloud metadata
+  redis_cloud_subscription_type?: 'pro' | 'essentials';
+  redis_cloud_database_name?: string;
   status?: string;
   version?: string;
   memory?: string;
@@ -89,6 +95,12 @@ export interface CreateInstanceRequest {
   admin_url?: string;
   admin_username?: string;
   admin_password?: string;
+  // Redis Cloud identifiers
+  redis_cloud_subscription_id?: number;
+  redis_cloud_database_id?: number;
+  // Redis Cloud metadata
+  redis_cloud_subscription_type?: 'pro' | 'essentials';
+  redis_cloud_database_name?: string;
 }
 
 export interface UpdateInstanceRequest {
@@ -105,6 +117,12 @@ export interface UpdateInstanceRequest {
   admin_url?: string;
   admin_username?: string;
   admin_password?: string;
+  // Redis Cloud identifiers
+  redis_cloud_subscription_id?: number;
+  redis_cloud_database_id?: number;
+  // Redis Cloud metadata
+  redis_cloud_subscription_type?: 'pro' | 'essentials';
+  redis_cloud_database_name?: string;
   status?: string;
   version?: string;
   memory?: string;
