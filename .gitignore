@@ -100,6 +100,10 @@ reference_code/
 artifacts/*/
 !artifacts/.gitkeep
 
+
+# Generated local maps
+map.json
+
 # Temporary
 tmp/
 temp/
