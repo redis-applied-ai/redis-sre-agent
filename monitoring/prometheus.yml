@@ -43,6 +43,27 @@ scrape_configs:
       - targets: ['node-exporter:9100']
     metrics_path: /metrics
     scrape_interval: 15s
+    metric_relabel_configs:
+      - source_labels: ['__name__']
+        regex: 'node_(memory|vmstat|pressure_memory).*'
+        action: drop
+
+
+
+  # Inject Pushgateway demo series into the 'node' job labels via honor_labels
+  # This allows the demo host ('demo-host') to appear as if reported by node_exporter
+  # so the agent's host metrics queries (which prefer node job) will include them.
+  - job_name: 'node-push'
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    metric_relabel_configs:
+      # Keep only metrics from the demo grouping (job="node", instance="demo-host")
+      - source_labels: ['job','instance']
+        regex: 'node;demo-host'
+        action: keep
 
 
   # Redis Enterprise node metrics (local demo cluster)
