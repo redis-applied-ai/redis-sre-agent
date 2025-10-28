@@ -73,7 +73,6 @@ test_storage/
 
 # Logging
 *.log
-logs/
 
 # Data
 data/
