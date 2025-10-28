@@ -31,10 +31,10 @@ jobs:
     - name: Run unit tests
       run: uv run pytest tests/unit/ -v --cov=redis_sre_agent --cov-report=xml --cov-report=term-missing
 
-    - name: Run integration tests
-      run: uv run pytest tests/ -m "integration and not slow" -v
+    - name: Run integration tests (Docker-backed, no OpenAI)
+      run: uv run pytest tests/integration -m "not openai_integration and not slow" -v --run-api-tests
       env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        CI: true
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
