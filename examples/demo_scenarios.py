@@ -2009,9 +2009,8 @@ class RedisSREDemo:
 
         # Consult the agent - let it gather its own diagnostics
         await self._run_diagnostics_and_agent_query(
-            f"The application team has reported performance issues with this Redis instance at {self.redis_url}. "
-            f"The instance is showing high memory utilization ({utilization:.1f}% of {maxmemory / (1024 * 1024):.1f} MB limit) "
-            f"with {keys_loaded:,} keys loaded. Please analyze the situation and provide immediate remediation steps."
+            "The application team has reported performance issues with this Redis instance."
+            "Please analyze the situation and provide immediate remediation steps."
         )
 
         # Cleanup and restore settings

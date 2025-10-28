@@ -306,6 +306,68 @@ class ToolManager:
                 continue
         return ordered_unique
 
+    def get_providers_for_protocol(self, protocol_cls: Any) -> List["ToolProvider"]:
+        """Return loaded providers that structurally satisfy a typing.Protocol.
+
+        The protocol should be annotated with @runtime_checkable for isinstance() to work.
+        """
+        # Unique providers in load order
+        seen = set()
+        ordered_unique: List[ToolProvider] = []
+        for provider in self._routing_table.values():
+            if id(provider) in seen:
+                continue
+            seen.add(id(provider))
+            try:
+                if isinstance(provider, protocol_cls):  # runtime_checkable structural check
+                    ordered_unique.append(provider)
+            except Exception:
+                continue
+        return ordered_unique
+
+    def _filter_tools_by_providers(
+        self, providers: List["ToolProvider"], allowed_ops: Optional[set[str]] = None
+    ) -> List[ToolDefinition]:
+        """Helper: return ToolDefinitions belonging to the given providers, optionally restricted by operation name.
+
+        Operation name is parsed as the substring after the provider prefix and instance hash,
+        i.e., name.split("_", 2)[2] when possible. This preserves multi-token ops like 'date_math'.
+        """
+        try:
+            provider_ids = {id(p) for p in providers or []}
+            results: List[ToolDefinition] = []
+            for td in self._tools:
+                p = self._routing_table.get(td.name)
+                if id(p) not in provider_ids:
+                    continue
+                if allowed_ops:
+                    try:
+                        nm = td.name or ""
+                        parts = nm.split("_", 2)
+                        op = parts[2] if len(parts) >= 3 else (parts[-1] if parts else nm)
+                        if op not in allowed_ops:
+                            continue
+                    except Exception:
+                        continue
+                results.append(td)
+            return results
+        except Exception:
+            return []
+
+    def get_tools_for_capability(
+        self, capability: Any, allowed_ops: Optional[set[str]] = None
+    ) -> List[ToolDefinition]:
+        """Return tool schemas for providers declaring a capability, optionally filtered by ops."""
+        providers = self.get_providers_for_capability(capability)
+        return self._filter_tools_by_providers(providers, allowed_ops=allowed_ops)
+
+    def get_tools_for_protocol(
+        self, protocol_cls: Any, allowed_ops: Optional[set[str]] = None
+    ) -> List[ToolDefinition]:
+        """Return tool schemas for providers satisfying a protocol, optionally filtered by ops."""
+        providers = self.get_providers_for_protocol(protocol_cls)
+        return self._filter_tools_by_providers(providers, allowed_ops=allowed_ops)
+
     def get_provider_for_capability(self, capability: Any) -> Optional["ToolProvider"]:
         """Return the first provider that declares the capability, or None."""
         providers = self.get_providers_for_capability(capability)

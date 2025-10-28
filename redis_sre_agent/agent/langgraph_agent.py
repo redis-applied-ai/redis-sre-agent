@@ -14,11 +14,10 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, Field
 
 from ..core.config import settings
 from ..core.instances import (
@@ -778,42 +777,12 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             try:
                 from langgraph.prebuilt import ToolNode as LGToolNode
 
-                def _args_model_from_parameters(tool_name: str, params: dict) -> type[BaseModel]:
-                    props = (params or {}).get("properties", {}) or {}
-                    required = set((params or {}).get("required", []) or [])
-                    fields = {}
-                    for k, spec in props.items():
-                        default = ... if k in required else None
-                        fields[k] = (
-                            Any,
-                            Field(default, description=(spec or {}).get("description")),
-                        )
-                    # Log schema shape once for debugging
-                    logger.debug(
-                        f"Tool args schema for {tool_name}: required={list(required)} props={list(props.keys())}"
-                    )
-                    # Build v2 model and allow extra keys
-                    ArgsModel = create_model(f"{tool_name}_Args", __base__=BaseModel, **fields)  # noqa: N806
-                    ArgsModel.model_config = ConfigDict(extra="allow")  # type: ignore[attr-defined]
-                    return ArgsModel
+                from .helpers import build_adapters_for_tooldefs as _build_adapters
 
-                adapters = []
-                for name, tdef in tooldefs_by_name.items():
-
-                    async def _exec_fn(_name=name, **kwargs):
-                        return await tool_mgr.resolve_tool_call(_name, kwargs or {})
-
-                    ArgsModel = _args_model_from_parameters(  # noqa: N806
-                        name, getattr(tdef, "parameters", {}) or {}
-                    )
-                    adapters.append(
-                        StructuredTool.from_function(
-                            coroutine=_exec_fn,
-                            name=name,
-                            description=getattr(tdef, "description", "") or "",
-                            args_schema=ArgsModel,
-                        )
-                    )
+                # Centralized adapter builder
+                _tool_schemas, adapters = await _build_adapters(
+                    tool_mgr, list(tooldefs_by_name.values())
+                )
 
                 lg_tool_node = LGToolNode(adapters)
 
@@ -997,53 +966,21 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     "name": getattr(target_instance, "name", None),
                 }
                 # Build knowledge-only adapters locally (mini model)
-                all_tools = tool_mgr.get_tools()
-                knowledge_tools = [
-                    t
-                    for t in all_tools
-                    if isinstance(t.name, str)
-                    and t.name.startswith("knowledge_")
-                    and ("search" in t.name or t.name.endswith("_search"))
-                ]
-                knowledge_tool_schemas = [t.to_openai_schema() for t in knowledge_tools]
-                knowledge_adapters = []
-                if knowledge_tools:
+                from redis_sre_agent.tools.protocols import KnowledgeProviderProtocol as _KProto
+
+                from .helpers import build_adapters_for_tooldefs as _build_adapters
+
+                knowledge_tools = tool_mgr.get_tools_for_protocol(_KProto, allowed_ops={"search"})
+                knowledge_tool_schemas, knowledge_adapters = await _build_adapters(
+                    tool_mgr, knowledge_tools
+                )
+                if knowledge_adapters:
                     knowledge_llm_base = ChatOpenAI(
                         model=self.settings.openai_model_mini,
                         openai_api_key=self.settings.openai_api_key,
                         timeout=self.settings.llm_timeout,
                     )
                     knowledge_llm = knowledge_llm_base.bind_tools(knowledge_tool_schemas)
-
-                    def _args_model_from_parameters(
-                        tool_name: str, params: dict
-                    ) -> type[BaseModel]:
-                        props = (params or {}).get("properties", {}) or {}
-                        required = set((params or {}).get("required", []) or [])
-                        fields = {}
-                        for k, spec in props.items():
-                            default = ... if k in required else None
-                            fields[k] = (
-                                Any,
-                                Field(default, description=(spec or {}).get("description")),
-                            )
-                        ArgsModel = create_model(f"{tool_name}_Args", __base__=BaseModel, **fields)  # noqa: N806
-                        ArgsModel.model_config = ConfigDict(extra="allow")  # type: ignore[attr-defined]
-                        return ArgsModel
-
-                    def _mk_adapter(tdef, _StructuredTool=StructuredTool):  # noqa: N803
-                        async def _exec(**kwargs):
-                            return await tool_mgr.resolve_tool_call(tdef.name, kwargs or {})
-
-                        ArgsModel = _args_model_from_parameters(tdef.name, tdef.parameters or {})  # noqa: N806
-                        return _StructuredTool.from_function(
-                            coroutine=_exec,
-                            name=tdef.name,
-                            description=tdef.description or "knowledge search",
-                            args_schema=ArgsModel,
-                        )
-
-                    knowledge_adapters = [_mk_adapter(t) for t in knowledge_tools]
 
                 if knowledge_adapters:
                     logger.info(
@@ -1865,68 +1802,34 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 return response
 
             # Build a small, bounded corrector with knowledge + utilities tools only
-            from langchain_core.tools import StructuredTool
             from langchain_openai import ChatOpenAI
-            from pydantic import BaseModel, ConfigDict, Field, create_model
 
             from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
 
             # Use always-on providers (knowledge, utilities)
             async with ToolManager(redis_instance=None) as corrector_mgr:
-                # Select only knowledge + utilities providers via manager helper
-                allowed_tooldefs = corrector_mgr.get_tools_by_provider_names(
-                    ["knowledge", "utilities"]
+                # Select only knowledge.search and utilities calculator/date_math/timezone_converter/http_head via protocol selectors
+                from redis_sre_agent.tools.protocols import (
+                    KnowledgeProviderProtocol as _KProto,
                 )
-                # Further restrict to knowledge.search and utilities calculator/date_math/timezone_converter/http_head
-                allowed_ops = {
-                    "search",
-                    "calculator",
-                    "date_math",
-                    "timezone_converter",
-                    "http_head",
-                }
-                tooldefs = []
-                for t in allowed_tooldefs:
-                    try:
-                        op = (t.name or "").split("_")[-1]
-                        if op in allowed_ops:
-                            tooldefs.append(t)
-                    except Exception:
-                        continue
+                from redis_sre_agent.tools.protocols import (
+                    UtilitiesProviderProtocol as _UProto,
+                )
+
+                knowledge_defs = corrector_mgr.get_tools_for_protocol(
+                    _KProto, allowed_ops={"search"}
+                )
+                utilities_defs = corrector_mgr.get_tools_for_protocol(
+                    _UProto,
+                    allowed_ops={"calculator", "date_math", "timezone_converter", "http_head"},
+                )
+                tooldefs = list(knowledge_defs) + list(utilities_defs)
                 tool_schemas = [t.to_openai_schema() for t in tooldefs]
 
-                # Build StructuredTool adapters
-                def _args_model_from_parameters(tool_name: str, params: dict) -> type[BaseModel]:
-                    props = (params or {}).get("properties", {}) or {}
-                    required = set((params or {}).get("required", []) or [])
-                    fields = {}
-                    for k, spec in props.items():
-                        default = ... if k in required else None
-                        fields[k] = (
-                            Any,
-                            Field(default, description=(spec or {}).get("description")),
-                        )
-                    args_model = create_model(f"{tool_name}_Args", __base__=BaseModel, **fields)
-                    args_model.model_config = ConfigDict(extra="allow")  # type: ignore[attr-defined]
-                    return args_model
+                # Build StructuredTool adapters centrally
+                from .helpers import build_adapters_for_tooldefs as _build_adapters
 
-                adapters = []
-                for tdef in tooldefs:
-
-                    async def _exec_fn(_name=tdef.name, **kwargs):
-                        return await corrector_mgr.resolve_tool_call(_name, kwargs or {})
-
-                    args_model = _args_model_from_parameters(
-                        tdef.name, getattr(tdef, "parameters", {}) or {}
-                    )
-                    adapters.append(
-                        StructuredTool.from_function(
-                            coroutine=_exec_fn,
-                            name=tdef.name,
-                            description=getattr(tdef, "description", "") or "",
-                            args_schema=args_model,
-                        )
-                    )
+                _tool_schemas2, adapters = await _build_adapters(corrector_mgr, tooldefs)
 
                 # LLM with tools bound
                 corrector_llm_base = ChatOpenAI(

@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import pytz
 
-from redis_sre_agent.tools.protocols import ToolProvider
+from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,9 @@ class UtilitiesToolProvider(ToolProvider):
     - Date Math: Calculate differences between dates, add/subtract time periods
     - Timezone Converter: Convert dates between timezones
     """
+
+    # Declare utilities capability
+    capabilities = {ToolCapability.UTILITIES}
 
     # Safe operators for calculator
     SAFE_OPERATORS = {
