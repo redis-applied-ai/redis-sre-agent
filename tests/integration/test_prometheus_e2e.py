@@ -77,7 +77,7 @@ async def test_prometheus_provider_e2e_query_and_search():
 
 @pytest.mark.asyncio
 async def test_tool_manager_e2e_routes_to_prometheus_with_env_config():
-    from redis_sre_agent.api.instances import RedisInstance
+    from redis_sre_agent.core.instances import RedisInstance
     from redis_sre_agent.tools.manager import ToolManager
 
     with prometheus_container_with_self_scrape() as (host, port):

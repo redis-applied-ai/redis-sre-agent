@@ -20,6 +20,7 @@ from ..core.schedule_storage import (
 from ..core.schedule_storage import (
     store_schedule,
 )
+from ..core.schedules import Schedule
 
 logger = logging.getLogger(__name__)
 
@@ -29,40 +30,6 @@ router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
 _schedules: Dict[str, Dict] = {}
 _scheduled_tasks: Dict[str, Dict] = {}
 _scheduled_runs: Dict[str, Dict] = {}  # Keep for API compatibility
-
-
-class Schedule(BaseModel):
-    """Schedule model for automated agent runs."""
-
-    id: str = Field(default_factory=lambda: str(uuid4()), description="Unique schedule ID")
-    name: str = Field(..., description="Human-readable schedule name")
-    description: Optional[str] = Field(None, description="Schedule description")
-    interval_type: str = Field(..., description="Interval type: minutes, hours, days, weeks")
-    interval_value: int = Field(..., ge=1, description="Interval value (e.g., 30 for '30 minutes')")
-    redis_instance_id: Optional[str] = Field(
-        None, description="Redis instance ID to use (optional)"
-    )
-    instructions: str = Field(..., description="Instructions for the agent to execute")
-    enabled: bool = Field(True, description="Whether the schedule is active")
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    last_run_at: Optional[str] = Field(None, description="Last execution timestamp")
-    next_run_at: Optional[str] = Field(None, description="Next scheduled execution timestamp")
-
-    def calculate_next_run(self) -> datetime:
-        """Calculate the next run time based on interval."""
-        now = datetime.now(timezone.utc)
-
-        if self.interval_type == "minutes":
-            return now + timedelta(minutes=self.interval_value)
-        elif self.interval_type == "hours":
-            return now + timedelta(hours=self.interval_value)
-        elif self.interval_type == "days":
-            return now + timedelta(days=self.interval_value)
-        elif self.interval_type == "weeks":
-            return now + timedelta(weeks=self.interval_value)
-        else:
-            raise ValueError(f"Unsupported interval type: {self.interval_type}")
 
 
 class CreateScheduleRequest(BaseModel):
@@ -109,15 +76,24 @@ class ScheduledTask(BaseModel):
 
 
 class ScheduledRun(BaseModel):
-    """Model for a scheduled run instance (legacy - keeping for API compatibility)."""
+    """Model for a scheduled run instance (legacy - keeping for API compatibility).
+
+    Extended to include thread_id and task_id for richer linkage and status reporting.
+    """
 
     id: str = Field(default_factory=lambda: str(uuid4()), description="Unique run ID")
     schedule_id: str = Field(..., description="ID of the parent schedule")
-    status: str = Field("pending", description="Run status: pending, running, completed, failed")
+    # New fields (optional for backward compatibility)
+    thread_id: Optional[str] = Field(None, description="ID of the thread created for this run")
+    task_id: Optional[str] = Field(None, description="ID of the per-turn task for this run")
+
+    status: str = Field("pending", description="Run status based on Task status")
     scheduled_at: str = Field(..., description="When this run was scheduled for")
     started_at: Optional[str] = Field(None, description="When the run actually started")
     completed_at: Optional[str] = Field(None, description="When the run completed")
-    triage_task_id: Optional[str] = Field(None, description="ID of the created triage task")
+    triage_task_id: Optional[str] = Field(
+        None, description="ID of the created triage task (thread)"
+    )
     error: Optional[str] = Field(None, description="Error message if run failed")
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -217,20 +193,22 @@ async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
 
-        # Update provided fields
+        # Merge provided fields
         update_data = request.dict(exclude_unset=True)
         if update_data:
             schedule_data.update(update_data)
-            schedule_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-            # Recalculate next run if interval changed
-            if "interval_type" in update_data or "interval_value" in update_data:
-                schedule = Schedule(**schedule_data)
-                next_run = schedule.calculate_next_run()
-                schedule_data["next_run_at"] = next_run.isoformat()
+        # Rehydrate to model for consistent types and timestamp handling
+        schedule = Schedule(**schedule_data)
+        schedule.updated_at = datetime.now(timezone.utc).isoformat()
 
-        # Store updated schedule in Redis
-        success = await store_schedule(schedule_data)
+        # Recalculate next run if interval changed
+        if "interval_type" in update_data or "interval_value" in update_data:
+            next_run = schedule.calculate_next_run()
+            schedule.next_run_at = next_run.isoformat()
+
+        # Persist updated schedule
+        success = await store_schedule(schedule.dict())
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -238,7 +216,7 @@ async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
             )
 
         logger.info(f"Updated schedule: {schedule_id}")
-        return Schedule(**schedule_data)
+        return schedule
 
     except Exception as e:
         logger.error(f"Failed to update schedule {schedule_id}: {e}")
@@ -323,25 +301,65 @@ async def list_schedule_runs(schedule_id: str):
                     }
                 )
 
-        # Convert to ScheduledRun format
+        # Convert to ScheduledRun format (derive Task status and IDs)
+        from ..core.keys import RedisKeys
+        from ..core.task_state import TaskManager
+
         runs = []
+        task_manager = TaskManager(redis_client=redis_client)
+
         for thread in schedule_threads:
-            # Map thread status to run status
-            run_status = thread["status"]
-            if run_status == "done":
-                run_status = "completed"
-            elif run_status == "in_progress":
-                run_status = "running"
+            thread_id = thread["thread_id"]
+
+            # Defaults
+            task_id: Optional[str] = None
+            task_status = "queued"
+            started_at = thread["created_at"]
+            completed_at = None
+            error_msg = None
+
+            # Find latest per-turn task for this thread
+            try:
+                zkey = RedisKeys.thread_tasks_index(thread_id)
+                tids = await redis_client.zrevrange(zkey, 0, 0)
+                if tids:
+                    tid0 = tids[0]
+                    if isinstance(tid0, bytes):
+                        tid0 = tid0.decode()
+                    task_id = tid0
+            except Exception:
+                task_id = None
+
+            if task_id:
+                try:
+                    tstate = await task_manager.get_task_state(task_id)
+                except Exception:
+                    tstate = None
+                if tstate:
+                    status_obj = getattr(tstate, "status", None)
+                    if status_obj is not None:
+                        task_status = getattr(status_obj, "value", str(status_obj))
+                    md = getattr(tstate, "metadata", None)
+                    if md is not None:
+                        started_at = md.created_at or started_at
+                        if task_status == "done":
+                            completed_at = md.updated_at
+                    error_msg = getattr(tstate, "error_message", None)
+
+            scheduled_at = thread["context"].get("scheduled_at", thread["created_at"])
 
             run = ScheduledRun(
-                id=thread["thread_id"],  # Use thread_id as run id
+                id=thread_id,  # Use thread_id as run id
                 schedule_id=schedule_id,
-                status=run_status,
-                scheduled_at=thread["context"].get("scheduled_at", thread["created_at"]),
-                started_at=thread["created_at"],
-                completed_at=thread["updated_at"] if run_status == "completed" else None,
-                triage_task_id=thread["thread_id"],  # Link to the thread for viewing
+                thread_id=thread_id,
+                task_id=task_id,
+                status=task_status,
+                scheduled_at=scheduled_at,
+                started_at=started_at,
+                completed_at=completed_at,
+                triage_task_id=thread_id,  # Legacy link to the thread for viewing
                 created_at=thread["created_at"],
+                error=error_msg,
             )
             runs.append(run)
 
@@ -433,9 +451,13 @@ async def trigger_schedule_now(schedule_id: str):
                     logger.error(f"Failed to submit manual agent task: {e}")
                     raise e
 
-        # Create a synthetic run record for the response
+        # Create a synthetic run record for the response (thread_id known; task_id will be created by worker)
         run = ScheduledRun(
-            schedule_id=schedule_id, scheduled_at=current_time.isoformat(), status="pending"
+            schedule_id=schedule_id,
+            scheduled_at=current_time.isoformat(),
+            status="pending",
+            thread_id=thread_id,
+            task_id=None,
         )
 
         logger.info(f"Manually triggered schedule {schedule_id}")

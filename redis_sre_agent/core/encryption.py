@@ -14,6 +14,7 @@ import json
 import logging
 import os
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,15 @@ def decrypt_secret(encrypted_data: str) -> str:
 
     except EncryptionError:
         raise
+    except InvalidTag as e:
+        # Authentication tag mismatch is usually caused by using the wrong master key
+        # (different from the one used to encrypt) or data corruption.
+        logger.error(
+            "Failed to decrypt secret: authentication failed (likely wrong master key or corrupted data)"
+        )
+        raise EncryptionError(
+            "Decryption failed: authentication failed (wrong master key or corrupted data)"
+        ) from e
     except Exception as e:
         logger.error(f"Failed to decrypt secret: {e}")
         raise EncryptionError(f"Decryption failed: {e}") from e

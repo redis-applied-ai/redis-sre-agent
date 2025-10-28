@@ -10,7 +10,7 @@ The agent comes with a knowledge base tool enabled by default. To use it, simply
 
 ```bash
 # The knowledge base tool is automatically available
-python -m redis_sre_agent.api.main
+uv run redis-sre-agent --help
 ```
 
 When you provide a `RedisInstance` in your query, instance-specific tools will also be loaded automatically. These are tools that are specific to the provided Redis instance, such as querying metrics or logs, or connecting to the instance to run INFO commands.

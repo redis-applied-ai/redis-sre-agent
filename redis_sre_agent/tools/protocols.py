@@ -1,17 +1,22 @@
-"""ABC-based protocols for tool providers.
+"""ABC-based protocols and base classes for tool providers.
 
-This module defines the base ToolProvider ABC and supporting data classes
-for metrics, logs, tickets, and other SRE tool capabilities.
+This module defines the base ToolProvider ABC, capability enums, lightweight
+data classes, and optional Protocols that describe the minimal contracts
+HostTelemetry and other orchestrators can program against.
 """
 
+import weakref
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from redis_sre_agent.api.instances import RedisInstance
+    from redis_sre_agent.core.instances import RedisInstance
 
+    from .manager import ToolManager
     from .tool_definition import ToolDefinition
 
 
@@ -24,6 +29,46 @@ class ToolCapability(Enum):
     REPOS = "repos"
     TRACES = "traces"
     DIAGNOSTICS = "diagnostics"  # For deep instance diagnostics (Redis INFO, key sampling, etc.)
+
+
+# --------------------------- Optional provider Protocols ---------------------------
+# These describe the minimal contracts higher-level orchestrators can rely on
+# without referencing concrete implementations (e.g., Prometheus/Loki).
+
+
+class MetricsProviderProtocol(Protocol):
+    async def query(self, query: str) -> Dict[str, Any]: ...
+
+    async def query_range(
+        self, query: str, start_time: str, end_time: str, step: Optional[str] = None
+    ) -> Dict[str, Any]: ...
+
+
+class LogsProviderProtocol(Protocol):
+    async def query_range(
+        self,
+        query: str,
+        start: str,
+        end: str,
+        step: Optional[str] = None,
+        limit: Optional[int] = None,
+        interval: Optional[str] = None,
+        direction: Optional[str] = None,
+    ) -> Dict[str, Any]: ...
+
+    async def series(
+        self, match: List[str], start: Optional[str] = None, end: Optional[str] = None
+    ) -> Dict[str, Any]: ...
+
+
+class DiagnosticsProviderProtocol(Protocol):
+    async def info(self, section: Optional[str] = None) -> Dict[str, Any]: ...
+    async def replication_info(self) -> Dict[str, Any]: ...
+    async def client_list(self, client_type: Optional[str] = None) -> Dict[str, Any]: ...
+    async def system_hosts(self) -> List["SystemHost"]: ...
+
+
+# --------------------------- Lightweight data classes ---------------------------
 
 
 class MetricValue:
@@ -74,6 +119,19 @@ class LogEntry:
         self.message = message
         self.source = source
         self.labels = labels or {}
+
+
+class SystemHost(BaseModel):
+    """Represents a system host target for metrics/logs discovery.
+
+    This describes where the Redis system is running (nodes, primaries/replicas,
+    cluster nodes, or Enterprise machines), not necessarily database endpoints.
+    """
+
+    host: str
+    port: Optional[int] = None
+    role: Optional[str] = None  # e.g., single, master, replica, cluster-master, enterprise-node
+    labels: Dict[str, str] = {}
 
 
 class Ticket:
@@ -160,6 +218,40 @@ class ToolProvider(ABC):
                 return {"result": f"Did something with {param}"}
     """
 
+    # Capabilities this provider offers. Subclasses should override.
+    capabilities: set[ToolCapability] = set()
+
+    # Optional per-provider instance config model and namespace
+    # If set, ToolManager/ToolProvider will attempt to parse instance.extension_data
+    # and instance.extension_secrets under this namespace and expose it via
+    # self.instance_config for provider use.
+    instance_config_model: Optional[type[BaseModel]] = None
+    extension_namespace: Optional[str] = None  # defaults to provider_name
+
+    # Weak back-reference to the manager (set by ToolManager on load)
+    _manager_ref: Optional[Any] = None
+
+    @property
+    def _manager(self) -> Optional["ToolManager"]:
+        """Dynamically resolve the ToolManager from a weak reference.
+
+        Back-compat: property name matches legacy attribute so providers that
+        do getattr(self, "_manager", None) keep working without changes.
+        """
+        try:
+            ref = getattr(self, "_manager_ref", None)
+            return ref() if ref else None
+        except Exception:
+            return None
+
+    @_manager.setter
+    def _manager(self, manager: Optional["ToolManager"]) -> None:
+        """Setter accepts a strong manager and stores a weakref to avoid cycles."""
+        try:
+            self._manager_ref = weakref.ref(manager) if manager is not None else None
+        except Exception:
+            self._manager_ref = None
+
     def __init__(
         self, redis_instance: Optional["RedisInstance"] = None, config: Optional[Any] = None
     ):
@@ -171,7 +263,72 @@ class ToolProvider(ABC):
         """
         self.redis_instance = redis_instance
         self.config = config
+        self.instance_config: Optional[BaseModel] = None
         self._instance_hash = hex(id(self))[2:8]
+        # Attempt to load instance-scoped extension config eagerly
+        try:
+            self.instance_config = self._load_instance_extension_config()
+        except Exception:
+            # Providers should operate without instance_config
+            self.instance_config = None
+
+    # ----- Extension config helpers -----
+    def _get_extension_namespace(self) -> str:
+        try:
+            ns = (self.extension_namespace or self.provider_name or "").strip()
+            return ns or ""
+        except Exception:
+            return ""
+
+    def _load_instance_extension_config(self) -> Optional[BaseModel]:
+        """Parse per-instance extension config for this provider, if a model is declared.
+
+        Supports two shapes for both extension_data and extension_secrets on RedisInstance:
+        - Namespaced mapping: extension_data[namespace] -> dict
+        - Flat keys:         extension_data[f"{namespace}.<key>"] -> value
+        For secrets, the value should be SecretStr where possible; plain strings are accepted.
+        """
+        # No instance or no model -> nothing to do
+        if not getattr(self, "instance_config_model", None) or not self.redis_instance:
+            return None
+        try:
+            ns = self._get_extension_namespace()
+            data: Dict[str, Any] = {}
+            # Gather data
+            try:
+                ext = getattr(self.redis_instance, "extension_data", None) or {}
+                if isinstance(ext.get(ns), dict):
+                    data.update(ext.get(ns) or {})
+                else:
+                    # Collect flat keys with prefix 'ns.'
+                    prefix = f"{ns}."
+                    for k, v in (ext or {}).items():
+                        if isinstance(k, str) and k.startswith(prefix):
+                            data[k[len(prefix) :]] = v
+            except Exception:
+                pass
+            # Gather secrets
+            try:
+                sec = getattr(self.redis_instance, "extension_secrets", None) or {}
+                # If secrets are namespaced mapping
+                sec_ns = sec.get(ns)
+                if isinstance(sec_ns, dict):
+                    for k, v in sec_ns.items():
+                        data[k] = v  # SecretStr preferred
+                else:
+                    prefix = f"{ns}."
+                    for k, v in (sec or {}).items():
+                        if isinstance(k, str) and k.startswith(prefix):
+                            data[k[len(prefix) :]] = v
+            except Exception:
+                pass
+            # Validate/construct model
+            model_cls = self.instance_config_model  # type: ignore[assignment]
+            if not model_cls:
+                return None
+            return model_cls.model_validate(data or {})  # type: ignore[attr-defined]
+        except Exception:
+            return None
 
     def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         """Map a tool_name to a provider method name.

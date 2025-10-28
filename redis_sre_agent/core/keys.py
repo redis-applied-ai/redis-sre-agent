@@ -156,6 +156,12 @@ class RedisKeys:
         """Sorted set of task_ids for a thread (score=timestamp)."""
         return f"sre:thread:{thread_id}:tasks"
 
+    @staticmethod
+    def schedule_key(schedule_id: str) -> str:
+        """Key for a schedule definition (legacy-compatible)."""
+        # Schedules use underscore prefix for historical compatibility
+        return f"sre_schedules:{schedule_id}"
+
     # ============================================================================
     # Stream keys (for WebSocket updates)
     # ============================================================================

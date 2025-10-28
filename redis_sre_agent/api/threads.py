@@ -11,8 +11,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, status
 
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.thread_state import ThreadManager
-from redis_sre_agent.models.threads import delete_thread as delete_thread_model
+from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.core.threads import delete_thread as delete_thread_model
 from redis_sre_agent.schemas.threads import (
     Message,
     ThreadAppendMessagesRequest,

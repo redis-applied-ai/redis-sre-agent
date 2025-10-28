@@ -53,7 +53,7 @@ async def test_tool_manager_knowledge_tools():
 @pytest.mark.asyncio
 async def test_tool_manager_with_instance():
     """Test that instance-specific tools are loaded when instance is provided."""
-    from redis_sre_agent.api.instances import RedisInstance
+    from redis_sre_agent.core.instances import RedisInstance
 
     # Create a test instance
     test_instance = RedisInstance(

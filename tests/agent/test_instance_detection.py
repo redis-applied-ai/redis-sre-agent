@@ -8,7 +8,7 @@ from redis_sre_agent.agent.langgraph_agent import (
     _detect_instance_type_with_llm,
     _mask_redis_url_credentials,
 )
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 
 
 @pytest.fixture

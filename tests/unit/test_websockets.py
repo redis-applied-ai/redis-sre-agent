@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.api.websockets import TaskStreamManager
-from redis_sre_agent.core.thread_state import ThreadState, ThreadUpdate
+from redis_sre_agent.core.threads import ThreadState, ThreadUpdate
 
 
 class TestTaskStreamManager:
@@ -52,6 +52,32 @@ class TestTaskStreamManager:
 
             # Verify TTL was set
             mock_redis.expire.assert_called_once_with(stream_key, 86400)
+
+    @pytest.mark.asyncio
+    async def test_publish_task_update_with_duplicate_keys(self, stream_manager):
+        """Ensure duplicate 'update_type'/'thread_id' keys in data don't break publish."""
+        mock_redis = AsyncMock(spec=Redis)
+        mock_redis.xadd = AsyncMock(return_value=b"1234567890-1")
+        mock_redis.expire = AsyncMock(return_value=True)
+
+        with patch.object(
+            stream_manager, "_get_client", new_callable=AsyncMock, return_value=mock_redis
+        ):
+            data = {
+                "update_type": "progress",  # duplicate with param
+                "thread_id": "wrong_thread",  # duplicate with param
+                "status": "running",
+            }
+            result = await stream_manager.publish_task_update("test_thread", "thread_update", data)
+
+            assert result is True
+
+            # Verify xadd was called and param values override data duplicates
+            call_args = mock_redis.xadd.call_args
+            stream_data = call_args[0][1]
+            assert stream_data["update_type"] == "thread_update"
+            assert stream_data["thread_id"] == "test_thread"
+            assert stream_data["status"] == "running"
 
     @pytest.mark.asyncio
     async def test_publish_task_update_failure(self, stream_manager):
@@ -244,7 +270,7 @@ class TestThreadManagerIntegration:
     @pytest.mark.asyncio
     async def test_thread_update_publishes_stream(self):
         """Test that thread updates are published to streams."""
-        from redis_sre_agent.core.thread_state import ThreadManager
+        from redis_sre_agent.core.threads import ThreadManager
 
         thread_manager = ThreadManager()
         thread_id = "test_thread"

@@ -200,7 +200,7 @@ async def test_query_nonexistent_metric(prometheus_config):
 @pytest.mark.asyncio
 async def test_provider_with_redis_instance(prometheus_config):
     """Test that provider works with a Redis instance context."""
-    from redis_sre_agent.api.instances import RedisInstance
+    from redis_sre_agent.core.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
@@ -209,6 +209,7 @@ async def test_provider_with_redis_instance(prometheus_config):
         environment="test",
         usage="cache",
         description="Test Redis instance",
+        instance_type="oss_single",
     )
 
     async with PrometheusToolProvider(

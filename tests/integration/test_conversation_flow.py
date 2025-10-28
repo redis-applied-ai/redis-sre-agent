@@ -12,7 +12,7 @@ Tests the complete flow:
 import pytest
 
 from redis_sre_agent.core.docket_tasks import process_agent_turn
-from redis_sre_agent.core.thread_state import ThreadManager
+from redis_sre_agent.core.threads import ThreadManager
 
 
 @pytest.fixture

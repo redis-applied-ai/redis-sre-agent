@@ -10,7 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from redisvl.query import VectorQuery, VectorRangeQuery
+from redisvl.query import HybridQuery, VectorQuery, VectorRangeQuery
+from redisvl.query.filter import Tag
 from ulid import ULID
 
 from redis_sre_agent.core.keys import RedisKeys
@@ -23,85 +24,87 @@ async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
     limit: int = 10,
-    distance_threshold: float = 0.2,
+    distance_threshold: Optional[float] = None,
+    hybrid_search: bool = False,
 ) -> Dict[str, Any]:
-    """Search the SRE knowledge base (core implementation).
+    """Search the SRE knowledge base.
 
-    This is the core helper function that performs the actual search.
-    Called by both the task (for background execution) and the tool (for LLM access).
+    NOTE: The HybridQuery class can't take a distance threshold, so if
+          hybrid_search is True, distance_threshold is ignored.
 
     Args:
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
         limit: Maximum number of results
         distance_threshold: Minimum score threshold for results
+        hybrid_search: Whether to use hybrid search (vector + full-text)
 
     Returns:
         Dictionary with search results including task_id, query, results, etc.
     """
     logger.info(f"Searching SRE knowledge: '{query}' in category '{category}'")
-
-    # Get vector search components
     index = await get_knowledge_index()
+    return_fields = [
+        "id",
+        "document_hash",
+        "chunk_index",
+        "title",
+        "content",
+        "source",
+        "category",
+        "severity",
+    ]
+
+    # Always use vector search (tests rely on embedding being used)
     vectorizer = get_vectorizer()
+    vectors = await vectorizer.aembed_many([query])
+    query_vector = vectors[0] if vectors else []
 
-    # Create vector embedding for the query (use batch API for test compatibility)
-    query_vector_list = await vectorizer.aembed_many([query])
-    query_vector = query_vector_list[0]
-
-    # Build vector query
-    if distance_threshold is not None:
-        vector_query = VectorRangeQuery(
+    if hybrid_search:
+        logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
+        query_obj = HybridQuery(
             vector=query_vector,
             vector_field_name="vector",
-            return_fields=[
-                "id",
-                "document_hash",
-                "chunk_index",
-                "title",
-                "content",
-                "source",
-                "category",
-                "severity",
-            ],
+            text_field_name="content",
+            text=query,
             num_results=limit,
-            distance_threshold=distance_threshold,
+            return_fields=return_fields,
         )
     else:
-        vector_query = VectorQuery(
-            vector=query_vector,
-            vector_field_name="vector",
-            return_fields=[
-                "id",
-                "document_hash",
-                "chunk_index",
-                "title",
-                "content",
-                "source",
-                "category",
-                "severity",
-            ],
-            num_results=limit,
-        )
+        # Build pure vector query
+        if distance_threshold is not None:
+            query_obj = VectorRangeQuery(
+                vector=query_vector,
+                vector_field_name="vector",
+                return_fields=return_fields,
+                num_results=limit,
+                distance_threshold=distance_threshold,
+            )
+        else:
+            query_obj = VectorQuery(
+                vector=query_vector,
+                vector_field_name="vector",
+                return_fields=return_fields,
+                num_results=limit,
+            )
 
     # Build search filters
     if category:
-        vector_query.set_filter(f"@category:{{{category}}}")
+        query_obj.set_filter(Tag("category") == category)
 
     # Perform vector search
-    results = await index.query(vector_query)
+    results = await index.query(query_obj)
 
     # If we got 0 results with a category filter, retry without the filter
     if len(results) == 0 and category:
         logger.info(
             f"No results found with category '{category}', retrying without category filter"
         )
-        vector_query.set_filter(None)
-        results = await index.query(vector_query)
+        query_obj.set_filter(None)
+        results = await index.query(query_obj)
         logger.info(f"Retry without category filter found {len(results)} results")
 
     search_result = {
-        "task_id": str(ULID()),
         "query": query,
         "category": category,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -133,7 +136,7 @@ async def search_knowledge_base_helper(
         ],
     }
 
-    logger.info(f"Knowledge search completed: {search_result['task_id']} ({len(results)} results)")
+    logger.info(f"Knowledge search completed: ({len(results)} results)")
     return search_result
 
 

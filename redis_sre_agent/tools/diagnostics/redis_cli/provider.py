@@ -5,14 +5,16 @@ All commands are read-only for safety.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.decorators import status_update
-from redis_sre_agent.tools.protocols import ToolProvider
+from redis_sre_agent.tools.protocols import SystemHost, ToolCapability, ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ class RedisCliToolProvider(ToolProvider):
     """Redis CLI diagnostics provider using redis-py.
 
     Provides read-only diagnostic tools for Redis troubleshooting:
+
     - INFO command (server, memory, clients, stats, etc.)
     - SLOWLOG (performance diagnostics)
     - ACL LOG (security diagnostics)
@@ -50,6 +53,9 @@ class RedisCliToolProvider(ToolProvider):
 
     The provider is initialized with a connection URL and manages the Redis client lifecycle.
     """
+
+    # Declare capabilities so orchestrators can obtain a diagnostics provider via ToolManager
+    capabilities = {ToolCapability.DIAGNOSTICS}
 
     def __init__(
         self,
@@ -122,7 +128,7 @@ class RedisCliToolProvider(ToolProvider):
             Redis: Initialized Redis client
         """
         if self._client is None:
-            from redis_sre_agent.api.instances import mask_redis_url
+            from redis_sre_agent.core.instances import mask_redis_url
 
             self._client = Redis.from_url(self.connection_url, decode_responses=True)
             logger.info(f"Connected to Redis at {mask_redis_url(self.connection_url)}")
@@ -827,3 +833,162 @@ class RedisCliToolProvider(ToolProvider):
                 "index_name": index_name,
                 "note": "This command requires RediSearch module and a valid index name",
             }
+
+    async def system_hosts(self) -> List[SystemHost]:
+        """Discover system hosts for this Redis deployment.
+
+        Returns a list of SystemHost entries derived from Redis diagnostics:
+        - Redis Cluster: parsed from CLUSTER NODES
+        - Replication: parsed from INFO replication (master/replica hosts)
+        - Single instance: inferred from our connection's local address (CLIENT LIST + CLIENT ID)
+        """
+        hosts: dict[Tuple[str, Optional[int]], SystemHost] = {}
+        client = self.get_client()
+
+        # Helper to add or update a host entry
+        def add_host(
+            host: str,
+            port: Optional[int] = None,
+            role: Optional[str] = None,
+            labels: Optional[Dict[str, str]] = None,
+        ):
+            if not host:
+                return
+            key = (host, port)
+            if key not in hosts:
+                hosts[key] = SystemHost(host=host, port=port, role=role, labels=labels or {})
+            else:
+                # Preserve first non-empty role and merge labels
+                if role and not hosts[key].role:
+                    hosts[key].role = role
+                if labels:
+                    hosts[key].labels.update(labels)
+
+        # 1) Try Redis Cluster discovery
+        try:
+            nodes_raw = await client.cluster("NODES")
+            if isinstance(nodes_raw, (bytes, bytearray)):
+                nodes_raw = nodes_raw.decode()
+            if isinstance(nodes_raw, str) and nodes_raw.strip():
+                for line in nodes_raw.splitlines():
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    addr = parts[1]  # e.g., 10.0.0.1:6379@16379
+                    flags = parts[2]  # contains master, slave, replica, etc.
+                    # Extract host and port (handle IPv6 [::1]:6379@16379)
+                    hp = addr.split("@")[0]
+                    if hp.startswith("[") and "]" in hp:
+                        host = hp[1 : hp.rfind("]")]
+                        port_str = hp[hp.rfind("]") + 2 :]
+                    else:
+                        host_port = hp.rsplit(":", 1)
+                        if len(host_port) == 2:
+                            host, port_str = host_port[0], host_port[1]
+                        else:
+                            host, port_str = hp, None
+                    try:
+                        port = int(port_str) if port_str else None
+                    except Exception:
+                        port = None
+
+                    role = None
+                    f = flags.lower()
+                    if "master" in f:
+                        role = "cluster-master"
+                    elif "replica" in f or "slave" in f:
+                        role = "cluster-replica"
+                    add_host(host, port, role, labels={"source": "cluster"})
+        except Exception:
+            # Not a cluster or command not available
+            pass
+
+        # If we already discovered cluster nodes, return them
+        if hosts:
+            return list(hosts.values())
+
+        # 2) Try replication topology
+        try:
+            repl = await client.info("replication")
+            if isinstance(repl, dict):
+                # Master (if this node is replica)
+                mhost = repl.get("master_host") or repl.get("master_host_ip")
+                mport = None
+                try:
+                    mport = int(repl.get("master_port")) if repl.get("master_port") else None
+                except Exception:
+                    mport = None
+                if mhost:
+                    add_host(str(mhost), mport, role="master", labels={"source": "replication"})
+
+                # Replicas
+                for k, v in repl.items():
+                    if not isinstance(k, str) or not k.startswith("slave"):
+                        continue
+                    ip = None
+                    port = None
+                    if isinstance(v, dict):
+                        ip = v.get("ip") or v.get("host")
+                        try:
+                            port = int(v.get("port")) if v.get("port") else None
+                        except Exception:
+                            port = None
+                    elif isinstance(v, str):
+                        # format: "ip=10.0.0.2,port=6380,state=online,..."
+                        try:
+                            m_ip = re.search(r"ip=([^,\s]+)", v)
+                            m_po = re.search(r"port=(\d+)", v)
+                            ip = m_ip.group(1) if m_ip else None
+                            port = int(m_po.group(1)) if m_po else None
+                        except Exception:
+                            ip, port = None, None
+                    if ip:
+                        add_host(str(ip), port, role="replica", labels={"source": "replication"})
+        except Exception:
+            pass
+
+        # 3) Fallback for single instance: use our connection's local address (laddr)
+        # Only if nothing else found
+        if not hosts:
+            try:
+                cid = await client.client_id()
+                clist = await client.client_list()
+                # Find this connection in client list
+                entry = None
+                for row in clist or []:
+                    try:
+                        if int(row.get("id")) == int(cid):
+                            entry = row
+                            break
+                    except Exception:
+                        continue
+                if entry:
+                    laddr = entry.get("laddr")  # e.g., "127.0.0.1:6379"
+                    if isinstance(laddr, str) and ":" in laddr:
+                        h, p = laddr.rsplit(":", 1)
+                        try:
+                            add_host(h, int(p), role="single", labels={"source": "client_list"})
+                        except Exception:
+                            add_host(h, None, role="single", labels={"source": "client_list"})
+            except Exception:
+                pass
+
+        # 4) Final fallback: use connection_url hostname/port
+        if not hosts:
+            try:
+                url = getattr(self, "connection_url", None)
+                if url:
+                    p = urlparse(url)
+                    if p.hostname:
+                        port_val = None
+                        try:
+                            port_val = int(p.port) if p.port else None
+                        except Exception:
+                            port_val = None
+                        add_host(
+                            p.hostname, port_val, role="single", labels={"source": "connection_url"}
+                        )
+            except Exception:
+                pass
+
+        return list(hosts.values())

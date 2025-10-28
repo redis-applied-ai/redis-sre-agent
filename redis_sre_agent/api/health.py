@@ -81,7 +81,7 @@ async def detailed_health_check():
         status_code = 503
 
     # Mask Redis URL for display
-    from redis_sre_agent.api.instances import mask_redis_url
+    from redis_sre_agent.core.instances import mask_redis_url
 
     masked_redis_url = mask_redis_url(settings.redis_url.get_secret_value())
 

@@ -78,7 +78,7 @@ print(result['metrics'])
 ### With Redis Instance Context
 
 ```python
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 
 redis_instance = RedisInstance(
     id="prod-cache",

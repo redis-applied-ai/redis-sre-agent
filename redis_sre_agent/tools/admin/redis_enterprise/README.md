@@ -177,7 +177,7 @@ The LLM can call:
 ## Example Usage
 
 ```python
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise import RedisEnterpriseAdminToolProvider
 
 # Create a Redis instance with admin API configuration

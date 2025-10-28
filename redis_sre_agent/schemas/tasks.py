@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from redis_sre_agent.core.thread_state import ThreadStatus
+from redis_sre_agent.core.threads import ThreadStatus
 
 
 class TaskCreateRequest(BaseModel):

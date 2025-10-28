@@ -15,8 +15,8 @@ from redis_sre_agent.core.knowledge_helpers import (
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
-from redis_sre_agent.core.task_state import TaskManager
-from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
+from redis_sre_agent.core.tasks import TaskManager
+from redis_sre_agent.core.threads import ThreadManager, ThreadStatus
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +60,21 @@ async def search_knowledge_base(
         Dictionary with search results
     """
     try:
-        kwargs = {"query": query, "category": category, "limit": limit}
+        kwargs = {"query": query, "limit": limit}
         if distance_threshold is not None:
             kwargs["distance_threshold"] = distance_threshold
-        return await search_knowledge_base_helper(**kwargs)
+        if category:
+            kwargs["category"] = category
+        result = await search_knowledge_base_helper(**kwargs)
+        # Ensure a task_id is present for callers/tests expecting it
+        try:
+            from ulid import ULID
+
+            result.setdefault("task_id", str(ULID()))
+        except Exception:
+            # Best-effort; absence shouldn't break callers
+            result.setdefault("task_id", "task")
+        return result
     except Exception as e:
         logger.error(f"Knowledge search failed (attempt {retry.attempt}): {e}")
         raise
@@ -111,63 +122,11 @@ async def ingest_sre_document(
         raise
 
 
-async def check_service_health(
-    service_name: str,
-    endpoints: List[str],
-    timeout: int = 30,
-    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=2)),
-) -> Dict[str, Any]:
-    """
-    Check health of a group of service endpoints.
-
-    Performs lightweight HTTP validation of each endpoint and returns a summary.
-    Intended to be used as a background task via Docket.
-    """
-    from time import perf_counter
-
-    checks: List[Dict[str, Any]] = []
-    for ep in endpoints:
-        start = perf_counter()
-        try:
-            # Use per-endpoint timeout (cap to a reasonable value)
-            per_timeout = max(1.0, min(float(timeout), 30.0))
-            result = await validate_url(ep, timeout=per_timeout)
-            ok = bool(result.get("valid"))
-            status_code = result.get("status_code")
-            error = result.get("error")
-        except Exception as e:  # pragma: no cover - defensive
-            ok = False
-            status_code = None
-            error = str(e)
-            result = {"final_url": None}
-        duration_ms = int((perf_counter() - start) * 1000)
-        checks.append(
-            {
-                "endpoint": ep,
-                "status": "healthy" if ok else "unhealthy",
-                "status_code": status_code,
-                "response_time_ms": duration_ms,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "final_url": result.get("final_url"),
-                "error": error,
-            }
-        )
-
-    overall_status = "healthy" if all(c["status"] == "healthy" for c in checks) else "unhealthy"
-    return {
-        "task_id": str(ULID()),
-        "service_name": service_name,
-        "endpoints_checked": len(endpoints),
-        "overall_status": overall_status,
-        "health_checks": checks,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-
 @sre_task
 async def scheduler_task(
+    global_limit="scheduler",  # Need a sentinel value for concurrency limit argument
     perpetual: Perpetual = Perpetual(every=timedelta(seconds=30), automatic=True),
-    concurrency: ConcurrencyLimit = ConcurrencyLimit("scheduler_task", max_concurrent=1),
+    concurrency: ConcurrencyLimit = ConcurrencyLimit("sentinel", max_concurrent=1),
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """
@@ -294,7 +253,7 @@ async def scheduler_task(
 
                 # Calculate and update next run time regardless of success/failure
                 try:
-                    from ..api.schedules import Schedule
+                    from ..core.schedules import Schedule
 
                     schedule_obj = Schedule(**schedule)
                     next_run = schedule_obj.calculate_next_run()
@@ -441,7 +400,7 @@ async def process_agent_turn(
             from redis_sre_agent.agent.langgraph_agent import (
                 _extract_instance_details_from_message,
             )
-            from redis_sre_agent.api.instances import create_instance_programmatically
+            from redis_sre_agent.core.instances import create_instance_programmatically
 
             instance_details = _extract_instance_details_from_message(message)
 
@@ -623,7 +582,7 @@ async def process_agent_turn(
         # Extract action items if present
         action_items = agent_response.get("action_items", [])
         if action_items:
-            from redis_sre_agent.core.thread_state import ThreadActionItem
+            from redis_sre_agent.core.threads import ThreadActionItem
 
             action_item_objects = [
                 (

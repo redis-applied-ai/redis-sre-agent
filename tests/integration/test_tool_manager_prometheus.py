@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.manager import ToolManager
 
 

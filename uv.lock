@@ -2832,7 +2832,7 @@ requires-dist = [
     { name = "pypdf2", specifier = ">=3.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "redis", specifier = ">=4.5.0" },
-    { name = "redisvl", specifier = ">=0.6.0,<0.8.0" },
+    { name = "redisvl", specifier = ">=0.9.0,<1.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "rich", specifier = ">=14.1.0" },
     { name = "sentence-transformers", specifier = ">=2.2.2" },
@@ -2857,7 +2857,7 @@ dev = [
 
 [[package]]
 name = "redisvl"
-version = "0.7.0"
+version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpath-ng" },
@@ -2869,9 +2869,9 @@ dependencies = [
     { name = "redis" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/c5/6213621057673d0183195c2602641e1bf35b0904e897b443de3105ee469c/redisvl-0.7.0.tar.gz", hash = "sha256:d5964911ecc0ba72827f22f7f63cfc102d4f03836c71e3cbfdbb0c18d8fcb85d", size = 113509 }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/09/a7b78562477fee5ba3def1b16a59870c51432b0e0b5d233f878446215b6d/redisvl-0.10.0.tar.gz", hash = "sha256:5791587f4e82a1b409af0cfbd66592edce7a746797e699a1af52507e3d90dffd", size = 610498 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/7e/d1596364cacc35d1992743d37d9270133733dbcc42c43c92f8a7c434fff9/redisvl-0.7.0-py3-none-any.whl", hash = "sha256:4b3b729da71b0f98d7add55d10ad5f1bc8a97747e704f4d311b510cbf6af3039", size = 157077 },
+    { url = "https://files.pythonhosted.org/packages/a5/15/0cb1a430fabd330c16fb6a16287743c769c0d7c674db48daa57efda2269c/redisvl-0.10.0-py3-none-any.whl", hash = "sha256:dfc0c3e3226d30fc69a9fe3ee3c3fae17c49155ea1deb1a81e905b254a4c703c", size = 161447 },
 ]
 
 [[package]]

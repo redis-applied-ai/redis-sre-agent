@@ -82,6 +82,22 @@ curl -X POST http://localhost:8000/api/v1/tasks/triage \\
 curl http://localhost:8000/api/v1/tasks/{thread_id}
 ```
 
+
+**CLI (schedule)**:
+
+Use the singular subcommand `schedule`.
+
+```
+# List schedules
+uv run redis-sre-agent schedule list
+
+# Get a schedule by ID
+uv run redis-sre-agent schedule get <schedule_id>
+
+# Show recent runs for a schedule (includes task_id and thread_id)
+uv run redis-sre-agent schedule runs <schedule_id>
+```
+
 ## Configuration
 
 Essential environment variables:

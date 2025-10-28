@@ -29,8 +29,8 @@ def test_task_list_shows_task_id_and_local_time_and_done_status(redis_url):
         async def _setup():
             from redis.asyncio import Redis as AsyncRedis
 
-            from redis_sre_agent.core.task_state import TaskManager
-            from redis_sre_agent.core.thread_state import ThreadManager, ThreadStatus
+            from redis_sre_agent.core.tasks import TaskManager
+            from redis_sre_agent.core.threads import ThreadManager, ThreadStatus
 
             # Create a clean client to the same Redis the CLI will hit
             client = AsyncRedis.from_url(redis_url, decode_responses=False)
@@ -97,7 +97,7 @@ def test_thread_sources_lists_recorded_fragments(redis_url):
         async def _setup_and_emit():
             from redis.asyncio import Redis as AsyncRedis
 
-            from redis_sre_agent.core.thread_state import ThreadManager
+            from redis_sre_agent.core.threads import ThreadManager
 
             client = AsyncRedis.from_url(redis_url, decode_responses=False)
             try:

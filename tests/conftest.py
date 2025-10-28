@@ -35,7 +35,7 @@ def mock_redis_infrastructure():
             "redis_sre_agent.core.redis.initialize_redis_infrastructure",
             side_effect=mock_initialize,
         ),
-        patch("redis_sre_agent.core.tasks.register_sre_tasks", side_effect=mock_register),
+        patch("redis_sre_agent.core.docket_tasks.register_sre_tasks", side_effect=mock_register),
         patch("redis_sre_agent.core.redis.cleanup_redis_connections", side_effect=mock_cleanup),
     ):
         yield

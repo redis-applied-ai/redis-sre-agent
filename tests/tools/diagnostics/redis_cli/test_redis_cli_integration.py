@@ -22,8 +22,8 @@ def redis_url(redis_container):
 @pytest.mark.asyncio
 async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
     """Test that Redis CLI provider loads correctly via ToolManager."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
@@ -32,6 +32,7 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     # Create settings with Redis CLI provider configured
@@ -78,8 +79,8 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
 @pytest.mark.asyncio
 async def test_redis_cli_tool_execution_via_manager(redis_url):
     """Test executing Redis CLI tools via ToolManager."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     redis_instance = RedisInstance(
         id="test-redis",
@@ -88,6 +89,7 @@ async def test_redis_cli_tool_execution_via_manager(redis_url):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     settings = Settings()
@@ -125,8 +127,8 @@ async def test_redis_cli_tool_execution_via_manager(redis_url):
 @pytest.mark.asyncio
 async def test_redis_cli_with_redis_instance(redis_url):
     """Test Redis CLI provider with Redis instance context."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     settings = Settings()
     settings.tool_providers = [
@@ -145,6 +147,7 @@ async def test_redis_cli_with_redis_instance(redis_url):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     try:
@@ -174,8 +177,8 @@ async def test_redis_cli_with_redis_instance(redis_url):
 @pytest.mark.asyncio
 async def test_multiple_providers_coexist(redis_url, monkeypatch):
     """Test that Redis CLI provider works alongside other providers."""
-    from redis_sre_agent.api.instances import RedisInstance
     from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.instances import RedisInstance
 
     # Configure both Prometheus and Redis CLI providers
     settings = Settings()
@@ -194,6 +197,7 @@ async def test_multiple_providers_coexist(redis_url, monkeypatch):
         environment="test",
         usage="cache",
         description="Test instance",
+        instance_type="oss_single",
     )
 
     import redis_sre_agent.core.config as config_module

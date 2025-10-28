@@ -257,6 +257,8 @@ services:
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - TOOLS_LOKI_URL=http://loki:3100
       - GRAFANA_URL=http://grafana:3000
+      - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
+
     depends_on:
       redis:
         condition: service_healthy
@@ -278,6 +280,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
+      - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - TOOLS_LOKI_URL=http://loki:3100
     depends_on:

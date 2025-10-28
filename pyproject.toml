@@ -20,7 +20,7 @@ dependencies = [
     "openai>=1.0.0",
     # Redis and vector search
     "redis>=4.5.0",
-    "redisvl>=0.6.0,<0.8.0",
+    "redisvl>=0.9.0,<1.0",
     "sentence-transformers>=2.2.2",
     # Background tasks (Docket instead of Prefect)
     "pydocket>=0.7.0",

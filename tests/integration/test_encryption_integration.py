@@ -6,12 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from redis_sre_agent.api.instances import (
+from redis_sre_agent.core.encryption import is_encrypted
+from redis_sre_agent.core.instances import (
     RedisInstance,
     get_instances_from_redis,
     save_instances_to_redis,
 )
-from redis_sre_agent.core.encryption import is_encrypted
 
 
 @pytest.fixture
@@ -40,6 +40,7 @@ class TestEncryptionIntegration:
             description="Test instance",
             admin_password="admin-secret-123",
             created_by="user",
+            instance_type="oss_single",
         )
 
         # Mock Redis client
@@ -114,6 +115,7 @@ class TestEncryptionIntegration:
             description="Test 1",
             admin_password="same-password",
             created_by="user",
+            instance_type="oss_single",
         )
 
         instance2 = RedisInstance(
@@ -125,6 +127,7 @@ class TestEncryptionIntegration:
             description="Test 2",
             admin_password="same-password",
             created_by="user",
+            instance_type="oss_single",
         )
 
         stored_data = None
@@ -183,6 +186,7 @@ class TestEncryptionIntegration:
             usage="cache",
             description="No admin password",
             created_by="user",
+            instance_type="oss_single",
         )
 
         stored_data = None
@@ -221,6 +225,7 @@ class TestEncryptionIntegration:
             usage="cache",
             description="Test",
             created_by="user",
+            instance_type="oss_single",
         )
 
         stored_data = None

@@ -13,62 +13,31 @@ from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
-async def test_cli_detection_multiple_commands_unique(mock_chat_openai):
-    # Mock LLM to return minimal valid JSON in fence
-    mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(
-        return_value=MagicMock(
-            content="""```json\n{\n  \"has_errors\": false,\n  \"validation_notes\": \"ok\",\n  \"url_validation_performed\": true\n}\n```"""
-        )
+@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+async def test_corrector_called_once_for_multiple_rladmin(mock_build):
+    mock_corrector = MagicMock()
+    mock_corrector.ainvoke = AsyncMock(
+        return_value={"result": {"edited_response": "E", "edits_applied": ["dedup rladmin"]}}
     )
-    mock_chat_openai.return_value = mock_llm
+    mock_build.return_value = mock_corrector
 
     agent = SRELangGraphAgent()
-
-    response = (
+    multi = (
         "First try: rladmin list databases\n"
         "Then again: rladmin list databases\n"
         "Finally check: rladmin get database stats"
     )
-
-    _ = await agent._fact_check_response(response)
-
-    # Inspect what was sent to the fact-checker
-    args = mock_llm.ainvoke.call_args
-    messages = args.args[0] if args.args else args.kwargs.get("messages")
-    user_msg = messages[1]["content"] if isinstance(messages[1], dict) else messages[1].content
-
-    # One section
-    assert user_msg.count("Detected CLI Commands (to validate)") == 1
-
-    # Extract the CLI section only
-    start = user_msg.index("Detected CLI Commands (to validate)")
-    section = user_msg[start:]
-
-    # Unique commands listed once within the section
-    assert section.count("rladmin list databases") == 1
-    assert "rladmin get database stats" in section
+    with patch.object(agent, "process_query", new=AsyncMock(return_value=multi)):
+        out = await agent.process_query_with_fact_check("help", "s", "u")
+    assert out.startswith("E")
+    mock_build.assert_called_once()
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
-async def test_cli_detection_absent_section(mock_chat_openai):
-    mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(
-        return_value=MagicMock(
-            content="""```json\n{\n  \"has_errors\": false,\n  \"validation_notes\": \"ok\",\n  \"url_validation_performed\": true\n}\n```"""
-        )
-    )
-    mock_chat_openai.return_value = mock_llm
-
+@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+async def test_corrector_not_called_without_triggers(mock_build):
     agent = SRELangGraphAgent()
-
-    response = "No CLI suggestions here."
-    _ = await agent._fact_check_response(response)
-
-    args = mock_llm.ainvoke.call_args
-    messages = args.args[0] if args.args else args.kwargs.get("messages")
-    user_msg = messages[1]["content"] if isinstance(messages[1], dict) else messages[1].content
-
-    assert "Detected CLI Commands (to validate)" not in user_msg
+    with patch.object(agent, "process_query", new=AsyncMock(return_value="no cli here")):
+        out = await agent.process_query_with_fact_check("help", "s", "u")
+    assert out == "no cli here"
+    mock_build.assert_not_called()

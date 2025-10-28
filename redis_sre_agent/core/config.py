@@ -125,6 +125,7 @@ class Settings(BaseSettings):
             "redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider",
             "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider",
             "redis_sre_agent.tools.logs.loki.provider.LokiToolProvider",
+            "redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider",
         ],
         description="Enabled tool providers (fully qualified class paths). "
         "Example: redis_sre_agent.tools.metrics.prometheus.PrometheusToolProvider",

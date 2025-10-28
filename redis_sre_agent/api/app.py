@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
         _app_startup_state = redis_status
 
         # Log configuration (mask Redis URL credentials)
-        from redis_sre_agent.api.instances import mask_redis_url
+        from redis_sre_agent.core.instances import mask_redis_url
 
         logger.info(f"Redis URL: {mask_redis_url(settings.redis_url.get_secret_value())}")
         logger.info(f"Embedding model: {settings.embedding_model}")

@@ -7,6 +7,40 @@ import pytest
 from redis_sre_agent.tools.utilities.provider import UtilitiesToolProvider
 
 
+@pytest.mark.asyncio
+async def test_http_head_invalid_url_returns_error():
+    p = UtilitiesToolProvider()
+    res = await p.http_head("not-a-url")
+    assert res["success"] is False and res["ok"] is False
+    assert res["error"] == "invalid_url"
+
+
+@pytest.mark.asyncio
+async def test_http_head_success(monkeypatch):
+    class DummyResp:
+        def __init__(self):
+            self.status = 200
+            self.url = "https://example.com/"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        return DummyResp()
+
+    import urllib.request as _rq
+
+    monkeypatch.setattr(_rq, "urlopen", fake_urlopen)
+
+    p = UtilitiesToolProvider()
+    res = await p.http_head("https://example.com")
+    assert res["success"] is True and res["ok"] is True
+    assert 200 <= res["status"] < 400
+
+
 @pytest.fixture
 def provider():
     """Create a utilities provider instance."""

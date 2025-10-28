@@ -2,48 +2,73 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from redis_sre_agent.agent.langgraph_agent import FACT_CHECKER_PROMPT, SRELangGraphAgent
+from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
-async def test_fact_checker_skips_url_validation(mock_chat_openai):
-    # Mock LLM to return minimal valid JSON
-    mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(
-        return_value=MagicMock(
-            content="""```json\n{\n  \"has_errors\": false,\n  \"validation_notes\": \"ok\"\n}\n```"""
-        )
+@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+async def test_corrector_runs_on_risky_patterns(mock_build):
+    # Corrector returns edited content
+    mock_corrector = MagicMock()
+    mock_corrector.ainvoke = AsyncMock(
+        return_value={
+            "result": {"edited_response": "EDITED", "edits_applied": ["removed unsafe step"]}
+        }
     )
-    mock_chat_openai.return_value = mock_llm
+    mock_build.return_value = mock_corrector
 
     agent = SRELangGraphAgent()
+    # Skip heavy workflow: patch process_query to return risky text
+    with patch.object(
+        agent, "process_query", new=AsyncMock(return_value="Use CONFIG SET to change policy")
+    ):
+        out = await agent.process_query_with_fact_check("redis config help", "s", "u")
 
-    response = "See http://example.com/a and https://redis.io/docs/latest/ for details."
-
-    _ = await agent._fact_check_response(response)
-
-    # Inspect the messages sent to the fact-checker
-    args = mock_llm.ainvoke.call_args
-    messages = args.args[0] if args.args else args.kwargs.get("messages")
-
-    sys_msg = messages[0]["content"] if isinstance(messages[0], dict) else messages[0].content
-    user_msg = messages[1]["content"] if isinstance(messages[1], dict) else messages[1].content
-
-    assert sys_msg == FACT_CHECKER_PROMPT
-    assert "## URL Validation Results:" not in user_msg
+    assert out.startswith("EDITED")
+    mock_build.assert_called_once()
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
-async def test_fact_checker_skips_out_of_scope(mock_chat_openai):
-    # Mock LLM
-    mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock()
-    mock_chat_openai.return_value = mock_llm
+@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+async def test_corrector_skips_out_of_scope(mock_build):
+    agent = SRELangGraphAgent()
+    with patch.object(agent, "process_query", new=AsyncMock(return_value="hello world")):
+        out = await agent.process_query_with_fact_check("just chatting", "s", "u")
+    # Out of Redis scope -> returns original, corrector not run
+    assert out == "hello world"
+    mock_build.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+async def test_corrector_no_change_returns_original(mock_build):
+    # Corrector returns same text -> agent returns original (no edits footers)
+    mock_corrector = MagicMock()
+    mock_corrector.ainvoke = AsyncMock(
+        return_value={"result": {"edited_response": "ORIG", "edits_applied": []}}
+    )
+    mock_build.return_value = mock_corrector
 
     agent = SRELangGraphAgent()
-    _ = await agent._fact_check_response("No URLs here.")  # also no Redis terms -> out of scope
+    with patch.object(agent, "process_query", new=AsyncMock(return_value="ORIG")):
+        out = await agent.process_query_with_fact_check("redis config", "s", "u")
 
-    # Ensure fact-check LLM was not called when out of Redis scope
-    mock_llm.ainvoke.assert_not_called()
+    assert out == "ORIG"
+
+
+@pytest.mark.asyncio
+@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+async def test_corrector_gates_by_url(mock_build):
+    mock_corrector = MagicMock()
+    mock_corrector.ainvoke = AsyncMock(
+        return_value={"result": {"edited_response": "E", "edits_applied": ["validated url"]}}
+    )
+    mock_build.return_value = mock_corrector
+
+    agent = SRELangGraphAgent()
+    with patch.object(
+        agent, "process_query", new=AsyncMock(return_value="See https://redis.io/docs")
+    ):
+        out = await agent.process_query_with_fact_check("redis", "s", "u")
+    assert out.startswith("E")
+    mock_build.assert_called_once()

@@ -12,49 +12,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from redis_sre_agent.agent import langgraph_agent
-from redis_sre_agent.agent.langgraph_agent import FACT_CHECKER_PROMPT, SRELangGraphAgent
+from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
 
-class TestRladminFactCheck:
-    def test_fact_checker_prompt_mentions_invalid_command_and_rladmin(self):
-        """FACT_CHECKER_PROMPT should mention invalid_command and rladmin."""
-        assert "invalid_command" in FACT_CHECKER_PROMPT
-        assert "rladmin" in FACT_CHECKER_PROMPT
-
+class TestRladminCorrector:
     @pytest.mark.asyncio
-    @patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI")
-    async def test_fact_check_includes_detected_cli_commands_section(self, mock_chat_openai):
-        """_fact_check_response should surface detected rladmin commands to the fact-checker."""
-        # Mock LLM to return valid JSON inside a markdown code fence
-        mock_llm = MagicMock()
-        mock_llm.ainvoke = AsyncMock(
-            return_value=MagicMock(
-                content="""```json\n{\n  \"has_errors\": false,\n  \"validation_notes\": \"ok\",\n  \"url_validation_performed\": true\n}\n```"""
-            )
+    @patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+    async def test_corrector_triggers_on_rladmin(self, mock_build):
+        mock_corrector = MagicMock()
+        mock_corrector.ainvoke = AsyncMock(
+            return_value={
+                "result": {"edited_response": "E", "edits_applied": ["removed fabricated rladmin"]}
+            }
         )
-        mock_chat_openai.return_value = mock_llm
+        mock_build.return_value = mock_corrector
 
         agent = SRELangGraphAgent()
-
-        # Response containing an invented command
-        response = "Run: rladmin list databases and then rladmin get database stats"
-        result = await agent._fact_check_response(response)
-
-        # Ensure result is parsed
-        assert isinstance(result, dict)
-        assert isinstance(result.get("has_errors"), bool)
-
-        # Capture messages passed to the fact-checker
-        assert mock_llm.ainvoke.call_count >= 1
-        call_args = mock_llm.ainvoke.call_args
-        messages = call_args.args[0] if call_args.args else call_args.kwargs.get("messages")
-        assert isinstance(messages, list) and len(messages) >= 2
-
-        # The user content (index 1) should include the detected CLI commands section and the commands
-        user_msg = messages[1]["content"] if isinstance(messages[1], dict) else messages[1].content
-        assert "Detected CLI Commands (to validate)" in user_msg
-        assert "rladmin list databases" in user_msg
-        assert "rladmin get database stats" in user_msg
+        with patch.object(
+            agent, "process_query", new=AsyncMock(return_value="Use rladmin list databases")
+        ):
+            out = await agent.process_query_with_fact_check("help", "s", "u")
+        assert out.startswith("E")
+        mock_build.assert_called_once()
 
     def test_module_source_contains_rladmin_guidance_snippet(self):
         """Basic presence test for the rladmin guidance in the Redis Enterprise context."""

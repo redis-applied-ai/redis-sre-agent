@@ -9,9 +9,9 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
-import redis_sre_agent.models.tasks as task_models
+import redis_sre_agent.core.tasks as task_models
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.task_state import TaskManager
+from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.schemas.tasks import TaskCreateRequest, TaskCreateResponse, TaskResponse
 
 logger = logging.getLogger(__name__)

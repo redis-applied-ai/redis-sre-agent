@@ -9,7 +9,7 @@ import pytest
 
 from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
-from redis_sre_agent.core.thread_state import ThreadUpdate
+from redis_sre_agent.core.threads import ThreadUpdate
 
 
 class TestProgressCallbackValidation:

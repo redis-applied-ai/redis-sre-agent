@@ -11,7 +11,7 @@ import logging
 from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional
 
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 
 from .protocols import ToolProvider
 from .tool_definition import ToolDefinition
@@ -86,7 +86,10 @@ class ToolManager:
                 await self._load_provider(provider_path)
 
             # Load additional providers based on instance type
-            instance_type = self.redis_instance.instance_type
+            itype = getattr(
+                self.redis_instance.instance_type, "value", self.redis_instance.instance_type
+            )
+            instance_type = itype or "unknown"
             logger.info(f"Instance type: {instance_type}")
 
             if instance_type == "redis_enterprise":
@@ -168,6 +171,11 @@ class ToolManager:
             # Always-on providers should not have redis_instance set
             instance = None if always_on else self.redis_instance
             provider = await self._stack.enter_async_context(provider_cls(redis_instance=instance))
+            # Back-reference so providers can discover peers by capability when needed
+            try:
+                setattr(provider, "_manager", self)
+            except Exception:
+                pass
 
             # Register tools in routing table
             tool_schemas = provider.create_tool_schemas()
@@ -202,9 +210,31 @@ class ToolManager:
         return cls._provider_class_cache[provider_path]
 
     async def __aexit__(self, *args) -> None:
-        """Exit context manager and cleanup all providers."""
-        if self._stack:
-            await self._stack.__aexit__(*args)
+        """Exit context manager and cleanup all providers and references.
+
+        We explicitly break manager<->provider references and clear routing/caches
+        to help GC promptly reclaim objects in long-running processes.
+        """
+        try:
+            if self._stack:
+                await self._stack.__aexit__(*args)
+        finally:
+            # Break back-references from providers to this manager
+            try:
+                providers = {p for p in self._routing_table.values()}
+            except Exception:
+                providers = set()
+            for p in providers:
+                try:
+                    # Property setter converts to weakref None
+                    p._manager = None
+                except Exception:
+                    pass
+            # Clear strong refs held by manager
+            self._routing_table.clear()
+            self._tools.clear()
+            self._loaded_provider_paths.clear()
+            self._call_cache.clear()
 
     def get_tools(self) -> List[ToolDefinition]:
         """Get all registered tool schemas.
@@ -213,6 +243,31 @@ class ToolManager:
             List of ToolDefinition objects for LLM binding
         """
         return self._tools
+
+    def get_tools_by_provider_names(self, provider_names: List[str]) -> List[ToolDefinition]:
+        """Return tools belonging to providers with given provider_name values.
+
+        Args:
+            provider_names: List of provider_name strings to include (case-insensitive)
+
+        Returns:
+            List of ToolDefinition objects from the selected providers
+        """
+        try:
+            wanted = {str(n).lower() for n in (provider_names or [])}
+            if not wanted:
+                return []
+            results: List[ToolDefinition] = []
+            # Filter tools by the provider that registered them
+            for td in self._tools:
+                provider = self._routing_table.get(td.name)
+                pname = getattr(provider, "provider_name", None)
+                if isinstance(pname, str) and pname.lower() in wanted:
+                    results.append(td)
+            return results
+        except Exception:
+            # Be conservative; if anything goes wrong, return no tools
+            return []
 
     def get_status_update(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         """Return a provider-supplied status update for a tool call, if available."""
@@ -224,6 +279,37 @@ class ToolManager:
         except Exception:
             logger.exception("Provider.get_status_update failed")
             return None
+
+    def get_providers_for_capability(self, capability: Any) -> List["ToolProvider"]:
+        """Return currently loaded providers that declare a given capability.
+
+        Providers may implement multiple capabilities. The returned list is de-duplicated
+        and preserves load order.
+        """
+        from .protocols import ToolCapability as _Cap  # local import to avoid cycles
+
+        if not isinstance(capability, _Cap):
+            raise ValueError(f"Invalid capability: {capability}")
+
+        # Unique providers in load order
+        seen = set()
+        ordered_unique: List[ToolProvider] = []
+        for provider in self._routing_table.values():
+            if id(provider) in seen:
+                continue
+            seen.add(id(provider))
+            try:
+                caps = getattr(provider, "capabilities", set()) or set()
+                if capability in caps:
+                    ordered_unique.append(provider)
+            except Exception:
+                continue
+        return ordered_unique
+
+    def get_provider_for_capability(self, capability: Any) -> Optional["ToolProvider"]:
+        """Return the first provider that declares the capability, or None."""
+        providers = self.get_providers_for_capability(capability)
+        return providers[0] if providers else None
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Route tool call to appropriate provider with per-run memoization.

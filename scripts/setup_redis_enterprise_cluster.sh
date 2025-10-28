@@ -13,13 +13,11 @@ if curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs 2>/dev/n
     if curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs 2>/dev/null | grep -q '"name":"test-db"'; then
         echo "✅ Database 'test-db' already exists"
         echo
-        echo "📊 Cluster is ready!"
+        echo "📊 Cluster is reachable; proceeding to ensure sharded database configuration"
         echo "   - Node 1 UI: https://localhost:8443 (admin@redis.com / admin)"
         echo "   - Database: redis://admin@localhost:12000/0"
         echo
-        echo "🔧 To put node 2 in maintenance mode:"
-        echo "   docker exec redis-enterprise-node1 rladmin node 2 maintenance_mode on"
-        exit 0
+        echo "(Skipping early exit; will verify database has 3 shards on 3 nodes)"
     else
         echo "⚠️  Database 'test-db' not found, will create it"
     fi
@@ -85,7 +83,10 @@ else
     # Join node 3 to cluster
     echo
     echo "📋 Step 3: Joining node 3 to cluster..."
-    timeout 60 docker exec redis-enterprise-node3 rladmin cluster join nodes $NODE1_IP username admin@redis.com password admin || echo "Node 3 join failed or timed out (2-node cluster is sufficient)"
+    if ! timeout 60 docker exec redis-enterprise-node3 rladmin cluster join nodes $NODE1_IP username admin@redis.com password admin; then
+        echo "❌ Node 3 failed to join the cluster"
+        exit 1
+    fi
 
     sleep 5
 fi
@@ -119,9 +120,14 @@ else
       -d '{
         "name": "test-db",
         "type": "redis",
-        "memory_size": 10485760,
+        "memory_size": 33554432,
         "port": 12000,
-        "replication": false
+        "replication": false,
+        "sharding": true,
+        "oss_sharding": true,
+        "shards_count": 3,
+        "shards_placement": "sparse",
+        "proxy_policy": "all-master-shards"
       }')
 
     if echo "$RESPONSE" | grep -q '"uid"'; then
@@ -145,6 +151,59 @@ for i in {1..30}; do
     echo "   Waiting for database... ($i/30)"
     sleep 2
 done
+echo
+echo "📋 Step 6: Ensuring 'test-db' has 3 shards across 3 nodes..."
+# Determine DB UID
+DB_UID=""
+DB_UID=$(docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | awk '/test-db/ {print $1}' | sed 's/db://')
+if [ -z "$DB_UID" ]; then
+    DB_UID=$(curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs | tr -d '\n' | sed -E 's/.*"name":"test-db".*?"uid":([0-9]+).*/\1/')
+fi
+if [ -z "$DB_UID" ]; then
+    echo "   ❌ Could not determine database UID for 'test-db'"
+else
+    echo "   → test-db UID: $DB_UID"
+    # Enforce sharded config: 3 shards, spread across nodes
+    RECONF_RESP=$(curl -k -s -u "admin@redis.com:admin" \
+      -X PUT "https://localhost:9443/v1/bdbs/$DB_UID" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "sharding": true,
+        "oss_sharding": true,
+        "shards_count": 3,
+        "shards_placement": "sparse",
+        "proxy_policy": "all-master-shards"
+      }')
+    if echo "$RECONF_RESP" | grep -q '"action_uid"'; then
+        echo "   ✅ Reconfiguration accepted (reshard may be in progress)"
+    else
+        echo "   ℹ️ Database configuration updated or already compliant"
+    fi
+
+    echo "⏳ Waiting for database to be active after reconfiguration..."
+    for i in {1..60}; do
+        if docker exec redis-enterprise redis-cli -h localhost -p 12000 -a admin ping 2>/dev/null | grep -q "PONG"; then
+            echo "✅ Database is active"
+            break
+        fi
+        echo "   Waiting... ($i/60)"
+        sleep 2
+    done
+
+    echo
+    echo "🔎 Current shard placement for 'test-db' (truncated):"
+    docker exec redis-enterprise-node1 rladmin status shards db test-db 2>/dev/null | head -n 20 || true
+
+    echo
+    echo "🧪 Rebalance test helpers:"
+    echo "   1) Skew all primary shards to node 1 to create imbalance:"
+    echo "      bash scripts/create_deliberate_shard_imbalance.sh test-db 1"
+    echo "   2) Trigger a cluster-managed rebalance via REST:"
+    echo "      bash scripts/trigger_rebalance.sh test-db"
+    echo "   3) Track action progress (replace ACTION_UID with value from previous response):"
+    echo "      curl -k -u 'admin@redis.com:admin' https://localhost:9443/v1/actions/ACTION_UID | jq . || true"
+fi
+
 
 echo
 echo "✅ Redis Enterprise 3-node cluster setup complete!"

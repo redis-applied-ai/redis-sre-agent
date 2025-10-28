@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from redis_sre_agent.core.docket_tasks import extract_action_items_from_response, process_agent_turn
-from redis_sre_agent.core.thread_state import (
+from redis_sre_agent.core.threads import (
     ThreadActionItem,
     ThreadManager,
     ThreadMetadata,

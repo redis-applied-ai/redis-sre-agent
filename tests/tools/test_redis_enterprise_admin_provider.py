@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from redis_sre_agent.api.instances import RedisInstance
+from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise.provider import (
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
@@ -406,3 +406,179 @@ async def test_error_handling(provider):
 
         assert result["status"] == "error"
         assert "HTTP 404" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_rebalance_status_classifies_smupdatebdb_with_detail(provider, monkeypatch):
+    """SMUpdateBDB without obvious pending_ops in the list should be classified as rebalance
+    after fetching action details that include migrate_shard/reshard operations.
+    """
+    # /v2/actions (list) - ambiguous SMUpdateBDB, no additional_info
+    actions_list = [
+        {
+            "action_uid": "abc-123",
+            "name": "SMUpdateBDB",
+            "status": "running",
+            "progress": 10.0,
+            "creation_time": 1700000000,
+            # object_name omitted in list; will appear in detail
+        }
+    ]
+
+    list_resp = MagicMock()
+    list_resp.json.return_value = actions_list
+    list_resp.raise_for_status = MagicMock()
+
+    # /v2/actions/abc-123 (detail) - include pending_ops that indicate migrate_shard
+    action_detail = {
+        "action_uid": "abc-123",
+        "name": "SMUpdateBDB",
+        "status": "running",
+        "progress": 50.0,
+        "creation_time": 1700000000,
+        "object_name": "bdb:1",
+        "additional_info": {
+            "pending_ops": {
+                "shard:1": {
+                    "op_name": "migrate_shard",
+                    "status_description": "moving",
+                    "progress": 50.0,
+                }
+            }
+        },
+    }
+    detail_resp = MagicMock()
+    detail_resp.json.return_value = action_detail
+    detail_resp.raise_for_status = MagicMock()
+
+    async def get_side_effect(path, params=None):
+        if path == "/v2/actions":
+            return list_resp
+        if path == "/v2/actions/abc-123":
+            return detail_resp
+        raise AssertionError(f"Unexpected GET path {path}")
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=get_side_effect)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.rebalance_status(db_uid=1)
+
+        assert result["status"] == "success"
+        # Should classify as active rebalance due to detail pending_ops
+        assert len(result["active"]) == 1
+        row = result["active"][0]
+        assert row["action_uid"] == "abc-123"
+        assert row["db_uid"] == 1
+        assert "SMUpdateBDB" in row["reason"]
+
+
+@pytest.mark.asyncio
+async def test_rebalance_status_recent_completed_window(provider, monkeypatch):
+    """Completed migrate_shard within the recent window should appear under recent_completed."""
+    fixed_now = 2_000_000_000
+    monkeypatch.setenv("TZ", "UTC")
+
+    # Create a completed action 60s ago
+    recent_action = {
+        "action_uid": "def-456",
+        "name": "migrate_shard",
+        "status": "completed",
+        "progress": 100.0,
+        "creation_time": fixed_now - 60,
+        "object_name": "bdb:2",
+    }
+
+    list_resp = MagicMock()
+    list_resp.json.return_value = [recent_action]
+    list_resp.raise_for_status = MagicMock()
+
+    with (
+        patch.object(provider, "get_client") as mock_get_client,
+        patch("time.time", return_value=fixed_now),
+    ):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=list_resp)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.rebalance_status(
+            db_uid=2, include_recent_completed=True, recent_seconds=120
+        )
+
+        assert result["status"] == "success"
+        assert len(result["active"]) == 0
+        assert len(result["recent_completed"]) == 1
+        row = result["recent_completed"][0]
+        assert row["action_uid"] == "def-456"
+        assert row["db_uid"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_logs_success(provider):
+    logs = [
+        {"id": 1, "level": "info", "msg": "cluster started", "time": "2025-01-01T00:00:00Z"},
+        {"id": 2, "level": "warn", "msg": "rebalance started", "time": "2025-01-01T00:05:00Z"},
+    ]
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = logs
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_logs(order="desc", limit=100)
+
+        assert result["status"] == "success"
+        assert result["count"] == 2
+        assert len(result["logs"]) == 2
+        mock_client.get.assert_called_once_with("/v1/logs", params={"order": "desc", "limit": 100})
+
+
+@pytest.mark.asyncio
+async def test_get_logs_normalizes_now(provider):
+    mock_response = MagicMock()
+    mock_response.json.return_value = []
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        captured = {}
+
+        async def fake_get(path, params=None):
+            captured["params"] = params or {}
+            return mock_response
+
+        mock_client.get = AsyncMock(side_effect=fake_get)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_logs(
+            order="desc", limit=10, stime="2025-01-01T00:00:00Z", etime="now"
+        )
+
+        assert result["status"] == "success"
+        sent = captured["params"]
+        assert sent["etime"] != "now"
+        assert "+00:00" in sent["etime"]
+
+
+@pytest.mark.asyncio
+async def test_system_hosts_from_nodes(provider):
+    nodes = [
+        {"uid": 1, "addr": "10.0.0.1"},
+        {"uid": 2, "addr": "10.0.0.2"},
+    ]
+    mock_response = MagicMock()
+    mock_response.json.return_value = nodes
+    mock_response.raise_for_status = MagicMock()
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+        hosts = await provider.system_hosts()
+        hs = [h.host for h in hosts]
+        assert "10.0.0.1" in hs and "10.0.0.2" in hs
+        assert all(h.role == "enterprise-node" for h in hosts)

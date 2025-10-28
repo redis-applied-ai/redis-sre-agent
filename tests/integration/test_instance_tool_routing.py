@@ -6,14 +6,14 @@ the agent's tools connect to THAT instance, not the application's Redis.
 
 import pytest
 
-from redis_sre_agent.api.instances import (
+from redis_sre_agent.core.docket_tasks import process_agent_turn
+from redis_sre_agent.core.instances import (
     RedisInstance,
     get_instances_from_redis,
     save_instances_to_redis,
 )
-from redis_sre_agent.core.docket_tasks import process_agent_turn
 from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.thread_state import ThreadManager
+from redis_sre_agent.core.threads import ThreadManager
 
 
 @pytest.fixture
@@ -36,6 +36,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
         environment="production",
         usage="cache",
         description="Test Redis Enterprise instance",
+        instance_type="redis_enterprise",
     )
 
     # Store instance using the correct API format
@@ -194,6 +195,7 @@ async def test_instance_context_passed_to_agent(thread_manager, async_redis_clie
         environment="test",
         usage="cache",
         description="Test instance for context passing",
+        instance_type="oss_single",
     )
 
     instance_key = RedisKeys.instance(test_instance.id)

@@ -20,15 +20,15 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from ..api.instances import (
+from ..core.config import settings
+from ..core.instances import (
     create_instance_programmatically,
     get_instances_from_redis,
     save_instances_to_redis,
 )
-from ..core.config import settings
 from ..tools.manager import ToolManager
 from .helpers import log_preflight_messages
-from .prompts import FACT_CHECKER_PROMPT, SRE_SYSTEM_PROMPT
+from .prompts import SRE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,6 @@ def _extract_operation_from_tool_name(tool_name: str) -> str:
     Returns:
         Operation name (e.g., "get_cluster_info")
     """
-    import re
 
     # Match pattern: underscore + 6 hex chars + underscore + operation
     match = re.search(r"_([0-9a-f]{6})_(.+)$", tool_name)
@@ -82,32 +81,11 @@ def _get_secret_value(secret: Any) -> str:
 def _mask_redis_url_credentials(url: str) -> str:
     """Mask username and password in Redis URL for safe logging/LLM usage.
 
-    Args:
-        url: Redis connection URL (e.g., redis://user:pass@host:port/db)
-
-    Returns:
-        Masked URL (e.g., redis://***:***@host:port/db)
+    Delegates to core.instances.mask_redis_url to avoid duplication.
     """
-    try:
-        parsed = urlparse(url)
-        if parsed.username or parsed.password:
-            # Reconstruct URL with masked credentials
-            masked_netloc = parsed.hostname or ""
-            if parsed.port:
-                masked_netloc += f":{parsed.port}"
-            if parsed.username or parsed.password:
-                masked_netloc = f"***:***@{masked_netloc}"
+    from redis_sre_agent.core.instances import mask_redis_url
 
-            masked_url = f"{parsed.scheme}://{masked_netloc}{parsed.path}"
-            if parsed.query:
-                masked_url += f"?{parsed.query}"
-            if parsed.fragment:
-                masked_url += f"#{parsed.fragment}"
-            return masked_url
-        return url
-    except Exception as e:
-        logger.warning(f"Failed to mask URL credentials: {e}")
-        return "redis://***:***@<host>:<port>"
+    return mask_redis_url(url)
 
 
 async def _detect_instance_type_with_llm(
@@ -224,7 +202,6 @@ def _extract_instance_details_from_message(message: str) -> Optional[Dict[str, s
     Returns:
         Dictionary with extracted details or None if not enough info found
     """
-    import re
 
     details = {}
     message_lower = message.lower()
@@ -410,56 +387,15 @@ class SRELangGraphAgent:
         except Exception:
             return True
 
-    async def _render_safety_and_fact_check_section(
-        self,
-        *,
-        safety_result: Optional[Dict[str, Any]],
-        fact_check_result: Optional[Dict[str, Any]],
-    ) -> str:
-        """Summarize safety and fact-check outputs into a natural-language section.
+    def _should_run_safety_fact(self, text: str) -> bool:
+        """Heuristic gate: run corrector only if risky patterns or URLs are present."""
+        try:
+            import re as _re
 
-        Returns a Markdown string beginning with '## Safety and Fact Checking'.
-        """
-        # If both are missing, don't render anything
-        if not (safety_result or fact_check_result):
-            return ""
-
-        payload = {
-            "safety": safety_result or {},
-            "fact_check": fact_check_result or {},
-        }
-        summarizer = ChatOpenAI(
-            model=self.settings.openai_model_mini,
-            openai_api_key=self.settings.openai_api_key,
-            timeout=self.settings.llm_timeout,
-        )
-        sys = SystemMessage(
-            content=(
-                "You write concise, operator-facing notes. Use plain, direct language.\n"
-                "Summarize the provided JSON findings without inventing facts."
-            )
-        )
-        human = HumanMessage(
-            content=(
-                f"""
-Given this JSON with safety and fact-check outputs, write a compact Markdown section:
-
-- Title: ## Safety and Fact Checking
-- Subsections: ### Safety, ### Fact Check (include each once)
-- Use natural language sentences; bullets are OK but keep them terse and useful.
-- If a category is empty/unavailable, say so in one short line.
-- Do NOT modify prior recommendations; this section is purely advisory.
-
-JSON:
-```
-{json.dumps(payload, default=str)}
-```
-"""
-            )
-        )
-        resp = await self._ainvoke_memo("safety_fact_section", summarizer, [sys, human])
-        text = getattr(resp, "content", "")
-        return str(text or "")
+            pattern = r"(rladmin|CONFIG\s+SET|FLUSH(?:ALL|DB)|\bEVAL\b|\bKEYS\b|/v\d+/.+(PUT|PATCH|DELETE)|https?://)"
+            return _re.search(pattern, str(text or ""), flags=_re.IGNORECASE) is not None
+        except Exception:
+            return False
 
     async def _compose_final_markdown(
         self,
@@ -560,7 +496,20 @@ JSON payload of analyses artifacts:
 
         if not content:
             logger.warning("Final markdown composer returned no content")
-        return content or ""
+            return ""
+
+        # Guardrail: If no safety notes were provided, strip any spurious 'Safety and Fact Checking' section
+        if not safety_and_fact_check_notes:
+            try:
+                import re as _re
+
+                content = _re.sub(
+                    r"\n##\s*Safety and Fact Checking[\s\S]*$", "", content, flags=_re.IGNORECASE
+                )
+            except Exception:
+                pass
+
+        return content
 
     def _build_workflow(
         self, tool_mgr: ToolManager, target_instance: Optional[Any] = None
@@ -1875,217 +1824,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             logger.error(f"Error clearing conversation: {e}")
             return False
 
-    async def _fact_check_response(
-        self, response: str, diagnostic_data: str = None
-    ) -> Dict[str, Any]:
-        """Fact-check an agent response for technical accuracy and URL validity.
-
-        Args:
-            response: The agent's response to fact-check
-            diagnostic_data: Optional diagnostic data that informed the response
-
-        Returns:
-            Dict containing fact-check results including URL validation
-        """
-
-        # Fast skip: if response is clearly out of Redis scope and has no URLs, don't invoke LLM
-        try:
-            if not self._is_redis_scoped(response):
-                import re as _re
-
-                if not _re.search(r"https?://", response or "", flags=_re.IGNORECASE):
-                    return {
-                        "has_errors": False,
-                        "validation_notes": "Skipped fact-check (out of Redis scope)",
-                    }
-        except Exception:
-            # If scope check fails, proceed with normal flow
-            pass
-
-        try:
-            import time as _time
-
-            start_time = _time.monotonic()
-            # URL validation disabled per user request
-            url_validation_results = []
-
-            # Create fact-checker LLM (separate from main agent)
-            fact_checker = ChatOpenAI(
-                model=self.settings.openai_model_mini,
-                openai_api_key=self.settings.openai_api_key,
-                timeout=self.settings.llm_timeout,
-            )
-
-            # Include URL validation results in the fact-check input
-            url_validation_summary = ""
-            if url_validation_results:
-                invalid_urls = [r for r in url_validation_results if not r["valid"]]
-                if invalid_urls:
-                    url_validation_summary = f"\n\n## URL Validation Results:\nINVALID URLs found: {[r['url'] for r in invalid_urls]}"
-                else:
-                    url_validation_summary = f"\n\n## URL Validation Results:\nAll {len(url_validation_results)} URLs are valid and accessible."
-
-            # Detect CLI commands (focus on rladmin) in the response
-            cli_detection_summary = ""
-            unique_cmds = []
-            try:
-                cli_matches = re.findall(r"(rladmin\b[^\n]*)", response)
-                if cli_matches:
-                    for cmd in cli_matches:
-                        if cmd not in unique_cmds:
-                            unique_cmds.append(cmd)
-                    # Cap validation to a few commands to limit latency
-                    unique_cmds = unique_cmds[:3]
-                    cli_detection_summary = (
-                        "\n\n## Detected CLI Commands (to validate)\n- " + "\n- ".join(unique_cmds)
-                    )
-            except Exception:
-                pass
-
-            # Validate detected CLI commands against knowledge base documentation
-            cli_docs_validation_summary = ""
-            unmatched_commands: list[str] = []
-            _doc_search_ran = False
-            try:
-                if unique_cmds:
-                    from redis_sre_agent.core.knowledge_helpers import (
-                        search_knowledge_base_helper,
-                    )
-
-                    _doc_search_ran = True
-
-                    def _build_query_from_cmd(cmd: str) -> str:
-                        # Build a compact query like: "rladmin node maintenance_mode"
-                        parts = []
-                        for tok in cmd.split():
-                            t = tok.strip()
-                            if not t:
-                                continue
-                            # stop at obvious option/value tokens
-                            if t.startswith("-") or t.isdigit():
-                                break
-                            # include rladmin and alpha/underscore tokens
-                            if t.lower() == "rladmin" or t.replace("_", "").isalpha():
-                                parts.append(t)
-                        # Limit length to avoid noisy queries
-                        return " ".join(parts[:4])
-
-                    lines = []
-                    for cmd in unique_cmds:
-                        if _time.monotonic() - start_time > 20.0:
-                            lines.append(
-                                "- Skipping remaining command validations due to time budget"
-                            )
-                            break
-                        q = _build_query_from_cmd(cmd)
-                        if not q:
-                            continue
-                        try:
-                            res = await search_knowledge_base_helper(query=q, limit=5)
-                            count = int(res.get("results_count", 0) or 0)
-                            sources = [r.get("source", "") for r in res.get("results", [])]
-                            if count == 0:
-                                unmatched_commands.append(cmd)
-                                lines.append(f"- {cmd}: 0 matching docs found for query '{q}'")
-                            else:
-                                preview_sources = (
-                                    ", ".join(sources[:2]) if sources else "(no sources)"
-                                )
-                                lines.append(
-                                    f"- {cmd}: {count} doc match(es) for query '{q}'; top sources: {preview_sources}"
-                                )
-                        except Exception as _e:
-                            # Continue validating other commands; summarize at end
-                            lines.append(
-                                f"- {cmd}: error during doc lookup; will defer to LLM fact-check"
-                            )
-                    if lines:
-                        cli_docs_validation_summary = (
-                            "\n\n## CLI Documentation Lookup:\n" + "\n".join(lines)
-                        )
-            except Exception as e:
-                logger.info(f"Skipping CLI doc validation during fact-checking: {e}")
-
-            # Prepare fact-check prompt
-            fact_check_input = f"""
-## Agent Response to Fact-Check:
-{response}
-
-## Diagnostic Data (if available):
-{diagnostic_data if diagnostic_data else "No diagnostic data provided"}{url_validation_summary}{cli_docs_validation_summary}{cli_detection_summary}
-
-Please review this Redis SRE agent response for factual accuracy, command validity (especially `rladmin`), and URL validity. Include any invalid commands or URLs as errors in your assessment.
-"""
-
-            from langchain_core.messages import HumanMessage, SystemMessage
-
-            messages = [
-                SystemMessage(content=FACT_CHECKER_PROMPT),
-                HumanMessage(content=fact_check_input),
-            ]
-
-            # Retry fact-check with parsing
-            async def _fact_check_with_retry():
-                """Inner function for fact-check retry logic."""
-                fact_check_response = await self._ainvoke_memo("fact_check", fact_checker, messages)
-
-                # Handle markdown code blocks if present
-                response_text = fact_check_response.content.strip()
-                if response_text.startswith("```json"):
-                    response_text = response_text[7:]  # Remove ```json
-                if response_text.endswith("```"):
-                    response_text = response_text[:-3]  # Remove ```
-                response_text = response_text.strip()
-
-                # Parse JSON response - this will raise JSONDecodeError if parsing fails
-                result = json.loads(response_text)
-                return result
-
-            try:
-                result = await self._retry_with_backoff(
-                    _fact_check_with_retry,
-                    max_retries=1,
-                    initial_delay=self.settings.llm_initial_delay,
-                    backoff_factor=self.settings.llm_backoff_factor,
-                )
-                logger.info(
-                    f"Fact-check completed: {'errors found' if result.get('has_errors') else 'no errors'}"
-                )
-                # Enforce invalid_command when we successfully ran doc validation and found no docs for a detected command
-                try:
-                    if _doc_search_ran and unmatched_commands:
-                        errs = result.get("errors") or []
-                        for cmd in unmatched_commands:
-                            errs.append(
-                                {
-                                    "claim": cmd,
-                                    "issue": "No matching documentation found for this command syntax; verify against official Redis docs.",
-                                    "category": "invalid_command",
-                                }
-                            )
-                        result["errors"] = errs
-                        result["has_errors"] = True
-                except Exception:
-                    # Never break on enforcement
-                    pass
-                return result
-            except json.JSONDecodeError as e:
-                logger.error(f"Fact-checker returned invalid JSON after retries: {e}")
-                return {
-                    "has_errors": False,
-                    "validation_notes": f"Fact-checker response parsing failed after {2 + 1} attempts",
-                }
-
-        except Exception as e:
-            logger.error(f"Error during fact-checking: {e}")
-            # Don't block on fact-check failures - return graceful fallback
-
-            return {
-                "has_errors": False,
-                "validation_notes": f"Fact-checking unavailable ({str(e)[:50]}...)",
-                "fact_check_error": True,
-            }
-
     async def process_query_with_fact_check(
         self,
         query: str,
@@ -2114,28 +1852,136 @@ Please review this Redis SRE agent response for factual accuracy, command validi
                 conversation_history,
             )
 
-            # Skip safety/fact-check entirely if out of Redis scope
+            # Skip correction if out of Redis scope
             try:
                 if not (self._is_redis_scoped(query) or self._is_redis_scoped(response)):
-                    logger.info("Skipping safety/fact-check (out of Redis scope)")
+                    logger.info("Skipping safety/fact-corrector (out of Redis scope)")
                     return response
             except Exception:
-                # If scope detection fails, proceed with notes
                 pass
 
-            # Collect notes (no corrections) in parallel
-            safety_result, fact_check_result = await asyncio.gather(
-                self._safety_evaluate_response(query, response),
-                self._fact_check_response(response),
-            )
+            # Heuristic gate: only run when risky patterns/URLs present
+            if not (self._should_run_safety_fact(response) or self._should_run_safety_fact(query)):
+                return response
 
-            # Render natural-language notes and append to the response
-            section = await self._render_safety_and_fact_check_section(
-                safety_result=safety_result, fact_check_result=fact_check_result
-            )
-            if section.strip():
-                return response + "\n\n" + section
-            return response
+            # Build a small, bounded corrector with knowledge + utilities tools only
+            from langchain_core.tools import StructuredTool
+            from langchain_openai import ChatOpenAI
+            from pydantic import BaseModel, ConfigDict, Field, create_model
+
+            from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
+
+            # Use always-on providers (knowledge, utilities)
+            async with ToolManager(redis_instance=None) as corrector_mgr:
+                # Select only knowledge + utilities providers via manager helper
+                allowed_tooldefs = corrector_mgr.get_tools_by_provider_names(
+                    ["knowledge", "utilities"]
+                )
+                # Further restrict to knowledge.search and utilities calculator/date_math/timezone_converter/http_head
+                allowed_ops = {
+                    "search",
+                    "calculator",
+                    "date_math",
+                    "timezone_converter",
+                    "http_head",
+                }
+                tooldefs = []
+                for t in allowed_tooldefs:
+                    try:
+                        op = (t.name or "").split("_")[-1]
+                        if op in allowed_ops:
+                            tooldefs.append(t)
+                    except Exception:
+                        continue
+                tool_schemas = [t.to_openai_schema() for t in tooldefs]
+
+                # Build StructuredTool adapters
+                def _args_model_from_parameters(tool_name: str, params: dict) -> type[BaseModel]:
+                    props = (params or {}).get("properties", {}) or {}
+                    required = set((params or {}).get("required", []) or [])
+                    fields = {}
+                    for k, spec in props.items():
+                        default = ... if k in required else None
+                        fields[k] = (
+                            Any,
+                            Field(default, description=(spec or {}).get("description")),
+                        )
+                    args_model = create_model(f"{tool_name}_Args", __base__=BaseModel, **fields)
+                    args_model.model_config = ConfigDict(extra="allow")  # type: ignore[attr-defined]
+                    return args_model
+
+                adapters = []
+                for tdef in tooldefs:
+
+                    async def _exec_fn(_name=tdef.name, **kwargs):
+                        return await corrector_mgr.resolve_tool_call(_name, kwargs or {})
+
+                    args_model = _args_model_from_parameters(
+                        tdef.name, getattr(tdef, "parameters", {}) or {}
+                    )
+                    adapters.append(
+                        StructuredTool.from_function(
+                            coroutine=_exec_fn,
+                            name=tdef.name,
+                            description=getattr(tdef, "description", "") or "",
+                            args_schema=args_model,
+                        )
+                    )
+
+                # LLM with tools bound
+                corrector_llm_base = ChatOpenAI(
+                    model=self.settings.openai_model_mini,
+                    openai_api_key=self.settings.openai_api_key,
+                    timeout=self.settings.llm_timeout,
+                )
+                corrector_llm = corrector_llm_base.bind_tools(tool_schemas)
+
+                # Build the compiled subgraph
+                corrector = build_safety_fact_corrector(
+                    corrector_llm,
+                    adapters,
+                    max_tool_steps=min(2, int(self.settings.max_tool_calls_per_stage or 2)),
+                    memoize=self._ainvoke_memo,
+                )
+
+                # Seed with an instruction-only system prompt so the model knows to use tools, then synthesize
+                sys = SystemMessage(
+                    content=(
+                        "You will minimally correct the provided response for safety and factual issues.\n"
+                        "- You may call knowledge_* search and utilities (http_head, calculator, date/time) at most 2 times in total.\n"
+                        "- Validate up to 5 URLs on well-known docs domains (redis.io, docs.redis.com, redis.com, redis.cloud, github.com) using http_head.\n"
+                        "- Do not invent commands. If uncertain, prefer removing or adding a one-line caution.\n"
+                        "Stop tool use when sufficient to make minimal edits; synthesis will follow."
+                    )
+                )
+                human = HumanMessage(
+                    content=(
+                        "Response text to review follows; do not rewrite wholesale — only fix unsafe/incorrect parts."
+                    )
+                )
+
+                instance_ctx = {}
+                try:
+                    # Best-effort instance facts from context
+                    instance_ctx = (context or {}).get("instance") or {}
+                except Exception:
+                    instance_ctx = {}
+
+                initial_state = {
+                    "messages": [sys, human],
+                    "budget": min(2, int(self.settings.max_tool_calls_per_stage or 2)),
+                    "response_text": response,
+                    "instance": instance_ctx,
+                }
+
+                corr_state = await corrector.ainvoke(initial_state)
+                result = (corr_state or {}).get("result") or {}
+                edited = str(result.get("edited_response") or "")
+                # Replace the original response with the corrected text; do not append audit notes by default
+                if edited.strip() and edited.strip() != str(response).strip():
+                    return edited
+                # If no change, just return original
+                return response
         finally:
             # Clear LLM memo cache for this run
             try:
@@ -2207,185 +2053,6 @@ Please review this Redis SRE agent response for factual accuracy, command validi
 
         # This should never be reached, but just in case
         raise last_exception
-
-    async def _safety_evaluate_response(
-        self, original_query: str, response: str, is_correction_recheck: bool = False
-    ) -> Dict[str, Any]:
-        r"""
-        Evaluate response for dangerous recommendations that could cause data loss.
-
-        This safety evaluator specifically checks for Redis data persistence safety:
-        - Ensures eviction policies aren't suggested for persistent data stores
-        - Validates that recommendations align with identified usage patterns
-        - Flags logic contradictions between analysis and recommendations
-
-        Args:
-            original_query: The original user query (may contain diagnostic data)
-            response: The agent's response to evaluate
-
-        Returns:
-            Dict containing safety evaluation results
-        # Ground safety evaluation in Redis knowledge base; if no citations, consider safe
-        _citations: list[dict] = []
-
-        try:
-            # Build a small set of focused queries from response content
-            import re as _re
-            topics: list[str] = []
-            text = f"{original_query}\n{response}"[:4000]
-            # Extract admin API endpoints and key terms
-            endpoints = _re.findall(r"/v\d+/[a-zA-Z0-9_\-/]+", text)[:2]
-            if endpoints:
-                topics.extend([f"Redis Enterprise admin API {ep}" for ep in endpoints])
-            if _re.search(r"\brladmin\b", text, flags=_re.IGNORECASE):
-                topics.append("rladmin command safety")
-            for kw in ["eviction", "persistence", "replication", "backup", "flushall", "CONFIG SET", "AOF", "RDB", "PUT", "PATCH", "DELETE"]:
-                if kw.lower() in text.lower():
-                    topics.append(f"Redis {kw} safety")
-            # Dedup and cap
-            seen = set()
-            queries = []
-            for t in topics:
-                if t not in seen:
-                    seen.add(t)
-                    queries.append(t)
-                if len(queries) >= 2:
-                    break
-
-            _citations: list[dict] = []
-            if queries:
-                from redis_sre_agent.core.knowledge_helpers import search_knowledge_base_helper
-                for q in queries:
-                    try:
-                        res = await search_knowledge_base_helper(q, limit=3)
-                        for r in res.get("results", [])[:2]:
-                            src = r.get("source") or ""
-                            if any(dom in src for dom in ("redis.io", "redis.com", "docs.redis.com", "redis.cloud")):
-                                _citations.append({
-                                    "source": src,
-                                    "title": r.get("title", ""),
-                                    "excerpt": (r.get("content") or "")[:280],
-                                })
-                            if len(_citations) >= 3:
-                                break
-                    except Exception:
-                        continue
-
-            if not _citations:
-                # No authoritative Redis citations; proceed to evaluator with (none) so it defaults to safe
-                _citations = []
-        except Exception:
-            # If grounding fails, proceed but still bias toward safety only with strong evidence
-            _citations = []
-
-        """
-        safety_prompt = """
-You are a Redis SRE Safety Evaluator. Evaluate ONLY using the provided Redis citations below.
-If you cannot support a claim with a direct citation from these sources, mark the response as safe.
-
-STRICT RULES:
-- Use ONLY information from the citations (official Redis docs/KB): redis.io, docs.redis.com, redis.com, redis.cloud
-- Do NOT apply generic HTTP/REST heuristics (e.g., "PUT replaces full resource") unless explicitly stated in the cited Redis docs
-- Limit your scope to Redis, Redis Enterprise, and Redis Cloud features and tooling
-- If the citations are silent/ambiguous, default to safe and do not invent risks
-
-EVALUATE THIS RESPONSE FOR SERIOUS SAFETY CONCERNS:
-
-ORIGINAL QUERY:
-{original_query}
-
-AGENT RESPONSE:
-{response}
-
-CITATIONS (authoritative context):
-{citations}
-
-Only flag as unsafe if the recommendations could cause (and citations clearly support):
-1. Immediate data loss (e.g., destructive eviction on persistent stores)
-2. Logic contradicting documented usage patterns or safety notes
-3. System failure (operations that would crash/corrupt Redis) per docs
-
-Do NOT flag as unsafe:
-- Recommendations with appropriate warnings documented in the citations
-- Restart/snapshot/persistence changes when the cited docs describe safe procedures
-- Operational risks not documented as unsafe in Redis sources
-
-RESPONSE FORMAT (JSON):
-{{
-  "safe": true/false,
-  "risk_level": "low|medium|high|critical",
-  "violations": ["each violation must have a supporting citation"],
-  "corrective_guidance": "safe alternative steps from citations",
-  "reasoning": "concise, cite-based explanation",
-  "citations": [
-    {{"url": "...", "quote": "short relevant excerpt"}}
-  ]
-}}
-
-{"CORRECTION RECHECK: This is a safety recheck of a corrected response. Be more lenient - if the response includes appropriate warnings and safer alternatives supported by the citations, consider it safe." if is_correction_recheck else ""}
-"""
-
-        # Pre-format the safety prompt with safe strings and citations to avoid closure issues
-        def _safe_str(obj):
-            try:
-                return str(obj)
-            except Exception:
-                return repr(obj)
-
-        query_str = _safe_str(original_query)
-        response_str = _safe_str(response)
-        citations_text = "(none)"
-        formatted_prompt = safety_prompt.replace("{original_query}", query_str)
-        formatted_prompt = formatted_prompt.replace("{response}", response_str)
-        formatted_prompt = formatted_prompt.replace("{citations}", citations_text or "(none)")
-        safety_llm = ChatOpenAI(
-            model=self.settings.openai_model_mini,
-            openai_api_key=self.settings.openai_api_key,
-            timeout=self.settings.llm_timeout,
-        )
-
-        async def _evaluate_with_retry():
-            """Inner function for retry logic."""
-            safety_response = await self._ainvoke_memo(
-                "safety", safety_llm, [SystemMessage(content=formatted_prompt)]
-            )
-            # Parse the JSON response - this will raise JSONDecodeError if parsing fails
-            result = json.loads(safety_response.content)
-            return result
-
-        try:
-            # Use retry logic for both LLM call and JSON parsing
-            result = await self._retry_with_backoff(
-                _evaluate_with_retry,
-                max_retries=1,
-                initial_delay=self.settings.llm_initial_delay,
-                backoff_factor=self.settings.llm_backoff_factor,
-            )
-            return result
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Safety evaluation JSON parsing failed after retries: {str(e)}")
-            return {
-                "safe": False,
-                "violations": [
-                    "Could not parse safety evaluation response after multiple attempts"
-                ],
-                "corrective_guidance": "Manual safety review required due to persistent parsing error",
-                "reasoning": f"Safety evaluation response was not in expected JSON format after {self.settings.llm_max_retries + 1} attempts",
-            }
-        except Exception as e:
-            try:
-                error_str = str(e)
-            except Exception:
-                error_str = repr(e)
-            logger.error(f"Safety evaluation failed after retries: {error_str}")
-            return {
-                "safe": False,
-                "violations": ["Safety evaluation failed"],
-                "risk_level": "high",
-                "corrective_guidance": "Manual review required - safety evaluation error",
-                "reasoning": f"Safety evaluation error after retries: {str(e)}",
-            }
 
 
 def get_sre_agent() -> SRELangGraphAgent:

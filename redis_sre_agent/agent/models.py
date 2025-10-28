@@ -70,3 +70,12 @@ class Recommendation(BaseModel):
 # Wrapper for structured-output list of topics
 class TopicsList(BaseModel):
     items: List[Topic] = Field(default_factory=list)
+
+
+class CorrectionResult(BaseModel):
+    """Structured output for the safety/fact correction stage."""
+
+    edited_response: str = Field(..., description="The minimally edited response text")
+    edits_applied: List[str] = Field(
+        default_factory=list, description="Short bullet list of edits/cautions applied"
+    )

@@ -100,7 +100,7 @@ Example rotation script:
 
 ```python
 import asyncio
-from redis_sre_agent.api.instances import get_instances_from_redis, save_instances_to_redis
+from redis_sre_agent.core.instances import get_instances_from_redis, save_instances_to_redis
 
 async def rotate_key():
     # Load with old key

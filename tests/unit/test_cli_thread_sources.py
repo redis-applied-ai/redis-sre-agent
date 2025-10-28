@@ -4,7 +4,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from redis_sre_agent.cli.main import main as cli_main
-from redis_sre_agent.core.thread_state import (
+from redis_sre_agent.core.threads import (
     ThreadMetadata,
     ThreadState,
     ThreadStatus,
@@ -48,7 +48,7 @@ def test_thread_sources_cli_json_output(monkeypatch):
         return _make_state_with_sources(thread_id)
 
     with patch(
-        "redis_sre_agent.core.thread_state.ThreadManager.get_thread_state",
+        "redis_sre_agent.core.threads.ThreadManager.get_thread_state",
         new=fake_get_thread_state,
     ):
         result = runner.invoke(cli_main, ["thread", "sources", "thread-1", "--json"])
@@ -73,7 +73,7 @@ def test_thread_sources_cli_human_output(monkeypatch):
         return _make_state_with_sources(thread_id)
 
     with patch(
-        "redis_sre_agent.core.thread_state.ThreadManager.get_thread_state",
+        "redis_sre_agent.core.threads.ThreadManager.get_thread_state",
         new=fake_get_thread_state,
     ):
         result = runner.invoke(cli_main, ["thread", "sources", "thread-1"])  # table output
