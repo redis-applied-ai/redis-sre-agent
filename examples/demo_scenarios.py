@@ -17,15 +17,15 @@ import redis
 from redis_sre_agent.core.instances import (
     RedisInstance,
     RedisInstanceType,
-    get_instances_from_redis,
-    save_instances_to_redis,
+    get_instances,
+    save_instances,
 )
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.tasks import TaskManager, create_task
-from redis_sre_agent.core.threads import ThreadStatus
+from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 
 DEMO_PORT = 7844
 DEFAULT_REDIS_ENTERPRISE_NAME = "Redis Enterprise Demo"
+DEFAULT_OSS_REDIS_NAME = "Open-Source Redis Demo"
 
 # TODO: Suppress Pydantic protected namespace warning from dependencies
 warnings.filterwarnings(
@@ -247,7 +247,7 @@ class RedisSREDemo:
             agent_url = "redis://redis-demo:6379/0"
 
             # Get existing instances
-            instances = await get_instances_from_redis()
+            instances = await get_instances()
 
             demo_instance_name = "Demo Redis (Scenarios)"
             target = None
@@ -317,7 +317,7 @@ class RedisSREDemo:
                 except Exception:
                     pass
 
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Updated demo instance registration (redis-demo:6379)")
             else:
                 from datetime import datetime
@@ -367,7 +367,7 @@ class RedisSREDemo:
                 except Exception:
                     pass
                 instances.append(demo_instance)
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Registered demo instance with agent (redis-demo:6379)")
 
         except Exception as e:
@@ -390,7 +390,7 @@ class RedisSREDemo:
         cluster/node/database status tools.
         """
         try:
-            instances = await get_instances_from_redis()
+            instances = await get_instances()
 
             # Look for existing by name or matching Enterprise admin URL
             existing = None
@@ -418,7 +418,7 @@ class RedisSREDemo:
                 existing.admin_username = admin_username
                 existing.admin_password = admin_password
                 # Persist
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Updated existing Redis Enterprise instance registration")
             else:
                 from datetime import datetime
@@ -443,7 +443,7 @@ class RedisSREDemo:
                     admin_password=admin_password,
                 )
                 instances.append(new_instance)
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Registered Redis Enterprise instance with agent")
         except Exception as e:
             print(f"⚠️  Warning: Could not register Redis Enterprise instance: {e}")
@@ -3027,7 +3027,7 @@ class RedisSREDemo:
             selected_instance_id = None
             selected_instance_name = None
             try:
-                instances = await get_instances_from_redis()
+                instances = await get_instances()
                 ql = query.lower()
 
                 def pick_enterprise_instance():
@@ -3118,7 +3118,7 @@ class RedisSREDemo:
                         print(f"   • {upd.update_type}: {upd.message}")
                     last_seen = len(state.updates)
 
-                if state and state.status in (ThreadStatus.DONE, ThreadStatus.FAILED):
+                if state and state.status in (TaskStatus.DONE, TaskStatus.FAILED):
                     if state.result and isinstance(state.result, dict):
                         response_text = state.result.get("response") or state.result.get("message")
                     if state.error_message:

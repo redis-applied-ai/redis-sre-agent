@@ -31,7 +31,7 @@ class TestThreadsAPI:
     def test_get_thread_not_found(self, client):
         """GET /api/v1/threads/{id} returns 404 when ThreadManager returns None."""
         mock_tm = MagicMock()
-        mock_tm.get_thread_state = AsyncMock(return_value=None)
+        mock_tm.get_thread = AsyncMock(return_value=None)
         with patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm):
             resp = client.get("/api/v1/threads/abc")
         assert resp.status_code == 404
@@ -56,7 +56,7 @@ class TestThreadsAPI:
         state.context = {"messages": []}
 
         mock_tm = MagicMock()
-        mock_tm.get_thread_state = AsyncMock(return_value=state)
+        mock_tm.get_thread = AsyncMock(return_value=state)
         mock_tm.update_thread_context = AsyncMock(return_value=True)
 
         with patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm):
@@ -84,7 +84,7 @@ class TestThreadsAPI:
             metadata.model_dump = lambda: {"user_id": "u"}
 
         mock_tm = MagicMock()
-        mock_tm.get_thread_state = AsyncMock(return_value=State())
+        mock_tm.get_thread = AsyncMock(return_value=State())
         with patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm):
             resp = client.get("/api/v1/threads/th1")
         assert resp.status_code == 200
@@ -95,7 +95,7 @@ class TestThreadsAPI:
     def test_update_thread_not_found(self, client):
         """PATCH /api/v1/threads/{id} returns 404 when no state."""
         mock_tm = MagicMock()
-        mock_tm.get_thread_state = AsyncMock(return_value=None)
+        mock_tm.get_thread = AsyncMock(return_value=None)
         with patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm):
             resp = client.patch("/api/v1/threads/missing", json={"context": {"k": "v"}})
         assert resp.status_code == 404

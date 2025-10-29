@@ -22,7 +22,7 @@ def test_instance_cli_help_lists_subcommands():
 def test_instances_list_empty_prints_message():
     runner = CliRunner()
 
-    with patch.object(core_instances, "get_instances_from_redis", new=AsyncMock(return_value=[])):
+    with patch.object(core_instances, "get_instances", new=AsyncMock(return_value=[])):
         result = runner.invoke(instance, ["list"])  # pretty output path
 
     assert result.exit_code == 0
@@ -43,9 +43,7 @@ def test_instances_list_json_with_item():
         instance_type="oss_single",
     )
 
-    with patch.object(
-        core_instances, "get_instances_from_redis", new=AsyncMock(return_value=[item])
-    ):
+    with patch.object(core_instances, "get_instances", new=AsyncMock(return_value=[item])):
         result = runner.invoke(instance, ["list", "--json"])  # JSON output path
 
     assert result.exit_code == 0

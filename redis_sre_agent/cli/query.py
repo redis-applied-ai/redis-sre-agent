@@ -9,32 +9,35 @@ import asyncio
 
 import click
 
+from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
+from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.instances import get_instance_by_id
 
 
 @click.command()
 @click.argument("query")
-@click.option("--redis-url", "-r", help="Redis URL to investigate (e.g., redis://localhost:6379)")
-def query(query: str, redis_url: str):
+@click.option("--redis-instance", "-r", help="Redis instance ID to investigate")
+def query(query: str, redis_instance_id: str):
     """Execute an agent query."""
 
     async def _query():
-        from redis_sre_agent.agent.langgraph_agent import get_sre_agent
+        if redis_instance_id:
+            instance = await get_instance_by_id(redis_instance_id)
+        else:
+            instance = None
 
         click.echo(f"🔍 Query: {query}")
-        if redis_url:
-            click.echo(f"🔗 Redis URL: {redis_url}")
 
-        agent = get_sre_agent()
-
-        # Add Redis URL context to the query if provided
-        contextualized_query = query
-        if redis_url:
-            contextualized_query = f"Please investigate this Redis instance: {redis_url}. {query}"
+        if instance:
+            click.echo(f"🔗 Redis instance: {instance.name}")
+            agent = get_sre_agent()
+        else:
+            agent = get_knowledge_agent()
 
         try:
             response = await agent.process_query(
-                contextualized_query,
+                query,
                 session_id="cli",
                 user_id="cli_user",
                 max_iterations=settings.max_iterations,

@@ -79,78 +79,62 @@ class TestLifespan:
         """Test successful startup."""
         from redis_sre_agent.api.app import app, lifespan
 
-        with patch("redis_sre_agent.api.app.initialize_redis_infrastructure") as mock_init:
+        with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
             with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
-                with patch("redis_sre_agent.api.app.cleanup_redis_connections") as mock_cleanup:
-                    mock_init.return_value = {"redis": "connected"}
-                    mock_register.return_value = None
-                    mock_cleanup.return_value = None
+                mock_init.return_value = {"redis": "connected"}
+                mock_register.return_value = None
 
-                    async with lifespan(app):
-                        # During startup
-                        pass
+                async with lifespan(app):
+                    # During startup
+                    pass
 
-                    # Verify startup was called
-                    mock_init.assert_called_once()
-                    mock_register.assert_called_once()
-
-                    # Verify cleanup was called on shutdown
-                    mock_cleanup.assert_called_once()
+                # Verify startup was called
+                mock_init.assert_called_once()
+                mock_register.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_lifespan_startup_redis_error(self):
         """Test startup with Redis initialization error."""
         from redis_sre_agent.api.app import app, get_app_startup_state, lifespan
 
-        with patch("redis_sre_agent.api.app.initialize_redis_infrastructure") as mock_init:
-            with patch("redis_sre_agent.api.app.cleanup_redis_connections") as mock_cleanup:
-                mock_init.side_effect = Exception("Redis connection failed")
-                mock_cleanup.return_value = None
+        with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
+            mock_init.side_effect = Exception("Redis connection failed")
 
-                async with lifespan(app):
-                    # Should not raise, but store error
-                    state = get_app_startup_state()
-                    assert "error" in state
-
-                mock_cleanup.assert_called_once()
+            async with lifespan(app):
+                # Should not raise, but store error
+                state = get_app_startup_state()
+                assert "error" in state
 
     @pytest.mark.asyncio
     async def test_lifespan_startup_task_registration_error(self):
         """Test startup with task registration error."""
         from redis_sre_agent.api.app import app, lifespan
 
-        with patch("redis_sre_agent.api.app.initialize_redis_infrastructure") as mock_init:
+        with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
             with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
-                with patch("redis_sre_agent.api.app.cleanup_redis_connections") as mock_cleanup:
-                    mock_init.return_value = {"redis": "connected"}
-                    mock_register.side_effect = Exception("Task registration failed")
-                    mock_cleanup.return_value = None
+                mock_init.return_value = {"redis": "connected"}
+                mock_register.side_effect = Exception("Task registration failed")
 
-                    async with lifespan(app):
-                        # Should not raise, just log warning
-                        pass
+                async with lifespan(app):
+                    # Should not raise, just log warning
+                    pass
 
-                    mock_init.assert_called_once()
-                    mock_register.assert_called_once()
-                    mock_cleanup.assert_called_once()
+                mock_init.assert_called_once()
+                mock_register.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_lifespan_shutdown_error(self):
         """Test shutdown with cleanup error."""
         from redis_sre_agent.api.app import app, lifespan
 
-        with patch("redis_sre_agent.api.app.initialize_redis_infrastructure") as mock_init:
+        with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
             with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
-                with patch("redis_sre_agent.api.app.cleanup_redis_connections") as mock_cleanup:
-                    mock_init.return_value = {"redis": "connected"}
-                    mock_register.return_value = None
-                    mock_cleanup.side_effect = Exception("Cleanup failed")
+                mock_init.return_value = {"redis": "connected"}
+                mock_register.return_value = None
 
-                    async with lifespan(app):
-                        # Should not raise during shutdown
-                        pass
-
-                    mock_cleanup.assert_called_once()
+                async with lifespan(app):
+                    # Should not raise during shutdown
+                    pass
 
 
 class TestMiddleware:
@@ -247,7 +231,7 @@ class TestAppEndpoints:
 
         # Patch heavy dependencies to avoid background tasks/warnings
         with (
-            patch("redis_sre_agent.api.health.initialize_redis_infrastructure", return_value={}),
+            patch("redis_sre_agent.api.health.initialize_redis", return_value={}),
             patch("redis_sre_agent.api.health.test_task_system", new=AsyncMock(return_value=False)),
             patch("redis_sre_agent.api.health.Docket") as mock_docket,
         ):

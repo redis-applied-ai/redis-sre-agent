@@ -582,12 +582,6 @@ async def test_llm_judge_evaluation():
 
     The test will be skipped if either requirement is not met.
     """
-    # Skip if OpenAI API key is not available
-    if (
-        not os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
-    ):
-        pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
     # Skip if knowledge base is not populated
     if not check_knowledge_index_exists():
@@ -643,11 +637,6 @@ async def test_single_scenario_evaluation():
     The test will be skipped if either requirement is not met.
     """
     # Skip if OpenAI API key is not available
-    if (
-        not os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
-    ):
-        pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
     # Skip if knowledge base is not populated
     if not check_knowledge_index_exists():

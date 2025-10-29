@@ -24,7 +24,7 @@ async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
     limit: int = 10,
-    distance_threshold: Optional[float] = None,
+    distance_threshold: Optional[float] = 0.2,
     hybrid_search: bool = False,
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base.
@@ -32,11 +32,15 @@ async def search_knowledge_base_helper(
     NOTE: The HybridQuery class can't take a distance threshold, so if
           hybrid_search is True, distance_threshold is ignored.
 
+    Behavior:
+        - Default: distance_threshold=0.2 (filters by cosine distance)
+        - Explicit None: disables threshold (pure KNN, return top-k regardless of distance)
+
     Args:
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
         limit: Maximum number of results
-        distance_threshold: Minimum score threshold for results
+        distance_threshold: Cosine distance cutoff; None disables threshold
         hybrid_search: Whether to use hybrid search (vector + full-text)
 
     Returns:
@@ -72,13 +76,15 @@ async def search_knowledge_base_helper(
         )
     else:
         # Build pure vector query
-        if distance_threshold is not None:
+        # distance_threshold default is 0.2; None disables threshold (pure KNN)
+        effective_threshold = distance_threshold
+        if effective_threshold is not None:
             query_obj = VectorRangeQuery(
                 vector=query_vector,
                 vector_field_name="vector",
                 return_fields=return_fields,
                 num_results=limit,
-                distance_threshold=distance_threshold,
+                distance_threshold=effective_threshold,
             )
         else:
             query_obj = VectorQuery(
@@ -232,11 +238,20 @@ async def get_all_document_fragments(
         index = await get_knowledge_index()
 
         # Use FT.SEARCH to find all chunks for this document
-        # document_hash is indexed as a TAG field, so we can filter on it
+        # document_hash is indexed as a TAG field, so we can filter on it.
+        # Tag values that include punctuation (e.g., '-') must be quoted.
         from redisvl.query import FilterQuery
 
+        def _quote_tag_value(value: str) -> str:
+            """Quote a RediSearch TAG value, escaping any embedded quotes.
+
+            See: RediSearch TAG query syntax — values with special chars must be
+            wrapped in double quotes. Double quotes inside must be escaped.
+            """
+            return '"' + (value.replace('"', '\\"')) + '"'
+
         filter_query = FilterQuery(
-            filter_expression=f"@document_hash:{{{document_hash}}}",
+            filter_expression=f"@document_hash:{{{_quote_tag_value(document_hash)}}}",
             return_fields=[
                 "title",
                 "content",
@@ -266,6 +281,22 @@ async def get_all_document_fragments(
             results, key=lambda x: int(x.get("chunk_index", 0)) if x.get("chunk_index") else 0
         )
 
+        # Normalize numeric fields to ints for stable assertions/consumers
+        normalized_fragments = []
+        for f in fragments:
+            nf = dict(f)
+            try:
+                if nf.get("chunk_index") is not None and nf.get("chunk_index") != "":
+                    nf["chunk_index"] = int(nf["chunk_index"])  # type: ignore
+            except Exception:
+                pass
+            try:
+                if nf.get("total_chunks") is not None and nf.get("total_chunks") != "":
+                    nf["total_chunks"] = int(nf["total_chunks"])  # type: ignore
+            except Exception:
+                pass
+            normalized_fragments.append(nf)
+
         # Get document metadata if requested
         metadata = {}
         if include_metadata:
@@ -276,15 +307,15 @@ async def get_all_document_fragments(
 
         result = {
             "document_hash": document_hash,
-            "fragments_count": len(fragments),
-            "fragments": fragments,
+            "fragments_count": len(normalized_fragments),
+            "fragments": normalized_fragments,
             "title": metadata.get("title", ""),
             "source": metadata.get("source", ""),
             "category": metadata.get("category", ""),
             "metadata": metadata,
         }
 
-        logger.info(f"Retrieved {len(fragments)} fragments for document {document_hash}")
+        logger.info(f"Retrieved {len(normalized_fragments)} fragments for document {document_hash}")
         return result
 
     except Exception as e:

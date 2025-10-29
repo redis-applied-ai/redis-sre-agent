@@ -32,11 +32,6 @@ class RedisKeys:
         return f"sre:thread:{thread_id}:context"
 
     @staticmethod
-    def thread_action_items(thread_id: str) -> str:
-        """Key for thread action items."""
-        return f"sre:thread:{thread_id}:action_items"
-
-    @staticmethod
     def thread_metadata(thread_id: str) -> str:
         """Key for thread metadata."""
         return f"sre:thread:{thread_id}:metadata"
@@ -187,7 +182,6 @@ class RedisKeys:
             "status": RedisKeys.thread_status(thread_id),
             "updates": RedisKeys.thread_updates(thread_id),
             "context": RedisKeys.thread_context(thread_id),
-            "action_items": RedisKeys.thread_action_items(thread_id),
             "metadata": RedisKeys.thread_metadata(thread_id),
             "result": RedisKeys.thread_result(thread_id),
             "error": RedisKeys.thread_error(thread_id),

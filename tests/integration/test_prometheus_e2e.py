@@ -93,6 +93,7 @@ async def test_tool_manager_e2e_routes_to_prometheus_with_env_config():
             environment="test",
             usage="cache",
             description="e2e test instance",
+            instance_type="oss_single",
         )
 
         async with ToolManager(redis_instance=instance) as mgr:

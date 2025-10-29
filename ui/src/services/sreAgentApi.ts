@@ -17,7 +17,6 @@ export interface TaskStatusResponse {
   status: 'queued' | 'in_progress' | 'completed' | 'done' | 'failed' | 'cancelled';
   updates: TaskUpdate[];
   result?: Record<string, any>;
-  action_items: any[];
   error_message?: string;
   metadata: {
     created_at: string;
@@ -358,6 +357,70 @@ class SREAgentAPI {
     if (finalStatus.status === 'failed') {
       throw new Error(finalStatus.error_message || 'Task failed');
     }
+
+
+    // Extract the response from the final result or latest update
+    let response = 'No response available';
+    if (finalStatus.result && finalStatus.result.response) {
+      response = finalStatus.result.response;
+    } else if (finalStatus.updates.length > 0) {
+      // Find the last assistant response
+      const assistantUpdates = finalStatus.updates.filter(u => u.type === 'response' || u.type === 'completion');
+      if (assistantUpdates.length > 0) {
+        response = assistantUpdates[assistantUpdates.length - 1].message;
+      }
+    }
+
+    return {
+      response,
+      thread_id: finalStatus.thread_id,
+    };
+  }
+
+  // Unified transcript helper: prefer context.messages; fallback to updates
+  async getTranscript(threadId: string): Promise<ChatMessage[]> {
+    const status = await this.getTaskStatus(threadId);
+
+    // Preferred: context.messages contains the entire transcript
+    const ctxMsgs = Array.isArray(status?.context?.messages) ? status.context.messages : [];
+    if (ctxMsgs.length > 0) {
+      return ctxMsgs.map((msg: any) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+      })) as ChatMessage[];
+    }
+
+    // Fallback: reconstruct from updates and metadata
+    const messages: ChatMessage[] = [];
+    const initial = (status.context as any)?.original_query || status.metadata.subject;
+    if (initial) {
+      messages.push({
+        role: 'user',
+        content: initial,
+        timestamp: status.metadata.created_at,
+      });
+    }
+
+    for (const update of status.updates) {
+      if ((update.type === 'response' || update.type === 'completion') && update.message) {
+        messages.push({ role: 'assistant', content: update.message, timestamp: update.timestamp });
+      } else if (update.type === 'user_message' && update.message) {
+        messages.push({ role: 'user', content: update.message, timestamp: update.timestamp });
+      } else if ((update.type === 'agent_reflection' || update.type === 'agent_processing' || update.type === 'agent_start') && update.message && update.message.length > 10 && !/completed/i.test(update.message)) {
+        messages.push({ role: 'assistant', content: update.message, timestamp: update.timestamp });
+      }
+    }
+
+    if ((status.status === 'done' || status.status === 'completed') && (status as any).result?.response) {
+      messages.push({ role: 'assistant', content: (status as any).result.response, timestamp: (status as any).result.turn_completed_at || status.metadata.updated_at });
+    }
+    if (status.status === 'failed' && status.error_message) {
+      messages.push({ role: 'assistant', content: `❌ ${status.error_message}`, timestamp: status.metadata.updated_at });
+    }
+
+    return messages;
+  }
 
     // Extract the response from the final result or latest update
     let response = 'No response available';

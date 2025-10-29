@@ -100,18 +100,22 @@ Example rotation script:
 
 ```python
 import asyncio
-from redis_sre_agent.core.instances import get_instances_from_redis, save_instances_to_redis
+from redis_sre_agent.core.instances import get_instances,
+
+save_instances
+
 
 async def rotate_key():
     # Load with old key
-    instances = await get_instances_from_redis()
+    instances = await get_instances()
 
     # Update environment with new key
     import os
     os.environ['REDIS_SRE_MASTER_KEY'] = '<new-key>'
 
     # Save with new key
-    await save_instances_to_redis(instances)
+    await save_instances(instances)
+
 
 asyncio.run(rotate_key())
 ```

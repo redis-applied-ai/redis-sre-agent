@@ -7,14 +7,17 @@ We persist per-task status, progress updates, and a final result.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from redisvl.query import FilterQuery
+from redisvl.query.filter import Tag
 from ulid import ULID
 
 from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.threads import ThreadStatus
+from redis_sre_agent.core.redis import get_redis_client, get_tasks_index
+from redis_sre_agent.core.threads import ThreadManager
 
 
 class TaskMetadata(BaseModel):
@@ -31,10 +34,23 @@ class TaskUpdate(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class TaskStatus(str, Enum):
+    """Task execution status.
+
+    NOTE: Threads no longer track status. This enum remains for task status only.
+    """
+
+    QUEUED = "queued"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class TaskState(BaseModel):
     task_id: str
     thread_id: str
-    status: ThreadStatus = ThreadStatus.QUEUED
+    status: TaskStatus = TaskStatus.QUEUED
     updates: List[TaskUpdate] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -50,7 +66,7 @@ class TaskManager:
     ) -> str:
         task_id = str(ULID())
         now_iso = datetime.now(timezone.utc).isoformat()
-        await self._redis.set(RedisKeys.task_status(task_id), ThreadStatus.QUEUED.value)
+        await self._redis.set(RedisKeys.task_status(task_id), TaskStatus.QUEUED.value)
         await self._redis.hset(
             RedisKeys.task_metadata(task_id),
             mapping={
@@ -69,7 +85,7 @@ class TaskManager:
         await self._upsert_task_search_doc(task_id)
         return task_id
 
-    async def update_task_status(self, task_id: str, status: ThreadStatus) -> bool:
+    async def update_task_status(self, task_id: str, status: TaskStatus) -> bool:
         ok = await self._redis.set(RedisKeys.task_status(task_id), status.value)
         await self._redis.hset(
             RedisKeys.task_metadata(task_id), "updated_at", datetime.now(timezone.utc).isoformat()
@@ -113,7 +129,7 @@ class TaskManager:
         await self._redis.hset(
             RedisKeys.task_metadata(task_id), "updated_at", datetime.now(timezone.utc).isoformat()
         )
-        await self.update_task_status(task_id, ThreadStatus.FAILED)
+        await self.update_task_status(task_id, TaskStatus.FAILED)
         await self._upsert_task_search_doc(task_id)
         return True
 
@@ -182,7 +198,7 @@ class TaskManager:
         except Exception:
             return False
 
-        await self.update_task_status(task_id, ThreadStatus.FAILED)
+        await self.update_task_status(task_id, TaskStatus.FAILED)
         return True
 
     async def get_task_state(self, task_id: str) -> Optional[TaskState]:
@@ -221,7 +237,7 @@ class TaskManager:
         return TaskState(
             task_id=task_id,
             thread_id=thread_id or "",
-            status=ThreadStatus(
+            status=TaskStatus(
                 status_val.decode("utf-8") if isinstance(status_val, bytes) else status_val
             ),
             updates=updates,
@@ -237,9 +253,6 @@ class TaskManager:
         )
 
 
-# ---- Domain-level helpers moved from redis_sre_agent.models.tasks ----
-
-
 async def create_task(
     *,
     message: str,
@@ -249,15 +262,7 @@ async def create_task(
 ) -> Dict[str, Any]:
     """Create a Task and queue processing. If no thread_id, create a new thread."""
     if redis_client is None:
-        from redis_sre_agent.core.redis import get_redis_client as _get
-
-        redis_client = _get()
-
-    # Import locally to avoid circulars and allow later module rename
-    from docket import Docket  # type: ignore
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
-    from redis_sre_agent.core.threads import ThreadManager, ThreadStatus
+        redis_client = get_redis_client()
 
     thread_manager = ThreadManager(redis_client=redis_client)
 
@@ -267,32 +272,22 @@ async def create_task(
             initial_context={"messages": [], **(context or {})}
         )
         created_new_thread = True
-        try:
-            await thread_manager.update_thread_subject(thread_id, message)
-        except Exception:
-            pass
+        await thread_manager.update_thread_subject(thread_id, message)
 
-    tm = TaskManager(redis_client=redis_client)
-    state = await thread_manager.get_thread_state(thread_id)
-    task_id = await tm.create_task(
+    task_manager = TaskManager(redis_client=redis_client)
+    state = await thread_manager.get_thread(thread_id)
+    task_id = await task_manager.create_task(
         thread_id=thread_id,
         user_id=(state.metadata.user_id if state else None),
         subject=message,
     )
 
-    await thread_manager.update_thread_status(thread_id, ThreadStatus.QUEUED)
-    await tm.update_task_status(task_id, ThreadStatus.QUEUED)
-
-    async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-        task_func = docket.add(process_agent_turn)
-        await task_func(
-            thread_id=thread_id, message=message, context=context or {}, task_id=task_id
-        )
+    await task_manager.update_task_status(task_id, TaskStatus.QUEUED)
 
     return {
         "task_id": task_id,
         "thread_id": thread_id,
-        "status": ThreadStatus.QUEUED,
+        "status": TaskStatus.QUEUED,
         "message": "Task created and queued for processing"
         if not created_new_thread
         else "Thread created; task queued",
@@ -310,7 +305,7 @@ async def get_task_status(*, thread_id: str, redis_client=None) -> Dict[str, Any
 
     thread_manager = ThreadManager(redis_client=redis_client)
 
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
     if not thread_state:
         raise ValueError(f"Thread {thread_id} not found")
 
@@ -322,19 +317,6 @@ async def get_task_status(*, thread_id: str, redis_client=None) -> Dict[str, Any
             "metadata": update.metadata or {},
         }
         for update in thread_state.updates
-    ]
-
-    action_items = [
-        {
-            "id": item.id,
-            "title": item.title,
-            "description": item.description,
-            "priority": item.priority,
-            "category": item.category,
-            "completed": item.completed,
-            "due_date": item.due_date,
-        }
-        for item in thread_state.action_items
     ]
 
     metadata = {
@@ -352,7 +334,6 @@ async def get_task_status(*, thread_id: str, redis_client=None) -> Dict[str, Any
         "status": thread_state.status,
         "updates": updates,
         "result": thread_state.result,
-        "action_items": action_items,
         "error_message": thread_state.error_message,
         "metadata": metadata,
         "context": thread_state.context,
@@ -403,38 +384,27 @@ async def get_task_by_id(*, task_id: str, redis_client=None) -> Dict[str, Any]:
 async def list_tasks(
     *,
     user_id: Optional[str] = None,
-    status_filter: Optional[ThreadStatus] = None,  # type: ignore[name-defined]
+    status_filter: Optional[TaskStatus] = None,  # type: ignore[name-defined]
     show_all: bool = False,
     limit: int = 50,
     redis_client=None,
 ) -> List[Dict[str, Any]]:
     """List recent tasks with optional filters. Returns TaskStatus-like dicts."""
     if redis_client is None:
-        from redis_sre_agent.core.redis import get_redis_client as _get
-
-        redis_client = _get()
-
-    from redis_sre_agent.core.threads import ThreadManager, ThreadStatus
+        redis_client = get_redis_client()
 
     thread_manager = ThreadManager(redis_client=redis_client)
 
     _instance_name_map: Dict[str, str] = {}
     try:
-        from redis_sre_agent.core.instances import get_instances_from_redis
+        from redis_sre_agent.core.instances import get_instances
 
-        instances = await get_instances_from_redis()
+        instances = await get_instances()
         _instance_name_map = {inst.id: inst.name for inst in instances}
     except Exception:
         pass
 
     try:
-        from datetime import datetime, timezone
-
-        from redisvl.query import FilterQuery
-        from redisvl.query.filter import Tag
-
-        from redis_sre_agent.core.redis import get_tasks_index
-
         index = await get_tasks_index()
 
         if show_all:
@@ -443,8 +413,8 @@ async def list_tasks(
             if status_filter:
                 expr = Tag("status") == status_filter.value
             else:
-                expr = (Tag("status") == ThreadStatus.IN_PROGRESS.value) | (
-                    Tag("status") == ThreadStatus.QUEUED.value
+                expr = (Tag("status") == TaskStatus.IN_PROGRESS.value) | (
+                    Tag("status") == TaskStatus.QUEUED.value
                 )
             if user_id:
                 expr = expr & (Tag("user_id") == user_id)
@@ -516,10 +486,9 @@ async def list_tasks(
                 {
                     "task_id": task_id,
                     "thread_id": row.get("thread_id"),
-                    "status": ThreadStatus(row.get("status", ThreadStatus.QUEUED.value)),
+                    "status": TaskStatus(row.get("status", TaskStatus.QUEUED.value)),
                     "updates": [],
                     "result": None,
-                    "action_items": [],
                     "error_message": None,
                     "metadata": metadata,
                     "context": {},
@@ -543,13 +512,13 @@ async def list_tasks(
 
         return tasks
     except Exception:
-        statuses: Optional[List[ThreadStatus]]
+        statuses: Optional[List[TaskStatus]]
         if show_all:
             statuses = None
         elif status_filter:
             statuses = [status_filter]
         else:
-            statuses = [ThreadStatus.IN_PROGRESS, ThreadStatus.QUEUED]
+            statuses = [TaskStatus.IN_PROGRESS, TaskStatus.QUEUED]
 
         fetch_size = max(limit * 10, 200)
         raw_summaries = await thread_manager.list_threads(
@@ -577,10 +546,9 @@ async def list_tasks(
                 {
                     "task_id": None,
                     "thread_id": summary["thread_id"],
-                    "status": ThreadStatus(summary["status"]),
+                    "status": TaskStatus(summary["status"]),
                     "updates": [],
                     "result": None,
-                    "action_items": [],
                     "error_message": None,
                     "metadata": metadata,
                     "context": {},

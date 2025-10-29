@@ -19,11 +19,13 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
+from ..agent.router import AgentType, route_to_appropriate_agent
 from ..core.config import settings
 from ..core.instances import (
-    create_instance_programmatically,
-    get_instances_from_redis,
-    save_instances_to_redis,
+    create_instance,
+    get_instance_by_id,
+    get_instances,
+    save_instances,
 )
 from ..tools.manager import ToolManager
 from .helpers import log_preflight_messages
@@ -1199,18 +1201,12 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
             # Resolve instance ID to get actual connection details
             try:
-                instances = await get_instances_from_redis()
-                for instance in instances:
-                    if instance.id == instance_id:
-                        target_instance = instance
-                        break
-
+                target_instance = await get_instance_by_id(instance_id)
                 if target_instance:
                     # Get connection URL and mask credentials for logging
                     logger.info(
                         f"Found target instance: {target_instance.name} ({target_instance.connection_url})"
                     )
-
                     # Add instance context to the query
                     enhanced_query = f"""User Query: {query}
 
@@ -1250,7 +1246,7 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
                     "Detected connection details in user message, attempting to create instance"
                 )
                 try:
-                    new_instance = await create_instance_programmatically(
+                    new_instance = await create_instance(
                         name=instance_details["name"],
                         connection_url=instance_details["connection_url"],
                         environment=instance_details["environment"],
@@ -1298,7 +1294,7 @@ Please verify the details and try again, or let me know if you'd like help with 
             if not target_instance:
                 # No instance created from user input, check existing instances
                 try:
-                    instances = await get_instances_from_redis()
+                    instances = await get_instances()
                     if len(instances) == 1:
                         # Only one instance available - use it automatically
                         target_instance = instances[0]
@@ -1344,10 +1340,7 @@ To get targeted analysis, please rephrase your query to specify which instance, 
 
                         # Check if this query seems to be about a specific Redis instance
                         # or if it's more general knowledge-seeking
-                        from ..agent.router import AgentType, get_agent_router
-
-                        router = get_agent_router()
-                        suggested_agent = router.route_query(query, context)
+                        suggested_agent = await route_to_appropriate_agent(query, context)
 
                         if suggested_agent == AgentType.KNOWLEDGE_ONLY:
                             # Route to knowledge agent for general queries
@@ -1436,12 +1429,12 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
 
                 # Save the updated instance type
                 try:
-                    instances = await get_instances_from_redis()
+                    instances = await get_instances()
                     for i, inst in enumerate(instances):
                         if inst.id == target_instance.id:
                             instances[i] = target_instance
                             break
-                    await save_instances_to_redis(instances)
+                    await save_instances(instances)
                     logger.info(
                         f"Updated instance '{target_instance.name}' with type '{detected_type}'"
                     )
@@ -1558,79 +1551,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             # Rebuild workflow with the tool manager and target instance
             self.workflow = self._build_workflow(tool_mgr, target_instance)
 
-            # Defensive: if workflow build unexpectedly returned None, fall back to a direct LLM call
-            if self.workflow is None or not hasattr(self.workflow, "compile"):
-                logger.error(
-                    "Workflow build returned None or invalid object; using direct LLM fallback."
-                )
-                try:
-                    if self.progress_callback:
-                        await self.progress_callback(
-                            "Encountered workflow issue; falling back to direct LLM response.",
-                            "agent_reflection",
-                        )
-
-                    # Direct LLM call without LangGraph execution; sanitize messages first
-                    def _sanitize_messages_for_llm(msgs: list[BaseMessage]) -> list[BaseMessage]:
-                        if not msgs:
-                            return msgs
-                        seen_tool_ids = set()
-                        clean: list[BaseMessage] = []
-                        for m in msgs:
-                            if isinstance(m, AIMessage):
-                                try:
-                                    for tc in getattr(m, "tool_calls", []) or []:
-                                        if isinstance(tc, dict):
-                                            tid = tc.get("id") or tc.get("tool_call_id")
-                                            if tid:
-                                                seen_tool_ids.add(tid)
-                                except Exception:
-                                    pass
-                                clean.append(m)
-                            elif isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
-                                tid = getattr(m, "tool_call_id", None)
-                                if tid and tid in seen_tool_ids:
-                                    clean.append(m)
-                                else:
-                                    continue
-                            else:
-                                clean.append(m)
-                        while clean and (
-                            isinstance(clean[0], ToolMessage)
-                            or getattr(clean[0], "type", "") == "tool"
-                        ):
-                            clean = clean[1:]
-                        # If the last message is an assistant with unfulfilled tool_calls, drop it to avoid API 400
-                        if (
-                            clean
-                            and isinstance(clean[-1], AIMessage)
-                            and (getattr(clean[-1], "tool_calls", None) or [])
-                        ):
-                            clean = clean[:-1]
-                        # Fallback guard: never return an empty list; keep first non-tool from original msgs
-                        if not clean:
-                            for m in msgs:
-                                if not (
-                                    isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool"
-                                ):
-                                    clean = [m]
-                                    break
-                        return clean
-
-                    safe_msgs = _sanitize_messages_for_llm(initial_messages)
-                    log_preflight_messages(
-                        safe_msgs, label="Preflight direct-fallback", logger=logger
-                    )
-                    resp = await self._ainvoke_memo("agent", self.llm_with_tools, safe_msgs)
-                    return str(getattr(resp, "content", resp) or "")
-                except Exception as e:
-                    logger.error(f"Direct LLM fallback failed: {e}")
-                    raise
-
             # Create MemorySaver for this query
-            # NOTE: RedisSaver doesn't support async (aget_tuple raises NotImplementedError)
-            # Conversation history is managed by our ThreadManager in Redis
-            # and passed via initial_state when needed
+            # TODO: Had some trouble with the redis saver
             checkpointer = MemorySaver()
             self.app = self.workflow.compile(checkpointer=checkpointer)
 
@@ -1651,26 +1573,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     logger.info(
                         f"SRE agent completed processing with {final_state['iteration_count']} iterations"
                     )
-
-                    class AgentResponseStr(str):
-                        def get(self, key: str, default: Any = None):
-                            if key == "content":
-                                return str(self)
-                            return default
-
-                    return AgentResponseStr(response_content)
+                    return response_content
                 else:
                     logger.warning("No valid response generated by SRE agent")
-
-                    class AgentResponseStr(str):
-                        def get(self, key: str, default: Any = None):
-                            if key == "content":
-                                return str(self)
-                            return default
-
-                    return AgentResponseStr(
-                        "I apologize, but I couldn't generate a proper response. Please try rephrasing your question."
-                    )
+                    return "I apologize, but I couldn't generate a proper response. Please try rephrasing your question."
 
             except Exception as e:
                 logger.error(f"Error processing SRE query: {str(e)}")
@@ -1680,16 +1586,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
                 logger.error(f"Traceback: {traceback.format_exc()}")
 
-                class AgentResponseStr(str):
-                    def get(self, key: str, default: Any = None):
-                        if key == "content":
-                            return str(self)
-                        return default
-
                 error_msg = str(e) if str(e) else f"{type(e).__name__}: {e.args}"
-                return AgentResponseStr(
-                    f"I encountered an error while processing your request: {error_msg}. Please try again or contact support if the issue persists."
-                )
+                return f"I encountered an error while processing your request: {error_msg}. Please try again."
 
     async def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
         """Get conversation history for a session.
@@ -1807,7 +1705,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
 
             # Use always-on providers (knowledge, utilities)
-            async with ToolManager(redis_instance=None) as corrector_mgr:
+            async with ToolManager(redis_instance=None) as corrector_tool_manager:
                 # Select only knowledge.search and utilities calculator/date_math/timezone_converter/http_head via protocol selectors
                 from redis_sre_agent.tools.protocols import (
                     KnowledgeProviderProtocol as _KProto,
@@ -1816,10 +1714,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     UtilitiesProviderProtocol as _UProto,
                 )
 
-                knowledge_defs = corrector_mgr.get_tools_for_protocol(
+                knowledge_defs = corrector_tool_manager.get_tools_for_protocol(
                     _KProto, allowed_ops={"search"}
                 )
-                utilities_defs = corrector_mgr.get_tools_for_protocol(
+                utilities_defs = corrector_tool_manager.get_tools_for_protocol(
                     _UProto,
                     allowed_ops={"calculator", "date_math", "timezone_converter", "http_head"},
                 )
@@ -1829,7 +1727,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 # Build StructuredTool adapters centrally
                 from .helpers import build_adapters_for_tooldefs as _build_adapters
 
-                _tool_schemas2, adapters = await _build_adapters(corrector_mgr, tooldefs)
+                _tool_schemas2, adapters = await _build_adapters(corrector_tool_manager, tooldefs)
 
                 # LLM with tools bound
                 corrector_llm_base = ChatOpenAI(

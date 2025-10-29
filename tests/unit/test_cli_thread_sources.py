@@ -5,14 +5,13 @@ from click.testing import CliRunner
 
 from redis_sre_agent.cli.main import main as cli_main
 from redis_sre_agent.core.threads import (
+    Thread,
     ThreadMetadata,
-    ThreadState,
-    ThreadStatus,
     ThreadUpdate,
 )
 
 
-def _make_state_with_sources(thread_id: str = "thread-1") -> ThreadState:
+def _make_state_with_sources(thread_id: str = "thread-1") -> Thread:
     update = ThreadUpdate(
         message="Found 1 knowledge fragments",
         update_type="knowledge_sources",
@@ -29,12 +28,10 @@ def _make_state_with_sources(thread_id: str = "thread-1") -> ThreadState:
             ],
         },
     )
-    return ThreadState(
+    return Thread(
         thread_id=thread_id,
-        status=ThreadStatus.DONE,
         updates=[update],
         context={},
-        action_items=[],
         metadata=ThreadMetadata(),
         result=None,
         error_message=None,
@@ -48,7 +45,7 @@ def test_thread_sources_cli_json_output(monkeypatch):
         return _make_state_with_sources(thread_id)
 
     with patch(
-        "redis_sre_agent.core.threads.ThreadManager.get_thread_state",
+        "redis_sre_agent.core.threads.ThreadManager.get_thread",
         new=fake_get_thread_state,
     ):
         result = runner.invoke(cli_main, ["thread", "sources", "thread-1", "--json"])
@@ -73,7 +70,7 @@ def test_thread_sources_cli_human_output(monkeypatch):
         return _make_state_with_sources(thread_id)
 
     with patch(
-        "redis_sre_agent.core.threads.ThreadManager.get_thread_state",
+        "redis_sre_agent.core.threads.ThreadManager.get_thread",
         new=fake_get_thread_state,
     ):
         result = runner.invoke(cli_main, ["thread", "sources", "thread-1"])  # table output

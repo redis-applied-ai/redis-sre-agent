@@ -457,139 +457,25 @@ const Triage = () => {
       setShowSidebar(false);
     }
 
-    // Load conversation history and start polling if task is active
+    // Load conversation transcript and set view mode based on status
     try {
       const status = await sreAgentApi.getTaskStatus(threadId);
-      console.log('Thread status loaded:', status);
+      const transcript = await sreAgentApi.getTranscript(threadId);
 
-      // Convert task updates to messages
-      const newMessages: ChatMessage[] = [];
+      const newMessages: ChatMessage[] = transcript.map((m, idx) => ({
+        id: `m-${idx}-${m.role}-${m.timestamp || idx}`,
+        role: m.role as any,
+        content: m.content,
+        timestamp: m.timestamp || new Date().toISOString(),
+      }));
 
-      // Add original query if available (use original_query from context, not the rewritten subject)
-      if (status.context?.original_query) {
-        newMessages.push({
-          id: `initial-${threadId}`,
-          role: 'user',
-          content: status.context.original_query,
-          timestamp: status.metadata.created_at,
-        });
-      }
-
-      // Convert updates to messages (reverse to show oldest first)
-      const sortedUpdates = [...status.updates].reverse();
-      sortedUpdates.forEach((update, index) => {
-        // Filter out technical/internal messages that users shouldn't see
-        const technicalMessageTypes = [
-          'turn_complete', 'agent_complete', 'completion', 'agent_init',
-          'turn_start', 'queued', 'triage', 'agent_status'
-        ];
-
-        const technicalMessagePatterns = [
-          /agent turn completed successfully/i,
-          /task completed/i,
-          /processing complete/i,
-          /initialization complete/i,
-          /agent initialized/i
-        ];
-
-        // Skip technical messages
-        if (technicalMessageTypes.includes(update.type)) {
-          return;
-        }
-
-        // Skip messages with technical patterns
-        if (update.message && technicalMessagePatterns.some(pattern => pattern.test(update.message))) {
-          return;
-        }
-
-        // Handle different update types based on actual API response
-        if (update.type === 'response') {
-          newMessages.push({
-            id: `update-${index}`,
-            role: 'assistant',
-            content: update.message,
-            timestamp: update.timestamp,
-          });
-        } else if (update.type === 'user_message') {
-          newMessages.push({
-            id: `update-${index}`,
-            role: 'user',
-            content: update.message,
-            timestamp: update.timestamp,
-          });
-        } else if (update.type === 'agent_reflection' || update.type === 'agent_processing' || update.type === 'agent_start') {
-          // Show agent's reasoning and analysis (only if meaningful)
-          if (update.message && update.message.length > 10 && !update.message.toLowerCase().includes('completed')) {
-            newMessages.push({
-              id: `reflection-${index}`,
-              role: 'assistant',
-              content: update.message,
-              timestamp: update.timestamp,
-            });
-          }
-        } else if (update.type === 'safety_check') {
-          // Show safety and fact-checking steps
-          newMessages.push({
-            id: `safety-${index}`,
-            role: 'system',
-            content: update.message,
-            timestamp: update.timestamp,
-          });
-        } else if (update.type === 'tool_call') {
-          // Show tool calls in a user-friendly way
-          const fullToolName = update.metadata?.tool_name || 'Unknown Tool';
-          const toolArgs = update.metadata?.tool_args;
-          const displayName = extractOperationName(fullToolName);
-
-          newMessages.push({
-            id: `tool-${index}`,
-            role: 'tool',
-            content: `Making tool call: ${displayName}`,
-            timestamp: update.timestamp,
-            toolCall: {
-              name: displayName,
-              args: toolArgs,
-            },
-          });
-        }
-      });
-
-      // Add the final agent response if task is complete and has a result
-      if ((status.status === 'done' || status.status === 'completed') && status.result?.response) {
-        newMessages.push({
-          id: `result-${threadId}`,
-          role: 'assistant',
-          content: status.result.response,
-          timestamp: status.result.turn_completed_at || status.metadata.updated_at,
-        });
-      }
-
-      // Add error message if processing failed
-      if (status.status === 'failed') {
-        newMessages.push({
-          id: `error-${threadId}`,
-          role: 'assistant',
-          content: `❌ I encountered an issue while processing your request. Please try again or contact support if the issue persists.`,
-          timestamp: status.metadata.updated_at,
-        });
-      }
-
-      console.log('Processed messages:', newMessages);
       setMessages(newMessages);
 
-      // Determine busy/live state and UI mode
-      const activeStatuses = ['queued', 'in_progress', 'running'];
-      const isActive = activeStatuses.includes(status.status as any);
-      setIsThreadBusy(isActive);
-
-      // Only change view mode if not locked (prevents flicker during follow-ups)
-      if (!liveModeLocked) {
-        setShowWebSocketMonitor(isActive);
-      }
-
+      const active = ['queued', 'in_progress', 'running'].includes(status.status as any);
+      setIsThreadBusy(active);
+      if (!liveModeLocked) setShowWebSocketMonitor(active);
     } catch (err) {
       console.warn('Could not load thread status:', err);
-      // Continue with empty messages - this is expected for new threads
       setIsThreadBusy(false);
     }
   };

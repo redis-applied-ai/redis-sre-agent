@@ -52,7 +52,7 @@ async def test_initial_message_creates_conversation_history(thread_manager, test
     await process_agent_turn(thread_id=thread_id, message="What is Redis?")
 
     # Load thread state
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
 
     # Verify messages were saved
     messages = thread_state.context.get("messages", [])
@@ -91,7 +91,7 @@ async def test_follow_up_message_has_context(thread_manager, test_thread):
     )
 
     # Load thread state
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
     messages = thread_state.context.get("messages", [])
 
     # Debug: print all messages
@@ -127,7 +127,7 @@ async def test_no_tool_messages_in_saved_history(thread_manager, test_thread):
     )
 
     # Load thread state
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
     messages = thread_state.context.get("messages", [])
 
     # Verify no tool messages
@@ -164,7 +164,7 @@ async def test_multiple_follow_ups_maintain_context(thread_manager, test_thread)
     )
 
     # Load thread state
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
     messages = thread_state.context.get("messages", [])
 
     # Should have 6 messages (3 turns x 2 messages each)
@@ -197,7 +197,7 @@ async def test_langgraph_checkpointer_integration(thread_manager, test_thread):
     )
 
     # Get the thread state
-    thread_state_1 = await thread_manager.get_thread_state(thread_id)
+    thread_state_1 = await thread_manager.get_thread(thread_id)
     messages_1 = thread_state_1.context.get("messages", [])
 
     # Send follow-up
@@ -207,7 +207,7 @@ async def test_langgraph_checkpointer_integration(thread_manager, test_thread):
     )
 
     # Get updated thread state
-    thread_state_2 = await thread_manager.get_thread_state(thread_id)
+    thread_state_2 = await thread_manager.get_thread(thread_id)
     messages_2 = thread_state_2.context.get("messages", [])
 
     # Verify messages accumulated
@@ -233,7 +233,7 @@ async def test_no_duplicate_messages_in_history(thread_manager, test_thread):
     )
 
     # Load thread state
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
     messages = thread_state.context.get("messages", [])
 
     # Check for duplicates
@@ -272,8 +272,8 @@ async def test_different_threads_have_separate_history(thread_manager):
     await process_agent_turn(thread_id=thread2.thread_id, message="My favorite color is red")
 
     # Load both thread states
-    thread1_state = await thread_manager.get_thread_state(thread1.thread_id)
-    thread2_state = await thread_manager.get_thread_state(thread2.thread_id)
+    thread1_state = await thread_manager.get_thread(thread1.thread_id)
+    thread2_state = await thread_manager.get_thread(thread2.thread_id)
 
     thread1_messages = thread1_state.context.get("messages", [])
     thread2_messages = thread2_state.context.get("messages", [])

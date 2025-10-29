@@ -32,11 +32,10 @@ def mock_redis_infrastructure():
 
     with (
         patch(
-            "redis_sre_agent.core.redis.initialize_redis_infrastructure",
+            "redis_sre_agent.core.redis.initialize_redis",
             side_effect=mock_initialize,
         ),
         patch("redis_sre_agent.core.docket_tasks.register_sre_tasks", side_effect=mock_register),
-        patch("redis_sre_agent.core.redis.cleanup_redis_connections", side_effect=mock_cleanup),
     ):
         yield
 
@@ -264,11 +263,10 @@ def app_with_mocks():
         patch("redis_sre_agent.core.redis.AsyncSearchIndex") as mock_index,
         patch("redis_sre_agent.core.docket_tasks.test_task_system", return_value=True),
         patch(
-            "redis_sre_agent.core.redis.initialize_redis_infrastructure",
+            "redis_sre_agent.core.redis.initialize_redis",
             side_effect=mock_initialize,
         ),
         patch("redis_sre_agent.core.docket_tasks.register_sre_tasks", side_effect=mock_register),
-        patch("redis_sre_agent.core.redis.cleanup_redis_connections", new_callable=AsyncMock),
     ):
         # Configure mocks
         mock_redis_instance = AsyncMock()

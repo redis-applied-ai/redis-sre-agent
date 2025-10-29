@@ -1,6 +1,8 @@
-"""Redis instance domain model and storage helpers.
+"""
+Redis instance domain model and storage helpers.
 
-Layer: core (domain and persistence). No API dependencies.
+TODO: Use a better persistence structure than serializing a list of JSON
+      objects into a string.
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ from pydantic import BaseModel, Field, SecretStr, field_serializer, field_valida
 
 from .encryption import encrypt_secret, get_secret_value
 from .keys import RedisKeys
-from .redis import get_redis_client
+from .redis import (
+    get_redis_client,  # noqa: F401  # Expose for tests that patch via this module path
+)
 
 logger = logging.getLogger(__name__)
 
@@ -296,8 +300,7 @@ class RedisInstance(BaseModel):
             return None
 
 
-# Storage helpers
-async def get_instances_from_redis() -> List[RedisInstance]:
+async def get_instances() -> List[RedisInstance]:
     """Load configured instances from Redis storage with decrypted secrets."""
     try:
         redis_client = get_redis_client()
@@ -331,7 +334,7 @@ async def get_instances_from_redis() -> List[RedisInstance]:
         return []
 
 
-async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
+async def save_instances(instances: List[RedisInstance]) -> bool:
     """Persist instances list to Redis with encrypted secrets."""
     try:
         redis_client = get_redis_client()
@@ -403,7 +406,7 @@ async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
 async def get_all_instances(
     user_id: Optional[str] = None, thread_id: Optional[str] = None
 ) -> List[RedisInstance]:
-    configured = await get_instances_from_redis()
+    configured = await get_instances()
     if user_id:
         configured = [
             inst for inst in configured if inst.user_id == user_id or inst.user_id is None
@@ -419,7 +422,7 @@ async def get_all_instances(
     return out
 
 
-async def create_instance_programmatically(
+async def create_instance(
     *,
     name: str,
     connection_url: str,
@@ -434,7 +437,7 @@ async def create_instance_programmatically(
 ) -> RedisInstance:
     """Create and persist a new instance for dynamic agent flows."""
     try:
-        instances = await get_instances_from_redis()
+        instances = await get_instances()
         if any(inst.name == name for inst in instances):
             raise ValueError(f"Instance with name '{name}' already exists")
         instance_id = f"redis-{environment}-{int(datetime.now().timestamp())}"
@@ -452,7 +455,7 @@ async def create_instance_programmatically(
             instance_type=instance_type,
         )
         instances.append(new_inst)
-        if not await save_instances_to_redis(instances):
+        if not await save_instances(instances):
             raise ValueError("Failed to save instance to storage")
         return new_inst
     except Exception as e:
@@ -462,21 +465,21 @@ async def create_instance_programmatically(
 
 # Convenience lookups
 async def get_instance_by_id(instance_id: str) -> Optional[RedisInstance]:
-    for inst in await get_instances_from_redis():
+    for inst in await get_instances():
         if inst.id == instance_id:
             return inst
     return None
 
 
 async def get_instance_by_name(instance_name: str) -> Optional[RedisInstance]:
-    for inst in await get_instances_from_redis():
+    for inst in await get_instances():
         if inst.name == instance_name:
             return inst
     return None
 
 
 async def get_instance_map() -> Dict[str, RedisInstance]:
-    return {inst.id: inst for inst in await get_instances_from_redis()}
+    return {inst.id: inst for inst in await get_instances()}
 
 
 async def get_instance_name(instance_id: str) -> Optional[str]:

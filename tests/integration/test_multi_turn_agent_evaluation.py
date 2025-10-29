@@ -580,12 +580,6 @@ async def run_multi_turn_evaluation() -> List[Dict[str, Any]]:
 @pytest.mark.slow
 async def test_multi_turn_agent_evaluation():
     """Test comprehensive multi-turn agent evaluation."""
-    # Skip if OpenAI API key is not available
-    if (
-        not os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("OPENAI_API_KEY") == "test-openai-key"
-    ):
-        pytest.skip("OPENAI_API_KEY not set or using test key - skipping OpenAI integration test")
 
     # Check if knowledge base is available
     from redisvl.index import AsyncSearchIndex

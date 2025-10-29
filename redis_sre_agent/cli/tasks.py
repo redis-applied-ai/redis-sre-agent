@@ -45,13 +45,12 @@ def task_list(user_id: str | None, status: str | None, show_all: bool, limit: in
         from rich.console import Console
         from rich.table import Table
 
-        from redis_sre_agent.core.tasks import list_tasks
-        from redis_sre_agent.core.threads import ThreadStatus
+        from redis_sre_agent.core.tasks import TaskStatus, list_tasks
 
         console = Console()
 
         # Determine fetch filter for backend: all filtering and ordering is server-side
-        backend_status_filter = ThreadStatus(status) if status else None
+        backend_status_filter = TaskStatus(status) if status else None
         tasks = await list_tasks(
             user_id=user_id,
             status_filter=backend_status_filter,
@@ -74,7 +73,7 @@ def task_list(user_id: str | None, status: str | None, show_all: bool, limit: in
                     kv_status = kv_status.decode()
                 if kv_status:
                     try:
-                        t["status"] = ThreadStatus(kv_status)
+                        t["status"] = TaskStatus(kv_status)
                     except Exception:
                         pass
         except Exception:

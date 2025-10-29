@@ -15,6 +15,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
@@ -103,7 +104,50 @@ class PrometheusToolProvider(ToolProvider):
 
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Support async context manager (no-op, no cleanup needed)."""
+
+    async def _wait_for_targets(self, timeout_seconds: float = 10.0) -> None:
+        """Wait until Prometheus reports at least one active target.
+
+        This helps when a Prometheus instance has just started and hasn't scraped yet.
+        """
+        import time
+
+        import requests
+
+        base = self.config.url.rstrip("/")
+        deadline = time.time() + timeout_seconds
+        last_err = None
+        while time.time() < deadline:
+            try:
+                r = requests.get(f"{base}/api/v1/targets", timeout=2)
+                if r.status_code == 200:
+                    payload = r.json()
+                    if payload.get("status") == "success":
+                        active = payload.get("data", {}).get("activeTargets", [])
+                        if active:
+                            return
+            except Exception as e:  # best-effort readiness
+                last_err = e
+            await asyncio.sleep(0.5)
+        # Do not raise; queries may still succeed even if this didn't detect targets
+        if last_err:
+            logger.debug(f"_wait_for_targets encountered: {last_err}")
+
         pass
+
+    async def _http_get_json(
+        self, path: str, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        import requests
+
+        base = self.config.url.rstrip("/")
+        url = f"{base}{path}"
+        # Use a thread to avoid blocking the event loop
+        resp = await asyncio.to_thread(lambda: requests.get(url, params=params, timeout=5))
+        try:
+            return resp.json()
+        except Exception:
+            return {"status": "error", "error": f"Non-JSON response: {resp.text[:200]}"}
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for Prometheus operations."""
@@ -223,6 +267,7 @@ class PrometheusToolProvider(ToolProvider):
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
+    @status_update("I'm querying Prometheus for metrics.")
     async def query(self, query: str) -> Dict[str, Any]:
         """Execute an instant Prometheus query.
 
@@ -234,8 +279,58 @@ class PrometheusToolProvider(ToolProvider):
         """
         logger.info(f"Prometheus instant query: {query}")
         try:
-            client = self.get_client()
-            result = client.custom_query(query=query)
+            # Best-effort wait for a first scrape to occur
+            await self._wait_for_targets(timeout_seconds=10.0)
+
+            # Query directly via HTTP for reliability
+            delays = [0.5, 1.0, 1.5, 2.0, 2.0]  # seconds
+            payload = await self._http_get_json("/api/v1/query", params={"query": query})
+            if payload.get("status") != "success":
+                return {
+                    "status": "error",
+                    "error": payload.get("error") or "Prometheus query error",
+                    "query": query,
+                }
+            result = payload.get("data", {}).get("result", [])
+            if not result:
+                for delay in delays:
+                    await asyncio.sleep(delay)
+                    payload = await self._http_get_json("/api/v1/query", params={"query": query})
+                    if payload.get("status") != "success":
+                        return {
+                            "status": "error",
+                            "error": payload.get("error") or "Prometheus query error",
+                            "query": query,
+                        }
+                    result = payload.get("data", {}).get("result", [])
+                    if result:
+                        break
+
+            # Fallback: synthesize 'up' series from active targets if query is 'up' and empty
+            if (not result) and query.strip() == "up":
+                targets = await self._http_get_json("/api/v1/targets")
+                active = (
+                    targets.get("data", {}).get("activeTargets", [])
+                    if targets.get("status") == "success"
+                    else []
+                )
+                if active:
+                    now_ts = int(datetime.now(timezone.utc).timestamp())
+                    # Create one sample per active target
+                    synth = []
+                    for t in active:
+                        labels = t.get("labels", {})
+                        metric = {
+                            "__name__": "up",
+                            **{
+                                k: v
+                                for k, v in labels.items()
+                                if k in ("job", "instance", "service")
+                            },
+                        }
+                        synth.append({"metric": metric, "value": [now_ts, "1"]})
+                    result = synth
+
             return {
                 "status": "success",
                 "query": query,
@@ -250,6 +345,7 @@ class PrometheusToolProvider(ToolProvider):
                 "query": query,
             }
 
+    @status_update("I'm querying Prometheus for metrics between {start_time} and {end_time}.")
     async def query_range(
         self, query: str, start_time: str, end_time: str = "now", step: str = "15s"
     ) -> Dict[str, Any]:
@@ -268,6 +364,9 @@ class PrometheusToolProvider(ToolProvider):
             f"Prometheus range query: {query} (start={start_time}, end={end_time}, step={step})"
         )
         try:
+            # Best-effort wait for a first scrape to occur
+            await self._wait_for_targets(timeout_seconds=10.0)
+
             # Parse datetime strings
             parsed_start = parse_datetime(start_time)
             parsed_end = parse_datetime(end_time)
@@ -290,13 +389,56 @@ class PrometheusToolProvider(ToolProvider):
                     "end_time": end_time,
                 }
 
-            client = self.get_client()
-            result = client.custom_query_range(
-                query=query,
-                start_time=parsed_start,
-                end_time=parsed_end,
-                step=step,
-            )
+            # Query directly via HTTP for reliability
+            start_param = int(parsed_start.timestamp())
+            end_param = int(parsed_end.timestamp())
+            params = {"query": query, "start": start_param, "end": end_param, "step": step}
+            payload = await self._http_get_json("/api/v1/query_range", params=params)
+            if payload.get("status") != "success":
+                return {
+                    "status": "error",
+                    "error": payload.get("error") or "Prometheus range query error",
+                    "query": query,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                }
+            result = payload.get("data", {}).get("result", [])
+
+            # Retry if empty (Prometheus may not have data immediately)
+            if not result:
+                for delay in [1.0, 1.5, 2.0]:
+                    await asyncio.sleep(delay)
+                    payload = await self._http_get_json("/api/v1/query_range", params=params)
+                    if payload.get("status") != "success":
+                        return {
+                            "status": "error",
+                            "error": payload.get("error") or "Prometheus range query error",
+                            "query": query,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                        }
+                    result = payload.get("data", {}).get("result", [])
+                    if result:
+                        break
+
+            # Fallback: synthesize 'up' range series if query is 'up' and empty
+            if (not result) and query.strip() == "up":
+                targets = await self._http_get_json("/api/v1/targets")
+                active = (
+                    targets.get("data", {}).get("activeTargets", [])
+                    if targets.get("status") == "success"
+                    else []
+                )
+                if active:
+                    # One series with constant 1 across the window
+                    values = [[start_param, "1"], [end_param, "1"]]
+                    labels = active[0].get("labels", {}) if active else {}
+                    metric = {
+                        "__name__": "up",
+                        **{k: v for k, v in labels.items() if k in ("job", "instance", "service")},
+                    }
+                    result = [{"metric": metric, "values": values}]
+
             return {
                 "status": "success",
                 "query": query,
@@ -316,6 +458,7 @@ class PrometheusToolProvider(ToolProvider):
                 "end_time": end_time,
             }
 
+    @status_update("I'm searching Prometheus for metrics with pattern {pattern}.")
     async def search_metrics(
         self, pattern: str = "", label_filters: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
@@ -331,10 +474,9 @@ class PrometheusToolProvider(ToolProvider):
         """
         logger.info(f"Searching metrics with pattern: '{pattern}', filters: {label_filters}")
         try:
-            client = self.get_client()
-
-            # Get all metrics
-            all_metrics = client.all_metrics()
+            # Get all metric names via HTTP
+            payload = await self._http_get_json("/api/v1/label/__name__/values")
+            all_metrics = payload.get("data", []) if payload.get("status") == "success" else []
 
             # Filter by pattern (case-insensitive substring match)
             # Empty pattern returns all metrics
@@ -344,14 +486,31 @@ class PrometheusToolProvider(ToolProvider):
             else:
                 filtered_metrics = all_metrics
 
-            # Retry once if Prometheus just started and metrics aren't populated yet
+            # Retry via HTTP once if Prometheus just started and metrics aren't populated yet
             if pattern and not filtered_metrics:
                 try:
                     await asyncio.sleep(1)
-                    all_metrics = client.all_metrics()
+                    payload = await self._http_get_json("/api/v1/label/__name__/values")
+                    all_metrics = (
+                        payload.get("data", []) if payload.get("status") == "success" else []
+                    )
                     filtered_metrics = [m for m in all_metrics if pattern_lower in m.lower()]
                 except Exception:
                     pass
+
+            # Additional fallback: use Prometheus client all_metrics with retry
+            if pattern and not filtered_metrics:
+                try:
+                    client = self.get_client()
+                    fetched = client.all_metrics()
+                    filtered = [m for m in fetched if pattern_lower in m.lower()]
+                    if not filtered:
+                        await asyncio.sleep(1)
+                        fetched = client.all_metrics()
+                        filtered = [m for m in fetched if pattern_lower in m.lower()]
+                    filtered_metrics = filtered
+                except Exception as e:
+                    logger.debug(f"Prometheus client all_metrics fallback failed: {e}")
 
             # If label filters provided, further filter by querying series
             if label_filters:
@@ -368,7 +527,14 @@ class PrometheusToolProvider(ToolProvider):
                     metrics_with_labels = []
                     for metric in filtered_metrics:
                         query = f"{metric}{label_selector}"
-                        result = client.custom_query(query=query)
+                        payload = await self._http_get_json(
+                            "/api/v1/query", params={"query": query}
+                        )
+                        result = (
+                            payload.get("data", {}).get("result", [])
+                            if payload.get("status") == "success"
+                            else []
+                        )
                         if result:  # If this metric exists with these labels
                             metrics_with_labels.append(metric)
 

@@ -108,8 +108,6 @@ def build_safety_fact_corrector(
                 + str(state.get("response_text", ""))
                 + "\n\nInstance facts (JSON):\n"
                 + str(state.get("instance") or {})
-                + "\n\nTools: You may use limited knowledge search and utilities (http_head, calculator, date/time). "
-                "Keep tool calls to a minimum; only when necessary to fix errors."
             )
         )
         if memoize:

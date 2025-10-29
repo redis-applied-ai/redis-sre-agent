@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.api.websockets import TaskStreamManager
-from redis_sre_agent.core.threads import ThreadState, ThreadUpdate
+from redis_sre_agent.core.threads import Thread, ThreadUpdate
 
 
 class TestTaskStreamManager:
@@ -169,7 +169,7 @@ class TestWebSocketEndpoint:
 
             mock_manager = AsyncMock()
             mock_manager_class.return_value = mock_manager
-            mock_manager.get_thread_state.return_value = None
+            mock_manager.get_thread.return_value = None
 
             with test_client.websocket_connect("/api/v1/ws/tasks/nonexistent") as websocket:
                 data = websocket.receive_json()
@@ -187,7 +187,7 @@ class TestWebSocketEndpoint:
         thread_id = "test_thread"
 
         # Mock thread state
-        mock_thread_state = ThreadState(
+        mock_thread_state = Thread(
             thread_id=thread_id,
             updates=[
                 ThreadUpdate(message="Processing...", update_type="progress"),
@@ -205,7 +205,7 @@ class TestWebSocketEndpoint:
 
             mock_manager = AsyncMock()
             mock_manager_class.return_value = mock_manager
-            mock_manager.get_thread_state.return_value = mock_thread_state
+            mock_manager.get_thread.return_value = mock_thread_state
 
             mock_stream_manager.start_consumer = AsyncMock()
             mock_stream_manager.stop_consumer = AsyncMock()

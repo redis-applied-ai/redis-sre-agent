@@ -10,16 +10,16 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, status
 
-from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.threads import ThreadManager
-from redis_sre_agent.core.threads import delete_thread as delete_thread_model
-from redis_sre_agent.schemas.threads import (
+from redis_sre_agent.api.schemas import (
     Message,
     ThreadAppendMessagesRequest,
     ThreadCreateRequest,
     ThreadResponse,
     ThreadUpdateRequest,
 )
+from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.core.threads import delete_thread as delete_thread_model
 
 logger = logging.getLogger(__name__)
 
@@ -45,19 +45,12 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
         if req.messages:
             await tm.append_messages(thread_id, [m.model_dump() for m in req.messages])
 
-        state = await tm.get_thread_state(thread_id)
+        state = await tm.get_thread(thread_id)
         messages = state.context.get("messages", []) if state else []
-        # Best-effort status: may be enum or string; normalize to string
-        status_val = None
-        if state is not None and hasattr(state, "status"):
-            s = state.status
-            status_val = getattr(s, "value", s) if s is not None else None
+        # Return created thread state (messages + context)
         return ThreadResponse(
             thread_id=thread_id,
-            status=status_val,
             messages=[Message(**m) for m in messages] if messages else [],
-            action_items=[ai.model_dump() for ai in (state.action_items if state else [])],
-            metadata=state.metadata.model_dump() if state else {},
             context=state.context if state else {},
         )
     except Exception as e:
@@ -69,15 +62,13 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
 async def get_thread(thread_id: str) -> ThreadResponse:
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
-    state = await tm.get_thread_state(thread_id)
+    state = await tm.get_thread(thread_id)
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
     messages = state.context.get("messages", [])
     return ThreadResponse(
         thread_id=thread_id,
         messages=[Message(**m) for m in messages] if messages else [],
-        action_items=[ai.model_dump() for ai in state.action_items],
-        metadata=state.metadata.model_dump(),
         context=state.context,
     )
 
@@ -86,7 +77,7 @@ async def get_thread(thread_id: str) -> ThreadResponse:
 async def update_thread(thread_id: str, req: ThreadUpdateRequest) -> Dict[str, Any]:
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
-    state = await tm.get_thread_state(thread_id)
+    state = await tm.get_thread(thread_id)
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
 

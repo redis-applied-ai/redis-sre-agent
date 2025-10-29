@@ -5,13 +5,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from redis_sre_agent.core.docket_tasks import extract_action_items_from_response, process_agent_turn
+from redis_sre_agent.core.docket_tasks import process_agent_turn
 from redis_sre_agent.core.threads import (
-    ThreadActionItem,
+    Thread,
     ThreadManager,
     ThreadMetadata,
-    ThreadState,
-    ThreadStatus,
     ThreadUpdate,
 )
 
@@ -55,7 +53,12 @@ class TestThreadManager:
     @pytest.mark.asyncio
     async def test_create_thread(self, thread_manager):
         """Test thread creation."""
-        with patch.object(thread_manager, "_save_thread_state", return_value=True) as mock_save:
+        with (
+            patch.object(thread_manager, "_save_thread_state", return_value=True) as mock_save,
+            patch.object(
+                thread_manager, "_upsert_thread_search_doc", new=AsyncMock(return_value=True)
+            ),
+        ):
             thread_id = await thread_manager.create_thread(
                 user_id="test_user",
                 session_id="test_session",
@@ -73,7 +76,7 @@ class TestThreadManager:
         """Test getting non-existent thread state."""
         thread_manager._redis_client.exists.return_value = False
 
-        state = await thread_manager.get_thread_state("nonexistent")
+        state = await thread_manager.get_thread("nonexistent")
         assert state is None
 
     @pytest.mark.asyncio
@@ -82,7 +85,6 @@ class TestThreadManager:
         # Mock Redis data
         thread_manager._redis_client.exists.return_value = True
         thread_manager._redis_client.get.side_effect = [
-            None,  # action_items
             None,  # result
             None,  # error
         ]
@@ -108,20 +110,12 @@ class TestThreadManager:
             },
         ]
 
-        state = await thread_manager.get_thread_state("test_thread")
+        state = await thread_manager.get_thread("test_thread")
 
         assert state is not None
         assert len(state.updates) == 1
         assert state.updates[0].message == "Test update"
         assert state.metadata.user_id == "test_user"
-
-    @pytest.mark.asyncio
-    async def test_update_thread_status(self, thread_manager):
-        """Test updating thread status."""
-        result = await thread_manager.update_thread_status("test_thread", ThreadStatus.DONE)
-
-        assert result is True
-        thread_manager._redis_client.hset.assert_called()
 
     @pytest.mark.asyncio
     async def test_add_thread_update(self, thread_manager):
@@ -145,37 +139,6 @@ class TestThreadManager:
         thread_manager._redis_client.set.assert_called()
 
     @pytest.mark.asyncio
-    async def test_add_action_items(self, thread_manager):
-        """Test adding action items."""
-        action_items = [
-            ThreadActionItem(
-                title="Test Action",
-                description="Test description",
-                priority="high",
-                category="investigation",
-            )
-        ]
-
-        # Mock existing action items
-        thread_manager._redis_client.get.return_value = None
-
-        result = await thread_manager.add_action_items("test_thread", action_items)
-
-        assert result is True
-        thread_manager._redis_client.set.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_set_thread_error(self, thread_manager):
-        """Test setting thread error."""
-        with patch.object(thread_manager, "update_thread_status") as mock_update:
-            mock_update.return_value = True
-
-            result = await thread_manager.set_thread_error("test_thread", "Test error")
-
-            assert result is True
-            thread_manager._redis_client.set.assert_called()
-            mock_update.assert_called_with("test_thread", ThreadStatus.FAILED)
-
     @pytest.mark.asyncio
     async def test_delete_thread(self, thread_manager):
         """Test thread deletion."""
@@ -199,7 +162,7 @@ class TestProcessAgentTurn:
             patch(
                 "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
             ) as mock_get_knowledge_agent,
-            patch("redis_sre_agent.agent.router.route_to_appropriate_agent") as mock_route,
+            patch("redis_sre_agent.core.docket_tasks.route_to_appropriate_agent") as mock_route,
         ):
             # Mock Redis client
             mock_redis = AsyncMock()
@@ -208,20 +171,22 @@ class TestProcessAgentTurn:
             # Mock thread manager
             mock_manager = AsyncMock()
             mock_manager_class.return_value = mock_manager
-            mock_manager.get_thread_state.return_value = ThreadState(
+            mock_manager.get_thread.return_value = Thread(
                 thread_id="test_thread",
                 context={"messages": []},
                 metadata=ThreadMetadata(),
             )
-            mock_manager.update_thread_status.return_value = True
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_result.return_value = True
-            mock_manager.add_action_items.return_value = True
 
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
 
-            mock_route.return_value = AgentType.REDIS_FOCUSED
+            # Make the mock async
+            async def mock_route_func(*args, **kwargs):
+                return AgentType.REDIS_FOCUSED
+
+            mock_route.side_effect = mock_route_func
 
             # Mock agent
             mock_agent = AsyncMock()
@@ -247,10 +212,8 @@ class TestProcessAgentTurn:
             # Verify result
             assert result["response"] == "Test response from agent"
             assert result["metadata"]["iterations"] == 2
-            assert len(result["action_items"]) == 1
 
             # Verify manager calls
-            mock_manager.update_thread_status.assert_called()
             mock_manager.add_thread_update.assert_called()
             mock_manager.set_thread_result.assert_called()
 
@@ -266,8 +229,7 @@ class TestProcessAgentTurn:
 
             mock_manager = AsyncMock()
             mock_manager_class.return_value = mock_manager
-            mock_manager.get_thread_state.return_value = None
-            mock_manager.update_thread_status.return_value = True
+            mock_manager.get_thread.return_value = None
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_error.return_value = True
 
@@ -285,16 +247,15 @@ class TestProcessAgentTurn:
             patch(
                 "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
             ) as mock_get_knowledge_agent,
-            patch("redis_sre_agent.agent.router.route_to_appropriate_agent") as mock_route,
+            patch("redis_sre_agent.core.docket_tasks.route_to_appropriate_agent") as mock_route,
         ):
             # Mock thread manager
             mock_manager = AsyncMock()
-            mock_manager.get_thread_state.return_value = ThreadState(
+            mock_manager.get_thread.return_value = Thread(
                 thread_id="test_thread",
                 context={"messages": []},
                 metadata=ThreadMetadata(),
             )
-            mock_manager.update_thread_status.return_value = True
             mock_manager.add_thread_update.return_value = True
             mock_manager.set_thread_error.return_value = True
             mock_thread_manager_class.return_value = mock_manager
@@ -311,7 +272,11 @@ class TestProcessAgentTurn:
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
 
-            mock_route.return_value = AgentType.REDIS_FOCUSED
+            # Make the mock async
+            async def mock_route_func(*args, **kwargs):
+                return AgentType.REDIS_FOCUSED
+
+            mock_route.side_effect = mock_route_func
 
             # Mock agent
             mock_agent = AsyncMock()
@@ -332,68 +297,6 @@ class TestProcessAgentTurn:
             mock_manager.set_thread_error.assert_called()
 
 
-class TestActionItemExtraction:
-    """Test action item extraction from agent responses."""
-
-    def test_extract_action_items_basic(self):
-        """Test basic action item extraction."""
-        response = """
-        Based on the analysis, here are the action items:
-        1. Check Redis memory usage
-        2. Review slow query log
-        3. Optimize key expiration settings
-        """
-
-        items = extract_action_items_from_response(response)
-
-        assert len(items) >= 2  # Should find at least 2 items
-        assert any("memory usage" in item["title"].lower() for item in items)
-        assert any("slow query" in item["title"].lower() for item in items)
-
-    def test_extract_action_items_recommendations(self):
-        """Test action item extraction with recommendations section."""
-        response = """
-        Analysis complete.
-
-        Recommendations:
-        - Increase Redis max memory setting
-        - Enable memory eviction policy
-        - Monitor key patterns for optimization
-
-        Additional context...
-        """
-
-        items = extract_action_items_from_response(response)
-
-        assert len(items) >= 2
-        assert any("memory setting" in item["title"].lower() for item in items)
-        assert any("eviction policy" in item["title"].lower() for item in items)
-
-    def test_extract_action_items_no_items(self):
-        """Test action item extraction with no action items."""
-        response = "This is just a regular response with no action items or recommendations."
-
-        items = extract_action_items_from_response(response)
-
-        assert len(items) == 0
-
-    def test_extract_action_items_mixed_case(self):
-        """Test action item extraction with mixed case."""
-        response = """
-        Next Steps:
-        * Check the configuration file
-        * Restart the Redis service
-        TODO:
-        + Verify backup procedures
-        """
-
-        items = extract_action_items_from_response(response)
-
-        assert len(items) >= 2
-        assert any("configuration" in item["title"].lower() for item in items)
-        assert any("restart" in item["title"].lower() for item in items)
-
-
 class TestThreadStateModels:
     """Test thread state model functionality."""
 
@@ -408,35 +311,17 @@ class TestThreadStateModels:
         assert update.metadata["tool"] == "test_tool"
         assert update.timestamp is not None
 
-    def test_thread_action_item_creation(self):
-        """Test ThreadActionItem model creation."""
-        item = ThreadActionItem(
-            title="Test Action",
-            description="Test description",
-            priority="high",
-            category="investigation",
-        )
-
-        assert item.title == "Test Action"
-        assert item.description == "Test description"
-        assert item.priority == "high"
-        assert item.category == "investigation"
-        assert item.completed is False
-        assert item.id is not None
-
     def test_thread_state_creation(self):
         """Test ThreadState model creation."""
-        state = ThreadState(
+        state = Thread(
             thread_id="test_thread",
             context={"query": "test"},
             updates=[ThreadUpdate(message="Test update")],
-            action_items=[ThreadActionItem(title="Test", description="Test")],
         )
 
         assert state.thread_id == "test_thread"
         assert state.context["query"] == "test"
         assert len(state.updates) == 1
-        assert len(state.action_items) == 1
         assert state.result is None
         assert state.error_message is None
 

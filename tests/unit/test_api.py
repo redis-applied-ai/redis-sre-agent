@@ -35,7 +35,7 @@ class TestHealthEndpoints:
 
         with (
             patch(
-                "redis_sre_agent.api.health.initialize_redis_infrastructure",
+                "redis_sre_agent.api.health.initialize_redis",
                 return_value=mock_infrastructure_status,
             ),
             patch(
@@ -86,7 +86,7 @@ class TestHealthEndpoints:
 
         with (
             patch(
-                "redis_sre_agent.api.health.initialize_redis_infrastructure",
+                "redis_sre_agent.api.health.initialize_redis",
                 return_value=mock_infrastructure_status,
             ),
             patch("redis_sre_agent.api.health.test_task_system", return_value=False),
@@ -125,7 +125,7 @@ class TestHealthEndpoints:
 
         with (
             patch(
-                "redis_sre_agent.api.health.initialize_redis_infrastructure",
+                "redis_sre_agent.api.health.initialize_redis",
                 return_value=mock_infrastructure_status,
             ),
             patch("redis_sre_agent.api.health.test_task_system", return_value=True),
@@ -146,7 +146,7 @@ class TestHealthEndpoints:
         """Test HEAD request to detailed health endpoint."""
         with (
             patch(
-                "redis_sre_agent.api.health.initialize_redis_infrastructure",
+                "redis_sre_agent.api.health.initialize_redis",
                 return_value={
                     "redis_connection": "available",
                     "vectorizer": "available",
@@ -183,7 +183,7 @@ class TestHealthEndpoints:
 
         with (
             patch(
-                "redis_sre_agent.api.health.initialize_redis_infrastructure",
+                "redis_sre_agent.api.health.initialize_redis",
                 return_value=mock_infrastructure_status,
             ),
             patch("redis_sre_agent.api.health.test_task_system", return_value=True),
@@ -225,7 +225,7 @@ class TestAppLifecycle:
         }
 
         with patch(
-            "redis_sre_agent.api.app.initialize_redis_infrastructure",
+            "redis_sre_agent.api.app.initialize_redis",
             return_value=mock_infrastructure_status,
         ):
             # Import app after patching to trigger startup
@@ -239,7 +239,7 @@ class TestAppLifecycle:
     async def test_app_startup_with_errors(self):
         """Test application startup with infrastructure errors."""
         with patch(
-            "redis_sre_agent.api.app.initialize_redis_infrastructure",
+            "redis_sre_agent.api.app.initialize_redis",
             side_effect=Exception("Infrastructure failed"),
         ):
             # Import app after patching to trigger startup
@@ -251,14 +251,10 @@ class TestAppLifecycle:
     @pytest.mark.asyncio
     async def test_app_shutdown(self):
         """Test application shutdown cleanup."""
-        mock_cleanup = AsyncMock()
+        # Import app to ensure module loads without requiring cleanup hook
+        from redis_sre_agent.api.app import app
 
-        with patch("redis_sre_agent.api.app.cleanup_redis_connections", mock_cleanup):
-            from redis_sre_agent.api.app import app
-
-            # Simulate shutdown by calling lifespan manually
-            # This is a simplified test - in practice the lifespan context manager handles this
-            assert app is not None
+        assert app is not None
 
 
 class TestMiddleware:

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from redis_sre_agent.core.threads import ThreadManager, ThreadMetadata, ThreadState
+from redis_sre_agent.core.threads import Thread, ThreadManager, ThreadMetadata
 
 
 @pytest.mark.asyncio
@@ -15,14 +15,14 @@ async def test_instance_id_from_client_updates_thread():
     thread_manager = ThreadManager(redis_client=mock_redis)
 
     # Create initial thread state with no instance_id
-    thread_state = ThreadState(
+    thread_state = Thread(
         thread_id="test-thread-123",
         context={},
         metadata=ThreadMetadata(user_id="test-user"),
     )
 
-    # Mock get_thread_state to return our thread
-    with patch.object(thread_manager, "get_thread_state", return_value=thread_state):
+    # Mock get_thread to return our thread
+    with patch.object(thread_manager, "get_thread", return_value=thread_state):
         with patch.object(thread_manager, "update_thread_context") as mock_update:
             with patch.object(thread_manager, "add_thread_update"):
                 # Simulate what happens in process_agent_turn
@@ -45,7 +45,7 @@ async def test_instance_id_from_client_updates_thread():
 async def test_instance_id_from_thread_is_reused():
     """Test that instance_id from thread context is reused when client doesn't provide one."""
     # Create thread state with saved instance_id
-    thread_state = ThreadState(
+    thread_state = Thread(
         thread_id="test-thread-123",
         context={"instance_id": "redis-prod-456"},
         metadata=ThreadMetadata(user_id="test-user"),
@@ -94,7 +94,7 @@ async def test_instance_created_from_message_is_saved():
 async def test_client_instance_id_overrides_thread():
     """Test that client-provided instance_id overrides thread's saved instance_id."""
     # Thread has one instance_id saved
-    thread_state = ThreadState(
+    thread_state = Thread(
         thread_id="test-thread-123",
         context={"instance_id": "redis-prod-old"},
         metadata=ThreadMetadata(user_id="test-user"),

@@ -360,7 +360,7 @@ async def create_indices() -> bool:
         return False
 
 
-async def initialize_redis_infrastructure() -> dict:
+async def initialize_redis() -> dict:
     """Initialize Redis infrastructure and return status."""
     status = {}
 
@@ -385,7 +385,7 @@ async def initialize_redis_infrastructure() -> dict:
 
     # Initialize Docket infrastructure if Redis is available
     if redis_ok:
-        docket_ok = await initialize_docket_infrastructure()
+        docket_ok = await initialize_docket()
         status["docket_infrastructure"] = "available" if docket_ok else "unavailable"
     else:
         status["docket_infrastructure"] = "unavailable"
@@ -400,7 +400,7 @@ async def initialize_redis_infrastructure() -> dict:
     return status
 
 
-async def initialize_docket_infrastructure() -> bool:
+async def initialize_docket() -> bool:
     """Initialize Docket task queue infrastructure."""
     try:
         # Import Docket here to avoid circular imports
@@ -418,11 +418,5 @@ async def initialize_docket_infrastructure() -> bool:
         logger.warning("Docket not available - task queue functionality will be limited")
         return False
     except Exception as e:
-        logger.error(f"Failed to initialize Docket infrastructure: {e}")
+        logger.error(f"Failed to initialize: {e}")
         return False
-
-
-async def cleanup_redis_connections():
-    """Cleanup Redis connections on shutdown (no-op since we removed caching)."""
-    # No cleanup needed since we don't cache connections anymore
-    logger.info("Redis connections cleanup called (no-op)")

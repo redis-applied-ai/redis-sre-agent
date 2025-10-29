@@ -6,12 +6,11 @@ import pytest
 
 from redis_sre_agent.core.redis import (
     SRE_KNOWLEDGE_SCHEMA,
-    cleanup_redis_connections,
     create_indices,
     get_knowledge_index,
     get_redis_client,
     get_vectorizer,
-    initialize_redis_infrastructure,
+    initialize_redis,
     test_redis_connection,
     test_vector_search,
 )
@@ -208,9 +207,9 @@ class TestRedisInfrastructure:
             patch("redis_sre_agent.core.redis.get_vectorizer", return_value=Mock()),
             patch("redis_sre_agent.core.redis.create_indices", return_value=True),
             patch("redis_sre_agent.core.redis.test_vector_search", return_value=True),
-            patch("redis_sre_agent.core.redis.initialize_docket_infrastructure", return_value=True),
+            patch("redis_sre_agent.core.redis.initialize_docket", return_value=True),
         ):
-            result = await initialize_redis_infrastructure()
+            result = await initialize_redis()
 
         expected_status = {
             "redis_connection": "available",
@@ -228,7 +227,7 @@ class TestRedisInfrastructure:
             patch("redis_sre_agent.core.redis.test_redis_connection", return_value=False),
             patch("redis_sre_agent.core.redis.get_vectorizer", return_value=Mock()),
         ):
-            result = await initialize_redis_infrastructure()
+            result = await initialize_redis()
 
         assert result["redis_connection"] == "unavailable"
         assert result["indices_created"] == "unavailable"
@@ -243,14 +242,7 @@ class TestRedisInfrastructure:
                 "redis_sre_agent.core.redis.get_vectorizer", side_effect=Exception("API key error")
             ),
         ):
-            result = await initialize_redis_infrastructure()
+            result = await initialize_redis()
 
         assert result["redis_connection"] == "available"
         assert result["vectorizer"] == "unavailable"
-
-    @pytest.mark.asyncio
-    async def test_cleanup_redis_connections(self, mock_redis_client):
-        """Test Redis connection cleanup (no-op since we removed caching)."""
-        # Cleanup function still exists but does nothing since we removed caching
-        await cleanup_redis_connections()
-        # No assertions needed - just verify it doesn't crash

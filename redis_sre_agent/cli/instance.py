@@ -21,7 +21,7 @@ from redis_sre_agent.core.redis import test_redis_connection
 
 @click.group()
 def instance():
-    """Manage Redis instances (list, create, get, update, delete, test)."""
+    """Manage Redis instances"""
     pass
 
 
@@ -71,7 +71,7 @@ def instances_list(as_json: bool, limit: int):
 
     async def _list():
         try:
-            items = await core_instances.get_instances_from_redis()
+            items = await core_instances.get_instances()
         except Exception as e:
             if as_json:
                 print(_json.dumps({"error": str(e)}))
@@ -219,7 +219,7 @@ def instances_create(
 
     async def _create():
         try:
-            instances = await core_instances.get_instances_from_redis()
+            instances = await core_instances.get_instances()
             if any(inst.name == name for inst in instances):
                 raise RuntimeError(f"Instance with name '{name}' already exists")
 
@@ -250,7 +250,7 @@ def instances_create(
             )
 
             instances.append(new_inst)
-            ok = await core_instances.save_instances_to_redis(instances)
+            ok = await core_instances.save_instances(instances)
             if not ok:
                 raise RuntimeError("Failed to save instance")
 
@@ -329,7 +329,7 @@ def instances_update(
 
     async def _update():
         try:
-            items = await core_instances.get_instances_from_redis()
+            items = await core_instances.get_instances()
             idx = None
             for i, it in enumerate(items):
                 if it.id == instance_id:
@@ -389,7 +389,7 @@ def instances_update(
             updated = current.model_copy(update=update_data)
             items[idx] = updated
 
-            ok = await core_instances.save_instances_to_redis(items)
+            ok = await core_instances.save_instances(items)
             if not ok:
                 raise RuntimeError("Failed to save updated instance")
 
@@ -424,13 +424,13 @@ def instances_delete(instance_id: str, yes: bool, as_json: bool):
                     click.echo("Cancelled")
                     return
 
-            items = await core_instances.get_instances_from_redis()
+            items = await core_instances.get_instances()
             orig = len(items)
             items = [i for i in items if i.id != instance_id]
             if len(items) == orig:
                 raise RuntimeError("Instance not found")
 
-            ok = await core_instances.save_instances_to_redis(items)
+            ok = await core_instances.save_instances(items)
             if not ok:
                 raise RuntimeError("Failed to save after deletion")
 

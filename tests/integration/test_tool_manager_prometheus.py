@@ -24,6 +24,7 @@ async def test_tool_manager_routes_to_prometheus_query():
             environment="test",
             usage="cache",
             description="test instance",
+            instance_type="oss_single",
         )
 
         async with ToolManager(redis_instance=instance) as mgr:
