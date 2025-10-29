@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import test_task_system
-from redis_sre_agent.core.redis import initialize_redis_infrastructure
+from redis_sre_agent.core.redis import initialize_redis
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ async def detailed_health_check():
     """Comprehensive health check testing all system components."""
 
     # Test Redis infrastructure
-    redis_status = await initialize_redis_infrastructure()
+    redis_status = await initialize_redis()
 
     # Test Docket task system
     task_system_ok = await test_task_system()

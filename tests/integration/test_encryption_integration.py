@@ -9,8 +9,8 @@ import pytest
 from redis_sre_agent.core.encryption import is_encrypted
 from redis_sre_agent.core.instances import (
     RedisInstance,
-    get_instances_from_redis,
-    save_instances_to_redis,
+    get_instances,
+    save_instances,
 )
 
 
@@ -58,9 +58,9 @@ class TestEncryptionIntegration:
         mock_redis.set = mock_set
         mock_redis.get = mock_get
 
-        with patch("redis_sre_agent.api.instances.get_redis_client", return_value=mock_redis):
+        with patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis):
             # Save instance
-            result = await save_instances_to_redis([instance])
+            result = await save_instances([instance])
             assert result is True
 
             # Verify data is encrypted in storage
@@ -79,7 +79,7 @@ class TestEncryptionIntegration:
             assert stored_inst["admin_password"] != "admin-secret-123"
 
             # Load instances back
-            loaded_instances = await get_instances_from_redis()
+            loaded_instances = await get_instances()
             assert len(loaded_instances) == 1
             loaded_inst = loaded_instances[0]
 
@@ -144,9 +144,9 @@ class TestEncryptionIntegration:
         mock_redis.set = mock_set
         mock_redis.get = mock_get
 
-        with patch("redis_sre_agent.api.instances.get_redis_client", return_value=mock_redis):
+        with patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis):
             # Save both instances
-            result = await save_instances_to_redis([instance1, instance2])
+            result = await save_instances([instance1, instance2])
             assert result is True
 
             # Verify each has different encrypted values (unique DEKs)
@@ -164,7 +164,7 @@ class TestEncryptionIntegration:
             assert is_encrypted(encrypted_pwd2)
 
             # Load and verify both decrypt correctly
-            loaded_instances = await get_instances_from_redis()
+            loaded_instances = await get_instances()
             assert len(loaded_instances) == 2
 
             for inst in loaded_instances:
@@ -203,13 +203,13 @@ class TestEncryptionIntegration:
         mock_redis.set = mock_set
         mock_redis.get = mock_get
 
-        with patch("redis_sre_agent.api.instances.get_redis_client", return_value=mock_redis):
+        with patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis):
             # Save instance
-            result = await save_instances_to_redis([instance])
+            result = await save_instances([instance])
             assert result is True
 
             # Load back
-            loaded_instances = await get_instances_from_redis()
+            loaded_instances = await get_instances()
             assert len(loaded_instances) == 1
             assert loaded_instances[0].admin_password is None
 
@@ -242,9 +242,9 @@ class TestEncryptionIntegration:
         mock_redis.set = mock_set
         mock_redis.get = mock_get
 
-        with patch("redis_sre_agent.api.instances.get_redis_client", return_value=mock_redis):
-            await save_instances_to_redis([instance])
-            loaded_instances = await get_instances_from_redis()
+        with patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis):
+            await save_instances([instance])
+            loaded_instances = await get_instances()
 
             loaded_inst = loaded_instances[0]
 

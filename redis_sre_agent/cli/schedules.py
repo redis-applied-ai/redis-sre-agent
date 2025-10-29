@@ -6,8 +6,20 @@ Read-only commands (list/get) for managing schedules.
 from __future__ import annotations
 
 import asyncio
+import json as _json
+from datetime import datetime
 
 import click
+from docket import Docket
+from rich.console import Console
+from rich.table import Table
+
+from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
+from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.schedule_storage import get_schedule
+from redis_sre_agent.core.tasks import TaskManager
+from redis_sre_agent.core.threads import ThreadManager
 
 
 @click.group()
@@ -508,22 +520,14 @@ def schedules_run_now(schedule_id: str, as_json: bool):
                 run_context["instance_id"] = schedule.get("redis_instance_id")
 
             # Create a thread for this run
-            from redis_sre_agent.core.redis import get_redis_client
-            from redis_sre_agent.core.threads import ThreadManager
-
             redis_client = get_redis_client()
-            tm = ThreadManager(redis_client=redis_client)
-            thread_id = await tm.create_thread(
+            thread_manager = ThreadManager(redis_client=redis_client)
+            thread_id = await thread_manager.create_thread(
                 user_id="scheduler",
                 session_id=f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}",
                 initial_context=run_context,
                 tags=["automated", "scheduled", "manual_trigger"],
             )
-
-            # Submit the agent task directly via Docket
-            from docket import Docket
-
-            from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 
             docket_task_id = None
             async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
@@ -574,16 +578,6 @@ def schedules_runs(schedule_id: str, as_json: bool, tz: str | None, limit: int):
     """List recent runs for a schedule."""
 
     async def _runs():
-        import json as _json
-        from datetime import datetime
-
-        from rich.console import Console
-        from rich.table import Table
-
-        from redis_sre_agent.core.redis import get_redis_client
-        from redis_sre_agent.core.schedule_storage import get_schedule
-        from redis_sre_agent.core.threads import ThreadManager
-
         try:
             sched = await get_schedule(schedule_id)
             if not sched:
@@ -595,19 +589,15 @@ def schedules_runs(schedule_id: str, as_json: bool, tz: str | None, limit: int):
                 return
 
             client = get_redis_client()
-            tm = ThreadManager(redis_client=client)
+            thread_manager = ThreadManager(redis_client=client)
 
-            # Fetch scheduler threads and filter to this schedule
-            from redis_sre_agent.core.keys import RedisKeys
-            from redis_sre_agent.core.tasks import TaskManager
-
-            summaries = await tm.list_threads(user_id="scheduler", limit=200)
+            summaries = await thread_manager.list_threads(user_id="scheduler", limit=200)
             runs = []
             task_manager = TaskManager(redis_client=client)
 
             for summary in summaries:
                 thread_id = summary["thread_id"]
-                state = await tm.get_thread_state(thread_id)
+                state = await thread_manager.get_thread(thread_id)
                 if not state or state.context.get("schedule_id") != schedule_id:
                     continue
 
@@ -631,20 +621,15 @@ def schedules_runs(schedule_id: str, as_json: bool, tz: str | None, limit: int):
 
                 if task_id:
                     try:
-                        tstate = await task_manager.get_task_state(task_id)
+                        task = await task_manager.get_task_state(task_id)
                     except Exception:
-                        tstate = None
-                    if tstate:
-                        status_obj = getattr(tstate, "status", None)
-                        task_status = (
-                            getattr(status_obj, "value", str(status_obj))
-                            if status_obj
-                            else task_status
-                        )
-                        if getattr(tstate, "metadata", None):
-                            started_at = tstate.metadata.created_at or started_at
-                            if task_status == "done":
-                                completed_at = tstate.metadata.updated_at
+                        task = None
+                    if task:
+                        # Normalize enum or str to a string status value
+                        task_status = getattr(task.status, "value", str(task.status))
+                        started_at = task.metadata.created_at or started_at
+                        if task_status == "done":
+                            completed_at = task.metadata.updated_at
 
                 scheduled_at = state.context.get("scheduled_at") or summary.get("created_at")
 

@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 from typing import Any, Dict
 
 import openai
@@ -22,20 +21,9 @@ class TestSREAgentBehavior:
     different types of SRE scenarios and questions.
 
     Requires:
-    - OPENAI_API_KEY environment variable
-    - AGENT_BEHAVIOR_TESTS=true to run
     - Redis container for vector storage
     - Implemented LangGraph agent (future)
     """
-
-    @pytest.fixture(autouse=True)
-    def check_behavior_tests_enabled(self):
-        """Skip if agent behavior tests are not enabled."""
-        if not os.environ.get("AGENT_BEHAVIOR_TESTS"):
-            pytest.skip("Agent behavior tests not enabled. Set AGENT_BEHAVIOR_TESTS=true")
-
-        if not os.environ.get("OPENAI_API_KEY"):
-            pytest.skip("OPENAI_API_KEY not set")
 
     @pytest.fixture(scope="class")
     def sre_test_cases(self):
@@ -397,42 +385,3 @@ class SREAgentBehaviorTestSuite:
         # Will implement comprehensive SRE behavior testing
         # Returns detailed results similar to reference implementation
         pass
-
-
-# Helper functions for running agent behavior tests
-def run_sre_agent_behavior_tests():
-    """Run SRE agent behavior tests with proper environment setup."""
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("❌ OPENAI_API_KEY not set. Cannot run agent behavior tests.")
-        return
-
-    if not os.environ.get("AGENT_BEHAVIOR_TESTS"):
-        print("ℹ️  Set AGENT_BEHAVIOR_TESTS=true to run agent behavior tests.")
-        return
-
-    print("🚀 Running SRE agent behavior tests...")
-
-    # Set environment for tests
-    os.environ["INTEGRATION_TESTS"] = "true"
-    os.environ["AGENT_BEHAVIOR_TESTS"] = "true"
-
-    # Run the tests
-    import subprocess
-
-    result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "pytest",
-            "tests/integration/test_agent_behavior.py",
-            "-v",
-            "-m",
-            "agent_behavior",
-        ]
-    )
-
-    return result.returncode == 0
-
-
-if __name__ == "__main__":
-    run_sre_agent_behavior_tests()

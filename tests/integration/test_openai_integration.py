@@ -10,7 +10,6 @@ from redis_sre_agent.core.docket_tasks import (
     search_knowledge_base,
 )
 from redis_sre_agent.core.redis import (
-    cleanup_redis_connections,
     create_indices,
     get_knowledge_index,
     get_vectorizer,
@@ -26,15 +25,6 @@ class TestOpenAIIntegration:
     - OPENAI_INTEGRATION_TESTS=true to run
     - Redis container (provided by redis_container fixture)
     """
-
-    @pytest.fixture(autouse=True)
-    def check_integration_tests_enabled(self):
-        """Skip if OpenAI integration tests are not enabled."""
-        if not os.environ.get("OPENAI_INTEGRATION_TESTS"):
-            pytest.skip("OpenAI integration tests not enabled. Set OPENAI_INTEGRATION_TESTS=true")
-
-        if not os.environ.get("OPENAI_API_KEY"):
-            pytest.skip("OPENAI_API_KEY not set")
 
     @pytest.mark.asyncio
     async def test_real_embedding_generation(self, redis_container):
@@ -73,7 +63,7 @@ class TestOpenAIIntegration:
             assert embeddings[0] != embeddings[1] != embeddings[2]
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_real_vector_index_creation_and_search(self, redis_container):
@@ -102,7 +92,7 @@ class TestOpenAIIntegration:
             assert index_exists is True
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_real_document_ingestion_workflow(self, redis_container):
@@ -158,7 +148,7 @@ class TestOpenAIIntegration:
                 assert isinstance(result_item["score"], (int, float))
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_semantic_search_quality(self, redis_container):
@@ -235,7 +225,7 @@ class TestOpenAIIntegration:
                     assert 0.0 <= result["score"] <= 1.0
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_embedding_consistency(self, redis_container):
@@ -267,18 +257,12 @@ class TestOpenAIIntegration:
             assert embedding1[0] != embedding3[0]
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
 
 @pytest.mark.openai_integration
 class TestOpenAIErrorHandling:
     """Test error handling with OpenAI API."""
-
-    @pytest.fixture(autouse=True)
-    def check_integration_tests_enabled(self):
-        """Skip if OpenAI integration tests are not enabled."""
-        if not os.environ.get("OPENAI_INTEGRATION_TESTS"):
-            pytest.skip("OpenAI integration tests not enabled")
 
     @pytest.mark.asyncio
     async def test_invalid_api_key_handling(self, redis_container):
@@ -335,18 +319,12 @@ class TestOpenAIErrorHandling:
                 assert len(embedding) == 1536
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
 
 @pytest.mark.openai_integration
 class TestRealWorkflowIntegration:
     """Test complete workflows with real OpenAI integration."""
-
-    @pytest.fixture(autouse=True)
-    def check_integration_tests_enabled(self):
-        """Skip if OpenAI integration tests are not enabled."""
-        if not os.environ.get("OPENAI_INTEGRATION_TESTS"):
-            pytest.skip("OpenAI integration tests not enabled")
 
     @pytest.mark.asyncio
     async def test_complete_sre_knowledge_workflow(self, redis_container):
@@ -464,43 +442,4 @@ class TestRealWorkflowIntegration:
             print("   - Verified category filtering")
 
         finally:
-            await cleanup_redis_connections()
-
-
-# Helper function to run OpenAI integration tests
-def run_openai_integration_tests():
-    """Run OpenAI integration tests with proper environment setup."""
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("❌ OPENAI_API_KEY not set. Cannot run OpenAI integration tests.")
-        return
-
-    if not os.environ.get("OPENAI_INTEGRATION_TESTS"):
-        print("ℹ️  Set OPENAI_INTEGRATION_TESTS=true to run OpenAI integration tests.")
-        return
-
-    print("🚀 Running OpenAI integration tests...")
-
-    # Set integration test environment
-    os.environ["INTEGRATION_TESTS"] = "true"
-    os.environ["OPENAI_INTEGRATION_TESTS"] = "true"
-
-    # Run the tests
-    import subprocess
-
-    result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "pytest",
-            "tests/integration/test_openai_integration.py",
-            "-v",
-            "-m",
-            "openai_integration",
-        ]
-    )
-
-    return result.returncode == 0
-
-
-if __name__ == "__main__":
-    run_openai_integration_tests()
+            pass

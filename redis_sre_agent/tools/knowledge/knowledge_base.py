@@ -16,7 +16,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     search_knowledge_base_helper,
 )
 from redis_sre_agent.tools.decorators import status_update
-from redis_sre_agent.tools.protocols import ToolProvider
+from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,9 @@ class KnowledgeBaseToolProvider(ToolProvider):
     which contains runbooks, Redis documentation, troubleshooting guides, and
     SRE procedures.
     """
+
+    # Declare knowledge capability
+    capabilities = {ToolCapability.KNOWLEDGE}
 
     @property
     def provider_name(self) -> str:
@@ -52,22 +55,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
                         "query": {
                             "type": "string",
                             "description": "Search query describing what you're looking for",
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": (
-                                "Optional category filter (incident, runbook, monitoring, "
-                                "redis_commands, redis_config, etc.)"
-                            ),
-                            "enum": [
-                                "incident",
-                                "runbook",
-                                "monitoring",
-                                "redis_commands",
-                                "redis_config",
-                                "troubleshooting",
-                                "best_practices",
-                            ],
                         },
                         "limit": {
                             "type": "integer",
@@ -220,7 +207,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
     async def search(
         self,
         query: str,
-        category: Optional[str] = None,
         limit: int = 10,
         distance_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -228,7 +214,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
 
         Args:
             query: Search query
-            category: Optional category filter
             limit: Maximum number of results
             distance_threshold: Optional cosine distance threshold. If provided, overrides the backend default.
 
@@ -236,11 +221,10 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Search results with relevant knowledge base content
         """
         logger.info(
-            f"Knowledge base search: {query} (category={category}, limit={limit}, distance_threshold={distance_threshold})"
+            f"Knowledge base search: {query} (limit={limit}, distance_threshold={distance_threshold})"
         )
         kwargs = {
             "query": query,
-            "category": category,
             "limit": limit,
             "distance_threshold": distance_threshold,
         }

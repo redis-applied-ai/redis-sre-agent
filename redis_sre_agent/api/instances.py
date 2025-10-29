@@ -274,7 +274,7 @@ class UpdateInstanceRequest(BaseModel):
 async def list_instances():
     """List all Redis instances with masked credentials."""
     try:
-        instances = await core_instances.get_instances_from_redis()
+        instances = await core_instances.get_instances()
         return [to_response(inst) for inst in instances]
     except Exception as e:
         logger.error(f"Failed to list instances: {e}")
@@ -286,7 +286,7 @@ async def create_instance(request: CreateInstanceRequest):
     """Create a new Redis instance."""
     try:
         # Get existing instances
-        instances = await core_instances.get_instances_from_redis()
+        instances = await core_instances.get_instances()
 
         # Check if instance with same name already exists
         if any(inst.name == request.name for inst in instances):
@@ -324,7 +324,7 @@ async def create_instance(request: CreateInstanceRequest):
         instances.append(new_instance)
 
         # Save to Redis
-        if not await core_instances.save_instances_to_redis(instances):
+        if not await core_instances.save_instances(instances):
             raise HTTPException(status_code=500, detail="Failed to save instance")
 
         logger.info(f"Created Redis instance: {new_instance.name} ({new_instance.id})")
@@ -341,7 +341,7 @@ async def create_instance(request: CreateInstanceRequest):
 async def get_instance(instance_id: str):
     """Get a specific Redis instance by ID with masked credentials."""
     try:
-        instances = await core_instances.get_instances_from_redis()
+        instances = await core_instances.get_instances()
 
         for instance in instances:
             if instance.id == instance_id:
@@ -360,7 +360,7 @@ async def get_instance(instance_id: str):
 async def update_instance(instance_id: str, request: UpdateInstanceRequest):
     """Update a Redis instance."""
     try:
-        instances = await core_instances.get_instances_from_redis()
+        instances = await core_instances.get_instances()
 
         # Find the instance to update
         instance_index = None
@@ -402,7 +402,7 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
         instances[instance_index] = updated_instance
 
         # Save to Redis
-        if not await core_instances.save_instances_to_redis(instances):
+        if not await core_instances.save_instances(instances):
             raise HTTPException(status_code=500, detail="Failed to save updated instance")
 
         logger.info(f"Updated Redis instance: {updated_instance.name} ({updated_instance.id})")
@@ -419,7 +419,7 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
 async def delete_instance(instance_id: str):
     """Delete a Redis instance."""
     try:
-        instances = await core_instances.get_instances_from_redis()
+        instances = await core_instances.get_instances()
 
         # Find and remove the instance
         original_count = len(instances)
@@ -431,8 +431,14 @@ async def delete_instance(instance_id: str):
             )
 
         # Save updated list to Redis
-        if not await core_instances.save_instances_to_redis(instances):
+        if not await core_instances.save_instances(instances):
             raise HTTPException(status_code=500, detail="Failed to save after deletion")
+
+        # Best-effort: remove search index document for this instance
+        try:
+            await core_instances.delete_instance_index_doc(instance_id)
+        except Exception:
+            pass
 
         logger.info(f"Deleted Redis instance: {instance_id}")
         return {"message": f"Instance {instance_id} deleted successfully"}
@@ -504,7 +510,7 @@ async def test_instance_connection(instance_id: str):
     try:
         from redis_sre_agent.core.redis import test_redis_connection
 
-        instances = await core_instances.get_instances_from_redis()
+        instances = await core_instances.get_instances()
 
         # Find the instance
         target_instance = None

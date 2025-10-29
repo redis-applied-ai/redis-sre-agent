@@ -9,8 +9,8 @@ import pytest
 from redis_sre_agent.core.docket_tasks import process_agent_turn
 from redis_sre_agent.core.instances import (
     RedisInstance,
-    get_instances_from_redis,
-    save_instances_to_redis,
+    get_instances,
+    save_instances,
 )
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.threads import ThreadManager
@@ -42,11 +42,11 @@ async def test_tools_connect_to_correct_instance(thread_manager):
     # Store instance using the correct API format
 
     # Get existing instances
-    existing_instances = await get_instances_from_redis()
+    existing_instances = await get_instances()
 
     # Add our test instance
     all_instances = existing_instances + [test_instance]
-    await save_instances_to_redis(all_instances)
+    await save_instances(all_instances)
 
     print(f"✅ Registered test instance: {test_instance.name}")
     print(f"   Connection URL: {test_instance.connection_url}")
@@ -83,10 +83,10 @@ async def test_tools_connect_to_correct_instance(thread_manager):
         print(f"\n⚠️  Agent execution failed (expected): {e}")
 
     # 5. Verify the thread state and check what happened
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
 
     print("\n📊 Thread state:")
-    print(f"   Status: {thread_state.status}")
+    print(f"   Context keys: {list(thread_state.context.keys())}")
     print(f"   Updates: {len(thread_state.updates)}")
     print(f"   Result: {thread_state.result}")
 
@@ -176,7 +176,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
 
     # Cleanup
     remaining_instances = [inst for inst in all_instances if inst.id != test_instance.id]
-    await save_instances_to_redis(remaining_instances)
+    await save_instances(remaining_instances)
     await thread_manager.delete_thread(thread_id)
 
     print("\n🧹 Cleanup complete")
@@ -230,7 +230,7 @@ async def test_instance_context_passed_to_agent(thread_manager, async_redis_clie
     )
 
     # Verify context was stored
-    thread_state = await thread_manager.get_thread_state(thread_id)
+    thread_state = await thread_manager.get_thread(thread_id)
     assert thread_state.context.get("instance_id") == test_instance.id, (
         "Instance ID should be in thread context"
     )

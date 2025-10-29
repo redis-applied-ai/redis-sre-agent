@@ -1,6 +1,8 @@
-"""Redis instance domain model and storage helpers.
+"""
+Redis instance domain model and storage helpers.
 
-Layer: core (domain and persistence). No API dependencies.
+TODO: Use a better persistence structure than serializing a list of JSON
+      objects into a string.
 """
 
 from __future__ import annotations
@@ -15,7 +17,11 @@ from pydantic import BaseModel, Field, SecretStr, field_serializer, field_valida
 
 from .encryption import encrypt_secret, get_secret_value
 from .keys import RedisKeys
-from .redis import get_redis_client
+from .redis import (
+    SRE_INSTANCES_INDEX,
+    get_instances_index,
+    get_redis_client,  # noqa: F401  # Expose for tests that patch via this module path
+)
 
 logger = logging.getLogger(__name__)
 
@@ -296,20 +302,31 @@ class RedisInstance(BaseModel):
             return None
 
 
-# Storage helpers
-async def get_instances_from_redis() -> List[RedisInstance]:
-    """Load configured instances from Redis storage with decrypted secrets."""
+async def get_instances() -> List[RedisInstance]:
+    """Load configured instances from per-instance storage with decrypted secrets."""
     try:
-        redis_client = get_redis_client()
-        instances_data = await redis_client.get(RedisKeys.instances_set())
-        if not instances_data:
-            return []
-        if isinstance(instances_data, bytes):
-            instances_data = instances_data.decode("utf-8")
-        instances_list = json.loads(instances_data)
+        # Ensure index exists (best-effort) and read instance docs from hash storage
+        await _ensure_instances_index_exists()
+        client = get_redis_client()
+        prefix = f"{SRE_INSTANCES_INDEX}:"
+        cursor: int = 0
+        keys: List[bytes] = []
+        while True:
+            cursor, batch = await client.scan(cursor=cursor, match=f"{prefix}*")
+            if batch:
+                keys.extend(batch)
+            if cursor == 0:
+                break
         out: List[RedisInstance] = []
-        for inst_data in instances_list:
+        for key in keys:
             try:
+                raw = await client.hget(key, "data")
+                if not raw:
+                    # Skip incomplete docs (no full JSON payload)
+                    continue
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                inst_data = json.loads(raw)
                 if inst_data.get("connection_url"):
                     inst_data["connection_url"] = get_secret_value(inst_data["connection_url"])
                 if inst_data.get("admin_password"):
@@ -317,33 +334,140 @@ async def get_instances_from_redis() -> List[RedisInstance]:
                 out.append(RedisInstance(**inst_data))
             except Exception as e:
                 logger.error(
-                    "Failed to load instance '%s' (ID: %s): %s. Skipping.",
-                    inst_data.get("name", "unknown"),
-                    inst_data.get("id", "unknown"),
+                    "Failed to load instance from %s: %s. Skipping.",
+                    key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key),
                     e,
                 )
         return out
-    except json.JSONDecodeError as e:
-        logger.error("Failed to parse instances data from Redis: %s", e)
-        return []
     except Exception as e:
         logger.error("Failed to get instances from Redis: %s", e)
         return []
 
 
-async def save_instances_to_redis(instances: List[RedisInstance]) -> bool:
-    """Persist instances list to Redis with encrypted secrets."""
+# --- Instances search index helpers (non-breaking integration) ---
+async def _ensure_instances_index_exists() -> None:
     try:
-        redis_client = get_redis_client()
-        instances_list = []
-        for instance in instances:
-            inst_dict = instance.model_dump(mode="json")
-            if inst_dict.get("connection_url"):
-                inst_dict["connection_url"] = encrypt_secret(inst_dict["connection_url"])
-            if inst_dict.get("admin_password"):
-                inst_dict["admin_password"] = encrypt_secret(inst_dict["admin_password"])
-            instances_list.append(inst_dict)
-        await redis_client.set(RedisKeys.instances_set(), json.dumps(instances_list))
+        index = await get_instances_index()
+        if not await index.exists():
+            await index.create()
+    except Exception:
+        # Best-effort only; don't fail persistence on index errors
+        return
+
+
+def _to_epoch(ts: Optional[str]) -> float:
+    if not ts:
+        return 0.0
+    try:
+        # Handle Z suffix
+        if ts.endswith("Z"):
+            ts = ts.replace("Z", "+00:00")
+        return datetime.fromisoformat(ts).timestamp()
+    except Exception:
+        try:
+            return float(ts)
+        except Exception:
+            return 0.0
+
+
+async def _upsert_instance_index_doc(instance: "RedisInstance") -> bool:
+    try:
+        await _ensure_instances_index_exists()
+        client = get_redis_client()
+        key = f"{SRE_INSTANCES_INDEX}:{instance.id}"
+
+        # Serialize full instance data (with encrypted secrets) into 'data'
+        inst_dict = instance.model_dump(mode="json")
+        if inst_dict.get("connection_url"):
+            inst_dict["connection_url"] = encrypt_secret(inst_dict["connection_url"])
+        if inst_dict.get("admin_password"):
+            inst_dict["admin_password"] = encrypt_secret(inst_dict["admin_password"])
+
+        # Index timestamps (numeric) but keep ISO strings inside 'data'
+        created_ts = _to_epoch(inst_dict.get("created_at"))
+        updated_ts = _to_epoch(inst_dict.get("updated_at"))
+        if updated_ts <= 0:
+            updated_ts = datetime.now(timezone.utc).timestamp()
+
+        # Normalize instance_type to value when Enum
+        itype = getattr(instance, "instance_type", "unknown")
+        try:
+            itype_val = itype.value  # Enum
+        except Exception:
+            itype_val = str(itype)
+
+        await client.hset(
+            key,
+            mapping={
+                "name": instance.name or "",
+                "environment": (instance.environment or "").lower(),
+                "usage": (instance.usage or "").lower(),
+                "instance_type": itype_val,
+                "user_id": getattr(instance, "user_id", "") or "",
+                "status": (getattr(instance, "status", "unknown") or "unknown").lower(),
+                "created_at": created_ts,
+                "updated_at": updated_ts,
+                "data": json.dumps(inst_dict),
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def _upsert_instances_index_docs(instances: List["RedisInstance"]) -> bool:
+    ok = True
+    for inst in instances:
+        ok = await _upsert_instance_index_doc(inst) and ok
+    return ok
+
+
+async def delete_instance_index_doc(instance_id: str) -> None:
+    try:
+        client = get_redis_client()
+        await client.delete(f"{SRE_INSTANCES_INDEX}:{instance_id}")
+    except Exception:
+        return
+
+
+async def save_instances(instances: List[RedisInstance]) -> bool:
+    """Persist instances using per-instance hash docs + search index (no legacy list)."""
+    try:
+        client = get_redis_client()
+        await _ensure_instances_index_exists()
+
+        # Upsert all provided instances
+        upsert_ok = await _upsert_instances_index_docs(instances)
+        if not upsert_ok:
+            return False
+
+        # Replace semantics: delete any stored docs not in the provided set
+        keep_ids = {inst.id for inst in instances}
+        prefix = f"{SRE_INSTANCES_INDEX}:"
+        cursor: int = 0
+        to_delete: List[bytes] = []
+        while True:
+            cursor, batch = await client.scan(cursor=cursor, match=f"{prefix}*")
+            if not batch:
+                if cursor == 0:
+                    break
+                continue
+            for key in batch:
+                try:
+                    # Extract id from key suffix
+                    k = key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key)
+                    instance_id = k.split(":", 1)[1]
+                    if instance_id not in keep_ids:
+                        to_delete.append(key)
+                except Exception:
+                    continue
+            if cursor == 0:
+                break
+        for key in to_delete:
+            try:
+                await client.delete(key)
+            except Exception:
+                pass
         return True
     except Exception as e:
         logger.exception("Failed to save instances to Redis: %s", e)
@@ -403,7 +527,7 @@ async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
 async def get_all_instances(
     user_id: Optional[str] = None, thread_id: Optional[str] = None
 ) -> List[RedisInstance]:
-    configured = await get_instances_from_redis()
+    configured = await get_instances()
     if user_id:
         configured = [
             inst for inst in configured if inst.user_id == user_id or inst.user_id is None
@@ -419,7 +543,7 @@ async def get_all_instances(
     return out
 
 
-async def create_instance_programmatically(
+async def create_instance(
     *,
     name: str,
     connection_url: str,
@@ -434,7 +558,7 @@ async def create_instance_programmatically(
 ) -> RedisInstance:
     """Create and persist a new instance for dynamic agent flows."""
     try:
-        instances = await get_instances_from_redis()
+        instances = await get_instances()
         if any(inst.name == name for inst in instances):
             raise ValueError(f"Instance with name '{name}' already exists")
         instance_id = f"redis-{environment}-{int(datetime.now().timestamp())}"
@@ -452,7 +576,7 @@ async def create_instance_programmatically(
             instance_type=instance_type,
         )
         instances.append(new_inst)
-        if not await save_instances_to_redis(instances):
+        if not await save_instances(instances):
             raise ValueError("Failed to save instance to storage")
         return new_inst
     except Exception as e:
@@ -462,21 +586,21 @@ async def create_instance_programmatically(
 
 # Convenience lookups
 async def get_instance_by_id(instance_id: str) -> Optional[RedisInstance]:
-    for inst in await get_instances_from_redis():
+    for inst in await get_instances():
         if inst.id == instance_id:
             return inst
     return None
 
 
 async def get_instance_by_name(instance_name: str) -> Optional[RedisInstance]:
-    for inst in await get_instances_from_redis():
+    for inst in await get_instances():
         if inst.name == instance_name:
             return inst
     return None
 
 
 async def get_instance_map() -> Dict[str, RedisInstance]:
-    return {inst.id: inst for inst in await get_instances_from_redis()}
+    return {inst.id: inst for inst in await get_instances()}
 
 
 async def get_instance_name(instance_id: str) -> Optional[str]:

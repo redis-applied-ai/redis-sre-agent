@@ -30,7 +30,7 @@ def test_task_list_shows_task_id_and_local_time_and_done_status(redis_url):
             from redis.asyncio import Redis as AsyncRedis
 
             from redis_sre_agent.core.tasks import TaskManager
-            from redis_sre_agent.core.threads import ThreadManager, ThreadStatus
+            from redis_sre_agent.core.threads import TaskStatus, ThreadManager
 
             # Create a clean client to the same Redis the CLI will hit
             client = AsyncRedis.from_url(redis_url, decode_responses=False)
@@ -47,7 +47,7 @@ def test_task_list_shows_task_id_and_local_time_and_done_status(redis_url):
 
                 # Mark task done and set a simple result
                 await task_mgr.set_task_result(task_id, {"ok": True})
-                await task_mgr.update_task_status(task_id, ThreadStatus.DONE)
+                await task_mgr.update_task_status(task_id, TaskStatus.DONE)
 
                 # Small wait to allow RediSearch to index initial doc (queued). The CLI refreshes status from KV.
                 await asyncio.sleep(0.05)

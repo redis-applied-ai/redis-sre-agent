@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from redis_sre_agent.core.redis import (
-    cleanup_redis_connections,
     create_indices,
-    initialize_redis_infrastructure,
+    initialize_redis,
     test_vector_search,
 )
 
@@ -47,7 +46,7 @@ class TestRedisIntegration:
             mock_vectorizer_instance.embed_many.return_value = [[0.1] * 1536]
 
             # Test infrastructure initialization
-            status = await initialize_redis_infrastructure()
+            status = await initialize_redis()
 
             # Should succeed with real Redis
             assert status["redis_connection"] == "available"
@@ -157,10 +156,7 @@ class TestRedisIntegration:
         assert async_redis_client is not None
         await async_redis_client.ping()
 
-        # Test cleanup
-        await cleanup_redis_connections()
-
-        # Should not throw errors
+        # No explicit cleanup necessary; just ensure no errors after use
 
 
 @pytest.mark.integration

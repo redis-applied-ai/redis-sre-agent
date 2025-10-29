@@ -44,68 +44,91 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Load thread messages when threadId changes
+  // Debounced REST refetch utility
+  const refetchTimeoutRef = useRef<number | null>(null);
+
+  const mapThreadToMessages = (threadData: any): ChatMessage[] => {
+    const msgs = Array.isArray(threadData?.context?.messages) ? threadData.context.messages : [];
+    if (msgs.length > 0) {
+      return msgs.map((msg: any, index: number) => ({
+        id: `${msg.role}-${index}-${msg.timestamp}`,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+      }));
+    }
+    // Fallback: build from updates if context.messages is missing
+    const out: ChatMessage[] = [];
+    if (threadData?.context?.original_query) {
+      out.push({ id: `initial-${threadId}`, role: 'user', content: threadData.context.original_query, timestamp: threadData.metadata?.created_at || new Date().toISOString() });
+    } else if (threadData?.metadata?.subject) {
+      out.push({ id: `initial-${threadId}`, role: 'user', content: threadData.metadata.subject, timestamp: threadData.metadata?.created_at || new Date().toISOString() });
+    }
+    const updates = Array.isArray(threadData?.updates) ? [...threadData.updates].reverse() : [];
+    updates.forEach((u: any, idx: number) => {
+      if ((u.type === 'response' || u.type === 'completion') && u.message) {
+        out.push({ id: `u-${idx}`, role: 'assistant', content: u.message, timestamp: u.timestamp });
+      } else if (u.type === 'user_message' && u.message) {
+        out.push({ id: `u-${idx}`, role: 'user', content: u.message, timestamp: u.timestamp });
+      } else if ((u.type === 'agent_reflection' || u.type === 'agent_processing' || u.type === 'agent_start') && u.message && u.message.length > 10 && !/completed/i.test(u.message)) {
+        out.push({ id: `r-${idx}` , role: 'assistant', content: u.message, timestamp: u.timestamp });
+      }
+    });
+    if ((threadData?.status === 'done' || threadData?.status === 'completed') && threadData?.result?.response) {
+      out.push({ id: `result-${threadId}`, role: 'assistant', content: threadData.result.response, timestamp: threadData.result.turn_completed_at || threadData.metadata?.updated_at || new Date().toISOString() });
+    }
+    return out;
+  };
+
+  const fetchThreadAndUpdate = async () => {
+    try {
+      const response = await fetch(`/api/v1/threads/${threadId}`);
+      if (!response.ok) {
+        console.error('Failed to load thread:', response.status, response.statusText);
+        setIsThinking(false);
+        return;
+      }
+      const threadData = await response.json();
+      const chatMessages = mapThreadToMessages(threadData);
+      setMessages(chatMessages);
+
+      // Derive a status from thread data
+      const derivedStatus = threadData?.error_message
+        ? 'failed'
+        : threadData?.result
+        ? 'completed'
+        : 'in_progress';
+
+      setCurrentStatus(derivedStatus);
+      onStatusChange?.(derivedStatus);
+      const inProgress = ['queued', 'in_progress', 'running'].includes(derivedStatus);
+      setIsThinking(inProgress);
+
+      // If complete, notify parent and disconnect
+      if (['done', 'completed', 'failed', 'cancelled'].includes(derivedStatus)) {
+        onCompleted?.({ status: derivedStatus, response: threadData?.result?.response });
+        disconnect();
+      }
+    } catch (error) {
+      console.error('Error loading thread messages:', error);
+      setIsThinking(false);
+    }
+  };
+
+  const scheduleRefetch = () => {
+    if (refetchTimeoutRef.current) return; // already scheduled
+    refetchTimeoutRef.current = window.setTimeout(() => {
+      refetchTimeoutRef.current = null;
+      fetchThreadAndUpdate();
+    }, 300);
+  };
+
+  // Load thread transcript on thread change
   useEffect(() => {
     console.log('Thread changed to:', threadId);
-
-    // Reset tracking refs
     lastMessageIdRef.current = null;
     lastRenderTimeRef.current = 0;
-
-    // Fetch thread messages from API
-    const loadThreadMessages = async () => {
-      try {
-        const response = await fetch(`/api/v1/tasks/${threadId}`);
-        if (response.ok) {
-          const threadData = await response.json();
-          console.log('Thread data:', threadData);
-          console.log('Context:', threadData.context);
-          console.log('Messages:', threadData.context?.messages);
-          console.log('Thread status:', threadData.status);
-
-          const threadMessages = threadData.context?.messages || [];
-
-          // Convert to ChatMessage format
-          const chatMessages: ChatMessage[] = threadMessages.map((msg: any, index: number) => ({
-            id: `${msg.role}-${index}-${msg.timestamp}`,
-            role: msg.role,
-            content: msg.content,
-            timestamp: msg.timestamp,
-          }));
-
-          // Only update messages if we actually got some from the API
-          // and the thread is completed; for active threads, let WS drive UI
-          const completedStatuses = ['done', 'completed', 'failed', 'cancelled'];
-          if (chatMessages.length > 0 && completedStatuses.includes(threadData.status)) {
-            setMessages(chatMessages);
-            console.log(`Loaded ${chatMessages.length} messages for thread ${threadId}:`, chatMessages);
-          } else if (chatMessages.length === 0) {
-            console.log('No messages in thread yet, keeping current messages');
-          } else {
-            console.log('Thread active; skipping REST transcript to avoid duplicates');
-          }
-
-          // Set status and thinking indicator based on thread status
-          setCurrentStatus(threadData.status);
-          onStatusChange?.(threadData.status);
-
-          // Only show thinking if thread is actually in progress
-          const inProgressStatuses = ['queued', 'in_progress', 'running'];
-          setIsThinking(inProgressStatuses.includes(threadData.status));
-        } else {
-          console.error('Failed to load thread:', response.status, response.statusText);
-          // If thread doesn't exist yet or error, start fresh
-          setMessages([]);
-          setIsThinking(false);
-        }
-      } catch (error) {
-        console.error('Error loading thread messages:', error);
-        setMessages([]);
-        setIsThinking(false);
-      }
-    };
-
-    loadThreadMessages();
+    fetchThreadAndUpdate();
   }, [threadId]);
 
   // Only scroll when messages change, not on every state update
@@ -132,11 +155,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
     }
   }, [initialQuery]);
 
+  // Track the active connection instance to ignore Strict Mode double-invoke events
+  const currentConnIdRef = useRef(0);
+  const nextConnIdRef = useRef(1);
+
   const connectWebSocket = () => {
     // Close existing connection if any
     if (wsRef.current) {
       console.log('Closing existing WebSocket connection');
-      isIntentionalCloseRef.current = true; // Mark as intentional to avoid error message
+      isIntentionalCloseRef.current = true; // intentional to avoid error message
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -146,31 +173,29 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
       const getWebSocketUrl = () => {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const hostname = window.location.hostname;
-
-        // Check if we're in development mode (Vite dev server)
         const isDevelopment = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
-                             (window.location.port.startsWith('30') || window.location.port === '5173');
-
+                              (window.location.port.startsWith('30') || window.location.port === '5173');
         if (!isDevelopment) {
           const port = window.location.port ? `:${window.location.port}` : '';
           return `${protocol}//${hostname}${port}/api/v1/ws/tasks/${threadId}`;
         }
-
         return `${protocol}//${hostname}:8000/api/v1/ws/tasks/${threadId}`;
       };
 
       const wsUrl = getWebSocketUrl();
+      const myConnId = nextConnIdRef.current++;
+      currentConnIdRef.current = myConnId;
       console.log('Connecting to WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.log('WebSocket connected');
         setIsConnected(true);
         setConnectionError(null);
         isIntentionalCloseRef.current = false; // Reset flag on successful connection
         setIsThinking(true);
-
-        // Send periodic pings to keep connection alive
+        // periodic pings
         const pingInterval = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'ping' }));
@@ -181,82 +206,36 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
       };
 
       ws.onmessage = (event) => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         try {
-          const data: TaskUpdate = JSON.parse(event.data);
-
-          if (data.type === 'pong') {
-            return;
-          }
-
-          // Handle different update types
-          if (data.update_type === 'initial_state') {
-            const status = data.status || 'unknown';
-            setCurrentStatus(status);
-            onStatusChange?.(status);
-
-            // For completed threads, NEVER process initial_state updates
-            const completedStatuses = ['done', 'completed', 'failed', 'cancelled'];
-            const isCompleted = completedStatuses.includes(status);
-
-            if (isCompleted) {
-              console.log('Skipping initial_state for completed thread - will load from REST API');
-              setIsThinking(false);
-              onCompleted?.({ status });
-            } else {
-              // Thread is in progress - process initial updates for real-time display
-              console.log('Processing initial_state updates for in-progress thread');
-
-              // Keep existing transcript; avoid clearing to preserve prior responses
-              // (deduplication occurs when adding new updates)
-
-              // Process initial updates to extract user-visible content in one batch
-              if (data.updates) {
-                const batch: Array<{content: string; timestamp: string}> = [];
-                data.updates.forEach((u: any) => {
-                  if (u.result?.response) return; // skip final result here
-                  if (u.type === 'response' && u.message) {
-                    batch.push({ content: u.message, timestamp: u.timestamp });
-                  } else if (u.type === 'agent_reflection' && u.message && u.message.length > 10) {
-                    batch.push({ content: u.message, timestamp: u.timestamp });
-                  }
-                });
-                addAssistantMessagesBatch(batch);
-              }
-
-              // If initial_state includes a result while status is active, do NOT treat it as completion here.
-              // We defer handling of final results to incremental updates to avoid premature completion flicker.
-              if (data.result?.response) {
-                console.log('Initial_state includes result; deferring to streaming updates (no completion).');
-              }
-            }
-          } else {
-            // Process new update (real-time streaming)
-            processUpdate(data);
-          }
+          const data = JSON.parse(event.data);
+          if (data.type === 'pong') return;
+          // Treat any WS message as an invalidation to refetch via REST (debounced)
+          scheduleRefetch();
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
         }
       };
 
       ws.onclose = (event) => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.log('WebSocket closed:', event.code, event.reason);
-
         setIsConnected(false);
-
-        // Only show error and reconnect if this wasn't an intentional close
-        if (!isIntentionalCloseRef.current && event.code !== 1000) {
+        // Do not reconnect if intentional, normal close, or thread not found (4004)
+        if (!isIntentionalCloseRef.current && event.code !== 1000 && event.code !== 4004) {
           setConnectionError('Connection lost. Attempting to reconnect...');
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
           }, 3000);
         } else {
-          // Clear error on intentional close
           setConnectionError(null);
         }
       };
 
       ws.onerror = (error) => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.error('WebSocket error:', error);
+        // Let onclose decide about reconnects; just surface a message
         setConnectionError('Connection error. Please refresh the page.');
       };
 
@@ -413,9 +392,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
   };
 
   useEffect(() => {
+    // Connect WS for this thread; React Strict Mode may double-invoke effects in dev
     connectWebSocket();
 
     return () => {
+      // Mark as intentional to prevent reconnection from stale socket events
+      isIntentionalCloseRef.current = true;
       disconnect();
     };
   }, [threadId]);

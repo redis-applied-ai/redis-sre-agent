@@ -222,3 +222,59 @@ def build_result_envelope(
         data=data_obj if isinstance(data_obj, dict) else {"raw": (content or "")[:4000]},
     )
     return env.model_dump()
+
+
+async def build_adapters_for_tooldefs(
+    tool_manager: Any, tooldefs: List[Any]
+) -> tuple[list[dict], list[Any]]:
+    """Create OpenAI tool schemas and LangChain StructuredTool adapters for ToolDefinitions.
+
+    Returns (tool_schemas, adapters)
+    """
+    try:
+        from typing import Any as _Any
+
+        from langchain_core.tools import StructuredTool as _StructuredTool
+        from pydantic import BaseModel as _BaseModel
+        from pydantic import ConfigDict as _ConfigDict
+        from pydantic import Field as _Field
+        from pydantic import create_model as _create_model
+    except Exception:
+        # Best-effort fallback (should not happen in runtime)
+        return [], []
+
+    def _args_model_from_parameters(tool_name: str, params: dict) -> type[_BaseModel]:
+        props = (params or {}).get("properties", {}) or {}
+        required = set((params or {}).get("required", []) or [])
+        fields: dict[str, tuple[_Any, _Any]] = {}
+        for k, spec in props.items():
+            default = ... if k in required else None
+            fields[k] = (
+                _Any,
+                _Field(default, description=(spec or {}).get("description")),
+            )
+        args_model = _create_model(f"{tool_name}_Args", __base__=_BaseModel, **fields)
+        # allow extra to be resilient to provider-side schema drift
+        try:
+            args_model.model_config = _ConfigDict(extra="allow")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return args_model
+
+    tool_schemas: list[dict] = [t.to_openai_schema() for t in (tooldefs or [])]
+    adapters: list[_StructuredTool] = []
+    for tdef in tooldefs or []:
+
+        async def _exec_fn(_name=tdef.name, **kwargs):
+            return await tool_manager.resolve_tool_call(_name, kwargs or {})
+
+        ArgsModel = _args_model_from_parameters(tdef.name, getattr(tdef, "parameters", {}) or {})  # noqa: N806
+        adapters.append(
+            _StructuredTool.from_function(
+                coroutine=_exec_fn,
+                name=tdef.name,
+                description=getattr(tdef, "description", "") or "",
+                args_schema=ArgsModel,
+            )
+        )
+    return tool_schemas, adapters

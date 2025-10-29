@@ -6,24 +6,42 @@ This API is separate from the legacy combined Tasks/Threads endpoints.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 
-from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.threads import ThreadManager
-from redis_sre_agent.core.threads import delete_thread as delete_thread_model
-from redis_sre_agent.schemas.threads import (
+from redis_sre_agent.api.schemas import (
     Message,
     ThreadAppendMessagesRequest,
     ThreadCreateRequest,
     ThreadResponse,
     ThreadUpdateRequest,
 )
+from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.core.threads import delete_thread as delete_thread_model
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/threads")
+async def list_threads(
+    user_id: Optional[str] = None, limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
+    """List threads with optional filtering.
+
+    Returns lightweight summaries from the threads search index.
+    """
+    try:
+        rc = get_redis_client()
+        tm = ThreadManager(redis_client=rc)
+        summaries = await tm.list_threads(user_id=user_id, limit=limit, offset=offset)
+        return summaries
+    except Exception as e:
+        logger.error(f"Failed to list threads: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list threads")
 
 
 @router.post("/threads", response_model=ThreadResponse, status_code=status.HTTP_201_CREATED)
@@ -45,19 +63,12 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
         if req.messages:
             await tm.append_messages(thread_id, [m.model_dump() for m in req.messages])
 
-        state = await tm.get_thread_state(thread_id)
+        state = await tm.get_thread(thread_id)
         messages = state.context.get("messages", []) if state else []
-        # Best-effort status: may be enum or string; normalize to string
-        status_val = None
-        if state is not None and hasattr(state, "status"):
-            s = state.status
-            status_val = getattr(s, "value", s) if s is not None else None
+        # Return created thread state (messages + context)
         return ThreadResponse(
             thread_id=thread_id,
-            status=status_val,
             messages=[Message(**m) for m in messages] if messages else [],
-            action_items=[ai.model_dump() for ai in (state.action_items if state else [])],
-            metadata=state.metadata.model_dump() if state else {},
             context=state.context if state else {},
         )
     except Exception as e:
@@ -69,16 +80,41 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
 async def get_thread(thread_id: str) -> ThreadResponse:
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
-    state = await tm.get_thread_state(thread_id)
+    state = await tm.get_thread(thread_id)
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
+
+    # Extract messages from context if present
     messages = state.context.get("messages", [])
+
+    # Build metadata dict compatible with UI expectations, robust to mocks
+    metadata: Optional[Dict[str, Any]] = None
+    md_dump = getattr(state.metadata, "model_dump", None)
+    if callable(md_dump):
+        try:
+            metadata = md_dump()
+        except Exception:
+            metadata = None
+    if metadata is None:
+        try:
+            metadata = dict(state.metadata)  # type: ignore[arg-type]
+        except Exception:
+            metadata = None
+
     return ThreadResponse(
         thread_id=thread_id,
+        user_id=(metadata.get("user_id") if metadata else None),
+        priority=(metadata.get("priority", 0) if metadata else 0),
+        tags=(metadata.get("tags", []) if metadata else []),
+        subject=(metadata.get("subject") if metadata else None),
         messages=[Message(**m) for m in messages] if messages else [],
-        action_items=[ai.model_dump() for ai in state.action_items],
-        metadata=state.metadata.model_dump(),
-        context=state.context,
+        context=getattr(state, "context", {}),
+        updates=[u.model_dump() for u in getattr(state, "updates", [])]
+        if getattr(state, "updates", None)
+        else [],
+        result=getattr(state, "result", None),
+        error_message=getattr(state, "error_message", None),
+        metadata=metadata,
     )
 
 
@@ -86,7 +122,7 @@ async def get_thread(thread_id: str) -> ThreadResponse:
 async def update_thread(thread_id: str, req: ThreadUpdateRequest) -> Dict[str, Any]:
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
-    state = await tm.get_thread_state(thread_id)
+    state = await tm.get_thread(thread_id)
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
 

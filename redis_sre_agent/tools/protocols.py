@@ -9,7 +9,7 @@ import weakref
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -29,6 +29,8 @@ class ToolCapability(Enum):
     REPOS = "repos"
     TRACES = "traces"
     DIAGNOSTICS = "diagnostics"  # For deep instance diagnostics (Redis INFO, key sampling, etc.)
+    KNOWLEDGE = "knowledge"  # Knowledge base search/ingest and fragment retrieval
+    UTILITIES = "utilities"  # Non-destructive utility functions (calc, date/time, http_head)
 
 
 # --------------------------- Optional provider Protocols ---------------------------
@@ -66,6 +68,47 @@ class DiagnosticsProviderProtocol(Protocol):
     async def replication_info(self) -> Dict[str, Any]: ...
     async def client_list(self, client_type: Optional[str] = None) -> Dict[str, Any]: ...
     async def system_hosts(self) -> List["SystemHost"]: ...
+
+
+@runtime_checkable
+class KnowledgeProviderProtocol(Protocol):
+    async def search(
+        self,
+        query: str,
+        category: Optional[str] = None,
+        limit: int = 10,
+        distance_threshold: Optional[float] = None,
+    ) -> Dict[str, Any]: ...
+    async def ingest(
+        self,
+        title: str,
+        content: str,
+        source: str,
+        category: str,
+        severity: Optional[str] = None,
+        product_labels: Optional[List[str]] = None,
+    ) -> Dict[str, Any]: ...
+    async def get_all_fragments(self, document_hash: str) -> Dict[str, Any]: ...
+    async def get_related_fragments(
+        self, document_hash: str, chunk_index: int, limit: int = 10
+    ) -> Dict[str, Any]: ...
+
+
+@runtime_checkable
+class UtilitiesProviderProtocol(Protocol):
+    async def calculator(self, expression: str) -> Dict[str, Any]: ...
+    async def date_math(
+        self,
+        operation: str,
+        date1: Optional[str] = None,
+        date2: Optional[str] = None,
+        amount: Optional[int] = None,
+        unit: Optional[str] = None,
+    ) -> Dict[str, Any]: ...
+    async def timezone_converter(
+        self, datetime_str: str, from_timezone: str, to_timezone: str
+    ) -> Dict[str, Any]: ...
+    async def http_head(self, url: str, timeout: Optional[float] = 2.0) -> Dict[str, Any]: ...
 
 
 # --------------------------- Lightweight data classes ---------------------------

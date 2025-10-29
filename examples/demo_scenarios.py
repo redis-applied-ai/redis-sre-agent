@@ -13,19 +13,21 @@ from typing import Optional
 
 import httpx
 import redis
+from docket import Docket
 
+from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.instances import (
     RedisInstance,
     RedisInstanceType,
-    get_instances_from_redis,
-    save_instances_to_redis,
+    get_instances,
+    save_instances,
 )
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.tasks import TaskManager, create_task
-from redis_sre_agent.core.threads import ThreadStatus
+from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 
 DEMO_PORT = 7844
 DEFAULT_REDIS_ENTERPRISE_NAME = "Redis Enterprise Demo"
+DEFAULT_OSS_REDIS_NAME = "Open-Source Redis Demo"
 
 # TODO: Suppress Pydantic protected namespace warning from dependencies
 warnings.filterwarnings(
@@ -247,7 +249,7 @@ class RedisSREDemo:
             agent_url = "redis://redis-demo:6379/0"
 
             # Get existing instances
-            instances = await get_instances_from_redis()
+            instances = await get_instances()
 
             demo_instance_name = "Demo Redis (Scenarios)"
             target = None
@@ -317,7 +319,7 @@ class RedisSREDemo:
                 except Exception:
                     pass
 
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Updated demo instance registration (redis-demo:6379)")
             else:
                 from datetime import datetime
@@ -367,7 +369,7 @@ class RedisSREDemo:
                 except Exception:
                     pass
                 instances.append(demo_instance)
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Registered demo instance with agent (redis-demo:6379)")
 
         except Exception as e:
@@ -390,7 +392,7 @@ class RedisSREDemo:
         cluster/node/database status tools.
         """
         try:
-            instances = await get_instances_from_redis()
+            instances = await get_instances()
 
             # Look for existing by name or matching Enterprise admin URL
             existing = None
@@ -418,7 +420,7 @@ class RedisSREDemo:
                 existing.admin_username = admin_username
                 existing.admin_password = admin_password
                 # Persist
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Updated existing Redis Enterprise instance registration")
             else:
                 from datetime import datetime
@@ -443,7 +445,7 @@ class RedisSREDemo:
                     admin_password=admin_password,
                 )
                 instances.append(new_instance)
-                await save_instances_to_redis(instances)
+                await save_instances(instances)
                 print("✅ Registered Redis Enterprise instance with agent")
         except Exception as e:
             print(f"⚠️  Warning: Could not register Redis Enterprise instance: {e}")
@@ -2009,9 +2011,8 @@ class RedisSREDemo:
 
         # Consult the agent - let it gather its own diagnostics
         await self._run_diagnostics_and_agent_query(
-            f"The application team has reported performance issues with this Redis instance at {self.redis_url}. "
-            f"The instance is showing high memory utilization ({utilization:.1f}% of {maxmemory / (1024 * 1024):.1f} MB limit) "
-            f"with {keys_loaded:,} keys loaded. Please analyze the situation and provide immediate remediation steps."
+            "The application team has reported performance issues with this Redis instance."
+            "Please analyze the situation and provide immediate remediation steps."
         )
 
         # Cleanup and restore settings
@@ -3022,13 +3023,13 @@ class RedisSREDemo:
 
         try:
             print("   🤖 Creating task and streaming progress...")
-            rc = get_redis_client()
+            redis_client = get_redis_client()
 
             # Attempt to choose an instance automatically
             selected_instance_id = None
             selected_instance_name = None
             try:
-                instances = await get_instances_from_redis()
+                instances = await get_instances()
                 ql = query.lower()
 
                 def pick_enterprise_instance():
@@ -3102,24 +3103,35 @@ class RedisSREDemo:
                 )
 
             # Create a new task for this query; thread created automatically if needed
-            task_info = await create_task(message=query.strip(), context=context, redis_client=rc)
+            task_info = await create_task(
+                message=query.strip(), context=context, redis_client=redis_client
+            )
             task_id = task_info["task_id"]
             thread_id = task_info["thread_id"]
             print(f"   📌 Task ID: {task_id} | Thread ID: {thread_id}")
 
-            tm = TaskManager(redis_client=rc)
+            task_manager = TaskManager(redis_client=redis_client)
             last_seen = 0
             response_text = None
 
+            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+                task_func = docket.add(process_agent_turn)
+                await task_func(
+                    thread_id=thread_id,
+                    message=query.strip(),
+                    context=context,
+                    task_id=task_id,
+                )
+
             # Poll for updates until DONE/FAILED
             while True:
-                state = await tm.get_task_state(task_id)
+                state = await task_manager.get_task_state(task_id)
                 if state and state.updates:
                     for upd in state.updates[last_seen:]:
                         print(f"   • {upd.update_type}: {upd.message}")
                     last_seen = len(state.updates)
 
-                if state and state.status in (ThreadStatus.DONE, ThreadStatus.FAILED):
+                if state and state.status in (TaskStatus.DONE, TaskStatus.FAILED):
                     if state.result and isinstance(state.result, dict):
                         response_text = state.result.get("response") or state.result.get("message")
                     if state.error_message:

@@ -198,7 +198,7 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
         # Verify thread exists
         redis_client = get_redis_client()
         thread_manager = ThreadManager(redis_client=redis_client)
-        thread_state = await thread_manager.get_thread_state(thread_id)
+        thread_state = await thread_manager.get_thread(thread_id)
         if not thread_state:
             await websocket.send_text(
                 json.dumps({"error": "Thread not found", "thread_id": thread_id})

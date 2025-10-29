@@ -143,7 +143,7 @@ def thread_get(thread_id: str, as_json: bool):
 
         console = Console()
         tm = ThreadManager(redis_client=get_redis_client())
-        state = await tm.get_thread_state(thread_id)
+        state = await tm.get_thread(thread_id)
         if not state:
             if as_json:
                 print(_json.dumps({"error": "Thread not found", "thread_id": thread_id}))
@@ -216,7 +216,7 @@ def thread_sources(thread_id: str, task_id: str | None, as_json: bool):
         from redis_sre_agent.core.threads import ThreadManager
 
         tm = ThreadManager(redis_client=get_redis_client())
-        state = await tm.get_thread_state(thread_id)
+        state = await tm.get_thread(thread_id)
         if not state:
             payload = {"error": "Thread not found", "thread_id": thread_id}
             if as_json:

@@ -29,7 +29,6 @@ if _check_service_health is None:
 else:
     check_service_health = _check_service_health  # type: ignore
 from redis_sre_agent.core.redis import (
-    cleanup_redis_connections,
     create_indices,
 )
 
@@ -37,12 +36,6 @@ from redis_sre_agent.core.redis import (
 @pytest.mark.docket_integration
 class TestDocketSREIntegration:
     """Integration tests for Docket task system with SRE tasks and real Redis."""
-
-    @pytest.fixture(autouse=True)
-    def check_docket_integration_enabled(self):
-        """Skip if Docket integration tests are not enabled."""
-        if not os.environ.get("DOCKET_INTEGRATION_TESTS"):
-            pytest.skip("Docket integration tests not enabled. Set DOCKET_INTEGRATION_TESTS=true")
 
     @pytest.mark.asyncio
     async def test_docket_sre_task_registration(self, redis_container):
@@ -62,7 +55,7 @@ class TestDocketSREIntegration:
             assert True
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_health_check_task_real_execution(self, redis_container):
@@ -102,7 +95,7 @@ class TestDocketSREIntegration:
                 assert check["endpoint"] in endpoints
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_document_ingestion_task_real_execution(self, redis_container):
@@ -137,7 +130,7 @@ class TestDocketSREIntegration:
                 assert "task_id" in result
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_knowledge_search_task_real_execution(self, redis_container):
@@ -187,7 +180,7 @@ class TestDocketSREIntegration:
                     assert search_result["score"] == 0.85
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_concurrent_sre_task_execution(self, redis_container):
@@ -227,7 +220,7 @@ class TestDocketSREIntegration:
                 assert len(set(task_ids)) == 2  # All unique
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
     @pytest.mark.asyncio
     async def test_task_retry_behavior(self, redis_container):
@@ -261,18 +254,12 @@ class TestDocketSREIntegration:
                 assert call_count == 3  # Failed twice, succeeded on 3rd
 
         finally:
-            await cleanup_redis_connections()
+            pass
 
 
 @pytest.mark.docket_integration
 class TestDocketWorkerIntegration:
     """Test Docket worker integration with SRE tasks."""
-
-    @pytest.fixture(autouse=True)
-    def check_docket_integration_enabled(self):
-        """Skip if Docket integration tests are not enabled."""
-        if not os.environ.get("DOCKET_INTEGRATION_TESTS"):
-            pytest.skip("Docket integration tests not enabled")
 
     @pytest.mark.asyncio
     async def test_worker_startup_with_real_redis(self, redis_container):
@@ -335,12 +322,6 @@ class TestDocketWorkerIntegration:
 class TestDocketErrorHandling:
     """Test Docket error handling scenarios."""
 
-    @pytest.fixture(autouse=True)
-    def check_docket_integration_enabled(self):
-        """Skip if Docket integration tests are not enabled."""
-        if not os.environ.get("DOCKET_INTEGRATION_TESTS"):
-            pytest.skip("Docket integration tests not enabled")
-
     @pytest.mark.asyncio
     async def test_redis_connection_failure_handling(self):
         """Test handling of Redis connection failures."""
@@ -371,39 +352,4 @@ class TestDocketErrorHandling:
                     )
 
         finally:
-            await cleanup_redis_connections()
-
-
-# Helper function to run Docket integration tests
-def run_docket_integration_tests():
-    """Run Docket integration tests with proper environment setup."""
-    if not os.environ.get("DOCKET_INTEGRATION_TESTS"):
-        print("ℹ️  Set DOCKET_INTEGRATION_TESTS=true to run Docket integration tests.")
-        return
-
-    print("🚀 Running Docket SRE integration tests...")
-
-    # Set environment for tests
-    os.environ["INTEGRATION_TESTS"] = "true"
-    os.environ["DOCKET_INTEGRATION_TESTS"] = "true"
-
-    # Run the tests
-    import subprocess
-
-    result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "pytest",
-            "tests/integration/test_docket_sre_integration.py",
-            "-v",
-            "-m",
-            "docket_integration",
-        ]
-    )
-
-    return result.returncode == 0
-
-
-if __name__ == "__main__":
-    run_docket_integration_tests()
+            pass

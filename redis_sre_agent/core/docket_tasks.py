@@ -5,9 +5,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from docket import ConcurrencyLimit, Docket, Perpetual, Retry
+from langchain_core.messages import AIMessage, HumanMessage
 from ulid import ULID
 
+from redis_sre_agent.agent import get_sre_agent
+from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
+from redis_sre_agent.agent.langgraph_agent import (
+    _extract_instance_details_from_message,
+)
+from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.instances import create_instance
 from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
     search_knowledge_base_helper,
@@ -15,8 +23,8 @@ from redis_sre_agent.core.knowledge_helpers import (
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
-from redis_sre_agent.core.tasks import TaskManager
-from redis_sre_agent.core.threads import ThreadManager, ThreadStatus
+from redis_sre_agent.core.tasks import TaskManager, TaskStatus
+from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +69,10 @@ async def search_knowledge_base(
     """
     try:
         kwargs = {"query": query, "limit": limit}
+        if category is not None:
+            kwargs["category"] = category
         if distance_threshold is not None:
             kwargs["distance_threshold"] = distance_threshold
-        if category:
-            kwargs["category"] = category
         result = await search_knowledge_base_helper(**kwargs)
         # Ensure a task_id is present for callers/tests expecting it
         try:
@@ -332,21 +340,18 @@ async def process_agent_turn(
     try:
         logger.info(f"Processing agent turn for thread {thread_id}")
 
-        # Update thread status to in-progress
-        await thread_manager.update_thread_status(thread_id, ThreadStatus.IN_PROGRESS)
-
-        # Get current thread state
-        thread_state = await thread_manager.get_thread_state(thread_id)
+        # Get current thread
+        thread = await thread_manager.get_thread(thread_id)
 
         # Create or use a per-turn task record associated with this thread
         task_manager = TaskManager(redis_client=redis_client)
         if task_id is None:
             task_id = await task_manager.create_task(
-                thread_id=thread_id, user_id=thread_state.metadata.user_id if thread_state else None
+                thread_id=thread_id, user_id=thread.metadata.user_id if thread else None
             )
-        await task_manager.update_task_status(task_id, ThreadStatus.IN_PROGRESS)
+        await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
         await thread_manager.add_thread_update(thread_id, f"Started task {task_id}", "task_start")
-        if not thread_state:
+        if not thread:
             raise ValueError(f"Thread {thread_id} not found")
 
         # ============================================================================
@@ -360,7 +365,7 @@ async def process_agent_turn(
         # ============================================================================
 
         instance_id_from_client = context.get("instance_id") if context else None
-        instance_id_from_thread = thread_state.context.get("instance_id")
+        instance_id_from_thread = thread.context.get("instance_id")
 
         # Determine which instance_id to use
         active_instance_id = None
@@ -397,18 +402,13 @@ async def process_agent_turn(
             logger.info("No instance_id found, attempting to extract from user message")
 
             # Try to extract connection details from the message
-            from redis_sre_agent.agent.langgraph_agent import (
-                _extract_instance_details_from_message,
-            )
-            from redis_sre_agent.core.instances import create_instance_programmatically
-
             instance_details = _extract_instance_details_from_message(message)
 
             if instance_details:
                 # User provided connection details - create instance
                 try:
                     logger.info("Creating instance from user-provided connection details")
-                    new_instance = await create_instance_programmatically(
+                    new_instance = await create_instance(
                         name=instance_details["name"],
                         connection_url=instance_details["connection_url"],
                         environment=instance_details["environment"],
@@ -417,7 +417,7 @@ async def process_agent_turn(
                             "description", "Created by agent from user-provided details"
                         ),
                         created_by="agent",
-                        user_id=thread_state.metadata.user_id or "unknown",
+                        user_id=thread.metadata.user_id or "unknown",
                     )
 
                     active_instance_id = new_instance.id
@@ -442,11 +442,8 @@ async def process_agent_turn(
                     )
                     # Continue without instance_id - will route to knowledge agent
 
-        # Route to appropriate agent based on query and context
-        from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
-
         # Merge context for routing decision
-        routing_context = thread_state.context.copy()
+        routing_context = thread.context.copy()
         if context:
             routing_context.update(context)
 
@@ -454,7 +451,7 @@ async def process_agent_turn(
         if active_instance_id:
             routing_context["instance_id"] = active_instance_id
 
-        agent_type = route_to_appropriate_agent(
+        agent_type = await route_to_appropriate_agent(
             query=message,
             context=routing_context,
             user_preferences=None,  # Could be extended to include user preferences
@@ -464,28 +461,20 @@ async def process_agent_turn(
 
         # Import and initialize the appropriate agent
         if agent_type == AgentType.REDIS_FOCUSED:
-            from redis_sre_agent.agent import get_sre_agent
-
             agent = get_sre_agent()
-            use_knowledge_only = False
-        else:  # AgentType.KNOWLEDGE_ONLY
-            from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
-
+        else:
             agent = get_knowledge_agent()
-            use_knowledge_only = True
 
         # Prepare the conversation state with thread context
-        messages = thread_state.context.get("messages", [])
-        logger.info(f"DEBUG: Loaded {len(messages)} messages from thread context")
+        messages = thread.context.get("messages", [])
+        logger.debug(f"Loaded {len(messages)} messages from thread context")
 
         conversation_state = {
             "messages": messages,
             "thread_id": thread_id,
         }
 
-        logger.info(
-            f"DEBUG: conversation_state messages type: {type(conversation_state['messages'])}"
-        )
+        logger.debug(f"conversation_state messages type: {type(conversation_state['messages'])}")
 
         # Add the new user message
         conversation_state["messages"].append(
@@ -515,15 +504,13 @@ async def process_agent_turn(
                 pass
 
         # Run the appropriate agent
-        if use_knowledge_only:
+        if agent_type == AgentType.KNOWLEDGE_ONLY:
             # Use knowledge-only agent with simpler interface
             await thread_manager.add_thread_update(
                 thread_id, "Processing query with knowledge-only agent", "agent_processing"
             )
 
             # Convert conversation history to LangChain messages for knowledge agent
-            from langchain_core.messages import AIMessage, HumanMessage
-
             lc_history = []
             for msg in conversation_state["messages"][:-1]:  # Exclude the latest message
                 if msg["role"] == "user":
@@ -533,8 +520,8 @@ async def process_agent_turn(
 
             response_text = await agent.process_query_with_fact_check(
                 query=message,
-                user_id=thread_state.metadata.user_id or "unknown",
-                session_id=thread_state.metadata.session_id or thread_id,
+                user_id=thread.metadata.user_id or "unknown",
+                session_id=thread.metadata.session_id or thread_id,
                 max_iterations=settings.max_iterations,
                 context=None,
                 progress_callback=progress_callback,
@@ -544,12 +531,11 @@ async def process_agent_turn(
             agent_response = {
                 "response": response_text,
                 "metadata": {"agent_type": "knowledge_only"},
-                "action_items": [],
             }
         else:
             # Use Redis-focused agent with full conversation state
             agent_response = await run_agent_with_progress(
-                agent, conversation_state, progress_callback, thread_state
+                agent, conversation_state, progress_callback, thread
             )
 
         # Add agent response to conversation
@@ -570,51 +556,27 @@ async def process_agent_turn(
             for msg in conversation_state["messages"]
             if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
         ]
-        thread_state.context["messages"] = clean_messages
-        thread_state.context["last_updated"] = datetime.now(timezone.utc).isoformat()
+        thread.context["messages"] = clean_messages
+        thread.context["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         # Save the updated context to Redis
-        await thread_manager._save_thread_state(thread_state)
+        await thread_manager._save_thread_state(thread)
         logger.info(
             f"Saved conversation history: {len(clean_messages)} user/assistant messages (filtered from {len(conversation_state['messages'])} total)"
         )
 
-        # Extract action items if present
-        action_items = agent_response.get("action_items", [])
-        if action_items:
-            from redis_sre_agent.core.threads import ThreadActionItem
-
-            action_item_objects = [
-                (
-                    ThreadActionItem(**item)
-                    if isinstance(item, dict)
-                    else ThreadActionItem(title=str(item), description="", category="general")
-                )
-                for item in action_items
-            ]
-            await thread_manager.add_action_items(thread_id, action_item_objects)
-
         # Set the final result
         result = {
             "response": agent_response.get("response", ""),
-            "action_items": action_items,
             "metadata": agent_response.get("metadata", {}),
             "thread_id": thread_id,
             "task_id": task_id,
             "turn_completed_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        # Set per-task result and mark task done (best-effort)
-        try:
-            await task_manager.set_task_result(task_id, result)
-            await task_manager.update_task_status(task_id, ThreadStatus.DONE)
-        except Exception:
-            pass
-
+        await task_manager.set_task_result(task_id, result)
+        await task_manager.update_task_status(task_id, TaskStatus.DONE)
         await thread_manager.set_thread_result(thread_id, result)
-
-        # Mark thread as done
-        await thread_manager.update_thread_status(thread_id, ThreadStatus.DONE)
         await thread_manager.add_thread_update(
             thread_id, f"Task {task_id} completed successfully", "turn_complete"
         )
@@ -631,10 +593,7 @@ async def process_agent_turn(
         # Update thread with error
         await thread_manager.set_thread_error(thread_id, error_message)
         await thread_manager.add_thread_update(thread_id, f"Error: {error_message}", "error")
-        try:
-            await task_manager.set_task_error(task_id, error_message)
-        except Exception:
-            pass
+        await task_manager.set_task_error(task_id, error_message)
 
         raise
 
@@ -727,9 +686,6 @@ async def run_agent_with_progress(
         # The response is already the final agent response
         agent_response = response
 
-        # Try to extract action items from response content
-        action_items = extract_action_items_from_response(agent_response)
-
         return {
             "response": agent_response,
             "metadata": {
@@ -737,108 +693,11 @@ async def run_agent_with_progress(
                 "tool_calls": 0,  # Placeholder - could be enhanced to track tool calls
                 "session_id": thread_id,
             },
-            "action_items": action_items,
         }
 
     except Exception as e:
         await progress_callback(f"Agent error: {str(e)}", "error")
         raise
-
-
-def extract_action_items_from_response(response_content: str) -> List[Dict[str, Any]]:
-    """
-    Extract action items from agent response content.
-
-    This is a simple implementation that looks for common action item patterns.
-    """
-    action_items = []
-
-    # Look for common action item patterns
-    import re
-
-    # Pattern 1: "Action Items:" or "Recommendations:" sections
-    action_patterns = [
-        r"action items?:?\s*\n(.*?)(?:\n\n|\n[A-Z]|\Z)",
-        r"recommendations?:?\s*\n(.*?)(?:\n\n|\n[A-Z]|\Z)",
-        r"next steps?:?\s*\n(.*?)(?:\n\n|\n[A-Z]|\Z)",
-        r"todo:?\s*\n(.*?)(?:\n\n|\n[A-Z]|\Z)",
-    ]
-
-    for pattern in action_patterns:
-        matches = re.finditer(pattern, response_content, re.IGNORECASE | re.DOTALL)
-        for match in matches:
-            action_text = match.group(1).strip()
-
-            # Split by lines and extract individual items
-            lines = [line.strip() for line in action_text.split("\n") if line.strip()]
-            for line in lines:
-                # Remove bullet points and numbering
-                clean_line = re.sub(r"^[\d\.\-\*\+]\s*", "", line).strip()
-                if clean_line and len(clean_line) > 10:  # Ignore very short items
-                    action_items.append(
-                        {
-                            "title": clean_line[:100],  # Truncate long titles
-                            "description": clean_line,
-                            "priority": "medium",
-                            "category": "general",
-                        }
-                    )
-
-    return action_items[:5]  # Limit to 5 action items
-
-
-async def validate_url(url: str, timeout: float = 3.0) -> Dict[str, Any]:
-    """Validate that a URL is reachable.
-
-    Performs a lightweight HTTP request and returns validity with minimal metadata.
-
-    Args:
-        url: URL to validate
-        timeout: Total timeout in seconds
-
-    Returns:
-        Dict with keys: url, valid (bool), status_code (int|None), final_url (str|None), error (str|None)
-    """
-    import aiohttp
-
-    result: Dict[str, Any] = {
-        "url": url,
-        "valid": False,
-        "status_code": None,
-        "final_url": None,
-        "error": None,
-    }
-
-    try:
-        client_timeout = aiohttp.ClientTimeout(total=timeout)
-        headers = {"User-Agent": "redis-sre-agent/1.0"}
-        async with aiohttp.ClientSession(timeout=client_timeout, headers=headers) as session:
-            # Try a HEAD first for speed; if not allowed, fall back to GET
-            try:
-                async with session.head(url, allow_redirects=True) as resp:
-                    result["status_code"] = resp.status
-                    result["final_url"] = str(resp.url)
-                    result["valid"] = resp.status < 400
-                    return result
-            except aiohttp.ClientResponseError as cre:
-                # 405 Method Not Allowed or similar -> fall back to GET
-                if cre.status and cre.status >= 400 and cre.status != 405:
-                    result["status_code"] = cre.status
-                    result["error"] = str(cre)
-                    return result
-            except Exception:
-                # Fall back to GET on any HEAD error
-                pass
-
-            # Fallback to GET
-            async with session.get(url, allow_redirects=True) as resp:
-                result["status_code"] = resp.status
-                result["final_url"] = str(resp.url)
-                result["valid"] = resp.status < 400
-                return result
-    except Exception as e:
-        result["error"] = str(e)
-        return result
 
 
 async def test_task_system() -> bool:

@@ -8,6 +8,7 @@ knowledge index and exercise the CLI commands:
 
 import asyncio
 import json
+from array import array
 from typing import Dict, List
 
 import pytest
@@ -28,6 +29,7 @@ def test_knowledge_fragments_cli_lists_all_chunks(redis_container):
     # Prepare sample fragments directly in the knowledge index (no OpenAI calls)
     async def _prepare() -> Dict[str, str]:
         index = await get_knowledge_index()
+        vec = array("f", [0.0] * settings.vector_dim).tobytes()
 
         doc_hash = "dochash-abc123"
         chunks: List[Dict] = [
@@ -42,7 +44,7 @@ def test_knowledge_fragments_cli_lists_all_chunks(redis_container):
                 "chunk_index": 0,
                 "total_chunks": 2,
                 # flat/cosine/float32 of configured dimension
-                "vector": [0.0] * settings.vector_dim,
+                "vector": vec,
             },
             {
                 "id": "frag-2",
@@ -54,7 +56,7 @@ def test_knowledge_fragments_cli_lists_all_chunks(redis_container):
                 "document_hash": doc_hash,
                 "chunk_index": 1,
                 "total_chunks": 2,
-                "vector": [0.0] * settings.vector_dim,
+                "vector": vec,
             },
         ]
 
@@ -90,6 +92,8 @@ def test_knowledge_related_cli_returns_context_window(redis_container):
     async def _prepare() -> Dict[str, str]:
         index = await get_knowledge_index()
         doc_hash = "dochash-xyz789"
+        vec = array("f", [0.0] * settings.vector_dim).tobytes()
+
         chunks: List[Dict] = [
             {
                 "id": "rfrag-0",
@@ -101,7 +105,7 @@ def test_knowledge_related_cli_returns_context_window(redis_container):
                 "document_hash": doc_hash,
                 "chunk_index": 0,
                 "total_chunks": 3,
-                "vector": [0.0] * settings.vector_dim,
+                "vector": vec,
             },
             {
                 "id": "rfrag-1",
@@ -113,7 +117,7 @@ def test_knowledge_related_cli_returns_context_window(redis_container):
                 "document_hash": doc_hash,
                 "chunk_index": 1,
                 "total_chunks": 3,
-                "vector": [0.0] * settings.vector_dim,
+                "vector": vec,
             },
             {
                 "id": "rfrag-2",
@@ -125,7 +129,7 @@ def test_knowledge_related_cli_returns_context_window(redis_container):
                 "document_hash": doc_hash,
                 "chunk_index": 2,
                 "total_chunks": 3,
-                "vector": [0.0] * settings.vector_dim,
+                "vector": vec,
             },
         ]
         keys = [RedisKeys.knowledge_document(c["id"]) for c in chunks]
