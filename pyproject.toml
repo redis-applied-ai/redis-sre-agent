@@ -84,6 +84,8 @@ dev-dependencies = [
     "bandit>=1.7.0",
     # OpenAPI client generator
     "openapi-python-client>=0.21.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.22",
 ]
 
 [tool.pytest.ini_options]

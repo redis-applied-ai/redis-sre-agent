@@ -85,3 +85,8 @@ docker compose down
 - Production Quickstart: docs/quickstarts/production.md
 - Experimental UI details: docs/ui/experimental.md
 - Knowledge ingestion (optional): `uv run redis-sre-agent pipeline prepare_sources` then `uv run redis-sre-agent pipeline ingest`
+
+### See also
+- Configuration: how-to/configuration.md
+- Tool Providers: how-to/tool-providers.md
+- Advanced Encryption: how-to/configuration/encryption.md

@@ -1,0 +1,63 @@
+site_name: Redis SRE Agent
+site_description: Production-ready Redis SRE agent with LangGraph, FastAPI, and monitoring.
+repo_url: https://github.com/redis-applied-ai/redis-sre-agent
+repo_name: redis-applied-ai/redis-sre-agent
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - toc.integrate
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: red
+      accent: deep-orange
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Quickstarts:
+      - Local: quickstarts/local.md
+      - Minimal Production: quickstarts/production.md
+  - How-to:
+      - Configuration: how-to/configuration.md
+      - Tool Providers: how-to/tool-providers.md
+      - Configuration (Advanced):
+          - Encryption: how-to/configuration/encryption.md
+  - UI:
+      - Experimental: ui/experimental.md
+
+# Future sections (add as pages are created):
+# - Concepts:
+#     - Overview: concepts/core.md
+# - How-to:
+#     - Local development & testing: how-to/local-dev.md
+#     - Configuration: how-to/configuration.md
+#     - CLI: how-to/cli.md
+#     - API: how-to/api.md
+#     - Pipelines & ingestion: how-to/pipelines.md
+# - Operations:
+#     - Observability & Health: operations/observability.md
+#     - Troubleshooting: operations/troubleshooting.md
+# - Reference:
+#     - Configuration: reference/configuration.md
+#     - Metrics: reference/metrics.md
+#     - CLI Reference: reference/cli.md
+#     - REST API: reference/api.md
+# - Examples:
+#     - End-to-end triage: examples/demo-triage.md
