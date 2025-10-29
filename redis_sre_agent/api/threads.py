@@ -83,11 +83,38 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     state = await tm.get_thread(thread_id)
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
+
+    # Extract messages from context if present
     messages = state.context.get("messages", [])
+
+    # Build metadata dict compatible with UI expectations, robust to mocks
+    metadata: Optional[Dict[str, Any]] = None
+    md_dump = getattr(state.metadata, "model_dump", None)
+    if callable(md_dump):
+        try:
+            metadata = md_dump()
+        except Exception:
+            metadata = None
+    if metadata is None:
+        try:
+            metadata = dict(state.metadata)  # type: ignore[arg-type]
+        except Exception:
+            metadata = None
+
     return ThreadResponse(
         thread_id=thread_id,
+        user_id=(metadata.get("user_id") if metadata else None),
+        priority=(metadata.get("priority", 0) if metadata else 0),
+        tags=(metadata.get("tags", []) if metadata else []),
+        subject=(metadata.get("subject") if metadata else None),
         messages=[Message(**m) for m in messages] if messages else [],
-        context=state.context,
+        context=getattr(state, "context", {}),
+        updates=[u.model_dump() for u in getattr(state, "updates", [])]
+        if getattr(state, "updates", None)
+        else [],
+        result=getattr(state, "result", None),
+        error_message=getattr(state, "error_message", None),
+        metadata=metadata,
     )
 
 
