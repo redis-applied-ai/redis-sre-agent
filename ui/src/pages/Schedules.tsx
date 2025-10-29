@@ -8,6 +8,7 @@ import {
   Loader,
   ErrorMessage,
 } from '@radar/ui-kit';
+import sreAgentApi from '../services/sreAgentApi';
 
 interface Schedule {
   id: string;
@@ -62,29 +63,41 @@ const Schedules = () => {
   const loadData = async () => {
     try {
       setError(null);
-      const [schedulesResponse, instancesResponse] = await Promise.all([
-        fetch('/api/v1/schedules/'),
-        fetch('/api/v1/instances')
+      const schedulesPromise = fetch('/api/v1/schedules/');
+      const instancesPromise = sreAgentApi.listInstances();
+
+      const [schedulesRes, instancesRes] = await Promise.allSettled([
+        schedulesPromise,
+        instancesPromise,
       ]);
 
-      if (!schedulesResponse.ok) {
+      if (schedulesRes.status !== 'fulfilled' || !schedulesRes.value.ok) {
         throw new Error('Failed to load schedules');
       }
-      if (!instancesResponse.ok) {
-        throw new Error('Failed to load instances');
-      }
 
-      const schedulesData = await schedulesResponse.json();
-      const instancesData = await instancesResponse.json();
-
+      const schedulesData = await schedulesRes.value.json();
       setSchedules(schedulesData);
-      setInstances(instancesData);
+
+      if (instancesRes.status === 'fulfilled') {
+        // Map API instances to minimal shape used by this page
+        const mapped = instancesRes.value.map((i: any) => ({
+          id: i.id,
+          name: i.name,
+          connection_url: i.connection_url,
+          environment: i.environment,
+          usage: i.usage,
+        }));
+        setInstances(mapped);
+      } else {
+        setInstances([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
       setIsLoading(false);
     }
   };
+
 
   const handleCreateSchedule = async (formData: FormData) => {
     try {
@@ -438,12 +451,17 @@ const Schedules = () => {
                     className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                   >
                     <option value="">Any/Knowledge-only queries</option>
-                    {instances.map((instance) => (
+                    {instances.length === 0 ? null : instances.map((instance) => (
                       <option key={instance.id} value={instance.id}>
                         {instance.name} ({instance.environment})
                       </option>
                     ))}
                   </select>
+                  {instances.length === 0 && (
+                    <div className="text-redis-xs text-muted-foreground mt-1">
+                      No Redis instances found. Create one on the Instances page and come back.
+                    </div>
+                  )}
                   <p className="text-redis-xs text-muted-foreground mt-1">
                     Leave empty to allow knowledge-only queries without a specific Redis instance
                   </p>
@@ -577,12 +595,17 @@ const Schedules = () => {
                     className="w-full px-3 py-2 border border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                   >
                     <option value="">Any/Knowledge-only queries</option>
-                    {instances.map((instance) => (
+                    {instances.length === 0 ? null : instances.map((instance) => (
                       <option key={instance.id} value={instance.id}>
                         {instance.name} ({instance.environment})
                       </option>
                     ))}
                   </select>
+                  {instances.length === 0 && (
+                    <div className="text-redis-xs text-muted-foreground mt-1">
+                      No Redis instances found. Create one on the Instances page and come back.
+                    </div>
+                  )}
                 </div>
 
                 <div>

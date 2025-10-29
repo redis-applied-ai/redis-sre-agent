@@ -341,7 +341,7 @@ Subject:"""
             }
             threads.append(summary)
 
-            return threads
+        return threads
 
     async def get_thread(self, thread_id: str) -> Optional[Thread]:
         """Retrieve complete thread state."""

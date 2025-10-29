@@ -69,10 +69,10 @@ async def search_knowledge_base(
     """
     try:
         kwargs = {"query": query, "limit": limit}
+        if category is not None:
+            kwargs["category"] = category
         if distance_threshold is not None:
             kwargs["distance_threshold"] = distance_threshold
-        if category:
-            kwargs["category"] = category
         result = await search_knowledge_base_helper(**kwargs)
         # Ensure a task_id is present for callers/tests expecting it
         try:

@@ -13,7 +13,9 @@ from typing import Optional
 
 import httpx
 import redis
+from docket import Docket
 
+from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.instances import (
     RedisInstance,
     RedisInstanceType,
@@ -3021,7 +3023,7 @@ class RedisSREDemo:
 
         try:
             print("   🤖 Creating task and streaming progress...")
-            rc = get_redis_client()
+            redis_client = get_redis_client()
 
             # Attempt to choose an instance automatically
             selected_instance_id = None
@@ -3101,18 +3103,29 @@ class RedisSREDemo:
                 )
 
             # Create a new task for this query; thread created automatically if needed
-            task_info = await create_task(message=query.strip(), context=context, redis_client=rc)
+            task_info = await create_task(
+                message=query.strip(), context=context, redis_client=redis_client
+            )
             task_id = task_info["task_id"]
             thread_id = task_info["thread_id"]
             print(f"   📌 Task ID: {task_id} | Thread ID: {thread_id}")
 
-            tm = TaskManager(redis_client=rc)
+            task_manager = TaskManager(redis_client=redis_client)
             last_seen = 0
             response_text = None
 
+            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+                task_func = docket.add(process_agent_turn)
+                await task_func(
+                    thread_id=thread_id,
+                    message=query.strip(),
+                    context=context,
+                    task_id=task_id,
+                )
+
             # Poll for updates until DONE/FAILED
             while True:
-                state = await tm.get_task_state(task_id)
+                state = await task_manager.get_task_state(task_id)
                 if state and state.updates:
                     for upd in state.updates[last_seen:]:
                         print(f"   • {upd.update_type}: {upd.message}")

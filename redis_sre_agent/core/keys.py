@@ -95,20 +95,6 @@ class RedisKeys:
         return "sre_knowledge:documents"
 
     # ============================================================================
-    # Instance-related keys
-    # ============================================================================
-
-    @staticmethod
-    def instances_set() -> str:
-        """Key for the set of all instance IDs."""
-        return "sre:instances"
-
-    @staticmethod
-    def instance(instance_id: str) -> str:
-        """Key for a specific Redis instance configuration."""
-        return f"sre:instance:{instance_id}"
-
-    # ============================================================================
     # Task result keys
     # ============================================================================
 

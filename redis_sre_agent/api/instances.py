@@ -434,6 +434,12 @@ async def delete_instance(instance_id: str):
         if not await core_instances.save_instances(instances):
             raise HTTPException(status_code=500, detail="Failed to save after deletion")
 
+        # Best-effort: remove search index document for this instance
+        try:
+            await core_instances.delete_instance_index_doc(instance_id)
+        except Exception:
+            pass
+
         logger.info(f"Deleted Redis instance: {instance_id}")
         return {"message": f"Instance {instance_id} deleted successfully"}
 

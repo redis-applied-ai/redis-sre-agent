@@ -56,22 +56,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "type": "string",
                             "description": "Search query describing what you're looking for",
                         },
-                        "category": {
-                            "type": "string",
-                            "description": (
-                                "Optional category filter (incident, runbook, monitoring, "
-                                "redis_commands, redis_config, etc.)"
-                            ),
-                            "enum": [
-                                "incident",
-                                "runbook",
-                                "monitoring",
-                                "redis_commands",
-                                "redis_config",
-                                "troubleshooting",
-                                "best_practices",
-                            ],
-                        },
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of results to return (default: 10)",
@@ -239,11 +223,10 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Search results with relevant knowledge base content
         """
         logger.info(
-            f"Knowledge base search: {query} (category={category}, limit={limit}, distance_threshold={distance_threshold})"
+            f"Knowledge base search: {query} (limit={limit}, distance_threshold={distance_threshold})"
         )
         kwargs = {
             "query": query,
-            "category": category,
             "limit": limit,
             "distance_threshold": distance_threshold,
         }

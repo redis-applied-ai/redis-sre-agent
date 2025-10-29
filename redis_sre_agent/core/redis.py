@@ -21,6 +21,9 @@ SRE_SCHEDULES_INDEX = "sre_schedules"
 SRE_THREADS_INDEX = "sre_threads"
 # Tasks index
 SRE_TASKS_INDEX = "sre_tasks"
+# Instances index
+SRE_INSTANCES_INDEX = "sre_instances"
+
 
 # Schema definitions
 SRE_KNOWLEDGE_SCHEMA = {
@@ -173,6 +176,24 @@ SRE_TASKS_SCHEMA = {
     ],
 }
 
+SRE_INSTANCES_SCHEMA = {
+    "index": {
+        "name": SRE_INSTANCES_INDEX,
+        "prefix": f"{SRE_INSTANCES_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "name", "type": "text"},
+        {"name": "environment", "type": "tag"},
+        {"name": "usage", "type": "tag"},
+        {"name": "instance_type", "type": "tag"},
+        {"name": "user_id", "type": "tag"},
+        {"name": "status", "type": "tag"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "updated_at", "type": "numeric"},
+    ],
+}
+
 
 def get_redis_client(url: Optional[str] = None) -> Redis:
     """Get Redis client (creates fresh client to avoid event loop issues)."""
@@ -240,6 +261,22 @@ async def get_tasks_index() -> AsyncSearchIndex:
 
     redis_client = Redis.from_url(redis_url, decode_responses=False)
     schema = IndexSchema.from_dict(SRE_TASKS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
+async def get_instances_index() -> AsyncSearchIndex:
+    """Get SRE instances index (async)."""
+    from redisvl.schema import IndexSchema
+
+    # Build Redis URL with password if needed
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_INSTANCES_SCHEMA)
     index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
     return index
 
@@ -353,6 +390,15 @@ async def create_indices() -> bool:
             logger.info(f"Created tasks index: {SRE_TASKS_INDEX}")
         else:
             logger.info(f"Tasks index already exists: {SRE_TASKS_INDEX}")
+
+        # Create instances index
+        instances_index = await get_instances_index()
+        instances_exists = await instances_index.exists()
+        if not instances_exists:
+            await instances_index.create()
+            logger.info(f"Created instances index: {SRE_INSTANCES_INDEX}")
+        else:
+            logger.info(f"Instances index already exists: {SRE_INSTANCES_INDEX}")
 
         return True
     except Exception as e:

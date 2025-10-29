@@ -423,13 +423,15 @@ class TestRedisStorageHelpers:
             patch.dict(os.environ, {"REDIS_SRE_MASTER_KEY": test_key}),
         ):
             mock_redis = AsyncMock()
-            mock_redis.set = AsyncMock(return_value=True)
+            mock_redis.hset = AsyncMock(return_value=True)
+            mock_redis.scan = AsyncMock(return_value=(0, []))
             mock_client.return_value = mock_redis
 
             result = await save_instances([instance])
 
             assert result is True
-            mock_redis.set.assert_called_once()
+            # Should upsert per-instance hash doc
+            mock_redis.hset.assert_called()
 
     @pytest.mark.asyncio
     async def test_save_instances_to_redis_error(self):
@@ -457,7 +459,8 @@ class TestRedisStorageHelpers:
             patch.dict(os.environ, {"REDIS_SRE_MASTER_KEY": test_key}),
         ):
             mock_redis = AsyncMock()
-            mock_redis.set = AsyncMock(side_effect=Exception("Redis error"))
+            mock_redis.hset = AsyncMock(side_effect=Exception("Redis error"))
+            mock_redis.scan = AsyncMock(return_value=(0, []))
             mock_client.return_value = mock_redis
 
             result = await save_instances([instance])

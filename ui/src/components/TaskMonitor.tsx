@@ -82,7 +82,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
 
   const fetchThreadAndUpdate = async () => {
     try {
-      const response = await fetch(`/api/v1/tasks/${threadId}`);
+      const response = await fetch(`/api/v1/threads/${threadId}`);
       if (!response.ok) {
         console.error('Failed to load thread:', response.status, response.statusText);
         setIsThinking(false);
@@ -92,15 +92,21 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
       const chatMessages = mapThreadToMessages(threadData);
       setMessages(chatMessages);
 
-      // Update status and thinking
-      setCurrentStatus(threadData.status);
-      onStatusChange?.(threadData.status);
-      const inProgress = ['queued', 'in_progress', 'running'].includes(threadData.status);
+      // Derive a status from thread data
+      const derivedStatus = threadData?.error_message
+        ? 'failed'
+        : threadData?.result
+        ? 'completed'
+        : 'in_progress';
+
+      setCurrentStatus(derivedStatus);
+      onStatusChange?.(derivedStatus);
+      const inProgress = ['queued', 'in_progress', 'running'].includes(derivedStatus);
       setIsThinking(inProgress);
 
       // If complete, notify parent and disconnect
-      if (['done', 'completed', 'failed', 'cancelled'].includes(threadData.status)) {
-        onCompleted?.({ status: threadData.status, response: threadData?.result?.response });
+      if (['done', 'completed', 'failed', 'cancelled'].includes(derivedStatus)) {
+        onCompleted?.({ status: derivedStatus, response: threadData?.result?.response });
         disconnect();
       }
     } catch (error) {
@@ -149,6 +155,10 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
     }
   }, [initialQuery]);
 
+  // Track the active connection instance to ignore Strict Mode double-invoke events
+  const currentConnIdRef = useRef(0);
+  const nextConnIdRef = useRef(1);
+
   const connectWebSocket = () => {
     // Close existing connection if any
     if (wsRef.current) {
@@ -173,10 +183,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
       };
 
       const wsUrl = getWebSocketUrl();
+      const myConnId = nextConnIdRef.current++;
+      currentConnIdRef.current = myConnId;
       console.log('Connecting to WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.log('WebSocket connected');
         setIsConnected(true);
         setConnectionError(null);
@@ -193,6 +206,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
       };
 
       ws.onmessage = (event) => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'pong') return;
@@ -204,9 +218,11 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
       };
 
       ws.onclose = (event) => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.log('WebSocket closed:', event.code, event.reason);
         setIsConnected(false);
-        if (!isIntentionalCloseRef.current && event.code !== 1000) {
+        // Do not reconnect if intentional, normal close, or thread not found (4004)
+        if (!isIntentionalCloseRef.current && event.code !== 1000 && event.code !== 4004) {
           setConnectionError('Connection lost. Attempting to reconnect...');
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
@@ -217,7 +233,9 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
       };
 
       ws.onerror = (error) => {
+        if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.error('WebSocket error:', error);
+        // Let onclose decide about reconnects; just surface a message
         setConnectionError('Connection error. Please refresh the page.');
       };
 
@@ -374,9 +392,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
   };
 
   useEffect(() => {
+    // Connect WS for this thread; React Strict Mode may double-invoke effects in dev
     connectWebSocket();
 
     return () => {
+      // Mark as intentional to prevent reconnection from stale socket events
+      isIntentionalCloseRef.current = true;
       disconnect();
     };
   }, [threadId]);

@@ -162,64 +162,24 @@ const Triage = () => {
 
   const loadThreads = async () => {
     try {
-      // Load all tasks (including scheduled/automated ones) by passing null for user_id
-      const taskList = await sreAgentApi.listTasks(null, undefined, 50);
-      const threadList: ChatThread[] = taskList
-        .filter(task => task.status !== 'cancelled') // Filter out cancelled/deleted threads
-        .map(task => {
-          // Check if this is a scheduled/automated task
-          const isScheduled = task.metadata.user_id === 'scheduler' ||
-                             (task.metadata.tags && task.metadata.tags.includes('scheduled'));
+      // Prefer native threads listing; gracefully handle backends without it
+      const summaries = await sreAgentApi.listThreads(undefined, 50, 0);
 
-          // Try to get a meaningful name from various sources
-          let threadName = 'Untitled';
-
-          // For scheduled tasks, prioritize schedule name and context
-          if (isScheduled) {
-            // First try schedule name from context
-            if (task.context?.schedule_name) {
-              threadName = task.context.schedule_name;
-            }
-            // Then try original query from context
-            else if (task.context?.original_query) {
-              threadName = task.context.original_query.substring(0, 50) + (task.context.original_query.length > 50 ? '...' : '');
-            }
-            // Then try subject from metadata
-            else if (task.metadata.subject && task.metadata.subject.trim() && task.metadata.subject !== 'Untitled') {
-              threadName = task.metadata.subject;
-            }
-          } else {
-            // For manual tasks, prioritize subject first
-            if (task.metadata.subject && task.metadata.subject.trim() && task.metadata.subject !== 'Untitled') {
-              threadName = task.metadata.subject;
-            }
-            // If no subject, try to get from original query in context
-            else if (task.context?.original_query) {
-              threadName = task.context.original_query.substring(0, 50) + (task.context.original_query.length > 50 ? '...' : '');
-            }
-            // If no original query, try to get from the first user message in updates
-            else if (task.updates.length > 0) {
-              const firstUserUpdate = task.updates.find(update => update.update_type === 'user_message' || update.update_type === 'query');
-              if (firstUserUpdate && firstUserUpdate.message) {
-                threadName = firstUserUpdate.message.substring(0, 50) + (firstUserUpdate.message.length > 50 ? '...' : '');
-              }
-            }
-          }
-
-          return {
-            id: task.thread_id,
-            name: threadName,
-            subject: threadName,
-            lastMessage: task.updates.length > 0 ? task.updates[0].message : 'No updates',
-            timestamp: task.metadata.updated_at,
-            messageCount: task.updates.length,
-            status: task.status,
-            isScheduled: isScheduled,
-            instanceId: task.context?.instance_id,
-            // Only set instanceName when provided; do not default to General Q&A here
-            instanceName: task.context?.instance_name,
-          };
-        });
+      const threadList: ChatThread[] = summaries.map((t) => {
+        const subject = t.subject && t.subject.trim() ? t.subject : 'Untitled';
+        return {
+          id: t.thread_id,
+          name: subject,
+          subject,
+          lastMessage: t.latest_message || 'No updates',
+          timestamp: t.updated_at || t.created_at,
+          messageCount: 0,
+          status: 'unknown', // precise status derived when the thread is loaded in the monitor
+          isScheduled: false, // can be refined from tags/user_id when backend provides it
+          instanceId: t.instance_id,
+          instanceName: undefined,
+        };
+      });
 
       setThreads(threadList);
     } catch (err) {

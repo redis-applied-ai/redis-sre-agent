@@ -6,7 +6,7 @@ This API is separate from the legacy combined Tasks/Threads endpoints.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -24,6 +24,24 @@ from redis_sre_agent.core.threads import delete_thread as delete_thread_model
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/threads")
+async def list_threads(
+    user_id: Optional[str] = None, limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
+    """List threads with optional filtering.
+
+    Returns lightweight summaries from the threads search index.
+    """
+    try:
+        rc = get_redis_client()
+        tm = ThreadManager(redis_client=rc)
+        summaries = await tm.list_threads(user_id=user_id, limit=limit, offset=offset)
+        return summaries
+    except Exception as e:
+        logger.error(f"Failed to list threads: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list threads")
 
 
 @router.post("/threads", response_model=ThreadResponse, status_code=status.HTTP_201_CREATED)

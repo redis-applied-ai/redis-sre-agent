@@ -33,10 +33,10 @@ async def _get_schedules(query: Optional[BaseQuery] = None) -> List[Dict]:
                 "next_run_at",
             ],
             filter_expression="*",  # Get all schedules
-            sort_by=("created_at", "DESC"),
-        )
+        ).sort_by("created_at", asc=False)
 
     # Execute the search
+    logger.info(f"Executing query: {query} ({query._query_string})")
     results = await index.query(query)
     schedules = []
 

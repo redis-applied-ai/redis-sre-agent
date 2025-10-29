@@ -434,6 +434,12 @@ def instances_delete(instance_id: str, yes: bool, as_json: bool):
             if not ok:
                 raise RuntimeError("Failed to save after deletion")
 
+            # Best-effort: remove search index document for this instance
+            try:
+                await core_instances.delete_instance_index_doc(instance_id)
+            except Exception:
+                pass
+
             payload = {"id": instance_id, "status": "deleted"}
             if as_json:
                 print(_json.dumps(payload))

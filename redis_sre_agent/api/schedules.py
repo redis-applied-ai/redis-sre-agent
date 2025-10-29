@@ -4,10 +4,21 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from docket import Docket
 from fastapi import APIRouter, HTTPException, status
 
+from ..core.docket_tasks import get_redis_url, process_agent_turn, scheduler_task
 from ..core.keys import RedisKeys
 from ..core.redis import get_redis_client
+from ..core.schedule_storage import (
+    delete_schedule as _delete_schedule,
+)
+from ..core.schedule_storage import (
+    get_schedule as _get_schedule,
+)
+from ..core.schedule_storage import (
+    list_schedules as _list_schedules,
+)
 from ..core.schedule_storage import (
     store_schedule,
 )
@@ -29,13 +40,13 @@ router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
 async def list_schedules():
     """List all schedules."""
     try:
-        schedule_data_list = await list_schedules()
+        schedule_data_list = await _list_schedules()
         schedules = []
         for schedule_data in schedule_data_list:
             schedules.append(Schedule(**schedule_data))
         return schedules
     except Exception as e:
-        logger.error(f"Failed to list schedules: {e}")
+        logger.exception(f"Failed to list schedules: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list schedules: {str(e)}",
@@ -69,7 +80,7 @@ async def create_schedule(request: CreateScheduleRequest):
         schedule.next_run_at = next_run.isoformat()
 
         # Store schedule in Redis
-        schedule_data = schedule.dict()
+        schedule_data = schedule.model_dump()
         success = await store_schedule(schedule_data)
         if not success:
             raise HTTPException(
@@ -92,7 +103,7 @@ async def create_schedule(request: CreateScheduleRequest):
 async def get_schedule(schedule_id: str):
     """Get a specific schedule."""
     try:
-        schedule_data = await get_schedule(schedule_id)
+        schedule_data = await _get_schedule(schedule_id)
         if not schedule_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
@@ -114,14 +125,14 @@ async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
     """Update a schedule."""
     try:
         # Get existing schedule from Redis
-        schedule_data = await get_schedule(schedule_id)
+        schedule_data = await _get_schedule(schedule_id)
         if not schedule_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
 
         # Merge provided fields
-        update_data = request.dict(exclude_unset=True)
+        update_data = request.model_dump(exclude_unset=True)
         if update_data:
             schedule_data.update(update_data)
 
@@ -158,7 +169,7 @@ async def delete_schedule(schedule_id: str):
     """Delete a schedule."""
     try:
         # Get schedule name before deletion
-        schedule_data = await get_schedule(schedule_id)
+        schedule_data = await _get_schedule(schedule_id)
         if not schedule_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
@@ -167,7 +178,7 @@ async def delete_schedule(schedule_id: str):
         schedule_name = schedule_data["name"]
 
         # Delete from Redis
-        success = await delete_schedule(schedule_id)
+        success = await _delete_schedule(schedule_id)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -192,7 +203,7 @@ async def list_schedule_runs(schedule_id: str):
     """List runs for a specific schedule."""
     try:
         # Check if schedule exists in Redis
-        schedule_data = await get_schedule(schedule_id)
+        schedule_data = await _get_schedule(schedule_id)
         if not schedule_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
@@ -251,19 +262,16 @@ async def list_schedule_runs(schedule_id: str):
 
             if task_id:
                 try:
-                    tstate = await task_manager.get_task_state(task_id)
+                    task = await task_manager.get_task_state(task_id)
                 except Exception:
-                    tstate = None
-                if tstate:
-                    status_obj = getattr(tstate, "status", None)
-                    if status_obj is not None:
-                        task_status = getattr(status_obj, "value", str(status_obj))
-                    md = getattr(tstate, "metadata", None)
-                    if md is not None:
-                        started_at = md.created_at or started_at
-                        if task_status == "done":
-                            completed_at = md.updated_at
-                    error_msg = getattr(tstate, "error_message", None)
+                    task = None
+                if task:
+                    task_status = task.status
+                    metadata = task.metadata
+                    started_at = metadata.created_at or started_at
+                    if task_status == "done":
+                        completed_at = metadata.updated_at
+                    error_msg = task.error_message
 
             scheduled_at = thread["context"].get("scheduled_at", thread["created_at"])
 
@@ -301,7 +309,7 @@ async def trigger_schedule_now(schedule_id: str):
     """Manually trigger a schedule to run immediately."""
     try:
         # Check if schedule exists in Redis
-        schedule_data = await get_schedule(schedule_id)
+        schedule_data = await _get_schedule(schedule_id)
         if not schedule_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
@@ -338,10 +346,6 @@ async def trigger_schedule_now(schedule_id: str):
         )
 
         # Submit the agent task directly
-        from docket import Docket
-
-        from ..core.docket_tasks import get_redis_url, process_agent_turn
-
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Use a deduplication key for the manual trigger
             task_key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
@@ -390,10 +394,6 @@ async def trigger_schedule_now(schedule_id: str):
 async def trigger_scheduler():
     """Manually trigger the scheduler task for testing."""
     try:
-        from docket import Docket
-
-        from ..core.docket_tasks import get_redis_url, scheduler_task
-
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             # Use a deduplication key based on current time to prevent multiple manual triggers
             current_time = datetime.now(timezone.utc)

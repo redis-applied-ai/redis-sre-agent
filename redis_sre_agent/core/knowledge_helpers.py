@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from redisvl.query import HybridQuery, VectorQuery, VectorRangeQuery
-from redisvl.query.filter import Tag
 from ulid import ULID
 
 from redis_sre_agent.core.keys import RedisKeys
@@ -46,7 +45,7 @@ async def search_knowledge_base_helper(
     Returns:
         Dictionary with search results including task_id, query, results, etc.
     """
-    logger.info(f"Searching SRE knowledge: '{query}' in category '{category}'")
+    logger.info(f"Searching SRE knowledge: '{query}'")
     index = await get_knowledge_index()
     return_fields = [
         "id",
@@ -94,21 +93,8 @@ async def search_knowledge_base_helper(
                 num_results=limit,
             )
 
-    # Build search filters
-    if category:
-        query_obj.set_filter(Tag("category") == category)
-
-    # Perform vector search
+    # Perform vector search (no category filter)
     results = await index.query(query_obj)
-
-    # If we got 0 results with a category filter, retry without the filter
-    if len(results) == 0 and category:
-        logger.info(
-            f"No results found with category '{category}', retrying without category filter"
-        )
-        query_obj.set_filter(None)
-        results = await index.query(query_obj)
-        logger.info(f"Retry without category filter found {len(results)} results")
 
     search_result = {
         "query": query,

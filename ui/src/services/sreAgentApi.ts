@@ -39,7 +39,6 @@ export interface TriageResponse {
 
 export interface ThreadSummary {
   thread_id: string;
-  status: string;
   subject: string;
   created_at: string;
   updated_at: string;
@@ -222,18 +221,20 @@ class SREAgentAPI {
     tags?: string[],
     instanceId?: string
   ): Promise<TriageResponse> {
-    const response = await fetch(`${this.tasksBaseUrl}/triage`, {
+    const response = await fetch(`${this.tasksBaseUrl}/tasks`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        query: message,
-        user_id: userId,
-        session_id: sessionId,
-        priority,
-        tags,
-        ...(instanceId && { instance_id: instanceId })
+        message,
+        context: {
+          user_id: userId,
+          session_id: sessionId,
+          priority,
+          tags,
+          ...(instanceId && { instance_id: instanceId })
+        }
       }),
     });
 
@@ -242,7 +243,12 @@ class SREAgentAPI {
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
-    return response.json();
+    const data = await response.json(); // TaskCreateResponse
+    return {
+      thread_id: data.thread_id,
+      status: data.status,
+      message: data.message,
+    } as TriageResponse;
   }
 
   async continueConversation(
@@ -251,15 +257,15 @@ class SREAgentAPI {
     userId: string,
     context?: Record<string, any>
   ): Promise<TriageResponse> {
-    const response = await fetch(`${this.tasksBaseUrl}/tasks/${threadId}/continue`, {
+    const response = await fetch(`${this.tasksBaseUrl}/tasks`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        query: message,
-        user_id: userId,
-        context,
+        message,
+        thread_id: threadId,
+        context: { user_id: userId, ...(context || {}) },
       }),
     });
 
@@ -268,18 +274,55 @@ class SREAgentAPI {
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
-    return response.json();
+    const data = await response.json(); // TaskCreateResponse
+    return {
+      thread_id: data.thread_id,
+      status: data.status,
+      message: data.message,
+    } as TriageResponse;
   }
 
   async getTaskStatus(threadId: string): Promise<TaskStatusResponse> {
-    const response = await fetch(`${this.tasksBaseUrl}/tasks/${threadId}`);
+    // Threads endpoint returns full thread state (messages, updates, result)
+    const response = await fetch(`${this.tasksBaseUrl}/threads/${threadId}`);
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
-    return response.json();
+    const thread = await response.json();
+    // Derive a task-like status from thread data
+    const status = thread?.error_message
+      ? 'failed'
+      : thread?.result
+      ? 'completed'
+      : 'in_progress';
+
+    return {
+      thread_id: thread.thread_id,
+      status,
+      updates: Array.isArray(thread.updates)
+        ? thread.updates.map((u: any) => ({
+            timestamp: u.timestamp,
+            message: u.message,
+            type: u.update_type,
+            metadata: u.metadata || {}
+          }))
+        : [],
+      result: thread.result,
+      error_message: thread.error_message,
+      metadata: {
+        created_at: thread?.metadata?.created_at,
+        updated_at: thread?.metadata?.updated_at,
+        user_id: thread?.metadata?.user_id,
+        session_id: thread?.metadata?.session_id,
+        priority: thread?.metadata?.priority ?? 0,
+        tags: thread?.metadata?.tags ?? [],
+        subject: thread?.metadata?.subject,
+      },
+      context: thread.context || {},
+    } as TaskStatusResponse;
   }
 
   async listTasks(
@@ -287,37 +330,83 @@ class SREAgentAPI {
     statusFilter?: string,
     limit: number = 50
   ): Promise<TaskStatusResponse[]> {
-    const baseUrl = `${this.tasksBaseUrl}/tasks`;
-    const url = this.createURL(baseUrl);
-    if (userId) url.searchParams.append('user_id', userId);
-    if (statusFilter) url.searchParams.append('status_filter', statusFilter);
-    url.searchParams.append('limit', limit.toString());
+    try {
+      const baseUrl = `${this.tasksBaseUrl}/tasks`;
+      const url = this.createURL(baseUrl);
+      if (userId) url.searchParams.append('user_id', userId);
+      if (statusFilter) url.searchParams.append('status_filter', statusFilter);
+      url.searchParams.append('limit', limit.toString());
 
-    const response = await fetch(url.toString());
+      const response = await fetch(url.toString());
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+      if (!response.ok) {
+        // If listing is not supported, return empty without throwing
+        if (response.status === 405 || response.status === 404) {
+          return [];
+        }
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      return response.json();
+    } catch (e) {
+      // Graceful fallback: no conversations
+      return [];
     }
+  }
+  async listThreads(
+    userId?: string,
+    limit: number = 50,
+    offset: number = 0,
+  ): Promise<ThreadSummary[]> {
+    try {
+      const baseUrl = `${this.tasksBaseUrl}/threads`;
+      const url = this.createURL(baseUrl);
+      if (userId) url.searchParams.append('user_id', userId);
+      url.searchParams.append('limit', String(limit));
+      url.searchParams.append('offset', String(offset));
 
-    return response.json();
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        // Gracefully handle missing list endpoint
+        if (response.status === 405 || response.status === 404) return [];
+        const text = await response.text();
+        throw new Error(`HTTP ${response.status}: ${text}`);
+      }
+
+      const data = await response.json();
+      // Ensure shape matches ThreadSummary
+      return (data || []).map((t: any) => ({
+        thread_id: t.thread_id,
+        subject: t.subject || 'Untitled',
+        created_at: t.created_at,
+        updated_at: t.updated_at,
+        user_id: t.user_id,
+        latest_message: t.latest_message || 'No updates',
+        tags: Array.isArray(t.tags) ? t.tags : [],
+        priority: typeof t.priority === 'number' ? t.priority : 0,
+        instance_id: t.instance_id,
+      })) as ThreadSummary[];
+    } catch {
+      return [];
+    }
   }
 
+
   async cancelTask(threadId: string, deleteThread: boolean = false): Promise<void> {
-    const baseUrl = `${this.tasksBaseUrl}/tasks/${threadId}`;
-    const url = this.createURL(baseUrl);
     if (deleteThread) {
-      url.searchParams.set('delete', 'true');
+      // Deleting a conversation maps to deleting the thread
+      const response = await fetch(`${this.tasksBaseUrl}/threads/${threadId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      return;
     }
 
-    const response = await fetch(url.toString(), {
-      method: 'DELETE',
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
-    }
+    // Cancelling an in-flight task by thread is not yet supported by the backend.
+    // No-op for now to avoid accidental deletions on Stop.
+    return;
   }
 
   // Polling utility for waiting for task completion
@@ -422,23 +511,7 @@ class SREAgentAPI {
     return messages;
   }
 
-    // Extract the response from the final result or latest update
-    let response = 'No response available';
-    if (finalStatus.result && finalStatus.result.response) {
-      response = finalStatus.result.response;
-    } else if (finalStatus.updates.length > 0) {
-      // Find the last assistant response
-      const assistantUpdates = finalStatus.updates.filter(u => u.type === 'response' || u.type === 'completion');
-      if (assistantUpdates.length > 0) {
-        response = assistantUpdates[assistantUpdates.length - 1].message;
-      }
-    }
 
-    return {
-      response,
-      thread_id: finalStatus.thread_id,
-    };
-  }
 
   async getConversationHistory(threadId: string, _userId?: string): Promise<{ messages: ChatMessage[] }> {
     try {

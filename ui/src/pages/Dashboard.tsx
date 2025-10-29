@@ -57,41 +57,70 @@ const Dashboard = () => {
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
 
   const loadDashboardData = async () => {
-    try {
-      setError('');
+    setError('');
 
-      // Load all data in parallel
-      const [tasksData, instancesData, knowledgeData, healthData] = await Promise.all([
-        sreAgentApi.listTasks(undefined, undefined, 10), // Get recent 10 tasks
-        sreAgentApi.listInstances(),
-        fetch('/api/v1/knowledge/stats').then(res => res.json()),
-        fetch('/api/v1/health').then(res => res.json()),
-      ]);
+    const threadsPromise = sreAgentApi.listThreads(undefined, 10, 0);
+    const instancesPromise = sreAgentApi.listInstances();
+    const knowledgePromise = fetch('/api/v1/knowledge/stats').then(res => res.json());
+    const healthPromise = fetch('/api/v1/health').then(res => res.json());
 
-      // Convert tasks to conversation threads
-      const conversationThreads: ConversationThread[] = tasksData
-        .filter(task => task.status !== 'cancelled')
-        .map(task => ({
-          id: task.thread_id,
-          name: task.metadata.subject || 'Untitled Conversation',
-          subject: task.metadata.subject || 'Untitled Conversation',
-          lastMessage: task.updates.length > 0 ? task.updates[0].message : 'No updates',
-          timestamp: task.metadata.updated_at,
-          messageCount: task.updates.length,
-          status: task.status,
+    const [threadsRes, instancesRes, knowledgeRes, healthRes] = await Promise.allSettled([
+      threadsPromise,
+      instancesPromise,
+      knowledgePromise,
+      healthPromise,
+    ]);
+
+    // Threads -> conversations (graceful if unavailable)
+    if (threadsRes.status === 'fulfilled') {
+      const threadsData = threadsRes.value;
+      const conversationThreads: ConversationThread[] = threadsData
+        .map(t => ({
+          id: t.thread_id,
+          name: t.subject || 'Untitled Conversation',
+          subject: t.subject || 'Untitled Conversation',
+          lastMessage: t.latest_message || 'No updates',
+          timestamp: t.updated_at || t.created_at,
+          messageCount: 0,
+          status: 'unknown',
         }));
-
       setConversations(conversationThreads);
-      setInstances(instancesData);
-      setKnowledgeStats(knowledgeData);
-      setSystemHealth(healthData);
-
-    } catch (err) {
-      console.error('Failed to load dashboard data:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
-    } finally {
-      setIsLoading(false);
+    } else {
+      console.warn('Conversations unavailable:', threadsRes.reason);
+      setConversations([]);
     }
+
+    // Instances
+    if (instancesRes.status === 'fulfilled') {
+      setInstances(instancesRes.value);
+    } else {
+      console.warn('Instances unavailable:', instancesRes.reason);
+      setInstances([]);
+    }
+
+    // Knowledge
+    if (knowledgeRes.status === 'fulfilled') {
+      setKnowledgeStats(knowledgeRes.value);
+    } else {
+      console.warn('Knowledge stats unavailable:', knowledgeRes.reason);
+      setKnowledgeStats(null);
+    }
+
+    // Health
+    if (healthRes.status === 'fulfilled') {
+      setSystemHealth(healthRes.value);
+    } else {
+      console.warn('Health unavailable:', healthRes.reason);
+      setSystemHealth(null);
+    }
+
+    // Surface a soft error if any failed
+    const anyFailed = [threadsRes, instancesRes, knowledgeRes, healthRes].some(r => r.status === 'rejected');
+    if (anyFailed) {
+      setError('Some dashboard data failed to load. Functionality may be limited.');
+    }
+
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -212,9 +241,9 @@ const Dashboard = () => {
               <div>
                 <p className="text-redis-sm text-redis-dusk-04">SRE Agent</p>
                 <p className={`text-redis-2xl font-bold ${
-                  systemHealth?.components?.workers === 'available' ? 'text-redis-green' : 'text-redis-red'
+                  systemHealth?.status === 'unhealthy' ? 'text-redis-red' : systemHealth?.status === 'degraded' ? 'text-redis-yellow-500' : 'text-redis-green'
                 }`}>
-                  {systemHealth?.components?.workers === 'available' ? '✅ Online' : '❌ Offline'}
+                  {systemHealth?.status === 'unhealthy' ? '❌ Offline' : systemHealth?.status === 'degraded' ? '🟡 Degraded' : '✅ Online'}
                 </p>
               </div>
               <div className="text-redis-xs text-redis-dusk-04">
