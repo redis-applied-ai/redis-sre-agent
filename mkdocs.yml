@@ -38,6 +38,7 @@ nav:
       - Configuration: how-to/configuration.md
       - Tool Providers: how-to/tool-providers.md
       - Using the CLI & API: how-to/cli.md
+      - Using the API: how-to/api.md
       - Local development & testing: how-to/local-dev.md
       - Configuration (Advanced):
           - Encryption: how-to/configuration/encryption.md
