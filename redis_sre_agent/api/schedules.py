@@ -227,7 +227,7 @@ async def list_schedule_runs(schedule_id: str):
                 schedule_threads.append(
                     {
                         "thread_id": thread_summary["thread_id"],
-                        "status": thread_summary["status"],
+                        # Status will be derived from the per-turn task below
                         "created_at": thread_summary["created_at"],
                         "updated_at": thread_summary["updated_at"],
                         "context": thread_state.context,

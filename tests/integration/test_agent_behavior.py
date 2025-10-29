@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.agent_behavior
+@pytest.mark.integration
 class TestSREAgentBehavior:
     """Test SRE Agent behavioral patterns with real OpenAI integration.
 

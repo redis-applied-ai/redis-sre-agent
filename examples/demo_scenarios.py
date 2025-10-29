@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import random
+import shutil
 import time
 import warnings
 from typing import Optional
@@ -102,7 +103,65 @@ def loki_push(labels: dict, lines: list[str]) -> bool:
         return 200 <= resp.status < 300
     except Exception as e:
         print(f"⚠️  Loki push failed: {e}")
+
+
+# Docker Compose helpers to bring up demo services if down
+
+
+def _compose_file_path() -> str:
+    try:
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "docker-compose.yml")
+    except Exception:
+        return "docker-compose.yml"
+
+
+def ensure_services_up(services: list[str], timeout: int = 60) -> bool:
+    """Ensure docker compose services are up; try to start them if down.
+
+    Returns True if services become reachable; False otherwise.
+    """
+    if not services:
+        return True
+    compose_file = _compose_file_path()
+    # Build compose command
+    cmd = None
+    if shutil.which("docker"):
+        cmd = ["docker", "compose", "-f", compose_file, "up", "-d", *services]
+    elif shutil.which("docker-compose"):
+        cmd = ["docker-compose", "-f", compose_file, "up", "-d", *services]
+    else:
+        print(
+            "   \u26a0\ufe0f  'docker' or 'docker-compose' not found in PATH; cannot auto-start services"
+        )
         return False
+    try:
+        import subprocess
+
+        print(f"   Bringing up services via: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except Exception as e:
+        print(f"   \u26a0\ufe0f  Failed to run docker compose: {e}")
+        return False
+
+    # Wait for Redis services to be reachable on expected host ports
+    port_map = {"redis-demo": 7844, "redis-demo-replica": 7845}
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        all_ok = True
+        for svc in services:
+            port = port_map.get(svc)
+            if not port:
+                continue
+            try:
+                rc = redis.Redis(host="localhost", port=port, decode_responses=True)
+                rc.ping()
+            except Exception:
+                all_ok = False
+                break
+        if all_ok:
+            return True
+        time.sleep(1.0)
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -232,8 +291,24 @@ class RedisSREDemo:
                 f"✅ Redis connection established on port {DEMO_PORT} (database cleared for clean demo)"
             )
         except redis.ConnectionError:
-            print(f"❌ Redis connection failed on port {DEMO_PORT}")
-            return False
+            print(
+                f"❌ Redis connection failed on port {DEMO_PORT} — attempting to start docker compose service 'redis-demo'"
+            )
+            try:
+                ok = ensure_services_up(["redis-demo"], timeout=90)
+                if not ok:
+                    print("❌ Could not start redis-demo via docker compose")
+                    return False
+                # Retry connection
+                time.sleep(1.0)
+                self.redis_client = redis.Redis(
+                    host="localhost", port=DEMO_PORT, decode_responses=True
+                )
+                self.redis_client.ping()
+                print(f"✅ Redis 'redis-demo' started and reachable on port {DEMO_PORT}")
+            except Exception:
+                print(f"❌ Redis connection failed on port {DEMO_PORT}")
+                return False
 
         # Register the demo instance with the agent (especially important for UI mode)
         await self._register_demo_instance()
@@ -1223,81 +1298,171 @@ class RedisSREDemo:
         await self.performance_scenario()
 
     async def scenario_3_4(self):
-        """3.4 Replication Lag (Synthetic evidence path)"""
+        """3.4 Replication Lag (Real replica)"""
         self.print_header("3.4 Replication Lag", "🔧")
 
-        self.print_step(1, "Seeding replication lag metrics and log lines")
+        # Ensure required services are up (primary + replica)
+        self.print_step(1, "Ensuring docker compose services are up for primary and replica")
         try:
-            # Metrics approximating lag on a replica
-            metrics_text = (
-                'demo_replication_lag_seconds{replica="redis-replica"} 12\n'
-                'demo_replica_link_status{replica="redis-replica",status="down"} 1\n'
-            )
-            if pushgateway_push("demo-scenarios", "redis-demo", metrics_text):
-                print("   📊 Pushed replication lag metrics to Pushgateway")
-
-            # Loki log lines to indicate link issues
-            loki_push(
-                {
-                    "service": "redis-demo",
-                    "scenario": "3.4",
-                    "component": "replication",
-                    "level": "warn",
-                },
-                [
-                    "redis-replica: master_link_status: down (demo)",
-                    "redis-replica: master_last_io_seconds_ago=12 (demo)",
-                ],
-            )
+            ok = ensure_services_up(["redis-demo", "redis-demo-replica"], timeout=120)
+            if not ok:
+                print("   ❌ Could not start required services via docker compose")
+                return
         except Exception as e:
-            print(f"   \u26a0\ufe0f  Failed to seed replication evidence: {e}")
+            print(f"   ⚠️  Could not ensure services up: {e}")
+            return
 
-        # Optional: attempt brief load to make primary stats non-zero
-        self.print_step(2, "Generating small primary write burst for realism")
+        # Connect to the replica and ensure it follows the primary
+        self.print_step(2, "Verifying replica follows the primary")
         try:
-            pipe = self.redis_client.pipeline()
-            for i in range(200):
-                pipe.set(f"demo:repl:{i}", "x" * 256)
-            pipe.execute()
+            replica = redis.Redis(host="localhost", port=7845, decode_responses=True)
+            replica.ping()
+            rep_info = replica.info("replication")
+            role = rep_info.get("role")
+            if role != "slave" or rep_info.get("master_link_status") != "up":
+                print("   ℹ️  Configuring replica to follow redis-demo:6379")
+                replica.execute_command("REPLICAOF", "redis-demo", 6379)
+                time.sleep(1.0)
+        except Exception as e:
+            print(f"   ❌ Could not connect/verify replica on localhost:7845: {e}")
+            return
+
+        # Register instances for the agent (so UI/tools can choose either)
+        await self._register_demo_instance()
+        try:
+            # Register or update the replica instance inline
+            from urllib.parse import urlparse
+
+            instances = await get_instances()
+            name = "Demo Redis Replica (Scenarios)"
+            agent_url = "redis://redis-demo-replica:6379/0"
+            target = None
+            for inst in instances:
+                try:
+                    if inst.name == name:
+                        target = inst
+                        break
+                    url = inst.connection_url.get_secret_value()
+                    parsed = urlparse(url)
+                    hostport = (
+                        f"{parsed.hostname}:{parsed.port}"
+                        if parsed.hostname and parsed.port
+                        else ""
+                    )
+                    if hostport in {"redis-demo-replica:6379", "localhost:7845", "127.0.0.1:7845"}:
+                        target = inst
+                        break
+                except Exception:
+                    continue
+            if target:
+                target.name = name
+                target.connection_url = agent_url
+                target.environment = getattr(target, "environment", None) or "development"
+                target.usage = getattr(target, "usage", None) or "demo"
+                await save_instances(instances)
+            else:
+                from datetime import datetime
+
+                inst = RedisInstance(
+                    id=f"redis-demo-replica-{int(datetime.now().timestamp())}",
+                    name=name,
+                    connection_url=agent_url,
+                    environment="development",
+                    usage="demo",
+                    description="Demo Redis replica for scenario testing; follows redis-demo:6379.",
+                    notes="Registered by demo_scenarios.py for replication lag scenario.",
+                    instance_type="oss_single",
+                )
+                instances.append(inst)
+                await save_instances(instances)
         except Exception:
             pass
+
+        # Induce replication lag by pausing the replica while generating writes on primary
+        self.print_step(3, "Inducing replication lag by pausing replica and writing on primary")
+        try:
+            import threading
+
+            def pause_replica():
+                try:
+                    rc = redis.Redis(host="localhost", port=7845, decode_responses=True)
+                    # Pause all clients (including replication feed) for 5 seconds
+                    rc.execute_command("CLIENT", "PAUSE", 5000, "ALL")
+                except Exception:
+                    pass
+
+            t = threading.Thread(target=pause_replica, daemon=True)
+            t.start()
+            time.sleep(0.1)  # small head start so pause engages
+
+            # Generate a burst of writes on the primary while replica is paused
+            pipe = self.redis_client.pipeline()
+            for i in range(10000):
+                pipe.incr("demo:repl:counter", 1)
+                if (i + 1) % 1000 == 0:
+                    pipe.execute()
+            pipe.execute()
+
+            # Measure lag from the primary perspective
+            master_info = self.redis_client.info("replication")
+            connected = master_info.get("connected_slaves", 0)
+            lag_seconds = None
+            offset_delta = None
+            try:
+                for idx in range(int(connected)):
+                    k = f"slave{idx}"
+                    s = master_info.get(k)
+                    if isinstance(s, str):
+                        parts = dict(pair.split("=", 1) for pair in s.split(",") if "=" in pair)
+                        if "lag" in parts:
+                            lag_seconds = int(parts.get("lag", "0"))
+                        try:
+                            offset_delta = int(master_info.get("master_repl_offset", 0)) - int(
+                                parts.get("offset", "0")
+                            )
+                        except Exception:
+                            offset_delta = None
+                        break
+            except Exception:
+                pass
+
+            print(f"   📊 Connected replicas: {connected}")
+            if lag_seconds is not None:
+                print(f"   ⏱️  Reported replica lag (seconds): {lag_seconds}")
+            if offset_delta is not None:
+                print(f"   📉 Replication offset delta (bytes): {offset_delta}")
+
+            # Optional: publish measured lag to Pushgateway for dashboards
+            try:
+                lag_val = lag_seconds if lag_seconds is not None else 0
+                metrics_text = (
+                    f'demo_replication_lag_seconds{{replica="redis-demo-replica"}} {lag_val}\n'
+                )
+                pushgateway_push("demo-scenarios", "redis-demo", metrics_text)
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"   ⚠️  Failed to induce or measure lag: {e}")
 
         # UI vs CLI handling
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Replication Lag",
-                "Replica shows link down and lag per demo evidence; ask agent to verify via INFO replication.",
+                "Replica is configured and lag was induced. Ask the agent to verify via INFO replication and suggest mitigations.",
             )
             return
 
         await self._run_diagnostics_and_agent_query(
-            "We suspect replication lag or link issues on a Redis replica for the demo instance. "
-            "Use INFO replication and any available metrics/logs to confirm and propose mitigations."
+            "We have a Redis primary (redis-demo:6379) and a replica (redis-demo-replica:6379). "
+            "Replication lag was induced by pausing the replica while writing to the primary. "
+            "Use INFO replication and any available metrics/logs to confirm and recommend mitigations."
         )
 
         # Cleanup
-        self.print_step(3, "Cleanup demo replication keys and reset evidence")
+        self.print_step(4, "Cleaning up replication demo keys")
         try:
-            demo_keys = self.redis_client.keys("demo:repl:*")
-            if demo_keys:
-                self.redis_client.delete(*demo_keys)
-        except Exception:
-            pass
-        try:
-            pushgateway_push(
-                "demo-scenarios",
-                "redis-demo",
-                'demo_replication_lag_seconds{replica="redis-replica"} 0\n',
-            )
-            loki_push(
-                {
-                    "service": "redis-demo",
-                    "scenario": "3.4",
-                    "component": "replication",
-                    "level": "info",
-                },
-                ["redis-replica: link restored and lag cleared (demo)"],
-            )
+            self.redis_client.delete("demo:repl:counter")
         except Exception:
             pass
 

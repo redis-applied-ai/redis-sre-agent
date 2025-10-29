@@ -157,6 +157,7 @@ SRE_THREADS_SCHEMA = {
         {"name": "priority", "type": "numeric"},
         {"name": "created_at", "type": "numeric"},
         {"name": "updated_at", "type": "numeric"},
+        {"name": "tags", "type": "tag"},
     ],
 }
 

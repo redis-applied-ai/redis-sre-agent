@@ -441,7 +441,7 @@ class RedisCliToolProvider(ToolProvider):
         else:
             raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
-    @status_update("I'm running Redis INFO to collect server metrics.")
+    @status_update("I'm running Redis INFO to collect server metrics ({section}).")
     async def info(self, section: Optional[str] = None) -> Dict[str, Any]:
         """Execute Redis INFO command.
 
@@ -692,7 +692,7 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
-    @status_update("I'm sampling keys from the Redis keyspace.")
+    @status_update("I'm sampling keys from the Redis keyspace (pattern: {pattern}).")
     async def sample_keys(self, count: int = 100, pattern: str = "*") -> Dict[str, Any]:
         """Sample keys from the Redis keyspace.
 
@@ -753,7 +753,7 @@ class RedisCliToolProvider(ToolProvider):
                 "pattern": pattern,
             }
 
-    @status_update("I'm listing RediSearch indexes.")
+    @status_update("I'm listing search indexes.")
     async def search_indexes(self) -> Dict[str, Any]:
         """List all Redis Search indexes.
 
@@ -786,7 +786,7 @@ class RedisCliToolProvider(ToolProvider):
                 "note": "This command requires RediSearch module to be loaded",
             }
 
-    @status_update("I'm getting RediSearch index info for {index_name}.")
+    @status_update("I'm getting search index info for {index_name}.")
     async def search_index_info(self, index_name: str) -> Dict[str, Any]:
         """Get information about a Redis Search index.
 

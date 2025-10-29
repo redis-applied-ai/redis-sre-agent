@@ -33,6 +33,27 @@ services:
     networks:
       - sre-network
 
+  # Redis Demo Replica - Follows redis-demo for replication tests
+  redis-demo-replica:
+    image: redis:8.2.1
+    ports:
+      - "7845:6379"  # Demo replica Redis
+    volumes:
+      - redis_demo_replica_data:/data
+    command: ["redis-server", "--replicaof", "redis-demo", "6379"]
+    labels:
+      - "logging=true"  # Collected by promtail for Loki
+    depends_on:
+      redis-demo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sre-network
+
   # Redis Enterprise Software - Multi-node cluster for testing enterprise runbooks
   redis-enterprise-node1:
     image: kurtfm/rs:latest
@@ -355,6 +376,8 @@ networks:
 volumes:
   redis_data:
   redis_demo_data:
+  redis_demo_replica_data:
+
   redis_enterprise_node1_data:
   redis_enterprise_node2_data:
   redis_enterprise_node3_data:

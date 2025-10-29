@@ -217,8 +217,8 @@ async def scheduler_task(
                         tags=["automated", "scheduled"],
                     )
 
-                    # Generate and update thread subject for scheduled tasks
-                    await thread_manager.update_thread_subject(thread_id, schedule["instructions"])
+                    # Set subject for scheduled tasks to the schedule name for clarity
+                    await thread_manager.set_thread_subject(thread_id, schedule["name"])
 
                     # Create a unique deduplication key for this schedule + time slot
                     # This ensures we don't create duplicate tasks for the same schedule at the same time
@@ -485,6 +485,21 @@ async def process_agent_turn(
             }
         )
 
+        # Persist the new user message early so UI transcript reflects it during processing
+        try:
+            await thread_manager.append_messages(
+                thread_id,
+                [
+                    {
+                        "role": "user",
+                        "content": message,
+                        "timestamp": conversation_state["messages"][-1]["timestamp"],
+                    }
+                ],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist user message early for thread {thread_id}: {e}")
+
         # Agent will post its own reflections as it works
 
         # Create a progress callback for the agent
@@ -556,8 +571,82 @@ async def process_agent_turn(
             for msg in conversation_state["messages"]
             if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
         ]
+
+        # Persist agent reflections/status updates for this turn as chat messages
+        try:
+            fresh_state = await thread_manager.get_thread(thread_id)
+            updates = list(getattr(fresh_state, "updates", []) or [])
+            # Keep only updates from this task/turn and relevant types
+            relevant_types = {"agent_reflection", "agent_processing", "agent_start"}
+            turn_updates = [
+                u
+                for u in updates
+                if (getattr(u, "metadata", None) or {}).get("task_id") == task_id
+                and getattr(u, "update_type", "") in relevant_types
+                and getattr(u, "message", None)
+            ]
+            # Order chronologically
+            turn_updates.sort(key=lambda u: getattr(u, "timestamp", ""))
+            reflection_messages = [
+                {
+                    "role": "assistant",
+                    "content": u.message,
+                    "timestamp": u.timestamp,
+                    "metadata": {"update_type": u.update_type, **(u.metadata or {})},
+                }
+                for u in turn_updates
+            ]
+            if reflection_messages:
+                # Insert reflections before the final assistant message for this turn
+                if clean_messages:
+                    final_msg = clean_messages[-1]
+                    base_msgs = clean_messages[:-1]
+                    # Deduplicate by content
+                    seen = set(m.get("content") for m in base_msgs)
+                    merged = (
+                        base_msgs
+                        + [m for m in reflection_messages if m["content"] not in seen]
+                        + [final_msg]
+                    )
+                    clean_messages = merged
+                else:
+                    clean_messages = reflection_messages
+        except Exception as e:
+            logger.warning(f"Failed to merge reflection updates into transcript: {e}")
+
         thread.context["messages"] = clean_messages
         thread.context["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+        # If the subject is empty/placeholder, set an optimistic subject from original_query or first user message
+        try:
+            subj = (thread.metadata.subject or "").strip()
+            if not subj or subj.lower() in {"untitled", "unknown"}:
+                candidate = None
+                oq = (
+                    thread.context.get("original_query")
+                    if isinstance(thread.context, dict)
+                    else None
+                )
+                if isinstance(oq, str) and oq.strip():
+                    candidate = oq.strip()
+                else:
+                    # Find the first user message content
+                    for m in clean_messages:
+                        if (
+                            isinstance(m, dict)
+                            and m.get("role") == "user"
+                            and (m.get("content") or "").strip()
+                        ):
+                            candidate = m.get("content").strip()
+                            break
+                if candidate:
+                    # Normalize to a single line and cap length
+                    line = candidate.splitlines()[0].strip()
+                    if len(line) > 80:
+                        line = line[:77].rstrip() + "…"
+                    await thread_manager.set_thread_subject(thread_id, line)
+        except Exception as e:
+            logger.warning(f"Failed to set optimistic subject for thread {thread_id}: {e}")
 
         # Save the updated context to Redis
         await thread_manager._save_thread_state(thread)

@@ -167,15 +167,17 @@ const Triage = () => {
 
       const threadList: ChatThread[] = summaries.map((t) => {
         const subject = t.subject && t.subject.trim() ? t.subject : 'Untitled';
+        const tags = Array.isArray((t as any).tags) ? (t as any).tags as string[] : [];
+        const isScheduled = tags.includes('scheduled') || (t.user_id === 'scheduler');
         return {
           id: t.thread_id,
           name: subject,
           subject,
           lastMessage: t.latest_message || 'No updates',
           timestamp: t.updated_at || t.created_at,
-          messageCount: 0,
+          messageCount: typeof (t as any).message_count === 'number' ? (t as any).message_count : 0,
           status: 'unknown', // precise status derived when the thread is loaded in the monitor
-          isScheduled: false, // can be refined from tags/user_id when backend provides it
+          isScheduled,
           instanceId: t.instance_id,
           instanceName: undefined,
         };
@@ -234,8 +236,10 @@ const Triage = () => {
             /task.*processing/i
           ];
 
+          const updateType = (update as any).type || (update as any).update_type;
+
           // Skip technical messages
-          if (technicalMessageTypes.includes(update.type)) {
+          if (technicalMessageTypes.includes(updateType)) {
             return;
           }
 
@@ -244,21 +248,21 @@ const Triage = () => {
             return;
           }
 
-          if (update.type === 'response') {
+          if (updateType === 'response') {
             newMessages.push({
               id: `update-${index}`,
               role: 'assistant',
               content: update.message,
               timestamp: update.timestamp,
             });
-          } else if (update.type === 'user_message') {
+          } else if (updateType === 'user_message') {
             newMessages.push({
               id: `update-${index}`,
               role: 'user',
               content: update.message,
               timestamp: update.timestamp,
             });
-          } else if (update.type === 'agent_reflection') {
+          } else if (updateType === 'agent_reflection') {
             // Show agent's reasoning and analysis (only if meaningful)
             if (update.message && update.message.length > 10 && !update.message.toLowerCase().includes('completed')) {
               newMessages.push({
@@ -268,7 +272,7 @@ const Triage = () => {
                 timestamp: update.timestamp,
               });
             }
-          } else if (update.type === 'safety_check') {
+          } else if (updateType === 'safety_check') {
             // Show safety and fact-checking steps
             newMessages.push({
               id: `safety-${index}`,
@@ -276,7 +280,7 @@ const Triage = () => {
               content: update.message,
               timestamp: update.timestamp,
             });
-          } else if (update.type === 'tool_call') {
+          } else if (updateType === 'tool_call') {
             // Show tool calls in a user-friendly way
             const fullToolName = update.metadata?.tool_name || 'Unknown Tool';
             const toolArgs = update.metadata?.tool_args;
@@ -431,6 +435,18 @@ const Triage = () => {
 
       setMessages(newMessages);
 
+      // Update message count and last message in sidebar for this thread
+      setThreads(prev => prev.map(t => (
+        t.id === threadId
+          ? {
+              ...t,
+              messageCount: newMessages.length,
+              lastMessage: newMessages[newMessages.length - 1]?.content || t.lastMessage,
+              timestamp: new Date().toISOString(),
+            }
+          : t
+      )));
+
       const active = ['queued', 'in_progress', 'running'].includes(status.status as any);
       setIsThreadBusy(active);
       if (!liveModeLocked) setShowWebSocketMonitor(active);
@@ -500,10 +516,18 @@ const Triage = () => {
         };
         setThreads(prev => [newThread, ...prev]);
 
+        // Refresh threads to replace placeholder title with backend-provided subject
+        await loadThreads();
+
+
       } else {
         // Continue existing conversation: switch to live WebSocket monitor
         await sreAgentApi.continueConversation(threadId!, messageContent, userId);
         sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
+
+        // Refresh threads to replace placeholder title with backend-provided subject
+        await loadThreads();
+
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
         setLiveModeLocked(true);
