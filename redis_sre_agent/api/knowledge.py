@@ -171,14 +171,12 @@ async def search_knowledge(
         # Note: product_labels parameter is accepted by the API but not yet implemented
         # in the search backend. For now, we ignore it and just search by query/category.
         # TODO: Implement product_labels filtering in search_knowledge_base
-
+        kwargs = {}
+        if category is not None:
+            kwargs["category"] = category
         if distance_threshold is not None:
-            result = await search_knowledge_base(
-                query, category=category, limit=limit, distance_threshold=distance_threshold
-            )
-        else:
-            # Do not pass None to preserve backend default threshold-on behavior
-            result = await search_knowledge_base(query, category=category, limit=limit)
+            kwargs["distance_threshold"] = distance_threshold
+        result = await search_knowledge_base(query, limit=limit, **kwargs)
 
         # Handle string, list, and dict responses
         if isinstance(result, str):

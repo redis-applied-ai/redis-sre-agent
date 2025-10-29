@@ -16,7 +16,7 @@ from redis_sre_agent.core.docket_tasks import register_sre_tasks
 
 # TODO: rename start
 @click.command()
-@click.option("--concurrency", "-c", default=2, help="Number of concurrent tasks")
+@click.option("--concurrency", "-c", default=4, help="Number of concurrent tasks")
 def worker(concurrency: int):
     """Start the background worker."""
 

@@ -593,7 +593,6 @@ class TestKnowledgeSearch:
         """Test successful knowledge search."""
         mock_result = {
             "query": "redis",
-            "category_filter": None,
             "results_count": 2,
             "results": [
                 {
@@ -629,7 +628,7 @@ class TestKnowledgeSearch:
 
             # Verify search was called with correct parameters
             # Note: product_labels is not yet implemented in search backend
-            mock_search.assert_called_once_with("redis", category=None, limit=5)
+            mock_search.assert_called_once_with("redis", limit=5)
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, test_client):
@@ -688,7 +687,6 @@ class TestKnowledgeSearch:
         ) as mock_search:
             mock_search.return_value = {
                 "query": "redis perf",
-                "category": None,
                 "results_count": 0,
                 "results": [],
                 "formatted_output": "",
@@ -700,6 +698,4 @@ class TestKnowledgeSearch:
 
             assert response.status_code == 200
             # Ensure the docket task was called with distance_threshold
-            mock_search.assert_called_once_with(
-                "redis perf", category=None, limit=3, distance_threshold=0.15
-            )
+            mock_search.assert_called_once_with("redis perf", limit=3, distance_threshold=0.15)

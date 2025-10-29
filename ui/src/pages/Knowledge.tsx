@@ -185,7 +185,9 @@ const Knowledge = () => {
 
       const params = new URLSearchParams({
         query: queryToUse,
-        limit: '10'
+        limit: '10',
+        // Use a permissive threshold to improve recall (API default is strict)
+        distance_threshold: '2.0'
       });
 
       if (searchCategory) {

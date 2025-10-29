@@ -207,7 +207,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
     async def search(
         self,
         query: str,
-        category: Optional[str] = None,
         limit: int = 10,
         distance_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -215,7 +214,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
 
         Args:
             query: Search query
-            category: Optional category filter
             limit: Maximum number of results
             distance_threshold: Optional cosine distance threshold. If provided, overrides the backend default.
 

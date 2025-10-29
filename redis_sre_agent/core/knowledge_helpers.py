@@ -23,7 +23,7 @@ async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
     limit: int = 10,
-    distance_threshold: Optional[float] = 0.2,
+    distance_threshold: Optional[float] = 0.5,
     hybrid_search: bool = False,
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base.
@@ -32,7 +32,7 @@ async def search_knowledge_base_helper(
           hybrid_search is True, distance_threshold is ignored.
 
     Behavior:
-        - Default: distance_threshold=0.2 (filters by cosine distance)
+        - Default: distance_threshold=0.5 (filters by cosine distance)
         - Explicit None: disables threshold (pure KNN, return top-k regardless of distance)
 
     Args:
@@ -75,7 +75,7 @@ async def search_knowledge_base_helper(
         )
     else:
         # Build pure vector query
-        # distance_threshold default is 0.2; None disables threshold (pure KNN)
+        # distance_threshold default is 0.5; None disables threshold (pure KNN)
         effective_threshold = distance_threshold
         if effective_threshold is not None:
             query_obj = VectorRangeQuery(
