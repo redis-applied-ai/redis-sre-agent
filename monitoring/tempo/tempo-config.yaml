@@ -60,6 +60,13 @@ metrics_generator:
     local_blocks:
       filter_server_spans: false
 
+
+  # Required paths for metrics-generator when using local-blocks (TraceQL metrics)
+  traces_storage:
+    path: /tmp/tempo/generator/traces
+  storage:
+    path: /tmp/tempo/generator/wal
+
 # Enable processors for the default (single-tenant) setup
 overrides:
   defaults:
