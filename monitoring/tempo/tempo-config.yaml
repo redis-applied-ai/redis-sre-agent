@@ -1,0 +1,40 @@
+server:
+  http_listen_port: 3200
+
+# Monolithic local setup suitable for development
+# Receives OTLP over HTTP and gRPC
+# Stores blocks locally under /tmp/tempo
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+  trace_idle_period: 10s
+  max_block_bytes: 1048576
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    compacted_block_retention: 1h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/traces
+    wal:
+      path: /tmp/tempo/wal
+
+# Query frontend uses Tempo's built-in HTTP server on :3200
+# Grafana should point its Tempo datasource to http://tempo:3200
