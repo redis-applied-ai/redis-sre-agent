@@ -415,10 +415,13 @@ async def initialize_redis() -> dict:
     redis_ok = await test_redis_connection()
     status["redis_connection"] = "available" if redis_ok else "unavailable"
 
-    # Test vectorizer
+    # Test vectorizer (skip when no OpenAI key configured)
     try:
-        vectorizer = get_vectorizer()
-        status["vectorizer"] = "available" if vectorizer else "unavailable"
+        if not getattr(settings, "openai_api_key", None):
+            status["vectorizer"] = "skipped"
+        else:
+            vectorizer = get_vectorizer()
+            status["vectorizer"] = "available" if vectorizer else "unavailable"
     except Exception as e:
         logger.error(f"Vectorizer initialization failed: {e}")
         status["vectorizer"] = "unavailable"
