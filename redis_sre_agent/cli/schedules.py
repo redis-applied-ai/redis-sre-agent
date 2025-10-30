@@ -528,6 +528,15 @@ def schedules_run_now(schedule_id: str, as_json: bool):
                 initial_context=run_context,
                 tags=["automated", "scheduled", "manual_trigger"],
             )
+            # Set subject to schedule name (fallback to first line of instructions)
+            try:
+                subj = (schedule.get("name") or "").strip()
+                if not subj:
+                    instr = (schedule.get("instructions") or "").strip()
+                    subj = instr.splitlines()[0][:80] if instr else "Scheduled Run"
+                await thread_manager.set_thread_subject(thread_id, subj)
+            except Exception:
+                pass
 
             docket_task_id = None
             async with Docket(url=await get_redis_url(), name="sre_docket") as docket:

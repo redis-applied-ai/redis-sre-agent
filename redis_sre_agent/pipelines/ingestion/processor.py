@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...core.keys import RedisKeys
-from ...core.redis import get_knowledge_index, get_vectorizer
+
+# Avoid importing Redis/vectorizer at module import time to keep optional deps lazy
 from ...pipelines.scraper.base import (
     ArtifactStorage,
     DocumentCategory,
@@ -20,6 +21,19 @@ from ...pipelines.scraper.base import (
 from .deduplication import DocumentDeduplicator
 
 logger = logging.getLogger(__name__)
+
+
+# Expose patchable wrappers so tests can monkeypatch these names
+async def get_knowledge_index():
+    from ...core.redis import get_knowledge_index as _get_knowledge_index
+
+    return await _get_knowledge_index()
+
+
+def get_vectorizer():
+    from ...core.redis import get_vectorizer as _get_vectorizer
+
+    return _get_vectorizer()
 
 
 class DocumentProcessor:
@@ -244,7 +258,7 @@ class IngestionPipeline:
         }
 
         try:
-            # Get Redis components
+            # Get Redis components (via patchable wrappers)
             index = await get_knowledge_index()
             vectorizer = get_vectorizer()
 
@@ -537,7 +551,7 @@ class IngestionPipeline:
 
         logger.info(f"Found {len(markdown_files)} markdown files to process")
 
-        # Get Redis components
+        # Get Redis components (via patchable wrappers)
         index = await get_knowledge_index()
         vectorizer = get_vectorizer()
 

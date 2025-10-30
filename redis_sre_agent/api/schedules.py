@@ -344,6 +344,16 @@ async def trigger_schedule_now(schedule_id: str):
             initial_context=run_context,
             tags=["automated", "scheduled", "manual_trigger"],
         )
+        # Set subject for the manual run to the schedule name for clarity
+        try:
+            subj = (schedule_data.get("name") or "").strip()
+            if not subj:
+                # Fallback to first line of instructions
+                instr = (schedule_data.get("instructions") or "").strip()
+                subj = instr.splitlines()[0][:80] if instr else "Scheduled Run"
+            await thread_manager.set_thread_subject(thread_id, subj)
+        except Exception:
+            pass
 
         # Submit the agent task directly
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
