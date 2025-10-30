@@ -38,3 +38,19 @@ storage:
 
 # Query frontend uses Tempo's built-in HTTP server on :3200
 # Grafana should point its Tempo datasource to http://tempo:3200
+
+# Enable metrics-generator so Grafana's TraceQL metrics/service graphs work
+metrics_generator:
+  ring:
+    kvstore:
+      store: memberlist
+  processor:
+    service_graphs: {}
+    span_metrics: {}
+  local_blocks: {}
+
+# Enable processors for the default (single-tenant) setup
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics, local-blocks]
