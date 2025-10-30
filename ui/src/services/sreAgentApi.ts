@@ -47,6 +47,8 @@ export interface ThreadSummary {
   tags: string[];
   priority: number;
   instance_id?: string;
+  // Optional count of user/assistant messages, provided by backend when available
+  message_count?: number;
 }
 
 export interface RedisInstance {
@@ -386,6 +388,7 @@ class SREAgentAPI {
         tags: Array.isArray(t.tags) ? t.tags : [],
         priority: typeof t.priority === 'number' ? t.priority : 0,
         instance_id: t.instance_id,
+        message_count: typeof t.message_count === 'number' ? t.message_count : undefined,
       })) as ThreadSummary[];
     } catch {
       return [];

@@ -1763,8 +1763,32 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
                 instance_ctx = {}
                 try:
-                    # Best-effort instance facts from context
-                    instance_ctx = (context or {}).get("instance") or {}
+                    # Prefer explicit instance facts from context
+                    ctx = context or {}
+                    instance_ctx = ctx.get("instance") or {}
+                    if not instance_ctx:
+                        # Fallback: resolve by instance_id and include safe fields only
+                        inst_id = ctx.get("instance_id")
+                        if inst_id:
+                            inst = await get_instance_by_id(inst_id)
+                            if inst:
+                                # Normalize instance_type to a simple string value when possible
+                                _itype = getattr(inst, "instance_type", None)
+                                try:
+                                    _itype_val = _itype.value  # Enum-like
+                                except Exception:
+                                    _itype_val = str(_itype) if _itype is not None else None
+
+                                instance_ctx = {
+                                    "id": getattr(inst, "id", None),
+                                    "name": getattr(inst, "name", None),
+                                    "environment": getattr(inst, "environment", None),
+                                    "instance_type": _itype_val,
+                                    "status": getattr(inst, "status", None),
+                                    "version": getattr(inst, "version", None),
+                                    "memory": getattr(inst, "memory", None),
+                                    "connections": getattr(inst, "connections", None),
+                                }
                 except Exception:
                     instance_ctx = {}
 
@@ -1780,7 +1804,22 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 edited = str(result.get("edited_response") or "")
                 # Replace the original response with the corrected text; do not append audit notes by default
                 if edited.strip() and edited.strip() != str(response).strip():
-                    return edited
+                    # Sanitize any accidental prompt echo sections
+                    try:
+                        import re as _re
+
+                        edited_sanitized = _re.sub(
+                            r"\n+Instance facts \(JSON\):[\s\S]*$", "", edited, flags=_re.IGNORECASE
+                        )
+                        edited_sanitized = _re.sub(
+                            r"\n+Original response to correct \(verbatim\):[\s\S]*$",
+                            "",
+                            edited_sanitized,
+                            flags=_re.IGNORECASE,
+                        )
+                    except Exception:
+                        edited_sanitized = edited
+                    return edited_sanitized
                 # If no change, just return original
                 return response
         finally:

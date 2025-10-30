@@ -156,6 +156,25 @@ Subject:"""
             logger.error(f"Failed to update thread {thread_id} subject: {e}")
             return False
 
+    async def set_thread_subject(self, thread_id: str, subject: str) -> bool:
+        """Set the thread subject explicitly and update the search index."""
+        try:
+            client = await self._get_client()
+            keys = self._get_thread_keys(thread_id)
+
+            await client.hset(keys["metadata"], "subject", subject or "")
+            await client.hset(
+                keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
+            )
+
+            # Update search index
+            await self._upsert_thread_search_doc(thread_id)
+            logger.info(f"Set thread {thread_id} subject: {subject}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set thread {thread_id} subject: {e}")
+            return False
+
     async def _upsert_thread_search_doc(self, thread_id: str) -> bool:
         """Upsert a simplified thread document into the RedisVL threads index (hash).
 
@@ -193,6 +212,15 @@ Subject:"""
             subject = metadata.get("subject", "")
             user_id = metadata.get("user_id", "")
             instance_id = context.get("instance_id", "")
+            # Parse tags from metadata JSON (stored as string)
+            raw_tags = metadata.get("tags", "[]")
+            try:
+                tags_list = json.loads(raw_tags) if isinstance(raw_tags, str) else (raw_tags or [])
+                if not isinstance(tags_list, list):
+                    tags_list = []
+            except Exception:
+                # Accept simple comma-delimited strings
+                tags_list = [t for t in str(raw_tags).split(",") if t]
             try:
                 priority = int(metadata.get("priority", 0))
             except Exception:
@@ -227,6 +255,8 @@ Subject:"""
                 "priority": priority,
                 "created_at": created_ts,
                 "updated_at": updated_ts,
+                # Store tags as comma-delimited for TAG field
+                "tags": ",".join([str(t) for t in (tags_list or [])]),
             }
             await client.hset(key, mapping=mapping)
             # TTL aligns with thread data TTL (24h)
@@ -282,6 +312,7 @@ Subject:"""
                 "priority",
                 "created_at",
                 "updated_at",
+                "tags",
             ],
         ).sort_by("updated_at", asc=False)
         if expr:
@@ -328,6 +359,10 @@ Subject:"""
             updated_iso = _iso(row.get("updated_at"))
 
             # Build summary
+            # Parse tags back into a list
+            raw_tags = row.get("tags") or ""
+            tags_list = [t for t in str(raw_tags).split(",") if t]
+
             summary = {
                 "thread_id": thread_id,
                 "subject": row.get("subject") or "Untitled",
@@ -335,7 +370,7 @@ Subject:"""
                 "updated_at": updated_iso,
                 "user_id": row.get("user_id") or None,
                 "latest_message": "No updates",
-                "tags": [],
+                "tags": tags_list,
                 "priority": int(row.get("priority") or 0),
                 "instance_id": row.get("instance_id") or None,
             }

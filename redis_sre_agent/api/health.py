@@ -67,7 +67,13 @@ async def detailed_health_check():
     all_healthy = all(status == "available" for status in components.values())
 
     # System is degraded if workers are missing but core components work
-    core_components = {k: v for k, v in components.items() if k not in ["workers"]}
+    # Treat vectorizer as optional when no OpenAI key is configured
+    requires_vectorizer = bool(getattr(settings, "openai_api_key", None))
+    core_components = {
+        k: v
+        for k, v in components.items()
+        if k not in ["workers"] and (requires_vectorizer or k != "vectorizer")
+    }
     core_healthy = all(status == "available" for status in core_components.values())
 
     if all_healthy:
