@@ -1,6 +1,7 @@
 """Main FastAPI application for Redis SRE Agent."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -32,6 +33,49 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global startup state for agent status checks
+
+
+def setup_tracing(app: FastAPI) -> None:
+    """Optionally initialize OpenTelemetry tracing if OTEL env is configured.
+
+    This is a no-op if OpenTelemetry packages are unavailable or
+    OTEL_EXPORTER_OTLP_ENDPOINT is not set.
+    """
+    try:
+        otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if not otlp_endpoint:
+            return
+
+        # Lazy imports to avoid hard dependency if not used
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        resource = Resource.create(
+            {
+                "service.name": settings.app_name,
+                "service.version": "0.1.0",
+            }
+        )
+        provider = TracerProvider(resource=resource)
+        exporter = OTLPSpanExporter(
+            endpoint=otlp_endpoint,
+            headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
+        )
+        processor = BatchSpanProcessor(exporter)
+        provider.add_span_processor(processor)
+        trace.set_tracer_provider(provider)
+
+        # Instrument FastAPI
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("OpenTelemetry tracing initialized (FastAPI instrumented)")
+    except Exception as e:
+        logger.warning(f"OpenTelemetry tracing not initialized: {e}")
+
+
 _app_startup_state = {}
 
 
@@ -54,6 +98,7 @@ async def lifespan(app: FastAPI):
 
         # Register SRE tasks with Docket
         # Note: The scheduler task is started by the worker, not the API
+
         try:
             from redis_sre_agent.core.docket_tasks import register_sre_tasks
 
@@ -96,6 +141,9 @@ app = FastAPI(
 )
 
 # Setup middleware
+# Setup tracing (no-op if not configured)
+setup_tracing(app)
+
 setup_middleware(app)
 
 

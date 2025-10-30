@@ -7,6 +7,13 @@ They are called by:
 """
 
 import logging
+import time
+
+try:
+    from opentelemetry import trace as _otel_trace  # type: ignore
+except Exception:  # pragma: no cover - tracing is optional
+    _otel_trace = None
+
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -60,7 +67,18 @@ async def search_knowledge_base_helper(
 
     # Always use vector search (tests rely on embedding being used)
     vectorizer = get_vectorizer()
-    vectors = await vectorizer.aembed_many([query])
+
+    # Measure embedding latency and optionally trace it
+    _tracer = _otel_trace.get_tracer(__name__) if _otel_trace else None
+    _t0 = time.monotonic()
+    if _tracer:
+        with _tracer.start_as_current_span("knowledge.embed") as _span:
+            _span.set_attribute("query.length", len(query))
+            vectors = await vectorizer.aembed_many([query])
+    else:
+        vectors = await vectorizer.aembed_many([query])
+    _t1 = time.monotonic()
+
     query_vector = vectors[0] if vectors else []
 
     if hybrid_search:
@@ -94,7 +112,19 @@ async def search_knowledge_base_helper(
             )
 
     # Perform vector search (no category filter)
-    results = await index.query(query_obj)
+    _t2 = time.monotonic()
+    if _tracer:
+        with _tracer.start_as_current_span("knowledge.index.query") as _span:
+            _span.set_attribute("limit", int(limit))
+            _span.set_attribute("hybrid_search", bool(hybrid_search))
+            _span.set_attribute(
+                "distance_threshold",
+                float(distance_threshold) if distance_threshold is not None else -1.0,
+            )
+            results = await index.query(query_obj)
+    else:
+        results = await index.query(query_obj)
+    _t3 = time.monotonic()
 
     search_result = {
         "query": query,
@@ -127,6 +157,14 @@ async def search_knowledge_base_helper(
             for doc in results
         ],
     }
+
+    # Log timing metrics for observability
+    _embed_ms = int((_t1 - _t0) * 1000)
+    _index_ms = int((_t3 - _t2) * 1000)
+    _total_ms = int((_t3 - _t0) * 1000)
+    logger.info(
+        f"Knowledge search timings: embed_ms={_embed_ms} index_ms={_index_ms} total_ms={_total_ms}"
+    )
 
     logger.info(f"Knowledge search completed: ({len(results)} results)")
     return search_result
