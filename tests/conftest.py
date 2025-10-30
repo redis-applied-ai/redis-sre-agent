@@ -363,10 +363,16 @@ def redis_container(worker_id):
     import importlib
 
     from redis_sre_agent.core import docket_tasks as tasks_module
+    from redis_sre_agent.core import knowledge_helpers as knowledge_helpers_module
     from redis_sre_agent.core import redis as redis_module
+    from redis_sre_agent.tools.knowledge import knowledge_base as knowledge_base_module
 
+    # Reload core modules that cache the Settings object and functions
     importlib.reload(redis_module)
     importlib.reload(tasks_module)
+    # Also reload dependent modules that imported functions from core.redis at import time
+    importlib.reload(knowledge_helpers_module)
+    importlib.reload(knowledge_base_module)
 
     # Create indices in the test Redis container
     import asyncio
