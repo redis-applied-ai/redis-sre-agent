@@ -1,3 +1,12 @@
+memberlist:
+  # For single-container dev, allow running without peers
+  abort_if_cluster_join_fails: false
+  bind_addr: 0.0.0.0
+  bind_port: 7946
+  # Self-join helps satisfy ring discovery even with one instance
+  join_members:
+    - tempo
+
 server:
   http_listen_port: 3200
 
