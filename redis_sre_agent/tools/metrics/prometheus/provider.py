@@ -143,7 +143,12 @@ class PrometheusToolProvider(ToolProvider):
         base = self.config.url.rstrip("/")
         url = f"{base}{path}"
         # Use a thread to avoid blocking the event loop
-        resp = await asyncio.to_thread(lambda: requests.get(url, params=params, timeout=5))
+        try:
+            resp = await asyncio.to_thread(lambda: requests.get(url, params=params, timeout=5))
+        except Exception as e:
+            # Surface HTTP/network errors as an error payload instead of raising.
+            # This lets callers fall back to retry paths (e.g., client.all_metrics()).
+            return {"status": "error", "error": str(e)}
         try:
             return resp.json()
         except Exception:
