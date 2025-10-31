@@ -1,4 +1,4 @@
-## Using the CLI and API: Core Workflows
+## Using the CLI: Core Workflows
 
 This guide shows how to use the agent end-to-end: start services, add an instance, triage with queries, ingest knowledge, search what the agent knows, schedule recurring checks, and view task/thread status.
 
