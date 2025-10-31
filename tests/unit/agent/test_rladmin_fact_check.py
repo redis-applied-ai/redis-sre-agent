@@ -29,9 +29,9 @@ class TestRladminCorrector:
 
         agent = SRELangGraphAgent()
         with patch.object(
-            agent, "process_query", new=AsyncMock(return_value="Use rladmin list databases")
+            agent, "_process_query", new=AsyncMock(return_value="Use rladmin list databases")
         ):
-            out = await agent.process_query_with_fact_check("help", "s", "u")
+            out = await agent.process_query("help", "s", "u")
         assert out.startswith("E")
         mock_build.assert_called_once()
 

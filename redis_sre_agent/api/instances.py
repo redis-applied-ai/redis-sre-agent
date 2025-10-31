@@ -14,9 +14,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Domain imports: use qualified module to avoid re-exporting symbols
 
-
+# TODO: Move basemodels to schemas.py
 def to_response(instance: "core_instances.RedisInstance") -> "RedisInstanceResponse":
     """Convert a domain RedisInstance to an API-safe response with masked credentials."""
     conn_url = (

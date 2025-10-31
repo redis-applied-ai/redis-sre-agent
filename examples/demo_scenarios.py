@@ -541,9 +541,34 @@ class RedisSREDemo:
             print("   ✅ Connected to Redis Enterprise instance")
         except Exception as e:
             print(f"   ❌ Could not connect to Redis Enterprise: {e}")
-            print("   💡 Make sure Redis Enterprise is running with the demo setup")
-            print("   💡 Expected connection: redis://localhost:12000/0")
-            return None
+            print("   🔧 Attempting to bootstrap Redis Enterprise demo cluster via script ...")
+            try:
+                import subprocess as _subprocess
+
+                setup = _subprocess.run(
+                    ["bash", "scripts/setup_redis_enterprise_cluster.sh"],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                if setup.returncode != 0:
+                    tail = "\n".join((setup.stderr or setup.stdout or "").splitlines()[-40:])
+                    print("   ❌ Bootstrap script failed; tail:")
+                    print("   " + "\n   ".join(tail.splitlines()))
+                    return None
+                # Retry connection after bootstrap
+                try:
+                    import redis as _redis
+
+                    client = _redis.from_url(enterprise_url)
+                    client.ping()
+                    print("   ✅ Connected to Redis Enterprise instance (after bootstrap)")
+                except Exception as e2:
+                    print(f"   ❌ Could not connect after bootstrap: {e2}")
+                    return None
+            except Exception as e3:
+                print(f"   ❌ Bootstrap attempt failed: {e3}")
+                return None
 
         # Ensure the agent can reach this instance via docker service hostnames
         await self._register_enterprise_instance(
@@ -675,10 +700,43 @@ class RedisSREDemo:
                     except Exception:
                         continue
                 if not db:
-                    print(
-                        f"   ⚠️  DB '{db_name}' not found via Admin API on localhost; skipping sharded DB check"
-                    )
-                    return
+                    print(f"   ℹ️ DB '{db_name}' not found; creating via Admin API")
+                    create_payload = {
+                        "name": str(db_name),
+                        "type": "redis",
+                        "memory_size": 33554432,
+                        "port": 12000,
+                        "replication": True,
+                        "sharding": True,
+                        "oss_sharding": True,
+                        "shards_count": int(min_shards),
+                        "shards_placement": "sparse",
+                        "proxy_policy": "all-master-shards",
+                    }
+                    crt = await client.post(f"{base}/v1/bdbs", json=create_payload, auth=auth)
+                    crt.raise_for_status()
+                    print("   ✅ Database created")
+                    # Re-read to verify and set db
+                    lst2 = await client.get(f"{base}/v1/bdbs", auth=auth)
+                    lst2.raise_for_status()
+                    try:
+                        dbs2 = (
+                            lst2.json()
+                            if lst2.headers.get("content-type", "").startswith("application/json")
+                            else []
+                        )
+                    except Exception:
+                        dbs2 = []
+                    for d in dbs2 or []:
+                        try:
+                            if str(d.get("name") or "").lower() == str(db_name).lower():
+                                db = d
+                                break
+                        except Exception:
+                            continue
+                    if not db:
+                        print("   ⚠️  Could not verify DB creation; skipping sharded DB check")
+                        return
 
                 uid = int(db.get("uid"))
                 shards = int(db.get("shards_count") or 0)
@@ -727,9 +785,33 @@ class RedisSREDemo:
             timeout=30,
         )
         if dbs.returncode != 0 or (db_name not in (dbs.stdout or "")):
-            raise RuntimeError(
-                f"Database '{db_name}' not found. Run setup_redis_enterprise_cluster.sh first."
+            print(f"   ℹ️ Database '{db_name}' not found; attempting to ensure it exists")
+            try:
+                await self._ensure_sharded_database(db_name=db_name, min_shards=3)
+            except Exception:
+                pass
+            # Re-check
+            dbs = self._docker_exec(
+                ["docker", "exec", "redis-enterprise-node1", "rladmin", "status", "databases"],
+                timeout=30,
             )
+            if dbs.returncode != 0 or (db_name not in (dbs.stdout or "")):
+                print("   ⚙️  Bootstrapping Redis Enterprise cluster via setup script ...")
+                setup = self._docker_exec(
+                    ["bash", "scripts/setup_redis_enterprise_cluster.sh"], timeout=600
+                )
+                if setup.returncode != 0:
+                    tail = "\n".join((setup.stderr or setup.stdout or "").splitlines()[-20:])
+                    raise RuntimeError(
+                        f"Failed to bootstrap Enterprise cluster (rc={setup.returncode}).\n{tail}"
+                    )
+                # Final re-check
+                dbs = self._docker_exec(
+                    ["docker", "exec", "redis-enterprise-node1", "rladmin", "status", "databases"],
+                    timeout=30,
+                )
+                if dbs.returncode != 0 or (db_name not in (dbs.stdout or "")):
+                    raise RuntimeError(f"Database '{db_name}' not found after bootstrap")
         # Node exists?
         nodes = self._docker_exec(
             ["docker", "exec", "redis-enterprise-node1", "rladmin", "status", "nodes"], timeout=30
@@ -1473,33 +1555,228 @@ class RedisSREDemo:
         # Prepare Enterprise connectivity and register instance for agent tools
         enterprise_client = await self._prepare_enterprise()
         if not enterprise_client:
+            # Fallback: seed synthetic evidence so the agent can still talk about failover
             print("   ⚠️ Proceeding with synthetic evidence only; Enterprise not reachable")
+            self.print_step(1, "Seeding failover evidence (metrics + logs)")
+            try:
+                pushgateway_push(
+                    "demo-scenarios",
+                    "redis-enterprise",
+                    'demo_failover_events_total{db="demo"} 1\n',
+                )
+                pushgateway_push(
+                    "demo-scenarios",
+                    "redis-enterprise",
+                    'demo_failover_state{db="demo",status="in_progress"} 1\n',
+                )
+                loki_push(
+                    {
+                        "service": "redis-enterprise",
+                        "job": "redis-enterprise",
+                        "scenario": "4.1",
+                        "component": "failover",
+                        "level": "info",
+                    },
+                    [
+                        "redis-enterprise: failover initiated for shard 1 (demo)",
+                        "redis-enterprise: promoting replica to master (demo)",
+                    ],
+                )
+            except Exception as e:
+                print(f"   ⚠️  Evidence seeding failed: {e}")
 
-        self.print_step(1, "Checking cluster status (no destructive actions)")
+            # UI vs CLI handling
+            if self.ui_mode:
+                self._wait_for_ui_interaction(
+                    "Master Shard Failover",
+                    "Synthetic failover event seeded; use admin-status tools to verify current shard roles.",
+                )
+            else:
+                await self._run_diagnostics_and_agent_query(
+                    "We suspect a Redis Enterprise failover occurred. Please investigate current shard roles, status, and impact."
+                )
+
+            # Cleanup synthetic state
+            self.print_step(2, "Marking failover complete in demo evidence")
+            try:
+                pushgateway_push(
+                    "demo-scenarios",
+                    "redis-enterprise",
+                    'demo_failover_state{db="demo",status="in_progress"} 0\n',
+                )
+                loki_push(
+                    {
+                        "service": "redis-enterprise",
+                        "job": "redis-enterprise",
+                        "scenario": "4.1",
+                        "component": "failover",
+                        "level": "info",
+                    },
+                    ["redis-enterprise: failover completed for shard 1 (demo)"],
+                )
+            except Exception:
+                pass
+            return
+
+        # === Real failover path ===
         import subprocess
 
+        # Step 1: Ensure DB is multi-sharded AND replication is enabled
+        self.print_step(1, "Ensuring 'test-db' is sharded and replication is enabled")
+        await self._ensure_sharded_database(db_name="test-db", min_shards=3)
         try:
-            status = subprocess.run(
-                ["docker", "exec", "redis-enterprise-node1", "rladmin", "status", "shards"],
+            base = "https://localhost:9443"
+            auth_user = os.getenv("REDIS_ENTERPRISE_ADMIN_USER", "admin@redis.com")
+            auth_pass = os.getenv("REDIS_ENTERPRISE_ADMIN_PASS", "admin")
+            import httpx as _httpx
+
+            async with _httpx.AsyncClient(verify=False, timeout=30.0) as client:
+                lst = await client.get(f"{base}/v1/bdbs", auth=(auth_user, auth_pass))
+                lst.raise_for_status()
+                dbs = []
+                try:
+                    dbs = (
+                        lst.json()
+                        if lst.headers.get("content-type", "").startswith("application/json")
+                        else []
+                    )
+                except Exception:
+                    dbs = []
+                db = None
+                for d in dbs or []:
+                    try:
+                        if str(d.get("name") or "").lower() == "test-db":
+                            db = d
+                            break
+                    except Exception:
+                        continue
+                if not db:
+                    print(
+                        "   ⚠️  Database 'test-db' not found via Admin API; continuing best-effort"
+                    )
+                else:
+                    if not bool(db.get("replication")):
+                        uid = int(db.get("uid"))
+                        shards_count = int(db.get("shards_count") or 3)
+                        payload = {
+                            "replication": True,
+                            # Preserve sharding-related settings so PUT is minimal-risk
+                            "sharding": True,
+                            "oss_sharding": True,
+                            "shards_count": shards_count,
+                            "shards_placement": db.get("shards_placement") or "sparse",
+                            "proxy_policy": db.get("proxy_policy") or "all-master-shards",
+                        }
+                        put = await client.put(
+                            f"{base}/v1/bdbs/{uid}", json=payload, auth=(auth_user, auth_pass)
+                        )
+                        put.raise_for_status()
+                        print("   ✅ Enabled replication on 'test-db'")
+                        # Wait briefly for DB to be healthy
+                        for _ in range(30):
+                            try:
+                                enterprise_client.ping()
+                                break
+                            except Exception:
+                                time.sleep(1.0)
+                    else:
+                        print("   ✅ Replication already enabled")
+        except Exception as e:
+            print(f"   ⚠️  Could not ensure replication: {e}")
+
+        # Step 2: Put masters on node 2 so failover is observable
+        self.print_step(2, "Placing master shards on node 2 (preparing for failover)")
+        try:
+            await self._create_shard_imbalance(db_name="test-db", target_node_id="2")
+        except Exception as e:
+            print(f"   ⚠️  Python imbalance helper failed: {e}")
+            print("   ⚙️  Falling back to shell script ...")
+            try:
+                imbalance = subprocess.run(
+                    ["bash", "scripts/create_deliberate_shard_imbalance.sh", "test-db", "2"],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if imbalance.returncode == 0:
+                    print("   ✅ Imbalance created (script). Output (truncated):")
+                    print("   " + "\n   ".join((imbalance.stdout or "").splitlines()[:20]))
+                else:
+                    print("   ⚠️  Imbalance script returned non-zero.")
+                    if imbalance.stderr:
+                        print("   stderr:")
+                        print("   " + "\n   ".join(imbalance.stderr.splitlines()[:10]))
+            except Exception as e2:
+                print(f"   ⚠️  Could not run imbalance script: {e2}")
+
+        # Step 3: Trigger failover by putting node 2 in maintenance mode
+        self.print_step(3, "Triggering failover by enabling maintenance mode on node 2")
+        did_maintenance = False
+        try:
+            maint_on = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "redis-enterprise-node1",
+                    "rladmin",
+                    "node",
+                    "2",
+                    "maintenance_mode",
+                    "on",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=20,
+                timeout=60,
             )
-            if status.returncode == 0:
-                print("   \u2705 rladmin status shards (truncated):")
-                print("   " + "\n   ".join(status.stdout.splitlines()[:20]))
+            if maint_on.returncode == 0:
+                did_maintenance = True
+                print("   ✅ maintenance_mode ON for node 2")
             else:
-                print("   \u26a0\ufe0f  rladmin status failed; proceeding with synthetic evidence")
+                print("   ⚠️  Failed to enable maintenance mode on node 2; rc!=0")
         except Exception as e:
-            print(f"   \u26a0\ufe0f  Could not run rladmin: {e}")
+            print(f"   ⚠️  Could not set maintenance mode: {e}")
 
-        self.print_step(2, "Seeding failover evidence (metrics + logs)")
+        # Step 4: Wait for masters to move off node 2
+        self.print_step(4, "Waiting for masters to fail over off node 2")
         try:
-            # Demo counter and a state flag
+            final_out = ""
+            for i in range(1, 21):
+                st = subprocess.run(
+                    [
+                        "docker",
+                        "exec",
+                        "redis-enterprise-node1",
+                        "rladmin",
+                        "status",
+                        "shards",
+                        "db",
+                        "test-db",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+                final_out = st.stdout or ""
+                masters_on_n2 = len(
+                    [ln for ln in (final_out.splitlines()) if (" master " in ln and "node:2" in ln)]
+                )
+                if masters_on_n2 == 0:
+                    print("   ✅ No masters on node 2; failover complete")
+                    break
+                time.sleep(3.0)
+            if final_out:
+                print("   rladmin status shards (truncated):")
+                print("   " + "\n   ".join(final_out.splitlines()[:20]))
+        except Exception as e:
+            print(f"   ⚠️  Could not poll shards status: {e}")
+
+        # Step 5: Seed failover evidence (metrics + logs)
+        self.print_step(5, "Seeding failover evidence (metrics + logs)")
+        try:
             pushgateway_push(
                 "demo-scenarios",
                 "redis-enterprise",
-                'demo_failover_events_total{db="demo"} 1\n',  # event count
+                'demo_failover_events_total{db="demo"} 1\n',
             )
             pushgateway_push(
                 "demo-scenarios",
@@ -1515,27 +1792,43 @@ class RedisSREDemo:
                     "level": "info",
                 },
                 [
-                    "redis-enterprise: failover initiated for shard 1 (demo)",
+                    "redis-enterprise: failover triggered by maintenance mode on node 2 (demo)",
                     "redis-enterprise: promoting replica to master (demo)",
                 ],
             )
         except Exception as e:
-            print(f"   \u26a0\ufe0f  Evidence seeding failed: {e}")
+            print(f"   ⚠️  Evidence seeding failed: {e}")
 
         # UI vs CLI handling
         if self.ui_mode:
             self._wait_for_ui_interaction(
                 "Master Shard Failover",
-                "Synthetic failover event seeded; use admin-status tools to verify current shard roles.",
+                "A real failover was triggered via maintenance mode; use admin-status tools to verify current shard roles.",
             )
         else:
             await self._run_diagnostics_and_agent_query(
                 "We suspect a Redis Enterprise failover occurred. Please investigate current shard roles, status, and impact."
             )
 
-        # Cleanup: mark state as completed
-        self.print_step(3, "Marking failover complete in demo evidence")
+        # Cleanup: disable maintenance mode and mark state completed
+        self.print_step(6, "Disabling maintenance mode on node 2 and clearing demo state")
         try:
+            if did_maintenance:
+                subprocess.run(
+                    [
+                        "docker",
+                        "exec",
+                        "redis-enterprise-node1",
+                        "rladmin",
+                        "node",
+                        "2",
+                        "maintenance_mode",
+                        "off",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
             pushgateway_push(
                 "demo-scenarios",
                 "redis-enterprise",
@@ -1549,7 +1842,7 @@ class RedisSREDemo:
                     "component": "failover",
                     "level": "info",
                 },
-                ["redis-enterprise: failover completed for shard 1 (demo)"],
+                ["redis-enterprise: failover completed (demo)"],
             )
         except Exception:
             pass
@@ -1564,6 +1857,12 @@ class RedisSREDemo:
             print(
                 "   \u26a0\ufe0f  Proceeding with synthetic evidence only; Enterprise not reachable"
             )
+        else:
+            try:
+                print("\n📋 Pre-step: Ensuring 'test-db' is available")
+                await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+            except Exception as e:
+                print(f"   \u26a0\ufe0f  Could not ensure database: {e}")
 
         self.print_step(1, "Seeding high shard CPU evidence (metrics + logs)")
         try:
@@ -1648,6 +1947,12 @@ class RedisSREDemo:
             print(
                 "   \u26a0\ufe0f Proceeding with synthetic evidence only; Enterprise not reachable"
             )
+        else:
+            try:
+                print("\n📋 Pre-step: Ensuring 'test-db' is available")
+                await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+            except Exception as e:
+                print(f"   \u26a0\ufe0f  Could not ensure database: {e}")
 
         self.print_step(1, "Checking shard placement (if available)")
         import subprocess
@@ -1952,6 +2257,12 @@ class RedisSREDemo:
             print(
                 "   \u26a0\ufe0f Proceeding with synthetic evidence only; Enterprise not reachable"
             )
+        else:
+            try:
+                print("\n📋 Pre-step: Ensuring 'test-db' is available")
+                await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+            except Exception as e:
+                print(f"   \u26a0\ufe0f  Could not ensure database: {e}")
 
         self.print_step(1, "Seeding evidence that disabled_commands may be unsafe/empty")
         try:

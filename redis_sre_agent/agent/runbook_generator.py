@@ -13,11 +13,14 @@ import openai
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
+from opentelemetry import trace
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import search_knowledge_base
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+
 
 # Initialize OpenAI client
 openai.api_key = settings.openai_api_key
@@ -132,14 +135,31 @@ class RunbookGenerator:
         """Build the LangGraph workflow."""
         workflow = StateGraph(RunbookAgentState)
 
-        # Add nodes
-        workflow.add_node("research_phase", self._research_node)
-        workflow.add_node("generate", self._generate_node)
-        workflow.add_node("evaluate", self._evaluate_node)
-        workflow.add_node("refine", self._refine_node)
+        # Lightweight OTel wrapper to trace per-node execution
+        def _trace_node(node_name: str):
+            def _decorator(fn):
+                async def _wrapped(state: RunbookAgentState) -> RunbookAgentState:
+                    with tracer.start_as_current_span(
+                        "langgraph.node",
+                        attributes={
+                            "langgraph.graph": "runbook",
+                            "langgraph.node": node_name,
+                        },
+                    ):
+                        return await fn(state)
+
+                return _wrapped
+
+            return _decorator
+
+        # Add nodes (wrapped with per-node tracing spans)
+        workflow.add_node("research_phase", _trace_node("research_phase")(self._research_node))
+        workflow.add_node("generate", _trace_node("generate")(self._generate_node))
+        workflow.add_node("evaluate", _trace_node("evaluate")(self._evaluate_node))
+        workflow.add_node("refine", _trace_node("refine")(self._refine_node))
 
         # Add completion node
-        workflow.add_node("complete", self._complete_node)
+        workflow.add_node("complete", _trace_node("complete")(self._complete_node))
 
         # Add edges
         workflow.set_entry_point("research_phase")
@@ -213,7 +233,24 @@ Provide a 3-4 sentence research summary highlighting:
 Research Summary:
 """
 
-        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        import time as _time
+
+        try:
+            from opentelemetry import trace as _otel_trace  # type: ignore
+        except Exception:
+            _otel_trace = None  # type: ignore
+        from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
+
+        _t0 = _time.perf_counter()
+        _tr = _otel_trace.get_tracer(__name__) if _otel_trace else None
+        if _tr:
+            with _tr.start_as_current_span("llm.call", attributes={"llm.component": "runbook"}):
+                response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        else:
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        record_llm_call_metrics(
+            component="runbook", llm=self.llm, response=response, start_time=_t0
+        )
         return response.content.strip()
 
     def _format_tavily_results(self, results: List[Dict]) -> str:
@@ -350,8 +387,17 @@ Generate a comprehensive Redis SRE runbook for the following scenario:
 Create a detailed, production-ready runbook that SREs can use during real incidents. Include specific Redis commands, configuration examples, monitoring queries, and actionable procedures.
 """
 
-        response = await self.llm.ainvoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+        import time as _time
+
+        from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
+
+        _t0 = _time.perf_counter()
+        with tracer.start_as_current_span("llm.call", attributes={"llm.component": "runbook"}):
+            response = await self.llm.ainvoke(
+                [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+            )
+        record_llm_call_metrics(
+            component="runbook", llm=self.llm, response=response, start_time=_t0
         )
 
         return response.content.strip()
@@ -432,8 +478,27 @@ Provide your evaluation in this exact JSON format:
 ```
 """
 
-        response = await self.llm.ainvoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+        import time as _time
+
+        try:
+            from opentelemetry import trace as _otel_trace  # type: ignore
+        except Exception:
+            _otel_trace = None  # type: ignore
+        from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
+
+        _t0 = _time.perf_counter()
+        _tr = _otel_trace.get_tracer(__name__) if _otel_trace else None
+        if _tr:
+            with _tr.start_as_current_span("llm.call", attributes={"llm.component": "runbook"}):
+                response = await self.llm.ainvoke(
+                    [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+                )
+        else:
+            response = await self.llm.ainvoke(
+                [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+            )
+        record_llm_call_metrics(
+            component="runbook", llm=self.llm, response=response, start_time=_t0
         )
 
         # Parse JSON response

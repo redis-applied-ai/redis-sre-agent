@@ -141,7 +141,7 @@ async def evaluate_enterprise_response_with_llm_judge(scenario: Dict[str, Any]) 
 Context: {scenario["context"]}"""
 
     try:
-        response = await agent.process_query_with_fact_check(
+        response = await agent.process_query(
             query=enhanced_query,
             session_id="enterprise_test_session",
             user_id="enterprise_test_user",

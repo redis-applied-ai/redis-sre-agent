@@ -1,7 +1,4 @@
-"""Thread management CLI commands.
-
-Extracted from main.py to keep CLI modular without behavior changes.
-"""
+"""Thread management CLI commands."""
 
 from __future__ import annotations
 

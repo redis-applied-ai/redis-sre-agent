@@ -15,11 +15,13 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from opentelemetry import trace
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.tools.manager import ToolManager
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 # Knowledge-focused system prompt
@@ -68,6 +70,7 @@ class KnowledgeAgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    tool_calls_executed: int
 
 
 class KnowledgeOnlyAgent:
@@ -150,10 +153,43 @@ class KnowledgeOnlyAgent:
                     clean = clean[1:]
                 return clean
 
-            messages = _sanitize_messages_for_llm(messages)
+            # OTel: capture sanitize phase
+            try:
+                from opentelemetry import trace as _otel_trace  # type: ignore
+
+                _tr = _otel_trace.get_tracer(__name__)
+            except Exception:
+                _tr = None  # type: ignore
+            _pre_count = len(messages)
+            if _tr:
+                with _tr.start_as_current_span(
+                    "knowledge.agent.sanitize", attributes={"messages.pre": _pre_count}
+                ):
+                    messages = _sanitize_messages_for_llm(messages)
+            else:
+                messages = _sanitize_messages_for_llm(messages)
 
             try:
-                response = await llm_with_tools.ainvoke(messages)
+                import time as _time
+
+                try:
+                    from opentelemetry import trace as _otel_trace  # type: ignore
+                except Exception:
+                    _otel_trace = None  # type: ignore
+                from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
+
+                _t0 = _time.perf_counter()
+                _tr = _otel_trace.get_tracer(__name__) if _otel_trace else None
+                if _tr:
+                    with _tr.start_as_current_span(
+                        "llm.call", attributes={"llm.component": "knowledge"}
+                    ):
+                        response = await llm_with_tools.ainvoke(messages)
+                else:
+                    response = await llm_with_tools.ainvoke(messages)
+                record_llm_call_metrics(
+                    component="knowledge", llm=llm_with_tools, response=response, start_time=_t0
+                )
                 # Coerce non-Message responses (e.g., simple mocks) into AIMessage
                 if not isinstance(response, BaseMessage):
                     content = getattr(response, "content", None)
@@ -181,13 +217,7 @@ class KnowledgeOnlyAgent:
                 else:
                     state["current_tool_calls"] = []
 
-                # Progress callback
-                if self.progress_callback:
-                    await self.progress_callback(
-                        f"Knowledge agent processing query (iteration {iteration_count + 1})",
-                        "agent_processing",
-                    )
-
+                # No per-iteration progress message; providers will emit status updates
                 return state
 
             except Exception as e:
@@ -210,11 +240,39 @@ class KnowledgeOnlyAgent:
                 return state
 
             try:
-                # Execute tools using ToolManager
-                tool_results = await tool_mgr.execute_tool_calls(last_message.tool_calls)
+                # Emit provider-supplied status updates before executing tools
+                try:
+                    pending = getattr(last_message, "tool_calls", []) or []
+                    if self.progress_callback:
+                        for tc in pending:
+                            tool_name = tc.get("name")
+                            tool_args = tc.get("args") or {}
+                            if tool_name:
+                                status_msg = tool_mgr.get_status_update(tool_name, tool_args)
+                                if status_msg:
+                                    await self.progress_callback(status_msg, "agent_reflection")
+                except Exception:
+                    pass
+
+                # Execute tools using ToolManager (wrapped in OTel span)
+                _tool_names = [
+                    tc.get("name", "") for tc in (getattr(last_message, "tool_calls", []) or [])
+                ]
+                with tracer.start_as_current_span(
+                    "knowledge.tools.execute",
+                    attributes={
+                        "tool_calls.count": len(_tool_names),
+                        "tool_calls.names": ",".join(_tool_names),
+                    },
+                ):
+                    tool_results = await tool_mgr.execute_tool_calls(last_message.tool_calls)
 
                 # Convert results to ToolMessage format expected by LangGraph
                 from langchain_core.messages import ToolMessage
+
+                # Track budget usage for tool calls
+                prev_exec = state.get("tool_calls_executed", 0)
+                state["tool_calls_executed"] = prev_exec + len(tool_results or [])
 
                 tool_messages = []
                 for tool_call, result in zip(last_message.tool_calls, tool_results):
@@ -246,9 +304,17 @@ class KnowledgeOnlyAgent:
                         # Don't let telemetry failures break tool handling
                         pass
 
+                    # Prefer JSON content to help the LLM consume results
+                    try:
+                        import json as _json
+
+                        _content = _json.dumps(result, default=str)
+                    except Exception:
+                        _content = str(result)
+
                     tool_messages.append(
                         ToolMessage(
-                            content=str(result),
+                            content=_content,
                             tool_call_id=tool_call["id"],
                         )
                     )
@@ -277,6 +343,21 @@ class KnowledgeOnlyAgent:
             if state.get("iteration_count", 0) >= state.get("max_iterations", 5):
                 return END
 
+            # Enforce a tool call budget to avoid runaway loops
+            try:
+                from redis_sre_agent.core.config import settings as _settings
+
+                _budget = int(getattr(_settings, "max_tool_calls_per_stage", 3))
+            except Exception:
+                _budget = 3
+            prev_exec = int(state.get("tool_calls_executed", 0) or 0)
+            pending = int(len(state.get("current_tool_calls", []) or []))
+            if prev_exec >= _budget:
+                return END
+            # If executing the pending calls would exceed budget, stop before entering tools
+            if pending and (prev_exec + pending) > _budget:
+                return END
+
             # If the last message has tool calls, execute them
             if (
                 hasattr(last_message, "tool_calls")
@@ -290,9 +371,26 @@ class KnowledgeOnlyAgent:
         # Create the workflow
         workflow = StateGraph(KnowledgeAgentState)
 
-        # Add nodes
-        workflow.add_node("agent", agent_node)
-        workflow.add_node("tools", safe_tool_node)
+        # Lightweight OTel wrapper to trace per-node execution
+        def _trace_node(node_name: str):
+            def _decorator(fn):
+                async def _wrapped(state: KnowledgeAgentState) -> KnowledgeAgentState:
+                    with tracer.start_as_current_span(
+                        "langgraph.node",
+                        attributes={
+                            "langgraph.graph": "knowledge",
+                            "langgraph.node": node_name,
+                        },
+                    ):
+                        return await fn(state)
+
+                return _wrapped
+
+            return _decorator
+
+        # Add nodes (wrapped with per-node tracing spans)
+        workflow.add_node("agent", _trace_node("agent")(agent_node))
+        workflow.add_node("tools", _trace_node("tools")(safe_tool_node))
 
         # Set entry point
         workflow.set_entry_point("agent")
@@ -306,107 +404,6 @@ class KnowledgeOnlyAgent:
     async def process_query(
         self,
         query: str,
-        user_id: str = "knowledge-user",
-        session_id: str = "knowledge-session",
-        max_iterations: int = 5,
-        progress_callback=None,
-        conversation_history: Optional[List[BaseMessage]] = None,
-    ) -> str:
-        """
-        Process a knowledge-only query.
-
-        Args:
-            query: User's question or request
-            user_id: User identifier
-            session_id: Session identifier
-            max_iterations: Maximum number of agent iterations
-            progress_callback: Optional callback for progress updates
-            conversation_history: Optional list of previous messages for context
-
-        Returns:
-            Agent's response as a string
-        """
-        logger.info(f"Processing knowledge query for user {user_id}")
-
-        # Set progress callback for this query
-        if progress_callback:
-            self.progress_callback = progress_callback
-
-        # Create ToolManager with only knowledge tools (no redis_instance)
-        tool_mgr = ToolManager(redis_instance=None)
-        logger.info(f"Loaded {len(tool_mgr.get_tools())} knowledge tools")
-
-        # Build workflow with tools
-        workflow = self._build_workflow(tool_mgr)
-
-        # Create initial state with conversation history
-        initial_messages = []
-        if conversation_history:
-            initial_messages = list(conversation_history)
-            logger.info(f"Including {len(conversation_history)} messages from conversation history")
-        initial_messages.append(HumanMessage(content=query))
-
-        initial_state: KnowledgeAgentState = {
-            "messages": initial_messages,
-            "session_id": session_id,
-            "user_id": user_id,
-            "current_tool_calls": [],
-            "iteration_count": 0,
-            "max_iterations": max_iterations,
-        }
-
-        # Create MemorySaver for this query
-        # Conversation history is managed by ThreadManager and passed via messages
-        checkpointer = MemorySaver()
-        app = workflow.compile(checkpointer=checkpointer)
-
-        # Configure thread for session persistence
-        thread_config = {"configurable": {"thread_id": session_id}}
-
-        try:
-            # Progress callback for start
-            if self.progress_callback:
-                await self.progress_callback(
-                    "Knowledge agent starting to process your query...", "agent_start"
-                )
-
-            # Run the workflow
-            final_state = await app.ainvoke(initial_state, config=thread_config)
-
-            # Extract the final response
-            messages = final_state.get("messages", [])
-            if messages:
-                last_message = messages[-1]
-                if isinstance(last_message, AIMessage):
-                    response = last_message.content
-                else:
-                    response = str(last_message.content)
-            else:
-                response = "I apologize, but I wasn't able to process your query. Please try asking a more specific question about SRE practices or troubleshooting."
-
-            # Progress callback for completion
-            if self.progress_callback:
-                await self.progress_callback(
-                    "Knowledge agent has completed processing your query.", "agent_complete"
-                )
-
-            logger.info(f"Knowledge query completed for user {user_id}")
-            return response
-
-        except Exception as e:
-            logger.error(f"Knowledge agent processing failed: {e}")
-            error_response = f"I encountered an error while processing your knowledge query: {str(e)}. Please try asking a more specific question about SRE practices, troubleshooting methodologies, or system reliability concepts."
-
-            if self.progress_callback:
-                await self.progress_callback(
-                    f"Knowledge agent encountered an error: {str(e)}", "agent_error"
-                )
-
-            return error_response
-
-    async def process_query_with_fact_check(
-        self,
-        query: str,
         session_id: str,
         user_id: str,
         max_iterations: int = 5,
@@ -414,11 +411,8 @@ class KnowledgeOnlyAgent:
         progress_callback=None,
         conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
-        """Process a query with the same signature as the main agent.
-
-        This method exists for compatibility with the task system that expects
-        both agents to have the same interface. For the knowledge-only agent,
-        we don't need fact-checking since it only provides general guidance.
+        """
+        Process a knowledge-only query.
 
         Args:
             query: User's question or request
@@ -432,15 +426,89 @@ class KnowledgeOnlyAgent:
         Returns:
             Agent's response as a string
         """
-        # Simply delegate to process_query (no fact-checking needed for knowledge queries)
-        return await self.process_query(
-            query=query,
-            user_id=user_id,
-            session_id=session_id,
-            max_iterations=max_iterations,
-            progress_callback=progress_callback,
-            conversation_history=conversation_history,
-        )
+        logger.info(f"Processing knowledge query for user {user_id}")
+
+        # Set progress callback for this query
+        if progress_callback:
+            self.progress_callback = progress_callback
+
+        # Create ToolManager with only knowledge tools (no redis_instance)
+        async with ToolManager(redis_instance=None) as tool_mgr:
+            logger.info(f"Loaded {len(tool_mgr.get_tools())} knowledge tools")
+
+            # Build workflow with tools
+            workflow = self._build_workflow(tool_mgr)
+
+            # Create initial state with conversation history
+            initial_messages = []
+            if conversation_history:
+                initial_messages = list(conversation_history)
+                logger.info(
+                    f"Including {len(conversation_history)} messages from conversation history"
+                )
+            initial_messages.append(HumanMessage(content=query))
+
+            initial_state: KnowledgeAgentState = {
+                "messages": initial_messages,
+                "session_id": session_id,
+                "user_id": user_id,
+                "current_tool_calls": [],
+                "iteration_count": 0,
+                "max_iterations": max_iterations,
+                "tool_calls_executed": 0,
+            }
+
+            # Create MemorySaver for this query
+            # Conversation history is managed by ThreadManager and passed via messages
+            checkpointer = MemorySaver()
+            app = workflow.compile(checkpointer=checkpointer)
+
+            # Configure thread for session persistence and recursion safety
+            thread_config = {
+                "configurable": {"thread_id": session_id},
+                "recursion_limit": self.settings.recursion_limit,
+            }
+
+            try:
+                # Progress callback for start
+                if self.progress_callback:
+                    await self.progress_callback(
+                        "Knowledge agent starting to process your query...", "agent_start"
+                    )
+
+                # Run the workflow (with recursion limit to match settings)
+                final_state = await app.ainvoke(initial_state, config=thread_config)
+
+                # Extract the final response
+                messages = final_state.get("messages", [])
+                if messages:
+                    last_message = messages[-1]
+                    if isinstance(last_message, AIMessage):
+                        response = last_message.content
+                    else:
+                        response = str(last_message.content)
+                else:
+                    response = "I apologize, but I wasn't able to process your query. Please try asking a more specific question about SRE practices or troubleshooting."
+
+                # Progress callback for completion
+                if self.progress_callback:
+                    await self.progress_callback(
+                        "Knowledge agent has completed processing your query.", "agent_complete"
+                    )
+
+                logger.info(f"Knowledge query completed for user {user_id}")
+                return response
+
+            except Exception as e:
+                logger.error(f"Knowledge agent processing failed: {e}")
+                error_response = f"I encountered an error while processing your knowledge query: {str(e)}. Please try asking a more specific question about SRE practices, troubleshooting methodologies, or system reliability concepts."
+
+                if self.progress_callback:
+                    await self.progress_callback(
+                        f"Knowledge agent encountered an error: {str(e)}", "agent_error"
+                    )
+
+                return error_response
 
 
 # Singleton instance for reuse

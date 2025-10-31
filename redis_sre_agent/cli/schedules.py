@@ -1,7 +1,4 @@
-"""Schedule CLI commands.
-
-Read-only commands (list/get) for managing schedules.
-"""
+"""Schedule CLI commands."""
 
 from __future__ import annotations
 

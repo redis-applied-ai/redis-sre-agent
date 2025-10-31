@@ -6,6 +6,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
@@ -36,44 +46,51 @@ logger = logging.getLogger(__name__)
 
 
 def setup_tracing(app: FastAPI) -> None:
-    """Optionally initialize OpenTelemetry tracing if OTEL env is configured.
+    """Initialize OpenTelemetry tracing if an OTLP endpoint is configured.
 
-    This is a no-op if OpenTelemetry packages are unavailable or
-    OTEL_EXPORTER_OTLP_ENDPOINT is not set.
+    If OTEL_EXPORTER_OTLP_ENDPOINT is not set, tracing is disabled and this
+    function logs an info message and returns.
     """
-    try:
-        otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-        if not otlp_endpoint:
-            return
+    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if not otlp_endpoint:
+        logger.info("OpenTelemetry tracing disabled (no OTEL_EXPORTER_OTLP_ENDPOINT)")
+        return
 
-        # Lazy imports to avoid hard dependency if not used
-        from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    resource = Resource.create(
+        {
+            "service.name": settings.app_name,
+            "service.version": "0.1.0",
+        }
+    )
+    provider = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(
+        endpoint=otlp_endpoint,
+        headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
+    )
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
 
-        resource = Resource.create(
-            {
-                "service.name": settings.app_name,
-                "service.version": "0.1.0",
-            }
-        )
-        provider = TracerProvider(resource=resource)
-        exporter = OTLPSpanExporter(
-            endpoint=otlp_endpoint,
-            headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
-        )
-        processor = BatchSpanProcessor(exporter)
-        provider.add_span_processor(processor)
-        trace.set_tracer_provider(provider)
+    # Instrument libraries
+    RedisInstrumentor().instrument()
+    HTTPXClientInstrumentor().instrument()
+    AioHttpClientInstrumentor().instrument()
+    AsyncioInstrumentor().instrument()
 
-        # Instrument FastAPI
-        FastAPIInstrumentor.instrument_app(app)
-        logger.info("OpenTelemetry tracing initialized (FastAPI instrumented)")
-    except Exception as e:
-        logger.warning(f"OpenTelemetry tracing not initialized: {e}")
+    # Instrument FastAPI (exclude common health/docs paths)
+    excluded = ",".join(
+        [
+            r"^/$",
+            r"^/api/v1/$",
+            r"^/api/v1/health$",
+            r"^/api/v1/metrics$",
+            r"^/api/v1/metrics/health$",
+            r"^/metrics$",
+            r"^/docs$",
+            r"^/openapi\.json$",
+        ]
+    )
+    FastAPIInstrumentor.instrument_app(app, excluded_urls=excluded)
+    logger.info("OpenTelemetry tracing initialized (FastAPI + libs instrumented)")
 
 
 _app_startup_state = {}

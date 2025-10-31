@@ -134,7 +134,7 @@ class TestSREAgentBehavior:
 
             try:
                 # Process query with the agent
-                response = await agent.process_query(
+                response = await agent._process_query(
                     query=test_case["user_input"],
                     session_id=f"test_{test_case['id']}",
                     user_id="test-sre-user",
@@ -192,7 +192,7 @@ class TestSREAgentBehavior:
         for test_case in tool_test_cases:
             logger.info(f"Testing tool calling for: {test_case['expected_tool']}")
 
-            response = await agent.process_query(
+            response = await agent._process_query(
                 query=test_case["query"],
                 session_id=test_case["session_id"],
                 user_id="test-sre-user",
@@ -217,7 +217,7 @@ class TestSREAgentBehavior:
         session_id = "memory-test-session"
 
         # First message - establish context
-        response1 = await agent.process_query(
+        response1 = await agent._process_query(
             query="I'm having issues with Redis memory usage, it's at 95%",
             session_id=session_id,
             user_id="test-sre-user",
@@ -226,7 +226,7 @@ class TestSREAgentBehavior:
         logger.info(f"First response: {response1[:200]}...")
 
         # Follow-up message - should remember context
-        response2 = await agent.process_query(
+        response2 = await agent._process_query(
             query="What should I check first?", session_id=session_id, user_id="test-sre-user"
         )
 

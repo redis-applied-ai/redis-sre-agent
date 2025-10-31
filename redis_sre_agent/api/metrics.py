@@ -142,8 +142,14 @@ async def prometheus_metrics():
             )
             metric_lines.append(formatted)
 
-        # Add a final newline
-        return "\n".join(metric_lines) + "\n"
+        # Concatenate custom app metrics with Prometheus client registry (e.g., LLM counters)
+        try:
+            from prometheus_client import generate_latest  # local import
+
+            prom_block = generate_latest().decode("utf-8")
+        except Exception:
+            prom_block = ""
+        return "\n".join(metric_lines) + "\n" + prom_block
 
     except Exception as e:
         logger.error(f"Error generating metrics: {e}")

@@ -308,6 +308,9 @@ services:
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - TOOLS_LOKI_URL=http://loki:3100
+      # OpenTelemetry export to Tempo
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
@@ -358,6 +361,7 @@ services:
       - ./monitoring/tempo/tempo-config.yaml:/etc/tempo/tempo.yaml:ro
     networks:
       - sre-network
+
 
 
   # Loki - Log aggregation

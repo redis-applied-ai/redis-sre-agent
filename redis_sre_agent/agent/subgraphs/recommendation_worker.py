@@ -15,11 +15,13 @@ from typing import Any, Dict, List, Optional, TypedDict
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
+from opentelemetry import trace
 
 from ..helpers import log_preflight_messages, sanitize_messages_for_llm
 from ..models import Recommendation
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class RecState(TypedDict, total=False):
@@ -153,9 +155,27 @@ def build_recommendation_worker(
         return {**state, "result": result}
 
     g = StateGraph(RecState)
-    g.add_node("llm", llm_node)
-    g.add_node("tools", tools_node)
-    g.add_node("synth", synth_node)
+
+    # Lightweight OTel wrapper to trace per-node execution
+    def _trace_node(node_name: str):
+        def _decorator(fn):
+            async def _wrapped(state: RecState) -> RecState:
+                with tracer.start_as_current_span(
+                    "langgraph.node",
+                    attributes={
+                        "langgraph.graph": "rec_worker",
+                        "langgraph.node": node_name,
+                    },
+                ):
+                    return await fn(state)
+
+            return _wrapped
+
+        return _decorator
+
+    g.add_node("llm", _trace_node("llm")(llm_node))
+    g.add_node("tools", _trace_node("tools")(tools_node))
+    g.add_node("synth", _trace_node("synth")(synth_node))
 
     g.set_entry_point("llm")
     g.add_conditional_edges("llm", should_continue, {"tools": "tools", "synth": "synth"})

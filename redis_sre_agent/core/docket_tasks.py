@@ -337,6 +337,21 @@ async def process_agent_turn(
     redis_client = get_redis_client()
     thread_manager = ThreadManager(redis_client=redis_client)
 
+    # OTel: root span for the entire agent turn so Redis commands nest under it
+    from opentelemetry import trace
+    from opentelemetry.context import attach as _attach
+    from opentelemetry.trace import set_span_in_context as _set_span_in_context
+
+    _root_span = trace.get_tracer(__name__).start_span(
+        "agent.turn",
+        attributes={
+            "thread.id": thread_id,
+            "message.len": len(message or ""),
+            "agent": "sre_agent",
+        },
+    )
+    _root_ctx_token = _attach(_set_span_in_context(_root_span))
+
     try:
         logger.info(f"Processing agent turn for thread {thread_id}")
 
@@ -533,11 +548,16 @@ async def process_agent_turn(
                 elif msg["role"] == "assistant":
                     lc_history.append(AIMessage(content=msg["content"]))
 
-            response_text = await agent.process_query_with_fact_check(
+            # Use a smaller iteration cap for the knowledge agent to avoid long loops
+            _k_max_iters = getattr(settings, "knowledge_max_iterations", None)
+            if not isinstance(_k_max_iters, int) or _k_max_iters <= 0:
+                _k_max_iters = min(int(getattr(settings, "max_iterations", 10) or 10), 8)
+
+            response_text = await agent._process_query(
                 query=message,
                 user_id=thread.metadata.user_id or "unknown",
                 session_id=thread.metadata.session_id or thread_id,
-                max_iterations=settings.max_iterations,
+                max_iterations=_k_max_iters,
                 context=None,
                 progress_callback=progress_callback,
                 conversation_history=lc_history if lc_history else None,
@@ -670,6 +690,13 @@ async def process_agent_turn(
             thread_id, f"Task {task_id} completed successfully", "turn_complete"
         )
 
+        # End root span if present
+        try:
+            if _root_span is not None:
+                _root_span.end()
+        except Exception:
+            pass
+
         logger.info(f"Agent turn completed for thread {thread_id}")
         return result
 
@@ -678,11 +705,24 @@ async def process_agent_turn(
         logger.error(
             f"Turn processing failed for thread {thread_id} (attempt {retry.attempt}): {e}"
         )
+        # Record exception on root span if available
+        try:
+            if _root_span is not None:
+                _root_span.record_exception(e)
+        except Exception:
+            pass
 
         # Update thread with error
         await thread_manager.set_thread_error(thread_id, error_message)
         await thread_manager.add_thread_update(thread_id, f"Error: {error_message}", "error")
         await task_manager.set_task_error(task_id, error_message)
+
+        # End root span on error
+        try:
+            if _root_span is not None:
+                _root_span.end()
+        except Exception:
+            pass
 
         raise
 
@@ -756,7 +796,7 @@ async def run_agent_with_progress(
 
         # Pass conversation history to the agent
         # MemorySaver is created fresh each time, so we need to provide history
-        response = await progress_agent.process_query_with_fact_check(
+        response = await progress_agent.process_query(
             query=latest_user_message,
             session_id=thread_id,
             user_id=thread_state.metadata.user_id if thread_state else "system",

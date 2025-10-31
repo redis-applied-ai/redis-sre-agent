@@ -6,9 +6,11 @@ All commands are read-only for safety.
 
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from opentelemetry import trace
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
@@ -18,6 +20,7 @@ from redis_sre_agent.tools.protocols import SystemHost, ToolCapability, ToolProv
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class RedisCliConfig(BaseModel):
@@ -43,7 +46,7 @@ class RedisCliToolProvider(ToolProvider):
     - CLUSTER INFO (cluster diagnostics)
     - Replication info (replication diagnostics)
     - MEMORY STATS (detailed memory breakdown)
-    - SCAN/RANDOMKEY (keyspace sampling)
+    - RANDOMKEY (keyspace sampling)
     - TYPE (key type inspection)
     - FT._LIST (list Search indexes)
     - FT.INFO (Search index information)
@@ -292,27 +295,18 @@ class RedisCliToolProvider(ToolProvider):
             ToolDefinition(
                 name=self._make_tool_name("sample_keys"),
                 description=(
-                    "Sample keys from the Redis keyspace to understand what data is stored. "
-                    "Uses SCAN to iterate through keys and returns a sample with their types. "
-                    "Use this to get a sense of the data model, key naming patterns, and "
-                    "key distribution across different data types."
+                    "Sample random keys from the Redis keyspace with minimal impact using RANDOMKEY. "
+                    "Returns a sample of unique keys with their types. Prefer this for lightweight "
+                    "inspections of the data model and type distribution."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "count": {
                             "type": "integer",
-                            "description": "Number of keys to sample (default: 100)",
+                            "description": "Number of keys to sample (default: 100; upper bound enforced)",
                             "default": 100,
-                        },
-                        "pattern": {
-                            "type": "string",
-                            "description": (
-                                "Optional SCAN pattern to filter keys. Examples: 'user:*', "
-                                "'session:*', 'cache:*'. Use '*' for all keys."
-                            ),
-                            "default": "*",
-                        },
+                        }
                     },
                     "required": [],
                 },
@@ -692,65 +686,108 @@ class RedisCliToolProvider(ToolProvider):
                 "error": str(e),
             }
 
-    @status_update("I'm sampling keys from the Redis keyspace (pattern: {pattern}).")
-    async def sample_keys(self, count: int = 100, pattern: str = "*") -> Dict[str, Any]:
-        """Sample keys from the Redis keyspace.
+    @status_update("I'm sampling random keys from the Redis keyspace (count: {count}).")
+    async def sample_keys(self, count: int = 100) -> Dict[str, Any]:
+        """Sample random keys from the Redis keyspace with minimal impact.
 
-        Args:
-            count: Number of keys to sample
-            pattern: SCAN pattern to filter keys
-
-        Returns:
-            Sample of keys with their types and statistics
+        Uses RANDOMKEY in pipelined batches and then TYPE for deduplicated keys.
+        Enforces an upper bound on count and a time limit to preserve server performance.
         """
-        logger.info(f"Sampling {count} keys with pattern '{pattern}'")
+        logger.info(f"Sampling {count} random keys")
         try:
             client = self.get_client()
 
-            # Use SCAN to iterate through keys
-            sampled_keys = []
-            cursor = 0
+            async def _run_sample(span) -> Dict[str, Any]:
+                max_count = 200  # hard cap to avoid excessive load
+                time_limit_secs = 1.0  # wall-clock cap
+                batch_attempts_max = 100  # max RANDOMKEY calls per batch
+                attempt_factor = 3  # oversample factor to offset duplicates
 
-            while len(sampled_keys) < count:
-                cursor, keys = await client.scan(cursor=cursor, match=pattern, count=100)
+                try:
+                    requested = int(count)
+                except Exception:
+                    requested = 100
+                target = max(0, min(requested, max_count))
 
-                # Get type for each key
-                for key in keys:
-                    if len(sampled_keys) >= count:
+                start = time.monotonic()
+                sampled: Dict[str, str] = {}
+                attempts = 0
+                batches = 0
+                max_attempts_total = max(50, target * 5)
+
+                while len(sampled) < target and (time.monotonic() - start) < time_limit_secs:
+                    remaining = target - len(sampled)
+                    to_attempt = min(max(remaining * attempt_factor, 10), batch_attempts_max)
+                    if attempts >= max_attempts_total:
                         break
+                    to_attempt = min(to_attempt, max_attempts_total - attempts)
 
-                    key_type = await client.type(key)
-                    sampled_keys.append(
-                        {
-                            "key": key,
-                            "type": key_type,
-                        }
-                    )
+                    pipe = client.pipeline(transaction=False)
+                    for _ in range(int(to_attempt)):
+                        pipe.randomkey()
+                    keys = await pipe.execute()
 
-                # Break if we've scanned the entire keyspace
-                if cursor == 0:
-                    break
+                    fresh: List[str] = []
+                    seen_batch = set()
+                    for k in keys:
+                        if not k:
+                            continue
+                        if k in sampled or k in seen_batch:
+                            continue
+                        seen_batch.add(k)
+                        fresh.append(k)
 
-            # Calculate type distribution
-            type_counts: Dict[str, int] = {}
-            for item in sampled_keys:
-                key_type = item["type"]
-                type_counts[key_type] = type_counts.get(key_type, 0) + 1
+                    if fresh:
+                        pipe2 = client.pipeline(transaction=False)
+                        for k in fresh:
+                            pipe2.type(k)
+                        types = await pipe2.execute()
+                        for k, t in zip(fresh, types):
+                            if len(sampled) >= target:
+                                break
+                            sampled[k] = t
 
-            return {
-                "status": "success",
-                "pattern": pattern,
-                "requested_count": count,
-                "sampled_count": len(sampled_keys),
-                "keys": sampled_keys,
-                "type_distribution": type_counts,
-            }
+                    attempts += int(to_attempt)
+                    batches += 1
+
+                # Build outputs
+                items = [{"key": k, "type": v} for k, v in list(sampled.items())[:target]]
+                type_counts: Dict[str, int] = {}
+                for it in items:
+                    t = it["type"]
+                    type_counts[t] = type_counts.get(t, 0) + 1
+
+                # Annotate the span with summary info
+                if span is not None:
+                    span.set_attribute("redis.random.attempts", int(attempts))
+                    span.set_attribute("redis.random.batches", int(batches))
+                    span.set_attribute("redis.sample.keys_sampled", len(items))
+                    span.set_attribute("redis.sample.requested_count", int(requested))
+                    span.set_attribute("redis.sample.max_count_enforced", int(max_count))
+                    span.set_attribute("redis.sample.time_limit_secs", float(time_limit_secs))
+
+                limit_applied = (requested > max_count) or (
+                    (time.monotonic() - start) >= time_limit_secs
+                )
+                return {
+                    "status": "success",
+                    "requested_count": requested,
+                    "sampled_count": len(items),
+                    "keys": items,
+                    "type_distribution": type_counts,
+                    "limit_applied": bool(limit_applied),
+                }
+
+            with tracer.start_as_current_span(
+                "tool.redis_cli.sample_keys",
+                attributes={"requested_count": int(count)},
+            ) as span:
+                return await _run_sample(span)
         except Exception as e:
             logger.error(f"Failed to sample keys: {e}")
             return {
                 "status": "error",
                 "error": str(e),
-                "pattern": pattern,
             }
 
     @status_update("I'm listing search indexes.")

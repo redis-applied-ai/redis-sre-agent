@@ -8,15 +8,10 @@ They are called by:
 
 import logging
 import time
-
-try:
-    from opentelemetry import trace as _otel_trace  # type: ignore
-except Exception:  # pragma: no cover - tracing is optional
-    _otel_trace = None
-
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from opentelemetry import trace
 from redisvl.query import HybridQuery, VectorQuery, VectorRangeQuery
 from ulid import ULID
 
@@ -24,6 +19,7 @@ from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_knowledge_index, get_vectorizer
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 async def search_knowledge_base_helper(
@@ -68,14 +64,10 @@ async def search_knowledge_base_helper(
     # Always use vector search (tests rely on embedding being used)
     vectorizer = get_vectorizer()
 
-    # Measure embedding latency and optionally trace it
-    _tracer = _otel_trace.get_tracer(__name__) if _otel_trace else None
+    # Measure embedding latency and trace it
     _t0 = time.monotonic()
-    if _tracer:
-        with _tracer.start_as_current_span("knowledge.embed") as _span:
-            _span.set_attribute("query.length", len(query))
-            vectors = await vectorizer.aembed_many([query])
-    else:
+    with tracer.start_as_current_span("knowledge.embed") as _span:
+        _span.set_attribute("query.length", len(query))
         vectors = await vectorizer.aembed_many([query])
     _t1 = time.monotonic()
 
@@ -113,16 +105,13 @@ async def search_knowledge_base_helper(
 
     # Perform vector search (no category filter)
     _t2 = time.monotonic()
-    if _tracer:
-        with _tracer.start_as_current_span("knowledge.index.query") as _span:
-            _span.set_attribute("limit", int(limit))
-            _span.set_attribute("hybrid_search", bool(hybrid_search))
-            _span.set_attribute(
-                "distance_threshold",
-                float(distance_threshold) if distance_threshold is not None else -1.0,
-            )
-            results = await index.query(query_obj)
-    else:
+    with tracer.start_as_current_span("knowledge.index.query") as _span:
+        _span.set_attribute("limit", int(limit))
+        _span.set_attribute("hybrid_search", bool(hybrid_search))
+        _span.set_attribute(
+            "distance_threshold",
+            float(distance_threshold) if distance_threshold is not None else -1.0,
+        )
         results = await index.query(query_obj)
     _t3 = time.monotonic()
 

@@ -83,6 +83,11 @@ class Settings(BaseSettings):
         default=50,
         description="Maximum reasoning iterations (LLM message cycles) for the main agent",
     )
+    # A tighter default is helpful for the knowledge-only agent to avoid loops
+    knowledge_max_iterations: int = Field(
+        default=8,
+        description="Maximum iterations specifically for the knowledge-only agent",
+    )
     max_tool_calls_per_stage: int = Field(
         default=3,
         description="Maximum knowledge/tool calls per subgraph stage (e.g., per-topic research budget)",

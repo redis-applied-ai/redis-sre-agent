@@ -212,11 +212,10 @@ async def test_sample_keys(redis_url, redis_container):
         await client.lpush("test:list", "item1")
         await client.hset("test:hash", "field", "value")
 
-        # Sample all keys
-        result = await provider.sample_keys(count=10, pattern="test:*")
+        # Sample keys
+        result = await provider.sample_keys(count=10)
 
         assert result["status"] == "success"
-        assert result["pattern"] == "test:*"
         assert result["requested_count"] == 10
         assert result["sampled_count"] >= 4  # At least the 4 keys we created
         assert "keys" in result
@@ -233,34 +232,6 @@ async def test_sample_keys(redis_url, redis_container):
 
         # Clean up
         await client.delete("test:key1", "test:key2", "test:list", "test:hash")
-
-
-@pytest.mark.asyncio
-async def test_sample_keys_with_pattern(redis_url, redis_container):
-    """Test sampling keys with a specific pattern."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
-        client = provider.get_client()
-
-        # Create keys with different prefixes
-        await client.set("user:1", "alice")
-        await client.set("user:2", "bob")
-        await client.set("session:1", "data")
-
-        # Sample only user keys
-        result = await provider.sample_keys(count=10, pattern="user:*")
-
-        assert result["status"] == "success"
-        assert result["sampled_count"] >= 2
-
-        # All keys should match the pattern
-        for key_info in result["keys"]:
-            key = key_info["key"]
-            if isinstance(key, bytes):
-                key = key.decode()
-            assert key.startswith("user:")
-
-        # Clean up
-        await client.delete("user:1", "user:2", "session:1")
 
 
 @pytest.mark.asyncio
@@ -297,20 +268,6 @@ async def test_search_index_info(redis_url):
 
 
 @pytest.mark.asyncio
-async def test_sample_keys_empty_keyspace(redis_url, redis_container):
-    """Test sampling keys when keyspace is empty or pattern matches nothing."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
-        # Sample with a pattern that won't match anything
-        result = await provider.sample_keys(count=10, pattern="nonexistent:*")
-
-        assert result["status"] == "success"
-        assert result["pattern"] == "nonexistent:*"
-        assert result["sampled_count"] == 0
-        assert result["keys"] == []
-        assert result["type_distribution"] == {}
-
-
-@pytest.mark.asyncio
 async def test_sample_keys_count_limit(redis_url, redis_container):
     """Test that sample_keys respects the count limit."""
     async with RedisCliToolProvider(connection_url=redis_url) as provider:
@@ -321,7 +278,7 @@ async def test_sample_keys_count_limit(redis_url, redis_container):
             await client.set(f"limit:test:{i}", f"value{i}")
 
         # Sample only 5 keys
-        result = await provider.sample_keys(count=5, pattern="limit:test:*")
+        result = await provider.sample_keys(count=5)
 
         assert result["status"] == "success"
         assert result["requested_count"] == 5
@@ -347,18 +304,18 @@ async def test_sample_keys_type_distribution(redis_url, redis_container):
         await client.zadd("dist:zset1", {"member": 1.0})
         await client.hset("dist:hash1", "field", "value")
 
-        result = await provider.sample_keys(count=10, pattern="dist:*")
+        result = await provider.sample_keys(count=10)
 
         assert result["status"] == "success"
-        assert result["sampled_count"] == 6
+        assert result["sampled_count"] >= 6
 
         # Check type distribution
         dist = result["type_distribution"]
-        assert dist.get("string", 0) == 2
-        assert dist.get("list", 0) == 1
-        assert dist.get("set", 0) == 1
-        assert dist.get("zset", 0) == 1
-        assert dist.get("hash", 0) == 1
+        assert dist.get("string", 0) >= 2
+        assert dist.get("list", 0) >= 1
+        assert dist.get("set", 0) >= 1
+        assert dist.get("zset", 0) >= 1
+        assert dist.get("hash", 0) >= 1
 
         # Clean up
         await client.delete(
@@ -376,12 +333,9 @@ async def test_resolve_tool_call_sample_keys(redis_url, redis_container):
         schemas = provider.create_tool_schemas()
         sample_keys_tool = [s for s in schemas if "sample_keys" in s.name][0]
 
-        result = await provider.resolve_tool_call(
-            sample_keys_tool.name, {"count": 5, "pattern": "route:*"}
-        )
+        result = await provider.resolve_tool_call(sample_keys_tool.name, {"count": 5})
 
         assert result["status"] == "success"
-        assert result["pattern"] == "route:*"
         assert result["sampled_count"] >= 1
 
         await client.delete("route:test")
@@ -429,11 +383,10 @@ async def test_sample_keys_default_parameters(redis_url, redis_container):
         await client.set("default:1", "value")
         await client.set("default:2", "value")
 
-        # Call with defaults (count=100, pattern="*")
+        # Call with defaults (count=100)
         result = await provider.sample_keys()
 
         assert result["status"] == "success"
-        assert result["pattern"] == "*"
         assert result["requested_count"] == 100
         assert result["sampled_count"] >= 2  # At least our test keys
 
@@ -451,12 +404,12 @@ async def test_sample_keys_with_bytes_keys(redis_url, redis_container):
         await client.set("bytes:test:1", "value")
         await client.set("bytes:test:2", "value")
 
-        result = await provider.sample_keys(count=10, pattern="bytes:test:*")
+        result = await provider.sample_keys(count=10)
 
         assert result["status"] == "success"
         assert result["sampled_count"] >= 2
 
-        # Keys should be present (either as bytes or strings)
+        # Keys should be present
         keys = result["keys"]
         assert len(keys) >= 2
 
@@ -475,11 +428,10 @@ async def test_sample_keys_error_handling():
     """Test sample_keys error handling with invalid connection."""
     # Use an invalid connection URL to trigger error
     async with RedisCliToolProvider(connection_url="redis://invalid-host:9999") as provider:
-        result = await provider.sample_keys(count=10, pattern="*")
+        result = await provider.sample_keys(count=10)
 
         assert result["status"] == "error"
         assert "error" in result
-        assert result["pattern"] == "*"
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from opentelemetry import trace
 from pydantic import BaseModel, Field
 
 from ..agent.router import AgentType, route_to_appropriate_agent
@@ -32,6 +33,7 @@ from .helpers import log_preflight_messages
 from .prompts import SRE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 def _extract_operation_from_tool_name(tool_name: str) -> str:
@@ -523,6 +525,23 @@ JSON payload of analyses artifacts:
         """
         # Build a quick lookup for ToolDefinition by name for envelopes
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
+
+        # Lightweight OTel wrapper to trace per-node execution
+        def _trace_node(node_name: str):
+            def _decorator(fn):
+                async def _wrapped(state: AgentState) -> AgentState:
+                    with tracer.start_as_current_span(
+                        "langgraph.node",
+                        attributes={
+                            "langgraph.graph": "sre_agent",
+                            "langgraph.node": node_name,
+                        },
+                    ):
+                        return await fn(state)
+
+                return _wrapped
+
+            return _decorator
 
         async def agent_node(state: AgentState) -> AgentState:
             """Main agent node that processes user input and decides on tool calls."""
@@ -1108,10 +1127,10 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         # Build the state graph
         workflow = StateGraph(AgentState)
 
-        # Add nodes
-        workflow.add_node("agent", agent_node)
-        workflow.add_node("tools", tool_node)
-        workflow.add_node("reasoning", reasoning_node)
+        # Add nodes (wrapped with per-node tracing spans)
+        workflow.add_node("agent", _trace_node("agent")(agent_node))
+        workflow.add_node("tools", _trace_node("tools")(tool_node))
+        workflow.add_node("reasoning", _trace_node("reasoning")(reasoning_node))
 
         # Add edges
         workflow.set_entry_point("agent")
@@ -1163,7 +1182,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         display = (tool_name or "").replace("_", " ").strip()
         return f"I've completed {display}."
 
-    async def process_query(
+    async def _process_query(
         self,
         query: str,
         session_id: str,
@@ -1659,7 +1678,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             logger.error(f"Error clearing conversation: {e}")
             return False
 
-    async def process_query_with_fact_check(
+    async def process_query(
         self,
         query: str,
         session_id: str,
@@ -1669,15 +1688,12 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
-        """Process a query once, then attach Safety and Fact-Checking notes.
-
-        No corrective re-runs are performed. The operator can review the notes.
-        """
+        """Process a query once, then attach Safety and Fact-Checking notes."""
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
         try:
-            # Produce the primary response via the full workflow
-            response = await self.process_query(
+            # Produce the primary response
+            response = await self._process_query(
                 query,
                 session_id,
                 user_id,

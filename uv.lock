@@ -2129,6 +2129,22 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-aiohttp-client"
+version = "0.57b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/35/0b/62ecc589a619d2661557084077854fc8b3908382e08ddd79d811124a930a/opentelemetry_instrumentation_aiohttp_client-0.57b0.tar.gz", hash = "sha256:ce05e8ef7bc7016d4b0d8e47786b5cf5e6efd7ff0bea8e1ab6616ef5fa985f37", size = 15037 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/63/45a664f89ea7f3e57658de084477bd3c2b437e123a212e699c19c0690f73/opentelemetry_instrumentation_aiohttp_client-0.57b0-py3-none-any.whl", hash = "sha256:fbec3966da845b9a650a72f8fc7f7ac4dd25365317c850a188611e1c92606ac8", size = 12374 },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-asgi"
 version = "0.57b0"
 source = { registry = "https://pypi.org/simple" }
@@ -2145,6 +2161,21 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-asyncio"
+version = "0.57b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6e/0b/66b90fbc36f0466370dbabe2e1ac86736c77ddf1b5fa0b2fc32d0fffdae6/opentelemetry_instrumentation_asyncio-0.57b0.tar.gz", hash = "sha256:4920d1d9d9fab0d001df7dccc53b1be027034b9308d450bdcc6877614d23bd40", size = 14053 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/76/6afb335c39fa1ca78bc08efb389da8c4199ba9a272e872def8a18e738fc5/opentelemetry_instrumentation_asyncio-0.57b0-py3-none-any.whl", hash = "sha256:e7b46356fc8fd1ccf3242dab13d01fdbd51d6ea827675139860ca0abcff3f160", size = 14747 },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-fastapi"
 version = "0.57b0"
 source = { registry = "https://pypi.org/simple" }
@@ -2158,6 +2189,37 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/47/a8/7c22a33ff5986523a7f9afcb5f4d749533842c3cc77ef55b46727580edd0/opentelemetry_instrumentation_fastapi-0.57b0.tar.gz", hash = "sha256:73ac22f3c472a8f9cb21d1fbe5a4bf2797690c295fff4a1c040e9b1b1688a105", size = 20277 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/df/f20fc21c88c7af5311bfefc15fc4e606bab5edb7c193aa8c73c354904c35/opentelemetry_instrumentation_fastapi-0.57b0-py3-none-any.whl", hash = "sha256:61e6402749ffe0bfec582e58155e0d81dd38723cd9bc4562bca1acca80334006", size = 12712 },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-httpx"
+version = "0.57b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/01/28/65fea8b8e7f19502a8af1229c62384f9211c1480f5dee1776841810d6551/opentelemetry_instrumentation_httpx-0.57b0.tar.gz", hash = "sha256:ea5669cdb17185f8d247c2dbf756ae5b95b53110ca4d58424f2be5cc7223dbdd", size = 19511 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/24/e59b319a5c6a41c6b4230f5e25651edbeb3a8d248afa1b411fd07cc3f9bf/opentelemetry_instrumentation_httpx-0.57b0-py3-none-any.whl", hash = "sha256:729fef97624016d3e5b03b71f51c9a1a2f7480b023373186d643fbed7496712a", size = 15111 },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-redis"
+version = "0.57b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3b/a0/e82d8dbb5e3856b4795e74e3a199aab00872daa40b6ebef1ac8e9a85e9d6/opentelemetry_instrumentation_redis-0.57b0.tar.gz", hash = "sha256:54fcd749dee6eebcd137c0f2d840d810fc4225368caf5f4cc91bfe0d13eb9176", size = 13971 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/c2/8b075769f62e0ecf2f1eaa3872825fbd930673dcafd4eef87efc777b13ac/opentelemetry_instrumentation_redis-0.57b0-py3-none-any.whl", hash = "sha256:4e988016e74d8fabc0be93a30462bce223423874c3fa53f0a154b0fe050041f9", size = 14926 },
 ]
 
 [[package]]
@@ -2926,7 +2988,11 @@ dependencies = [
     { name = "openai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-instrumentation-aiohttp-client" },
+    { name = "opentelemetry-instrumentation-asyncio" },
     { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-instrumentation-redis" },
     { name = "opentelemetry-sdk" },
     { name = "prometheus-api-client" },
     { name = "prometheus-client" },
@@ -2980,7 +3046,11 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0.0" },
     { name = "opentelemetry-api", specifier = ">=1.21.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.34.0" },
+    { name = "opentelemetry-instrumentation-aiohttp-client", specifier = ">=0.57b0" },
+    { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.57b0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.41b1" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.57b0" },
+    { name = "opentelemetry-instrumentation-redis", specifier = ">=0.57b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.21.0" },
     { name = "prometheus-api-client", specifier = ">=0.6.0" },
     { name = "prometheus-client", specifier = ">=0.19.0" },

@@ -54,6 +54,8 @@ metrics_generator:
   ring:
     kvstore:
       store: memberlist
+
+
   processor:
     service_graphs: {}
     span_metrics: {}

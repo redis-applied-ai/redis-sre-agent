@@ -86,7 +86,7 @@ async def evaluate_agent_response(scenario: Dict[str, Any]) -> Dict[str, Any]:
         agent = SRELangGraphAgent()
 
         # Get agent response
-        response = await agent.process_query(
+        response = await agent._process_query(
             query=scenario["user_query"],
             session_id=f"test_{scenario['scenario_id']}",
             user_id="evaluator",
