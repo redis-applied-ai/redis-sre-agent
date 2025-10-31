@@ -1,0 +1,76 @@
+repos:
+  # General file formatting
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+        exclude: 'tsconfig\.json$'
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # TypeScript/JavaScript linting
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        entry: npm run lint
+        language: system
+        files: \.(ts|tsx|js|jsx)$
+        pass_filenames: false
+
+  # TypeScript type checking
+  - repo: local
+    hooks:
+      - id: typescript
+        name: TypeScript Check
+        entry: npm run typecheck
+        language: system
+        files: \.(ts|tsx)$
+        pass_filenames: false
+
+  # Prettier formatting
+  - repo: local
+    hooks:
+      - id: prettier
+        name: Prettier
+        entry: npm run format:check
+        language: system
+        files: \.(ts|tsx|js|jsx|json|css|md)$
+        pass_filenames: false
+
+  # Run tests on staged files
+  - repo: local
+    hooks:
+      - id: vitest
+        name: Vitest
+        entry: npm run test
+        language: system
+        files: \.(ts|tsx)$
+        pass_filenames: false
+
+  # Package.json validation
+  - repo: local
+    hooks:
+      - id: package-json-sorting
+        name: Sort package.json
+        entry: npx sort-package-json
+        language: system
+        files: package\.json$
+
+  # Security checks
+  - repo: local
+    hooks:
+      - id: audit
+        name: npm audit
+        entry: npm audit --audit-level=moderate
+        language: system
+        pass_filenames: false
+        stages: [manual]
