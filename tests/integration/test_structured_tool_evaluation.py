@@ -163,7 +163,7 @@ class StructuredToolEvaluator:
 
         try:
             # Get agent response with enhanced prompt
-            response = await self.agent.process_query(
+            response = await self.agent._process_query(
                 query=scenario["user_query"],
                 session_id=f"structured_eval_{scenario['scenario_id']}",
                 user_id="evaluator",

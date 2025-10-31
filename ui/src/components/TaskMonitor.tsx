@@ -48,35 +48,84 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
   const refetchTimeoutRef = useRef<number | null>(null);
 
   const mapThreadToMessages = (threadData: any): ChatMessage[] => {
-    const msgs = Array.isArray(threadData?.context?.messages) ? threadData.context.messages : [];
-    if (msgs.length > 0) {
-      return msgs.map((msg: any, index: number) => ({
-        id: `${msg.role}-${index}-${msg.timestamp}`,
+    // Start with any persisted transcript messages
+    const baseMsgs: any[] = Array.isArray(threadData?.context?.messages)
+      ? threadData.context.messages
+      : [];
+
+    const out: ChatMessage[] = [];
+
+    // If we don't have any persisted messages yet, seed with the initial query/subject
+    if (baseMsgs.length === 0) {
+      const initial = threadData?.context?.original_query || threadData?.metadata?.subject;
+      if (initial) {
+        out.push({
+          id: `initial-${threadId}`,
+          role: 'user',
+          content: initial,
+          timestamp: threadData?.metadata?.created_at || new Date().toISOString(),
+        });
+      }
+    }
+
+    // Map persisted transcript first (user/assistant)
+    baseMsgs.forEach((msg: any, index: number) => {
+      if (!msg || !msg.content) return;
+      out.push({
+        id: `${msg.role}-${index}-${msg.timestamp || index}`,
         role: msg.role,
         content: msg.content,
-        timestamp: msg.timestamp,
-      }));
-    }
-    // Fallback: build from updates if context.messages is missing
-    const out: ChatMessage[] = [];
-    if (threadData?.context?.original_query) {
-      out.push({ id: `initial-${threadId}`, role: 'user', content: threadData.context.original_query, timestamp: threadData.metadata?.created_at || new Date().toISOString() });
-    } else if (threadData?.metadata?.subject) {
-      out.push({ id: `initial-${threadId}`, role: 'user', content: threadData.metadata.subject, timestamp: threadData.metadata?.created_at || new Date().toISOString() });
-    }
-    const updates = Array.isArray(threadData?.updates) ? [...threadData.updates].reverse() : [];
-    updates.forEach((u: any, idx: number) => {
-      if ((u.type === 'response' || u.type === 'completion') && u.message) {
-        out.push({ id: `u-${idx}`, role: 'assistant', content: u.message, timestamp: u.timestamp });
-      } else if (u.type === 'user_message' && u.message) {
-        out.push({ id: `u-${idx}`, role: 'user', content: u.message, timestamp: u.timestamp });
-      } else if ((u.type === 'agent_reflection' || u.type === 'agent_processing' || u.type === 'agent_start') && u.message && u.message.length > 10 && !/completed/i.test(u.message)) {
-        out.push({ id: `r-${idx}` , role: 'assistant', content: u.message, timestamp: u.timestamp });
-      }
+        timestamp: msg.timestamp || threadData?.metadata?.updated_at || new Date().toISOString(),
+      });
     });
-    if ((threadData?.status === 'done' || threadData?.status === 'completed') && threadData?.result?.response) {
-      out.push({ id: `result-${threadId}`, role: 'assistant', content: threadData.result.response, timestamp: threadData.result.turn_completed_at || threadData.metadata?.updated_at || new Date().toISOString() });
+
+    // Merge in live updates as assistant/user bubbles even when context.messages exists
+    // This ensures reflections and interim responses are visible during the turn.
+    const seen = new Set(out.map(m => `${m.role}::${m.content}`));
+    const updates = Array.isArray(threadData?.updates) ? [...threadData.updates].reverse() : [];
+
+    updates.forEach((u: any, idx: number) => {
+      const utype = u.type || u.update_type;
+      const text = u.message;
+      if (!text || typeof text !== 'string' || text.trim().length === 0) return;
+
+      // Map update types to chat roles
+      let role: ChatMessage['role'] | null = null;
+      if (utype === 'user_message') role = 'user';
+      else if (
+        utype === 'response' ||
+        utype === 'completion' ||
+        utype === 'agent_reflection' ||
+        utype === 'agent_processing' ||
+        utype === 'agent_start'
+      ) {
+        // Avoid adding terminal/completed notices as bubbles
+        if (/\bcompleted\b/i.test(text)) return;
+        role = 'assistant';
+      }
+
+      if (!role) return;
+
+      const key = `${role}::${text}`;
+      if (seen.has(key)) return; // de-duplicate by role+content
+
+      out.push({ id: `upd-${idx}-${u.timestamp || Date.now()}`, role, content: text, timestamp: u.timestamp || new Date().toISOString() });
+      seen.add(key);
+    });
+
+    // Include final result if present and not already included
+    if (threadData?.result?.response) {
+      const finalKey = `assistant::${threadData.result.response}`;
+      if (!seen.has(finalKey)) {
+        out.push({
+          id: `result-${threadId}`,
+          role: 'assistant',
+          content: threadData.result.response,
+          timestamp: threadData.result.turn_completed_at || threadData?.metadata?.updated_at || new Date().toISOString(),
+        });
+      }
     }
+
     return out;
   };
 
@@ -89,7 +138,24 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
         return;
       }
       const threadData = await response.json();
-      const chatMessages = mapThreadToMessages(threadData);
+      let chatMessages = mapThreadToMessages(threadData);
+
+      // If we have a pending user message that hasn't shown up in the server transcript yet,
+      // keep it visible by merging it into the local view until the server includes it.
+      const pending = pendingUserRef.current;
+      if (pending) {
+        const existsOnServer = chatMessages.some(m => m.role === 'user' && m.content === pending);
+        if (!existsOnServer) {
+          chatMessages = [
+            ...chatMessages,
+            { id: `pending-${Date.now()}`, role: 'user', content: pending, timestamp: new Date().toISOString() },
+          ];
+        } else {
+          // Server transcript now includes the pending message; clear the ref
+          pendingUserRef.current = null;
+        }
+      }
+
       setMessages(chatMessages);
 
       // Derive a status from thread data
@@ -136,9 +202,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
     scrollToBottom();
   }, [messages.length]); // Only trigger when message count changes
 
+  // Track a pending user message (e.g., the just-sent follow-up) so it persists
+  // across REST refetches until the server transcript includes it.
+  const pendingUserRef = useRef<string | null>(null);
+
   useEffect(() => {
-    // Append initial user message if provided and not already present
     if (initialQuery) {
+      pendingUserRef.current = initialQuery;
       setMessages(prev => {
         const exists = prev.some(m => m.role === 'user' && m.content === initialQuery);
         if (exists) return prev;
@@ -357,8 +427,16 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({ threadId, initialQuery, onSta
     // Show assistant updates in a stable way (batch-friendly)
     const updateType = update.type || update.update_type;
     if (update.message && update.message.length > 0) {
-      if (updateType === 'agent_reflection' || updateType === 'response') {
-        addAssistantMessagesBatch([{ content: update.message, timestamp: update.timestamp }]);
+      if (
+        updateType === 'agent_reflection' ||
+        updateType === 'response' ||
+        updateType === 'agent_processing' ||
+        updateType === 'agent_start'
+      ) {
+        // Avoid adding terminal/completed notices as chat bubbles
+        if (!/\bcompleted\b/i.test(update.message)) {
+          addAssistantMessagesBatch([{ content: update.message, timestamp: update.timestamp }]);
+        }
       }
     }
 

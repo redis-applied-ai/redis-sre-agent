@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 CLI commands for Redis SRE runbook generation and management.
 """

@@ -52,6 +52,10 @@ dependencies = [
     "boto3>=1.34.0", # For AWS integrations
     "prometheus-api-client>=0.6.0",
     "rich>=14.1.0",
+    "opentelemetry-instrumentation-redis>=0.57b0",
+    "opentelemetry-instrumentation-asyncio>=0.57b0",
+    "opentelemetry-instrumentation-httpx>=0.57b0",
+    "opentelemetry-instrumentation-aiohttp-client>=0.57b0",
 ]
 
 [project.scripts]
@@ -84,6 +88,8 @@ dev-dependencies = [
     "bandit>=1.7.0",
     # OpenAPI client generator
     "openapi-python-client>=0.21.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.22",
 ]
 
 [tool.pytest.ini_options]

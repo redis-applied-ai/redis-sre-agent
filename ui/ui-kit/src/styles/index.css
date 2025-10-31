@@ -1,0 +1,773 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Redis Color System */
+  --color-redis-red: #ff4438;
+  --color-redis-red-dark: #351d22;
+  --color-redis-lime: #5bc69b;
+  --color-redis-green: #22c55e;
+  --color-redis-green-50: #f0fdf4;
+  --color-redis-green-200: #bbf7d0;
+  --color-redis-green-600: #16a34a;
+  --color-redis-yellow-300: #ffcc00;
+  --color-redis-yellow-500: #dcff1e;
+  --color-redis-yellow-50: #fefce8;
+  --color-redis-yellow-200: #fef08a;
+  --color-redis-yellow-600: #ca8a04;
+  --color-redis-red-50: #fef2f2;
+  --color-redis-red-200: #fecaca;
+  --color-redis-red-600: #dc2626;
+  --color-redis-blue-50: #eff6ff;
+  --color-redis-blue-200: #bfdbfe;
+  --color-redis-blue-600: #2563eb;
+
+  /* Product UI Design System */
+  --color-redis-blue-01: #364dd9;
+  --color-redis-blue-02: #3044bf;
+  --color-redis-blue-03: #405bff;
+  --color-redis-blue-04: #16284f;
+  --color-redis-gray-01: #f8f8f8;
+  --color-redis-dusk-01: #f3f3f3;
+  --color-redis-dusk-02: #e9e9e9;
+  --color-redis-dusk-03: #d9d9d9;
+  --color-redis-dusk-04: #b9c2c6;
+  --color-redis-dusk-05: #8a99a0;
+  --color-redis-dusk-06: #5c707a;
+  --color-redis-dusk-07: #2d4754;
+  --color-redis-dusk-08: #163341;
+  --color-redis-dusk-09: #0d212c;
+  --color-redis-midnight: #091a23;
+
+  /* Spacing System */
+  --spacing-redis-gap: 15px;
+  --spacing-redis-pad-x: 30px;
+  --spacing-redis-pad-t: 22px;
+  --spacing-redis-pad-b: 30px;
+
+  /* Typography System */
+  --text-redis-xs: 12px;
+  --text-redis-sm: 14px;
+  --text-redis-base: 16px;
+  --text-redis-lg: 20px;
+  --text-redis-xl: 24px;
+
+  /* Border Radius System */
+  --radius-redis-xs: 3px;
+  --radius-redis-sm: 5px;
+  --radius-redis-md: 10px;
+
+  /* Font Families */
+  --font-geist: 'Geist', sans-serif;
+  --font-geist-mono: 'Geist Mono', 'monospace';
+  --font-redis: 'Geist', 'Space Grotesk', sans-serif;
+  --font-redis-mono: 'Geist Mono', 'Space Mono', 'monospace';
+/* Breakpoints - TailwindCSS v4 style */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+}
+
+/* Base styles for the design system with theme support */
+:root {
+  /* Light theme colors - cohesive light design */
+  --background: var(--color-redis-dusk-01);
+  --foreground: var(--color-redis-midnight);
+  --card: #ffffff;
+  --card-foreground: var(--color-redis-midnight);
+  --primary: var(--color-redis-blue-03);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-redis-dusk-02);
+  --secondary-foreground: var(--color-redis-dusk-07);
+  --muted: var(--color-redis-dusk-02);
+  --muted-foreground: var(--color-redis-dusk-06);
+  --accent: var(--color-redis-blue-01);
+  --accent-foreground: #ffffff;
+  --border: var(--color-redis-dusk-03);
+  --input: #ffffff;
+  --input-foreground: var(--color-redis-midnight);
+  --ring: var(--color-redis-blue-03);
+  /* Softer hover surface for rows in light mode */
+  --row-hover: var(--color-redis-dusk-01);
+}
+
+/* Dark theme colors */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: var(--color-redis-midnight);
+    --foreground: var(--color-redis-dusk-01);
+    --card: var(--color-redis-dusk-09);
+    --card-foreground: var(--color-redis-dusk-01);
+    --primary: var(--color-redis-blue-03);
+    --primary-foreground: #ffffff;
+    --secondary: var(--color-redis-dusk-08);
+    --secondary-foreground: var(--color-redis-dusk-04);
+    --muted: var(--color-redis-dusk-08);
+    --muted-foreground: var(--color-redis-dusk-04);
+    --accent: var(--color-redis-blue-01);
+    --accent-foreground: #ffffff;
+    --border: var(--color-redis-dusk-08);
+    --input: var(--color-redis-dusk-08);
+    --input-foreground: var(--color-redis-dusk-01);
+    --ring: var(--color-redis-blue-03);
+    /* Subtle hover in dark mode */
+    --row-hover: rgba(255, 255, 255, 0.06);
+  }
+}
+
+/* Manual theme override classes */
+.theme-light {
+  --background: var(--color-redis-dusk-01);
+  --foreground: var(--color-redis-midnight);
+  --card: #ffffff;
+  --card-foreground: var(--color-redis-midnight);
+  --secondary: var(--color-redis-dusk-02);
+  --secondary-foreground: var(--color-redis-dusk-07);
+  --muted: var(--color-redis-dusk-02);
+  --muted-foreground: var(--color-redis-dusk-06);
+  --border: var(--color-redis-dusk-03);
+  --input: #ffffff;
+  --input-foreground: var(--color-redis-midnight);
+  --row-hover: var(--color-redis-dusk-01);
+}
+
+.theme-dark {
+  --background: var(--color-redis-midnight);
+  --foreground: var(--color-redis-dusk-01);
+  --card: var(--color-redis-dusk-09);
+  --card-foreground: var(--color-redis-dusk-01);
+  --secondary: var(--color-redis-dusk-08);
+  --secondary-foreground: var(--color-redis-dusk-04);
+  --muted: var(--color-redis-dusk-08);
+  --muted-foreground: var(--color-redis-dusk-04);
+  --border: var(--color-redis-dusk-08);
+  --input: var(--color-redis-dusk-08);
+  --input-foreground: var(--color-redis-dusk-01);
+  --row-hover: rgba(255, 255, 255, 0.06);
+}
+.redis-ui-base {
+  font-family: var(--font-redis);
+    background-color: var(--background);
+    color: var(--foreground);
+}
+
+/* Component-specific base styles using theme variables */
+.redis-button-base {
+  @apply rounded-redis-sm px-4 py-2 text-redis-sm font-medium transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  background-color: var(--primary);
+    color: var(--primary-foreground);
+  }
+
+  .redis-button-base.variant-outline {
+    background-color: transparent;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+  }
+
+  .redis-button-base.variant-secondary {
+    background-color: var(--secondary);
+    color: var(--secondary-foreground);
+  }
+
+  .redis-button-base.variant-ghost {
+    background-color: transparent;
+    color: var(--foreground);
+}
+
+.redis-input-base {
+  @apply rounded-redis-sm border px-3 py-2 text-redis-sm focus:outline-none focus:ring-2 focus:border-transparent;
+    background-color: var(--input);
+    color: var(--input-foreground);
+    border-color: var(--border);
+  }
+
+  .redis-input-base:focus {
+    box-shadow: 0 0 0 2px var(--ring);
+}
+
+.redis-card-base {
+  @apply rounded-redis-sm border shadow-lg;
+    background-color: var(--card);
+    color: var(--card-foreground);
+    border-color: var(--border);
+  }
+
+  /* Theme-aware text colors */
+  .text-foreground {
+    color: var(--foreground);
+  }
+
+  .text-muted-foreground {
+    color: var(--muted-foreground);
+  }
+
+  .text-card-foreground {
+    color: var(--card-foreground);
+  }
+
+  /* Override specific Redis color classes to be theme-aware */
+  .text-redis-dusk-01 {
+    color: var(--foreground);
+  }
+
+  .text-redis-dusk-04 {
+    color: var(--muted-foreground);
+  }
+
+  /* Theme-aware Redis brand colors for consistency */
+  .text-redis-blue-03 {
+    color: var(--primary);
+  }
+
+  .text-redis-green {
+    color: var(--color-redis-green);
+  }
+
+  .text-redis-green-600 {
+    color: var(--color-redis-green-600);
+  }
+
+  .bg-redis-green-50 {
+    background-color: var(--color-redis-green-50);
+  }
+
+  .bg-redis-green-200 {
+    background-color: var(--color-redis-green-200);
+  }
+
+  .border-redis-green-200 {
+    border-color: var(--color-redis-green-200);
+  }
+
+  /* Yellow variants */
+  .text-redis-yellow-600 {
+    color: var(--color-redis-yellow-600);
+  }
+
+  .bg-redis-yellow-50 {
+    background-color: var(--color-redis-yellow-50);
+  }
+
+  .border-redis-yellow-200 {
+    border-color: var(--color-redis-yellow-200);
+  }
+
+  /* Red variants */
+  .text-redis-red-600 {
+    color: var(--color-redis-red-600);
+  }
+
+  .bg-redis-red-50 {
+    background-color: var(--color-redis-red-50);
+  }
+
+  .border-redis-red-200 {
+    border-color: var(--color-redis-red-200);
+  }
+
+  /* Blue variants */
+  .text-redis-blue-600 {
+    color: var(--color-redis-blue-600);
+  }
+
+  .bg-redis-blue-50 {
+    background-color: var(--color-redis-blue-50);
+  }
+
+  .border-redis-blue-200 {
+    border-color: var(--color-redis-blue-200);
+  }
+
+  /* Warning text – darker in light mode for contrast */
+  .text-redis-yellow-500 {
+    color: #6b7a00;
+    /* AA on pale yellow */
+  }
+
+  .theme-dark .text-redis-yellow-500 {
+    color: #dcff1e;
+  }
+
+  .text-redis-red {
+    color: #ff4438;
+  }
+
+  /* High-contrast badge system */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    /* py-0.5 px-2 */
+    font-size: 0.75rem;
+    /* text-redis-xs */
+    line-height: 1rem;
+    border-radius: var(--radius-redis-xs);
+    border: 1px solid var(--border);
+    font-weight: 500;
+  }
+
+  .badge-success {
+    background-color: rgba(60, 222, 103, 0.22);
+    border-color: #3cde67;
+    color: #0c4f2d;
+    /* darker green for contrast */
+  }
+
+  .badge-warning {
+    background-color: rgba(220, 255, 30, 0.26);
+    border-color: #d4e200;
+    color: #364100;
+    /* dark olive for contrast */
+  }
+
+  .badge-critical {
+    background-color: rgba(255, 68, 56, 0.22);
+    border-color: #ff4438;
+    color: #6e1b1b;
+    /* dark red for contrast */
+  }
+
+  .badge-info {
+    background-color: rgba(64, 91, 255, 0.22);
+    border-color: #405bff;
+    color: #1b2f8a;
+    /* dark blue for contrast */
+  }
+
+  .badge-neutral {
+    background-color: var(--muted);
+    border-color: var(--border);
+    color: var(--foreground);
+  }
+
+  /* Accessible text colors for solid backgrounds */
+  .on-redis-red {
+    color: #ffffff;
+  }
+
+  .on-redis-blue {
+    color: #ffffff;
+  }
+
+  .on-redis-yellow {
+    color: #0d0d0d;
+  }
+
+  /* Notification background colors - solid backgrounds instead of transparent */
+  .bg-redis-green\/10 {
+    background-color: rgba(60, 222, 103, 0.45);
+    border-color: #3cde67;
+  }
+
+  .bg-redis-red\/10 {
+    background-color: rgba(255, 68, 56, 0.45);
+    border-color: #ff4438;
+  }
+
+  /* Warning background – raise contrast in light mode */
+  .bg-redis-yellow-500\/10 {
+    background-color: rgba(220, 255, 30, 0.45);
+    border-color: #d4e200;
+  }
+
+  .bg-redis-blue-03\/10 {
+    background-color: rgba(64, 91, 255, 0.45);
+    border-color: #405bff;
+  }
+
+  /* Dark theme adjustments for notifications */
+  @media (prefers-color-scheme: dark) {
+    .bg-redis-green\/10 {
+      background-color: rgba(60, 222, 103, 0.40);
+    }
+
+    .bg-redis-red\/10 {
+      background-color: rgba(255, 68, 56, 0.40);
+    }
+
+    .bg-redis-yellow-500\/10 {
+      background-color: rgba(220, 255, 30, 0.40);
+    }
+
+    .bg-redis-blue-03\/10 {
+      background-color: rgba(64, 91, 255, 0.40);
+    }
+  }
+
+  /* Theme class overrides for notifications */
+  .theme-dark .bg-redis-green\/10 {
+    background-color: rgba(60, 222, 103, 0.2);
+  }
+
+  .theme-dark .bg-redis-red\/10 {
+    background-color: rgba(255, 68, 56, 0.2);
+  }
+
+  .theme-dark .bg-redis-yellow-500\/10 {
+    background-color: rgba(220, 255, 30, 0.2);
+  }
+
+  .theme-dark .bg-redis-blue-03\/10 {
+    background-color: rgba(64, 91, 255, 0.2);
+  }
+
+  /* Header theme overrides */
+  .bg-redis-midnight {
+    background-color: var(--card);
+  }
+
+  .border-redis-dusk-08 {
+    border-color: var(--border);
+  }
+
+  /* Activity items in dashboard */
+  .bg-redis-dusk-09 {
+    background-color: var(--muted);
+  }
+
+  /* Status badges - lightened for light mode */
+  .bg-redis-dusk-07 {
+    background-color: rgba(22, 51, 65, 0.12);
+    color: #2d4754;
+  }
+
+  /* Avatar background tint in light mode */
+  .bg-redis-dusk-08 {
+    background-color: rgba(22, 51, 65, 0.18);
+  }
+
+  /* Preserve stronger tones in dark theme */
+  .theme-dark .bg-redis-dusk-07 {
+    background-color: var(--color-redis-dusk-07);
+    color: var(--color-redis-dusk-04);
+  }
+
+  .theme-dark .bg-redis-dusk-08 {
+    background-color: var(--color-redis-dusk-08);
+  }
+
+  /* Checkbox base styling */
+  .checkbox-base {
+    width: 1.125rem;
+    height: 1.125rem;
+    border: 1px solid var(--border);
+    background-color: var(--card);
+    border-radius: 4px;
+    accent-color: var(--primary);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+
+  .checkbox-base:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--ring);
+    border-color: transparent;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    /* 12px space between box and label */
+    padding-top: 0.5rem;
+    /* 8px vertical padding */
+    padding-bottom: 0.5rem;
+    min-height: 2rem;
+  }
+
+  .checkbox-label+.checkbox-label {
+    margin-top: 0.5rem;
+  }
+
+  /* Form field vertical rhythm */
+  .form-field {
+    margin-bottom: 0.875rem;
+    /* ~14px */
+  }
+
+  .form-field:last-child {
+    margin-bottom: 0;
+  }
+
+  .form-field .helper-text {
+    margin-top: 0.25rem;
+  }
+
+  .form-field .error-text {
+    margin-top: 0.25rem;
+  }
+
+  /* Softer table row hover using theme var */
+  .hover\:bg-redis-dusk-09:hover {
+    background-color: var(--row-hover);
+  }
+
+  /* Layout container theming */
+  [data-testid="layout-container"] {
+    background-color: var(--background) !important;
+    min-height: 100vh;
+  }
+
+  /* Ensure main content area fills the screen */
+  main {
+    background-color: var(--background);
+    min-height: 100vh;
+  }
+
+  /* Comprehensive responsive utilities */
+
+  /* Mobile-first base styles */
+  .grid-cols-1 {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .flex-col {
+    flex-direction: column;
+  }
+
+  .flex-row {
+    flex-direction: row;
+  }
+
+  /* Essential layout utilities */
+  .overflow-x-auto {
+    overflow-x: auto;
+  }
+
+  .overflow-hidden {
+    overflow: hidden;
+  }
+
+  .max-w-7xl {
+    max-width: 80rem;
+  }
+
+  .mx-auto {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .w-full {
+    width: 100%;
+  }
+
+  .h-16 {
+    height: 4rem;
+  }
+
+  .h-12 {
+    height: 3rem;
+  }
+
+  /* Spacing utilities */
+  .gap-2 {
+    gap: 0.5rem;
+  }
+
+  .gap-3 {
+    gap: 0.75rem;
+  }
+
+  .gap-4 {
+    gap: 1rem;
+  }
+
+  .gap-6 {
+    gap: 1.5rem;
+  }
+
+  .space-y-1>*+* {
+    margin-top: 0.25rem;
+  }
+
+  .space-y-3>*+* {
+    margin-top: 0.75rem;
+  }
+
+  /* Text utilities */
+  .text-base {
+    font-size: 1rem;
+  }
+
+  .text-2xl {
+    font-size: 1.5rem;
+  }
+
+  .font-medium {
+    font-weight: 500;
+  }
+
+  .capitalize {
+    text-transform: capitalize;
+  }
+
+  /* Small screens (640px and up) */
+  @media (min-width: 640px) {
+    .sm\:gap-4 {
+      gap: 1rem;
+    }
+
+    .sm\:gap-6 {
+      gap: 1.5rem;
+    }
+
+    .sm\:px-6 {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+
+    .sm\:block {
+      display: block;
+    }
+
+    .sm\:flex {
+      display: flex;
+    }
+
+    .sm\:flex-row {
+      flex-direction: row;
+    }
+
+    .sm\:items-center {
+      align-items: center;
+    }
+
+    .sm\:justify-between {
+      justify-content: space-between;
+    }
+
+    .sm\:grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .sm\:w-auto {
+      width: auto;
+    }
+
+    .sm\:flex-initial {
+      flex: 0 1 auto;
+    }
+
+    .sm\:text-lg {
+      font-size: 1.125rem;
+    }
+
+    .sm\:text-3xl {
+      font-size: 1.875rem;
+    }
+  }
+
+  /* Medium screens (768px and up) */
+  @media (min-width: 768px) {
+    .md\:grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .md\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .md\:max-w-none {
+      max-width: none;
+    }
+
+    .md\:col-span-2 {
+      grid-column: span 2 / span 2;
+    }
+
+    .md\:flex {
+      display: flex;
+    }
+
+    .md\:hidden {
+      display: none;
+    }
+
+    .md\:ml-6 {
+      margin-left: 1.5rem;
+    }
+
+    .md\:space-x-8> :not([hidden])~ :not([hidden]) {
+      margin-left: 2rem;
+    }
+
+    .md\:items-center {
+      align-items: center;
+    }
+  }
+
+  /* Large screens (1024px and up) */
+  @media (min-width: 1024px) {
+    .lg\:grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .lg\:grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .lg\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .lg\:px-8 {
+      padding-left: 2rem;
+      padding-right: 2rem;
+    }
+
+    .lg\:px-10 {
+      padding-left: 2.5rem;
+      padding-right: 2.5rem;
+    }
+
+    .lg\:pl-56 {
+      padding-left: 14rem;
+    }
+
+    .lg\:text-4xl {
+      font-size: 2.25rem;
+    }
+  }
+
+  /* Extra large screens (1280px and up) */
+  @media (min-width: 1280px) {
+    .xl\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  /* Visibility utilities */
+  .hidden {
+    display: none;
+  }
+
+  @media (min-width: 640px) {
+    .sm\:block {
+      display: block;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .md\:block {
+      display: block;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .lg\:block {
+      display: block;
+    }
+}

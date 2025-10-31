@@ -1,7 +1,4 @@
-"""Top-level `query` CLI command.
-
-Extracted from main.py to modularize CLI.
-"""
+"""Top-level `query` CLI command."""
 
 from __future__ import annotations
 
@@ -36,7 +33,7 @@ def query(query: str, redis_instance_id: str):
             agent = get_knowledge_agent()
 
         try:
-            response = await agent.process_query(
+            response = await agent._process_query(
                 query,
                 session_id="cli",
                 user_id="cli_user",

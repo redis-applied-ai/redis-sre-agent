@@ -27,8 +27,8 @@ async def test_corrector_called_once_for_multiple_rladmin(mock_build):
         "Then again: rladmin list databases\n"
         "Finally check: rladmin get database stats"
     )
-    with patch.object(agent, "process_query", new=AsyncMock(return_value=multi)):
-        out = await agent.process_query_with_fact_check("help", "s", "u")
+    with patch.object(agent, "_process_query", new=AsyncMock(return_value=multi)):
+        out = await agent.process_query("help", "s", "u")
     assert out.startswith("E")
     mock_build.assert_called_once()
 
@@ -38,6 +38,6 @@ async def test_corrector_called_once_for_multiple_rladmin(mock_build):
 async def test_corrector_not_called_without_triggers(mock_build):
     agent = SRELangGraphAgent()
     with patch.object(agent, "process_query", new=AsyncMock(return_value="no cli here")):
-        out = await agent.process_query_with_fact_check("help", "s", "u")
+        out = await agent.process_query("help", "s", "u")
     assert out == "no cli here"
     mock_build.assert_not_called()

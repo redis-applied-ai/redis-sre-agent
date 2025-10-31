@@ -122,7 +122,7 @@ else
         "type": "redis",
         "memory_size": 33554432,
         "port": 12000,
-        "replication": false,
+        "replication": true,
         "sharding": true,
         "oss_sharding": true,
         "shards_count": 3,

@@ -1,14 +1,21 @@
-"""Top-level `worker` CLI command.
-
-Extracted from main.py to modularize CLI.
-"""
+"""Top-level `worker` CLI command."""
 
 from __future__ import annotations
 
 import asyncio
+import os
 
 import click
 from docket import Worker
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import register_sre_tasks
@@ -43,6 +50,41 @@ def worker(concurrency: int):
 
         redis_url = settings.redis_url.get_secret_value()
         logger.info("Starting SRE Docket worker connected to Redis")
+
+        # OpenTelemetry tracing (enabled when OTEL endpoint is present)
+        otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if not otlp_endpoint:
+            logger.info("OTel tracing disabled in worker (no OTEL_EXPORTER_OTLP_ENDPOINT)")
+        else:
+            resource = Resource.create(
+                {
+                    "service.name": "redis-sre-worker",
+                    "service.version": "0.1.0",
+                }
+            )
+            provider = TracerProvider(resource=resource)
+            exporter = OTLPSpanExporter(
+                endpoint=otlp_endpoint,
+                headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
+            )
+            provider.add_span_processor(BatchSpanProcessor(exporter))
+            trace.set_tracer_provider(provider)
+
+            # Libraries
+            RedisInstrumentor().instrument()
+            HTTPXClientInstrumentor().instrument()
+            AioHttpClientInstrumentor().instrument()
+            AsyncioInstrumentor().instrument()
+            logger.info("OTel tracing enabled in worker (redis/httpx/aiohttp/asyncio)")
+
+        # Start a Prometheus metrics HTTP server to expose worker metrics (incl. LLM tokens)
+        try:
+            from prometheus_client import start_http_server
+
+            start_http_server(9101)
+            logger.info("Prometheus metrics server started on :9101")
+        except Exception as _e:
+            logger.warning(f"Failed to start Prometheus metrics server in worker: {_e}")
 
         try:
             # Register tasks first (support both sync and async implementations)

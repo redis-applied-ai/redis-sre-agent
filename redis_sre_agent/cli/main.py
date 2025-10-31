@@ -1,33 +1,48 @@
 """CLI interface for Redis SRE Agent."""
 
+import importlib
+
 import click
 
-from .instance import instance
-from .knowledge import knowledge
-from .pipeline import pipeline
-from .query import query
-from .runbook import runbook
-from .schedules import schedule
-from .tasks import task
-from .threads import thread
-from .worker import worker
+# Map command names to their module:attribute for lazy import
+_COMMANDS = {
+    "thread": "redis_sre_agent.cli.threads:thread",
+    "schedule": "redis_sre_agent.cli.schedules:schedule",
+    "instance": "redis_sre_agent.cli.instance:instance",
+    "task": "redis_sre_agent.cli.tasks:task",
+    "knowledge": "redis_sre_agent.cli.knowledge:knowledge",
+    "pipeline": "redis_sre_agent.cli.pipeline:pipeline",
+    "runbook": "redis_sre_agent.cli.runbook:runbook",
+    "query": "redis_sre_agent.cli.query:query",
+    "worker": "redis_sre_agent.cli.worker:worker",
+}
 
 
-@click.group()
+class LazyGroup(click.MultiCommand):
+    """
+    Lazy loading of CLI commands to avoid hard dependencies at top level.
+
+    This allows us to split up Click commands into separate files
+    without having to import all dependencies at the top level.
+    """
+
+    def list_commands(self, ctx):
+        # Keep stable ordering for help output
+        return list(_COMMANDS.keys())
+
+    def get_command(self, ctx, name):
+        target = _COMMANDS.get(name)
+        if not target:
+            return None
+        module_path, attr = target.split(":", 1)
+        mod = importlib.import_module(module_path)
+        return getattr(mod, attr)
+
+
+@click.command(cls=LazyGroup)
 def main():
     """Redis SRE Agent CLI."""
     pass
-
-
-main.add_command(thread)
-main.add_command(schedule)
-main.add_command(instance)
-main.add_command(task)
-main.add_command(knowledge)
-main.add_command(pipeline)
-main.add_command(runbook)
-main.add_command(query)
-main.add_command(worker)
 
 
 if __name__ == "__main__":

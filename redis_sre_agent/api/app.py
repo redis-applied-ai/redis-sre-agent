@@ -1,10 +1,21 @@
 """Main FastAPI application for Redis SRE Agent."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
@@ -32,6 +43,56 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global startup state for agent status checks
+
+
+def setup_tracing(app: FastAPI) -> None:
+    """Initialize OpenTelemetry tracing if an OTLP endpoint is configured.
+
+    If OTEL_EXPORTER_OTLP_ENDPOINT is not set, tracing is disabled and this
+    function logs an info message and returns.
+    """
+    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if not otlp_endpoint:
+        logger.info("OpenTelemetry tracing disabled (no OTEL_EXPORTER_OTLP_ENDPOINT)")
+        return
+
+    resource = Resource.create(
+        {
+            "service.name": settings.app_name,
+            "service.version": "0.1.0",
+        }
+    )
+    provider = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(
+        endpoint=otlp_endpoint,
+        headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
+    )
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+
+    # Instrument libraries
+    RedisInstrumentor().instrument()
+    HTTPXClientInstrumentor().instrument()
+    AioHttpClientInstrumentor().instrument()
+    AsyncioInstrumentor().instrument()
+
+    # Instrument FastAPI (exclude common health/docs paths)
+    excluded = ",".join(
+        [
+            r"^/$",
+            r"^/api/v1/$",
+            r"^/api/v1/health$",
+            r"^/api/v1/metrics$",
+            r"^/api/v1/metrics/health$",
+            r"^/metrics$",
+            r"^/docs$",
+            r"^/openapi\.json$",
+        ]
+    )
+    FastAPIInstrumentor.instrument_app(app, excluded_urls=excluded)
+    logger.info("OpenTelemetry tracing initialized (FastAPI + libs instrumented)")
+
+
 _app_startup_state = {}
 
 
@@ -54,6 +115,7 @@ async def lifespan(app: FastAPI):
 
         # Register SRE tasks with Docket
         # Note: The scheduler task is started by the worker, not the API
+
         try:
             from redis_sre_agent.core.docket_tasks import register_sre_tasks
 
@@ -96,6 +158,9 @@ app = FastAPI(
 )
 
 # Setup middleware
+# Setup tracing (no-op if not configured)
+setup_tracing(app)
+
 setup_middleware(app)
 
 

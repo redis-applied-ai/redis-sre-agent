@@ -7,6 +7,8 @@ them as tools for the LLM to use.
 import logging
 from typing import Any, Dict, List, Optional
 
+from opentelemetry import trace
+
 from redis_sre_agent.core.docket_tasks import (
     ingest_sre_document as _ingest_sre_document,
 )
@@ -20,6 +22,7 @@ from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
 from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class KnowledgeBaseToolProvider(ToolProvider):
@@ -228,7 +231,24 @@ class KnowledgeBaseToolProvider(ToolProvider):
             "limit": limit,
             "distance_threshold": distance_threshold,
         }
-        return await search_knowledge_base_helper(**kwargs)
+        # OTel: instrument knowledge search without leaking raw query
+        import hashlib as _hl
+
+        _qhash = ""
+        try:
+            _qhash = _hl.sha1((query or "").encode("utf-8")).hexdigest()
+        except Exception:
+            _qhash = ""
+        with tracer.start_as_current_span(
+            "tool.knowledge.search",
+            attributes={
+                "query.len": len(query or ""),
+                "query.sha1": _qhash,
+                "limit": int(limit),
+                "distance_threshold.set": distance_threshold is not None,
+            },
+        ):
+            return await search_knowledge_base_helper(**kwargs)
 
     async def ingest(
         self,
@@ -264,6 +284,24 @@ class KnowledgeBaseToolProvider(ToolProvider):
         if product_labels:
             kwargs["product_labels"] = product_labels
 
+        # OTel: instrument ingestion
+        try:
+            from opentelemetry import trace as _otel_trace  # type: ignore
+
+            _tr = _otel_trace.get_tracer(__name__)
+        except Exception:
+            _tr = None  # type: ignore
+        if _tr:
+            with _tr.start_as_current_span(
+                "tool.knowledge.ingest",
+                attributes={
+                    "title.len": len(title or ""),
+                    "category": str(category or ""),
+                    "has.labels": bool(product_labels),
+                    "has.severity": bool(severity),
+                },
+            ):
+                return await _ingest_sre_document(**kwargs)
         return await _ingest_sre_document(**kwargs)
 
     async def get_all_fragments(self, document_hash: str) -> Dict[str, Any]:
@@ -276,6 +314,18 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Dictionary with all document fragments
         """
         logger.info(f"Getting all fragments for document: {document_hash}")
+        try:
+            from opentelemetry import trace as _otel_trace  # type: ignore
+
+            _tr = _otel_trace.get_tracer(__name__)
+        except Exception:
+            _tr = None  # type: ignore
+        if _tr:
+            with _tr.start_as_current_span(
+                "tool.knowledge.get_all_fragments",
+                attributes={"document_hash": str(document_hash)[:16]},
+            ):
+                return await get_all_document_fragments(document_hash)
         return await get_all_document_fragments(document_hash)
 
     async def get_related_fragments(
@@ -292,4 +342,20 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Dictionary with related fragments
         """
         logger.info(f"Getting related fragments for document {document_hash}, chunk {chunk_index}")
+        try:
+            from opentelemetry import trace as _otel_trace  # type: ignore
+
+            _tr = _otel_trace.get_tracer(__name__)
+        except Exception:
+            _tr = None  # type: ignore
+        if _tr:
+            with _tr.start_as_current_span(
+                "tool.knowledge.get_related_fragments",
+                attributes={
+                    "document_hash": str(document_hash)[:16],
+                    "chunk_index": int(chunk_index),
+                    "limit": int(limit),
+                },
+            ):
+                return await get_related_document_fragments(document_hash, chunk_index, limit)
         return await get_related_document_fragments(document_hash, chunk_index, limit)

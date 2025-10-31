@@ -268,9 +268,11 @@ async def create_task(
 
     created_new_thread = False
     if not thread_id:
-        thread_id = await thread_manager.create_thread(
-            initial_context={"messages": [], **(context or {})}
-        )
+        # Ensure initial context includes the original query for UI transcript
+        base_ctx = dict(context or {})
+        base_ctx.setdefault("messages", [])
+        base_ctx.setdefault("original_query", message)
+        thread_id = await thread_manager.create_thread(initial_context=base_ctx)
         created_new_thread = True
         await thread_manager.update_thread_subject(thread_id, message)
 
@@ -556,3 +558,45 @@ async def list_tasks(
             )
 
         return tasks
+
+
+async def delete_task(*, task_id: str, redis_client=None) -> dict[str, Any]:
+    """Permanently delete a single task and its related keys.
+
+    Removes:
+    - KV: status, updates, result, error, metadata
+    - ZSET membership in sre:thread:{thread_id}:tasks
+    - FT hash at sre_tasks:{task_id}
+    """
+    if redis_client is None:
+        from redis_sre_agent.core.redis import get_redis_client as _get
+
+        redis_client = _get()
+
+    from redis_sre_agent.core.redis import SRE_TASKS_INDEX
+
+    # Resolve thread_id from metadata
+    md = await redis_client.hgetall(RedisKeys.task_metadata(task_id))
+    thread_id = None
+    if isinstance(md, dict):
+        for k, v in md.items():
+            k2 = k.decode() if isinstance(k, bytes) else k
+            if k2 == "thread_id":
+                thread_id = (v.decode() if isinstance(v, bytes) else v) or None
+                break
+
+    # Delete per-task keys
+    await redis_client.delete(RedisKeys.task_status(task_id))
+    await redis_client.delete(RedisKeys.task_updates(task_id))
+    await redis_client.delete(RedisKeys.task_result(task_id))
+    await redis_client.delete(RedisKeys.task_error(task_id))
+    await redis_client.delete(RedisKeys.task_metadata(task_id))
+
+    # Remove from thread’s task index
+    if thread_id:
+        await redis_client.zrem(RedisKeys.thread_tasks_index(thread_id), task_id)
+
+    # Delete FT hash
+    await redis_client.delete(f"{SRE_TASKS_INDEX}:{task_id}")
+
+    return {"deleted": True}

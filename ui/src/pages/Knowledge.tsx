@@ -66,6 +66,8 @@ const Knowledge = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchCategory, setSearchCategory] = useState('');
   const [expandedResults, setExpandedResults] = useState<Set<number>>(new Set());
+  const [distanceThreshold, setDistanceThreshold] = useState<number>(2.0);
+
 
   // Simple ingestion form state
   const [ingestionText, setIngestionText] = useState('');
@@ -172,7 +174,7 @@ const Knowledge = () => {
     }
   };
 
-  const searchKnowledgeBase = async (query?: string) => {
+  const searchKnowledgeBase = async (query?: string, thresholdOverride?: number) => {
     const queryToUse = query || searchQuery;
     if (!queryToUse.trim()) {
       setSearchResults([]);
@@ -183,11 +185,11 @@ const Knowledge = () => {
       setIsSearching(true);
       setError(null);
 
+      const thresholdToUse = typeof thresholdOverride === 'number' ? thresholdOverride : distanceThreshold;
       const params = new URLSearchParams({
         query: queryToUse,
         limit: '10',
-        // Use a permissive threshold to improve recall (API default is strict)
-        distance_threshold: '2.0'
+        distance_threshold: String(thresholdToUse),
       });
 
       if (searchCategory) {
@@ -484,7 +486,7 @@ const Knowledge = () => {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <input
                 type="text"
                 placeholder="Search knowledge base..."
@@ -504,9 +506,29 @@ const Knowledge = () => {
                 <option value="performance">Performance</option>
                 <option value="security">Security</option>
               </select>
+              <div className="hidden md:flex items-center gap-2 w-64 px-2">
+                <span className="text-xs text-redis-dusk-04 whitespace-nowrap">Threshold: {distanceThreshold.toFixed(2)}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  value={distanceThreshold}
+                  aria-label="Vector distance threshold"
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    setDistanceThreshold(v);
+                    if (searchQuery.trim()) {
+                      // Re-run search with the updated threshold
+                      void searchKnowledgeBase(undefined, v);
+                    }
+                  }}
+                  className="w-full"
+                />
+              </div>
               <Button
                 variant="primary"
-                onClick={searchKnowledgeBase}
+                onClick={() => searchKnowledgeBase()}
                 disabled={isSearching || !searchQuery.trim()}
               >
                 {isSearching ? 'Searching...' : 'Search'}

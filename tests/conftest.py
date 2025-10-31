@@ -125,9 +125,7 @@ test_env = {
     "DEBUG": "true",
 }
 
-# Set default REDIS_URL for unit tests (will be overridden by redis_container for integration tests)
-if not os.environ.get("REDIS_URL"):
-    test_env["REDIS_URL"] = "redis://localhost:6379/0"
+# REDIS_URL is not defaulted here; tests rely on Testcontainers-provided Redis via the use_redis_testcontainer autouse fixture
 
 # Only set test API key if no real key is present
 if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "":
@@ -239,7 +237,6 @@ def app_with_mocks():
     """FastAPI app with all dependencies mocked."""
     # Don't override OPENAI_API_KEY if it's already set
     app_test_env = {
-        "REDIS_URL": "redis://localhost:6379/0",
         "APP_NAME": "Redis SRE Agent Test",
         "DEBUG": "true",
     }
@@ -366,10 +363,16 @@ def redis_container(worker_id):
     import importlib
 
     from redis_sre_agent.core import docket_tasks as tasks_module
+    from redis_sre_agent.core import knowledge_helpers as knowledge_helpers_module
     from redis_sre_agent.core import redis as redis_module
+    from redis_sre_agent.tools.knowledge import knowledge_base as knowledge_base_module
 
+    # Reload core modules that cache the Settings object and functions
     importlib.reload(redis_module)
     importlib.reload(tasks_module)
+    # Also reload dependent modules that imported functions from core.redis at import time
+    importlib.reload(knowledge_helpers_module)
+    importlib.reload(knowledge_base_module)
 
     # Create indices in the test Redis container
     import asyncio
@@ -406,6 +409,13 @@ def redis_container(worker_id):
         os.environ.pop("REDIS_URL", None)
 
     compose.stop()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def use_redis_testcontainer(redis_container):
+    """Ensure a Testcontainers-provided Redis is running and REDIS_URL is set for all tests."""
+    # No-op: depending on redis_container starts it and sets REDIS_URL
+    yield
 
 
 @pytest.fixture(scope="session")

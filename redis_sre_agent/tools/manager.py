@@ -11,12 +11,15 @@ import logging
 from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional
 
+from opentelemetry import trace
+
 from redis_sre_agent.core.instances import RedisInstance
 
 from .protocols import ToolProvider
 from .tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class ToolManager:
@@ -407,7 +410,22 @@ class ToolManager:
         if cache_key in self._call_cache:
             return self._call_cache[cache_key]
 
-        result = await provider.resolve_tool_call(tool_name, args)
+        # OTel: per-tool resolve span
+        _provider_name = getattr(provider, "provider_name", None)
+        _op = None
+        try:
+            _op = provider.resolve_operation(tool_name, args)  # type: ignore[attr-defined]
+        except Exception:
+            _op = None
+        with tracer.start_as_current_span(
+            "tool.resolve",
+            attributes={
+                "tool.name": tool_name,
+                "tool.provider": str(_provider_name) if _provider_name else "",
+                "tool.operation": str(_op) if _op else "",
+            },
+        ):
+            result = await provider.resolve_tool_call(tool_name, args)
         # Cache result for this run
         self._call_cache[cache_key] = result
         return result

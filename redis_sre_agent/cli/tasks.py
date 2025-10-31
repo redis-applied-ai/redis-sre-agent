@@ -1,7 +1,4 @@
-"""Task management CLI commands.
-
-Extracted from main.py to keep CLI modular without behavior changes.
-"""
+"""Task management CLI commands."""
 
 from __future__ import annotations
 
@@ -219,3 +216,137 @@ def task_get(task_id: str, as_json: bool):
             console.print(f"[red]Error:[/red] {err}")
 
     asyncio.run(_get())
+
+
+@task.command("purge")
+@click.option(
+    "--status",
+    type=click.Choice(
+        ["queued", "in_progress", "done", "failed", "cancelled"], case_sensitive=False
+    ),
+    help="Filter by a single status",
+)
+@click.option(
+    "--older-than", "older_than", help="Purge tasks older than a duration (e.g. 7d, 24h, 3600s)"
+)
+@click.option("--all", "purge_all", is_flag=True, help="Purge ALL tasks (dangerous)")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted; make no changes")
+@click.option("-y", "--yes", is_flag=True, help="Do not prompt for confirmation")
+def task_purge(
+    status: str | None, older_than: str | None, purge_all: bool, dry_run: bool, yes: bool
+):
+    """Delete tasks in bulk with safeguards.
+
+    By default requires --older-than DURATION (and optionally --status), unless --all.
+    """
+
+    async def _run():
+        from datetime import datetime, timedelta, timezone
+
+        from rich.console import Console
+
+        from redis_sre_agent.core.redis import SRE_TASKS_INDEX, get_redis_client
+        from redis_sre_agent.core.tasks import delete_task as delete_task_core
+
+        console = Console()
+
+        def _parse_duration(s: str) -> timedelta:
+            if not s:
+                raise ValueError("Duration string is empty")
+            s = s.strip().lower()
+            try:
+                if s.endswith("d"):
+                    return timedelta(days=float(s[:-1]))
+                if s.endswith("h"):
+                    return timedelta(hours=float(s[:-1]))
+                if s.endswith("m"):
+                    return timedelta(minutes=float(s[:-1]))
+                if s.endswith("s"):
+                    return timedelta(seconds=float(s[:-1]))
+                return timedelta(seconds=float(s))
+            except Exception as e:
+                raise ValueError(f"Invalid duration '{s}': {e}")
+
+        if not purge_all and not older_than and not status:
+            console.print(
+                "[red]Refusing to purge without a scope. Provide --older-than/--status or --all.[/red]"
+            )
+            return
+
+        # Confirmation
+        if not dry_run and not yes:
+            scope_bits = []
+            if purge_all:
+                scope_bits.append("ALL tasks")
+            if status:
+                scope_bits.append(f"status={status}")
+            if older_than:
+                scope_bits.append(f"older_than={older_than}")
+            scope = ", ".join(scope_bits) or "(no-scope)"
+            console.print(f"You are about to delete [bold]{scope}[/bold].")
+            console.print("Add --dry-run to preview or -y to confirm.")
+            return
+
+        client = get_redis_client()
+
+        # Compute cutoff timestamp if scoped by age
+        cutoff_ts = None
+        if older_than:
+            delta = _parse_duration(older_than)
+            cutoff_ts = (datetime.now(timezone.utc) - delta).timestamp()
+
+        cursor = 0
+        page = 1000
+        scanned = 0
+        deleted = 0
+
+        while True:
+            cursor, keys = await client.scan(
+                cursor=cursor, match=f"{SRE_TASKS_INDEX}:*", count=page
+            )
+            if not keys and cursor == 0:
+                break
+            for k in keys or []:
+                redis_key = k.decode() if isinstance(k, bytes) else k
+                task_id = redis_key[len(f"{SRE_TASKS_INDEX}:") :]
+
+                # Read filter fields from FT hash
+                try:
+                    fields = await client.hmget(redis_key, "status", "updated_at", "created_at")
+                    st_raw, upd_raw, _ = fields
+                    st = (
+                        (st_raw.decode() if isinstance(st_raw, bytes) else st_raw) if st_raw else ""
+                    )
+                    upd = float(upd_raw.decode() if isinstance(upd_raw, bytes) else upd_raw or 0)
+                except Exception:
+                    st = ""
+                    upd = 0.0
+
+                eligible = True
+                if status:
+                    eligible = eligible and (st.lower() == status.lower())
+                if cutoff_ts is not None:
+                    eligible = eligible and (upd > 0 and upd < cutoff_ts)
+
+                if not purge_all and not eligible:
+                    scanned += 1
+                    continue
+
+                if dry_run:
+                    console.print(
+                        f"[yellow]DRY RUN[/yellow] Would delete task {task_id} (status={st})"
+                    )
+                else:
+                    try:
+                        await delete_task_core(task_id=task_id, redis_client=client)
+                        deleted += 1
+                    except Exception:
+                        pass
+                scanned += 1
+
+            if cursor == 0:
+                break
+
+        console.print(f"[green]Done.[/green] Scanned: {scanned}, Tasks deleted: {deleted}")
+
+    asyncio.run(_run())

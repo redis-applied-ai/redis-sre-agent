@@ -33,6 +33,27 @@ services:
     networks:
       - sre-network
 
+  # Redis Demo Replica - Follows redis-demo for replication tests
+  redis-demo-replica:
+    image: redis:8.2.1
+    ports:
+      - "7845:6379"  # Demo replica Redis
+    volumes:
+      - redis_demo_replica_data:/data
+    command: ["redis-server", "--replicaof", "redis-demo", "6379"]
+    labels:
+      - "logging=true"  # Collected by promtail for Loki
+    depends_on:
+      redis-demo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sre-network
+
   # Redis Enterprise Software - Multi-node cluster for testing enterprise runbooks
   redis-enterprise-node1:
     image: kurtfm/rs:latest
@@ -225,6 +246,7 @@ services:
     depends_on:
       - prometheus
       - loki
+      - tempo
     networks:
       - sre-network
 
@@ -258,6 +280,9 @@ services:
       - TOOLS_LOKI_URL=http://loki:3100
       - GRAFANA_URL=http://grafana:3000
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
+      # OTEL: export spans to Tempo via OTLP HTTP
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.1.0,deployment.environment=dev
 
     depends_on:
       redis:
@@ -283,6 +308,9 @@ services:
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - TOOLS_LOKI_URL=http://loki:3100
+      # OpenTelemetry export to Tempo
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
@@ -317,6 +345,23 @@ services:
       - /app/node_modules  # Anonymous volume for node_modules
     networks:
       - sre-network
+
+
+  # Tempo - Traces backend (OTLP receiver + query)
+  tempo:
+    image: grafana/tempo:latest
+    user: "0:0"  # run as root to create/write under mounted volume
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    ports:
+      - "3200:3200"   # Tempo HTTP API (querier)
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    volumes:
+      - tempo_data:/tmp/tempo
+      - ./monitoring/tempo/tempo-config.yaml:/etc/tempo/tempo.yaml:ro
+    networks:
+      - sre-network
+
 
 
   # Loki - Log aggregation
@@ -355,9 +400,12 @@ networks:
 volumes:
   redis_data:
   redis_demo_data:
+  redis_demo_replica_data:
+
   redis_enterprise_node1_data:
   redis_enterprise_node2_data:
   redis_enterprise_node3_data:
   prometheus_data:
   grafana_data:
   loki_data:
+  tempo_data:

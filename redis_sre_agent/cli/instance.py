@@ -1,8 +1,4 @@
-"""Instance CLI commands for managing Redis instances.
-
-This module provides a Click command group `instance` with sub-commands to list,
-create, get, update, delete, and test Redis instance connections.
-"""
+"""Instance CLI commands for managing Redis instances."""
 
 from __future__ import annotations
 
@@ -23,9 +19,6 @@ from redis_sre_agent.core.redis import test_redis_connection
 def instance():
     """Manage Redis instances"""
     pass
-
-
-# ---------------------------- helpers ---------------------------- #
 
 
 def _mask_response(inst: core_instances.RedisInstance) -> Dict[str, Any]:
@@ -60,9 +53,6 @@ def _print_instances_table(items: List[core_instances.RedisInstance], limit: int
     console.print(table)
 
 
-# ---------------------------- list ---------------------------- #
-
-
 @instance.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON")
 @click.option("--limit", default=100, help="Max rows to display")
@@ -86,9 +76,6 @@ def instances_list(as_json: bool, limit: int):
         _print_instances_table(items, limit=limit)
 
     asyncio.run(_list())
-
-
-# ---------------------------- get ---------------------------- #
 
 
 @instance.command("get")
@@ -153,8 +140,6 @@ def instances_get(instance_id: str, as_json: bool):
 
     asyncio.run(_get())
 
-
-# ---------------------------- create ---------------------------- #
 
 _ALLOWED_ENVS = ["development", "staging", "production", "test"]
 _ALLOWED_USAGE = ["cache", "analytics", "session", "queue", "custom"]
@@ -266,9 +251,6 @@ def instances_create(
                 click.echo(f"❌ Error: {e}")
 
     asyncio.run(_create())
-
-
-# ---------------------------- update ---------------------------- #
 
 
 @instance.command("update")
@@ -407,9 +389,6 @@ def instances_update(
     asyncio.run(_update())
 
 
-# ---------------------------- delete ---------------------------- #
-
-
 @instance.command("delete")
 @click.argument("instance_id")
 @click.option("--yes", is_flag=True, help="Skip confirmation")
@@ -452,9 +431,6 @@ def instances_delete(instance_id: str, yes: bool, as_json: bool):
                 click.echo(f"❌ Error: {e}")
 
     asyncio.run(_delete())
-
-
-# ---------------------------- test connection ---------------------------- #
 
 
 @instance.command("test-url")
