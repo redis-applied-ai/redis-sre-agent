@@ -43,7 +43,6 @@ nav:
       - Pipelines & ingestion: how-to/pipelines.md
       - Configuration (Advanced):
           - Encryption: how-to/configuration/encryption.md
-      - End-to-end triage (runbook): how-to/triage-runbook.md
       - Scheduling flows: how-to/scheduling-flows.md
   - UI:
       - Experimental: ui/experimental.md
@@ -51,11 +50,9 @@ nav:
       - Overview: concepts/core.md
   - Operations:
       - Observability & Health: operations/observability.md
-      - Troubleshooting: operations/troubleshooting.md
   - Reference:
       - CLI Reference: reference/cli.md
       - REST API: reference/api.md
-      - Metrics: reference/metrics.md
       - Configuration: reference/configuration.md
 
 # Future sections (add as pages are created):

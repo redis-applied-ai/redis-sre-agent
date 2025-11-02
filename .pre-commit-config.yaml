@@ -27,3 +27,10 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      - id: mkdocs-build
+        name: mkdocs build (strict)
+        entry: uv run mkdocs build --strict
+        language: system
+        pass_filenames: false
+        files: ^(docs/|mkdocs\.yml)
