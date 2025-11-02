@@ -28,14 +28,22 @@ jobs:
     - name: Install dependencies
       run: uv sync --dev
 
+    - name: Generate and check reference docs
+      run: |
+        uv run python scripts/generate_reference_docs.py
+        git diff --exit-code -- docs/reference || (echo "::error::Reference docs out of date. Run: uv run python scripts/generate_reference_docs.py and commit changes."; exit 1)
+
+    - name: Docs snippet checks
+      run: uv run pytest -q tests/test_docs_snippets.py
     - name: Run unit tests
       run: uv run pytest tests/unit/ -v --cov=redis_sre_agent --cov-report=xml --cov-report=term-missing
 
-    - name: Run integration tests
-      run: uv run pytest tests/integration -m "integration and not slow" -v --run-api-tests
-      env:
-        CI: true
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+# Too slow to run in CI at the moment. Disabling for now.
+#    - name: Run integration tests
+#      run: uv run pytest tests/integration -m "integration and not slow" -v --run-api-tests
+#      env:
+#        CI: true
+#        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4

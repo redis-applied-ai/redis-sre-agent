@@ -481,6 +481,7 @@ class KnowledgeOnlyAgent:
 
                 # Extract the final response
                 messages = final_state.get("messages", [])
+
                 if messages:
                     last_message = messages[-1]
                     if isinstance(last_message, AIMessage):

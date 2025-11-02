@@ -28,9 +28,9 @@ TOOLS_LOKI_URL=http://localhost:3100
 
 ### Tool providers
 Providers are loaded by the ToolManager based on:
-- Always-on providers (knowledge base, utilities)
-- Instance-specific providers from settings.tool_providers (env: TOOL_PROVIDERS)
-- Conditional providers by instance type (Redis Enterprise admin, Redis Cloud)
+- **Without an instance**: Knowledge base and basic utilities (date conversions, calculator)
+- **With an instance**: All of the above plus the providers configured in settings.tool_providers (env: TOOL_PROVIDERS)
+- **Conditional providers**: Additional providers based on instance type (Redis Enterprise admin, Redis Cloud)
 
 Override provider list via environment (JSON list):
 ```bash

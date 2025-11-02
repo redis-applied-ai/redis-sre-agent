@@ -2,6 +2,22 @@
 
 A LangGraph-based Redis SRE Agent for intelligent infrastructure monitoring and incident response.
 
+## Overview
+
+Redis SRE Agent is an AI teammate for Redis operations. It answers questions from your knowledge base and actively triages live Redis issues. It’s easy to customize to your monitoring and observability systems.
+
+- Knowledge Agent: answers questions using your runbooks and Redis docs
+- Triage Agent: connects to a target Redis instance, gathers signals (metrics/logs), and recommends fixes
+- Jobs: run ad‑hoc via CLI/API or schedule recurring health checks
+- Integrations: bring your own monitoring/ticketing via providers (Prometheus, CloudWatch, Grafana, GitHub/Jira)
+
+### Core concepts
+- Agents: Use the Knowledge Agent for “how/why” answers; use the Triage Agent to investigate a specific Redis instance.
+- Jobs: Ad‑hoc jobs are created via CLI/API; Scheduled jobs run on an interval and post results to a thread you can follow.
+- Providers: Pluggable integrations supply metrics, logs, tickets, etc. You can add your own provider with a small class.
+
+
+
 ## Architecture
 
 **Flow**: API/CLI → LangGraph Agent → SRE Tools → Redis/Monitoring Systems → Automated Response
@@ -60,7 +76,7 @@ uv run python scripts/seed.py
 uv run redis-sre-agent worker
 
 # Start API (Terminal 2)
-uv run fastapi dev redis_sre_agent/api/app.py
+uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Usage
@@ -73,13 +89,13 @@ curl http://localhost:8000/
 # Detailed health check
 curl http://localhost:8000/api/v1/health
 
-# Submit a triage request (returns thread_id for tracking)
-curl -X POST http://localhost:8000/api/v1/tasks/triage \\
+# Submit a triage request (returns task_id and thread_id)
+curl -X POST http://localhost:8000/api/v1/tasks \\
   -H "Content-Type: application/json" \\
-  -d '{"query": "Check Redis cluster health and memory usage", "user_id": "sre-user"}'
+  -d '{"message": "Check Redis cluster health and memory usage", "context": {"instance_id": "<instance_id>"}}'
 
 # Check task status
-curl http://localhost:8000/api/v1/tasks/{thread_id}
+curl http://localhost:8000/api/v1/tasks/{task_id}
 ```
 
 
@@ -198,7 +214,7 @@ The agent uses a **Protocol-based tool system** that provides extensible interfa
 - **search_related_repositories**: Search code across repositories (GitHub, GitLab)
 - **list_available_metrics**: Discover available metrics across all providers
 
-For detailed information on implementing custom providers and using the protocol system, see [Protocol-Based Tools Documentation](docs/protocol-tools.md).
+For details on adding integrations and custom providers, see [Tool Providers](docs/how-to/tool-providers.md).
 
 ## Testing
 

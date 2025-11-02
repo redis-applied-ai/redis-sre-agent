@@ -2,7 +2,7 @@
 
 This guide shows how to use the agent end-to-end: start services, add an instance, triage with queries, ingest knowledge, search what the agent knows, schedule recurring checks, and view task/thread status.
 
-Prerequisites
+### Prerequisites
 - OPENAI_API_KEY set (see How-to: Configuration)
 - Services running (Docker Compose or local API + worker)
 
@@ -65,7 +65,7 @@ uv run redis-sre-agent pipeline full
 uv run redis-sre-agent pipeline status
 uv run redis-sre-agent pipeline show-batch --batch <name>
 ```
-Runbooks (subtopic)
+#### Runbooks
 ```bash
 # Generate standardized runbooks for a topic
 uv run redis-sre-agent runbook generate --topic "Redis memory troubleshooting"
@@ -119,7 +119,7 @@ uv run redis-sre-agent thread get <thread_id>
 uv run redis-sre-agent thread sources <thread_id>
 ```
 
-Tips
+### Tips
 - Use the Docker stack to get Prometheus/Loki; set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL so the agent can fetch metrics/logs.
 - Prefer `docker compose exec -T sre-agent uv run ...` inside containers when running in Docker (uses in-cluster addresses).
 - Health endpoints: `curl http://localhost:8000/` and `/api/v1/health` to verify API and worker availability.

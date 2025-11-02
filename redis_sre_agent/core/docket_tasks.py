@@ -553,7 +553,7 @@ async def process_agent_turn(
             if not isinstance(_k_max_iters, int) or _k_max_iters <= 0:
                 _k_max_iters = min(int(getattr(settings, "max_iterations", 10) or 10), 8)
 
-            response_text = await agent._process_query(
+            response_text = await agent.process_query(
                 query=message,
                 user_id=thread.metadata.user_id or "unknown",
                 session_id=thread.metadata.session_id or thread_id,

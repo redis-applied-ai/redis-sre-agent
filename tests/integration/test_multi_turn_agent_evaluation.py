@@ -189,7 +189,7 @@ class MultiTurnAgentEvaluator:
 
         # Run agent conversation
         try:
-            agent_response = await self.agent._process_query(
+            agent_response = await self.agent.process_query(
                 query=scenario["user_query"],
                 session_id=thread_id,
                 user_id="evaluator",

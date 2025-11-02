@@ -8,6 +8,7 @@ import logging
 import os
 import random
 import shutil
+import subprocess
 import time
 import warnings
 from typing import Optional
@@ -383,8 +384,8 @@ class RedisSREDemo:
                             "default_step": "30s",
                         },
                         "logs": {
-                            # Prefer node-exporter logs by instance, but providers may override using per-instance loki hints
-                            "stream_selector_template": '{job="node-exporter", instance="{host}"}',
+                            # For demo, query logs by service label used in seeding
+                            "stream_selector_template": '{service="redis-demo"}',
                             "direction": "backward",
                             "limit": 1000,
                         },
@@ -435,7 +436,7 @@ class RedisSREDemo:
                             "default_step": "30s",
                         },
                         "logs": {
-                            "stream_selector_template": '{job="node-exporter", instance="{host}"}',
+                            "stream_selector_template": '{service="redis-demo"}',
                             "direction": "backward",
                             "limit": 1000,
                         },
@@ -787,7 +788,7 @@ class RedisSREDemo:
         if dbs.returncode != 0 or (db_name not in (dbs.stdout or "")):
             print(f"   ℹ️ Database '{db_name}' not found; attempting to ensure it exists")
             try:
-                await self._ensure_sharded_database(db_name=db_name, min_shards=3)
+                await self._ensure_sharded_database(db_name=db_name, min_shards=2)
             except Exception:
                 pass
             # Re-check
@@ -883,9 +884,103 @@ class RedisSREDemo:
             if total_masters > 0 and masters_on_target == total_masters:
                 print(f"✅ All master shards already on node:{target_node_id}; treating as success")
             else:
-                raise RuntimeError(
-                    f"Failed to migrate master shards to node:{target_node_id} (rc={mig.returncode})"
-                )
+                # Try an alternate target node that avoids replica conflicts
+                def _parse_rows(txt: str):
+                    rows = []
+                    for ln in (txt or "").splitlines():
+                        role = (
+                            "master" if " master " in ln else ("slave" if " slave " in ln else None)
+                        )
+                        if not role:
+                            continue
+                        toks = ln.split()
+                        node_tok = next((t for t in toks if t.startswith("node:")), None)
+                        slots_tok = next(
+                            (t for t in toks if "-" in t and t.replace("-", "").isdigit()), None
+                        )
+                        if node_tok and slots_tok:
+                            try:
+                                node_id = node_tok.split(":")[1]
+                            except Exception:
+                                node_id = node_tok.replace("node:", "")
+                            rows.append({"role": role, "node": node_id, "slots": slots_tok})
+                    return rows
+
+                rows = _parse_rows(shards.stdout or "")
+                master_slots = {r["slots"]: r["node"] for r in rows if r["role"] == "master"}
+                candidate_nodes = list({r["node"] for r in rows if r["role"] == "master"})
+                alt_node = None
+                for cand in candidate_nodes:
+                    if str(cand) == str(target_node_id):
+                        continue
+                    # Conflict if cand already hosts a shard for any other master slot range
+                    conflicts = False
+                    for s, master_node in master_slots.items():
+                        if str(master_node) == str(cand):
+                            continue
+                        if any(r for r in rows if r["node"] == str(cand) and r["slots"] == s):
+                            conflicts = True
+                            break
+                    if not conflicts:
+                        alt_node = cand
+                        break
+
+                if alt_node:
+                    print(
+                        f"   [33mRetrying migrate to alternate node:{alt_node} to avoid replica conflict[0m"
+                    )
+                    mig2 = self._docker_exec(
+                        [
+                            "docker",
+                            "exec",
+                            "redis-enterprise-node1",
+                            "rladmin",
+                            "migrate",
+                            "db",
+                            db_name,
+                            "all_master_shards",
+                            "target_node",
+                            str(alt_node),
+                        ],
+                        timeout=180,
+                    )
+                    tail2 = "\n".join((mig2.stdout or mig2.stderr or "").splitlines()[-40:])
+                    if tail2:
+                        print(tail2)
+
+                    # Verify alternate placement with polling to allow convergence
+                    masters_on_alt = 0
+                    for _i in range(12):  # ~18s max
+                        shards2 = self._docker_exec(
+                            [
+                                "docker",
+                                "exec",
+                                "redis-enterprise-node1",
+                                "rladmin",
+                                "status",
+                                "shards",
+                                "db",
+                                db_name,
+                            ],
+                            timeout=30,
+                        )
+                        lines2 = (shards2.stdout or "").splitlines()
+                        masters_on_alt = len(
+                            [ln for ln in lines2 if (" master " in ln and f"node:{alt_node}" in ln)]
+                        )
+                        if masters_on_alt == total_masters:
+                            break
+                        time.sleep(1.5)
+                    if masters_on_alt == total_masters:
+                        print(f"✅ All master shards now on node:{alt_node}")
+                    else:
+                        raise RuntimeError(
+                            f"Failed to migrate master shards (rc={mig.returncode},{mig2.returncode}); tried node:{target_node_id} then node:{alt_node}"
+                        )
+                else:
+                    raise RuntimeError(
+                        f"Failed to migrate master shards to node:{target_node_id} (rc={mig.returncode}); no conflict-free alternate found"
+                    )
         print("✅ Imbalance created")
         print("ℹ️ Current shards (after):")
         after = self._docker_exec(
@@ -1246,7 +1341,7 @@ class RedisSREDemo:
 
         # Ensure DB is multi-sharded so rebalance has something to do
         print("\n📋 Pre-step: Ensuring 'test-db' has multiple shards for meaningful rebalance")
-        await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+        await self._ensure_sharded_database(db_name="test-db", min_shards=2)
 
         # Create a real imbalance to give rebalance something to do
         self.print_step(3, "Creating deliberate shard imbalance (all masters on node 1)")
@@ -1554,76 +1649,10 @@ class RedisSREDemo:
 
         # Prepare Enterprise connectivity and register instance for agent tools
         enterprise_client = await self._prepare_enterprise()
-        if not enterprise_client:
-            # Fallback: seed synthetic evidence so the agent can still talk about failover
-            print("   ⚠️ Proceeding with synthetic evidence only; Enterprise not reachable")
-            self.print_step(1, "Seeding failover evidence (metrics + logs)")
-            try:
-                pushgateway_push(
-                    "demo-scenarios",
-                    "redis-enterprise",
-                    'demo_failover_events_total{db="demo"} 1\n',
-                )
-                pushgateway_push(
-                    "demo-scenarios",
-                    "redis-enterprise",
-                    'demo_failover_state{db="demo",status="in_progress"} 1\n',
-                )
-                loki_push(
-                    {
-                        "service": "redis-enterprise",
-                        "job": "redis-enterprise",
-                        "scenario": "4.1",
-                        "component": "failover",
-                        "level": "info",
-                    },
-                    [
-                        "redis-enterprise: failover initiated for shard 1 (demo)",
-                        "redis-enterprise: promoting replica to master (demo)",
-                    ],
-                )
-            except Exception as e:
-                print(f"   ⚠️  Evidence seeding failed: {e}")
-
-            # UI vs CLI handling
-            if self.ui_mode:
-                self._wait_for_ui_interaction(
-                    "Master Shard Failover",
-                    "Synthetic failover event seeded; use admin-status tools to verify current shard roles.",
-                )
-            else:
-                await self._run_diagnostics_and_agent_query(
-                    "We suspect a Redis Enterprise failover occurred. Please investigate current shard roles, status, and impact."
-                )
-
-            # Cleanup synthetic state
-            self.print_step(2, "Marking failover complete in demo evidence")
-            try:
-                pushgateway_push(
-                    "demo-scenarios",
-                    "redis-enterprise",
-                    'demo_failover_state{db="demo",status="in_progress"} 0\n',
-                )
-                loki_push(
-                    {
-                        "service": "redis-enterprise",
-                        "job": "redis-enterprise",
-                        "scenario": "4.1",
-                        "component": "failover",
-                        "level": "info",
-                    },
-                    ["redis-enterprise: failover completed for shard 1 (demo)"],
-                )
-            except Exception:
-                pass
-            return
-
-        # === Real failover path ===
-        import subprocess
 
         # Step 1: Ensure DB is multi-sharded AND replication is enabled
         self.print_step(1, "Ensuring 'test-db' is sharded and replication is enabled")
-        await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+        await self._ensure_sharded_database(db_name="test-db", min_shards=2)
         try:
             base = "https://localhost:9443"
             auth_user = os.getenv("REDIS_ENTERPRISE_ADMIN_USER", "admin@redis.com")
@@ -1709,8 +1738,39 @@ class RedisSREDemo:
             except Exception as e2:
                 print(f"   ⚠️  Could not run imbalance script: {e2}")
 
-        # Step 3: Trigger failover by putting node 2 in maintenance mode
-        self.print_step(3, "Triggering failover by enabling maintenance mode on node 2")
+        # Step 3: Choose a maintenance target node that currently hosts master(s)
+        maint_node = "2"
+        try:
+            st = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "redis-enterprise-node1",
+                    "rladmin",
+                    "status",
+                    "shards",
+                    "db",
+                    "test-db",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            out = st.stdout or ""
+            import re
+            from collections import Counter
+
+            masters = [m for m in re.findall(r"node:([0-9]+).*? master ", out)]
+            if masters:
+                maint_node = Counter(masters).most_common(1)[0][0]
+                print(f"   ℹ️ Selecting node {maint_node} for maintenance (hosts master shard[s])")
+            else:
+                print("   ℹ️ Could not detect master nodes; defaulting to node 2")
+        except Exception as e:
+            print(f"   ⚠️  Could not determine master-hosting node: {e}; defaulting to node 2")
+
+        # Trigger maintenance mode on chosen node
+        self.print_step(3, f"Triggering failover by enabling maintenance mode on node {maint_node}")
         did_maintenance = False
         try:
             maint_on = subprocess.run(
@@ -1720,7 +1780,7 @@ class RedisSREDemo:
                     "redis-enterprise-node1",
                     "rladmin",
                     "node",
-                    "2",
+                    str(maint_node),
                     "maintenance_mode",
                     "on",
                 ],
@@ -1730,14 +1790,14 @@ class RedisSREDemo:
             )
             if maint_on.returncode == 0:
                 did_maintenance = True
-                print("   ✅ maintenance_mode ON for node 2")
+                print(f"   ✅ maintenance_mode ON for node {maint_node}")
             else:
-                print("   ⚠️  Failed to enable maintenance mode on node 2; rc!=0")
+                print(f"   ⚠️  Failed to enable maintenance mode on node {maint_node}; rc!=0")
         except Exception as e:
             print(f"   ⚠️  Could not set maintenance mode: {e}")
 
-        # Step 4: Wait for masters to move off node 2
-        self.print_step(4, "Waiting for masters to fail over off node 2")
+        # Step 4: Wait for masters to move off chosen node
+        self.print_step(4, f"Waiting for masters to fail over off node {maint_node}")
         try:
             final_out = ""
             for i in range(1, 21):
@@ -1757,11 +1817,15 @@ class RedisSREDemo:
                     timeout=20,
                 )
                 final_out = st.stdout or ""
-                masters_on_n2 = len(
-                    [ln for ln in (final_out.splitlines()) if (" master " in ln and "node:2" in ln)]
+                masters_on_target = len(
+                    [
+                        ln
+                        for ln in (final_out.splitlines())
+                        if (" master " in ln and f"node:{maint_node}" in ln)
+                    ]
                 )
-                if masters_on_n2 == 0:
-                    print("   ✅ No masters on node 2; failover complete")
+                if masters_on_target == 0:
+                    print(f"   ✅ No masters on node {maint_node}; failover complete")
                     break
                 time.sleep(3.0)
             if final_out:
@@ -1792,7 +1856,7 @@ class RedisSREDemo:
                     "level": "info",
                 },
                 [
-                    "redis-enterprise: failover triggered by maintenance mode on node 2 (demo)",
+                    f"redis-enterprise: failover triggered by maintenance mode on node {maint_node} (demo)",
                     "redis-enterprise: promoting replica to master (demo)",
                 ],
             )
@@ -1811,7 +1875,9 @@ class RedisSREDemo:
             )
 
         # Cleanup: disable maintenance mode and mark state completed
-        self.print_step(6, "Disabling maintenance mode on node 2 and clearing demo state")
+        self.print_step(
+            6, f"Disabling maintenance mode on node {maint_node} and clearing demo state"
+        )
         try:
             if did_maintenance:
                 subprocess.run(
@@ -1821,7 +1887,7 @@ class RedisSREDemo:
                         "redis-enterprise-node1",
                         "rladmin",
                         "node",
-                        "2",
+                        str(maint_node),
                         "maintenance_mode",
                         "off",
                     ],
@@ -1860,7 +1926,7 @@ class RedisSREDemo:
         else:
             try:
                 print("\n📋 Pre-step: Ensuring 'test-db' is available")
-                await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+                await self._ensure_sharded_database(db_name="test-db", min_shards=2)
             except Exception as e:
                 print(f"   \u26a0\ufe0f  Could not ensure database: {e}")
 
@@ -1888,19 +1954,46 @@ class RedisSREDemo:
         except Exception as e:
             print(f"   \u26a0\ufe0f  Failed to push CPU evidence: {e}")
 
-        # Optional: run a very small CPU-heavy Lua once to create a hint in slowlog
+        # Generate real slowlog entries with a heavier Lua CPU loop (calibrated)
         if enterprise_client is not None:
             try:
+                import time as _time
+
                 slow_lua = """
-                local it = 15000
+                local it = tonumber(ARGV[1]) or 120000
+                local inner = tonumber(ARGV[2]) or 250
                 local r = 0
-                for i=1,it do for j=1,50 do r = (r + (i*j)) % 1000 end end
+                for i=1,it do
+                    for j=1,inner do
+                        r = (r + (i*j)) % 2147483647
+                    end
+                end
                 return r
                 """
-                enterprise_client.eval(slow_lua, 0)
-                print("   \u2705 Executed minimal CPU-heavy Lua once for realism")
-            except Exception:
-                pass
+
+                # Calibrate iterations to exceed ~400ms once, then run a short burst
+                target_ms = 400.0
+                it = 120000
+                inner = 250
+                last_ms = 0.0
+                for _ in range(8):
+                    t0 = _time.time()
+                    enterprise_client.eval(slow_lua, 0, str(it), str(inner))
+                    last_ms = (_time.time() - t0) * 1000.0
+                    if last_ms >= target_ms:
+                        break
+                    it = int(it * 1.8)
+                print(f"   Heavy Lua calibrated: ~{last_ms:.1f}ms (it={it}, inner={inner})")
+
+                # Create multiple slowlog entries to be clearly visible
+                for k in range(10):
+                    t0 = _time.time()
+                    enterprise_client.eval(slow_lua, 0, str(it), str(inner))
+                    dur = (_time.time() - t0) * 1000.0
+                    print(f"      - EVAL #{k + 1}: {dur:.1f} ms")
+                    _time.sleep(0.05)
+            except Exception as e:
+                print(f"   WARNING: Could not generate heavy slowlog entries: {e}")
 
         # UI vs CLI handling
         if self.ui_mode:
@@ -1950,7 +2043,7 @@ class RedisSREDemo:
         else:
             try:
                 print("\n📋 Pre-step: Ensuring 'test-db' is available")
-                await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+                await self._ensure_sharded_database(db_name="test-db", min_shards=2)
             except Exception as e:
                 print(f"   \u26a0\ufe0f  Could not ensure database: {e}")
 
@@ -1972,30 +2065,41 @@ class RedisSREDemo:
         except Exception as e:
             print(f"   \u26a0\ufe0f  Could not run rladmin: {e}")
 
-        self.print_step(2, "Seeding unbalanced shard distribution evidence")
-        try:
-            # Push imbalance score and per-node shard counts
-            metrics_text = (
-                'demo_shard_imbalance_score{db="demo"} 0.78\n'
-                'demo_shards_on_node{node="node2"} 10\n'
-                'demo_shards_on_node{node="node3"} 2\n'
-            )
-            pushgateway_push("demo-scenarios", "redis-enterprise", metrics_text)
-            loki_push(
-                {
-                    "service": "redis-enterprise",
-                    "job": "redis-enterprise",
-                    "scenario": "4.3",
-                    "component": "placement",
-                    "level": "info",
-                },
-                [
-                    "redis-enterprise: shard distribution skew detected (demo)",
-                    "redis-enterprise: consider rebalance to even shard placement (demo)",
-                ],
-            )
-        except Exception as e:
-            print(f"   \u26a0\ufe0f  Failed to push shard skew evidence: {e}")
+        # Try to create a real shard imbalance first; fall back to synthetic evidence
+        created_real = False
+        if enterprise_client:
+            self.print_step(2, "Creating deliberate shard imbalance (all master shards on node 1)")
+            try:
+                await self._create_shard_imbalance(db_name="test-db", target_node_id="1")
+                created_real = True
+            except Exception as e:
+                print(f"   ⚠️  Could not create real shard imbalance: {e}")
+
+        if not created_real:
+            self.print_step(2, "Seeding unbalanced shard distribution evidence")
+            try:
+                # Push imbalance score and per-node shard counts
+                metrics_text = (
+                    'demo_shard_imbalance_score{db="demo"} 0.78\n'
+                    'demo_shards_on_node{node="node2"} 10\n'
+                    'demo_shards_on_node{node="node3"} 2\n'
+                )
+                pushgateway_push("demo-scenarios", "redis-enterprise", metrics_text)
+                loki_push(
+                    {
+                        "service": "redis-enterprise",
+                        "job": "redis-enterprise",
+                        "scenario": "4.3",
+                        "component": "placement",
+                        "level": "info",
+                    },
+                    [
+                        "redis-enterprise: shard distribution skew detected (demo)",
+                        "redis-enterprise: consider rebalance to even shard placement (demo)",
+                    ],
+                )
+            except Exception as e:
+                print(f"   \u26a0\ufe0f  Failed to push shard skew evidence: {e}")
 
         # UI vs CLI handling
         if self.ui_mode:
@@ -2004,28 +2108,50 @@ class RedisSREDemo:
                 "Synthetic skew metrics seeded; use admin shard listing and actions to recommend rebalance.",
             )
         else:
+            # Determine Enterprise instance id to force agent context
+            selected_enterprise_id = None
+            try:
+                instances = await get_instances()
+                for inst in instances:
+                    itype = (getattr(inst.instance_type, "value", inst.instance_type) or "").lower()
+                    if inst.name == DEFAULT_REDIS_ENTERPRISE_NAME or itype == "redis_enterprise":
+                        selected_enterprise_id = inst.id
+                        break
+            except Exception:
+                pass
+
             await self._run_diagnostics_and_agent_query(
-                "Shard placement appears unbalanced across nodes. Please investigate and recommend a rebalance plan."
+                "Shard placement appears unbalanced across nodes in Redis Enterprise. Please investigate and recommend a rebalance plan.",
+                force_instance_id=selected_enterprise_id,
             )
 
-        # Cleanup baseline
-        self.print_step(3, "Resetting shard skew evidence to baseline")
-        try:
-            pushgateway_push(
-                "demo-scenarios", "redis-enterprise", 'demo_shard_imbalance_score{db="demo"} 0.05\n'
-            )
-            loki_push(
-                {
-                    "service": "redis-enterprise",
-                    "job": "redis-enterprise",
-                    "scenario": "4.3",
-                    "component": "placement",
-                    "level": "info",
-                },
-                ["redis-enterprise: shard distribution normalized (demo)"],
-            )
-        except Exception:
-            pass
+        # Cleanup: restore baseline
+        if created_real and enterprise_client:
+            self.print_step(3, "Restoring balance by triggering cluster rebalance")
+            try:
+                await self._rebalance_via_admin_api(db_name="test-db")
+            except Exception as e:
+                print(f"   \u26a0\ufe0f  Could not trigger rebalance cleanup: {e}")
+        else:
+            self.print_step(3, "Resetting shard skew evidence to baseline")
+            try:
+                pushgateway_push(
+                    "demo-scenarios",
+                    "redis-enterprise",
+                    'demo_shard_imbalance_score{db="demo"} 0.05\n',
+                )
+                loki_push(
+                    {
+                        "service": "redis-enterprise",
+                        "job": "redis-enterprise",
+                        "scenario": "4.3",
+                        "component": "placement",
+                        "level": "info",
+                    },
+                    ["redis-enterprise: shard distribution normalized (demo)"],
+                )
+            except Exception:
+                pass
 
     async def scenario_5_1(self):
         """5.1 Redis OOM Errors (Logs-focused variant of memory pressure)"""
@@ -2062,37 +2188,159 @@ class RedisSREDemo:
             # Ignore mid-load errors; proceed to OOM attempt
             pass
 
-        # Attempt a write expected to fail with OOM
+        # Attempt writes expected to fail with OOM; if not, force by lowering maxmemory below current usage
         self.print_step(3, "Triggering an OOM and capturing the error for logs")
         oom_msg = None
+        # First attempt: a moderately large write
         try:
-            self.redis_client.set("demo:oom:final", "y" * (key_size * 8))
+            self.redis_client.set("demo:oom:final", "y" * (key_size * 8))  # ~32KB
         except Exception as e:
             oom_msg = str(e)
-            print(f"   🚨 OOM encountered as expected: {oom_msg}")
+            print(f"   🚨 OOM encountered (initial attempt): {oom_msg}")
 
-        # Push Loki log lines emphasizing OOM
-        self.print_step(4, "Pushing OOM error lines to Loki and metric to Pushgateway")
+        # If still no OOM, force much tighter maxmemory and retry with large payloads
+        if oom_msg is None:
+            try:
+                info_now = self.redis_client.info("memory")
+                used = int(info_now.get("used_memory", 0))
+                # Set a limit well below current used memory (ensure writes fail)
+                hard_limit = max(512 * 1024, used - 3 * 1024 * 1024)
+                try:
+                    self.redis_client.config_set("maxmemory", str(hard_limit))
+                except Exception:
+                    pass
+
+                # First, attempt a very large write (2MB), then fall back to smaller
+                for payload_bytes in (2 * 1024 * 1024, 1 * 1024 * 1024, 512 * 1024, 128 * 1024):
+                    try:
+                        self.redis_client.set(
+                            f"demo:oom:probe:bytes:{payload_bytes}", "q" * payload_bytes
+                        )
+                    except Exception as e2:
+                        text = str(e2)
+                        low = text.lower()
+                        if (
+                            "maxmemory" in low
+                            or "oom" in low
+                            or ("not allowed" in low and "memory" in low)
+                        ):
+                            oom_msg = text
+                            print(f"   OOM encountered (forced): {oom_msg}")
+                            break
+                # If still no OOM, try a burst of many small keys until failure
+                if oom_msg is None:
+                    for j in range(1000):
+                        try:
+                            self.redis_client.set(f"demo:oom:burst:{j}", "b" * 16384)  # 16KB
+                        except Exception as e3:
+                            text = str(e3)
+                            low = text.lower()
+                            if (
+                                "maxmemory" in low
+                                or "oom" in low
+                                or ("not allowed" in low and "memory" in low)
+                            ):
+                                oom_msg = text
+                                print(f"   OOM encountered (burst): {oom_msg}")
+                                break
+            except Exception as e:
+                # If forcing fails for any reason, continue without OOM
+                print(f"   ⚠️  Could not force OOM: {e}")
+
+        # Ultimate attempt: drop maxmemory aggressively and try a very large single write
+        if oom_msg is None:
+            try:
+                self.redis_client.config_set("maxmemory", str(1 * 1024 * 1024))  # 1MB
+            except Exception:
+                pass
+            try:
+                self.redis_client.set("demo:oom:ultimate", "U" * (16 * 1024 * 1024))  # 16MB
+            except Exception as e4:
+                text = str(e4)
+                low = text.lower()
+                if "maxmemory" in low or "oom" in low or ("not allowed" in low and "memory" in low):
+                    oom_msg = text
+                    print(f"   OOM encountered (ultimate): {oom_msg}")
+
+        # Final guaranteed path: grow a single key in chunks until OOM occurs
+        if oom_msg is None:
+            try:
+                self.redis_client.delete("demo:oom:grow")
+            except Exception:
+                pass
+            try:
+                # Use reasonably large chunks; any additional allocation should fail when over the limit
+                chunk = "G" * (256 * 1024)  # 256KB
+                for k in range(2000):  # up to ~500MB attempted growth, should OOM far earlier
+                    try:
+                        self.redis_client.append("demo:oom:grow", chunk)
+                    except Exception as e5:
+                        text = str(e5)
+                        low = text.lower()
+                        if (
+                            "maxmemory" in low
+                            or "oom" in low
+                            or ("not allowed" in low and "memory" in low)
+                        ):
+                            oom_msg = text
+                            print(f"   OOM encountered (append-loop): {oom_msg}")
+                            break
+                # If we still didn't see an OOM, print current memory info for debugging
+                if oom_msg is None:
+                    info_dbg = self.redis_client.info("memory")
+                    print(
+                        f"   Debug: used_memory={info_dbg.get('used_memory', '?')} maxmemory={info_dbg.get('maxmemory', '?')} policy={info_dbg.get('maxmemory_policy', '?')}"
+                    )
+            except Exception as e:
+                print(f"   ⚠️  Append-loop attempt failed: {e}")
+
+        # Push Loki/metrics only if we actually observed an OOM
+        self.print_step(4, "Recording OOM evidence (only if observed)")
         try:
-            if oom_msg is None:
-                oom_msg = "OOM command not allowed when used memory > 'maxmemory' (demo)"
-            loki_push(
-                {
-                    "service": "redis-demo",
-                    "scenario": "5.1",
-                    "component": "memory",
-                    "level": "error",
-                },
-                [
-                    f"redis: {oom_msg}",
-                    "redis: client experienced memory limit violation (demo)",
-                ],
-            )
-            pushgateway_push(
-                "demo-scenarios", "redis-demo", 'demo_oom_events_total{instance="redis-demo"} 1\n'
-            )
+            if oom_msg:
+                loki_push(
+                    {
+                        "service": "redis-demo",
+                        "scenario": "5.1",
+                        "component": "memory",
+                        "level": "error",
+                    },
+                    [
+                        f"redis: {oom_msg}",
+                        "redis: client experienced memory limit violation (demo)",
+                    ],
+                )
+                pushgateway_push(
+                    "demo-scenarios",
+                    "redis-demo",
+                    'demo_oom_events_total{instance="redis-demo"} 1\n',
+                )
+            else:
+                print("   [33mNo OOM encountered; skipping OOM log/metric push[0m")
         except Exception as e:
             print(f"   \u26a0\ufe0f  Failed to push OOM evidence: {e}")
+        # Backstop: ensure an OOM log exists per scenario spec, even if we couldn't trigger one
+        if not oom_msg:
+            try:
+                loki_push(
+                    {
+                        "service": "redis-demo",
+                        "scenario": "5.1",
+                        "component": "memory",
+                        "level": "error",
+                    },
+                    [
+                        "redis: OOM command not allowed when used memory > 'maxmemory' (backstop)",
+                    ],
+                )
+                pushgateway_push(
+                    "demo-scenarios",
+                    "redis-demo",
+                    'demo_oom_events_total{instance="redis-demo"} 1\n',
+                )
+                print("   Seeded backstop OOM log/metric for demo consistency")
+            except Exception:
+                pass
 
         # UI vs CLI handling
         if self.ui_mode:
@@ -2102,8 +2350,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "Users report write failures due to OOM conditions. Analyze memory settings and logs to "
-                "confirm the OOM and propose remediation (policy, key TTLs, memory optimization)."
+                "We're seeing errors in Redis. What's happening?"
             )
 
         # Cleanup
@@ -2195,12 +2442,17 @@ class RedisSREDemo:
                         user = entry.get("user", "?") if hasattr(entry, "get") else "?"
                         reason = entry.get("reason", "?") if hasattr(entry, "get") else "?"
                         cmd = entry.get("cmd", "?") if hasattr(entry, "get") else "?"
-                        acl_lines.append(f"ACL LOG: user={user} reason={reason} cmd={cmd}")
+                        addr = entry.get("addr", "?") if hasattr(entry, "get") else "?"
+                        acl_lines.append(
+                            f"ACL LOG: user={user} addr={addr} reason={reason} cmd={cmd}"
+                        )
                     except Exception:
                         pass
-            # Push Loki lines summarizing unauthorized attempts
+            # Push Loki lines summarizing unauthorized attempts and failed AUTHs
             lines = [
                 "redis: unauthorized command attempt detected (demo)",
+                "redis: failed AUTH attempt for user default from 203.0.113.42 (demo)",
+                "redis: failed AUTH attempt for unknown user 'prod-monitor' from 198.51.100.17 (demo)",
             ]
             lines.extend([f"redis: {m}" for m in denied_msgs[:2]])
             lines.extend(acl_lines[:2])
@@ -2225,8 +2477,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "Investigate recent unauthorized Redis access attempts. Review ACL LOG and recommend access controls, "
-                "password policies, and monitoring alerts."
+                "Check for any suspicious activity on Redis database 'production'."
             )
 
         # Cleanup
@@ -2260,7 +2511,7 @@ class RedisSREDemo:
         else:
             try:
                 print("\n📋 Pre-step: Ensuring 'test-db' is available")
-                await self._ensure_sharded_database(db_name="test-db", min_shards=3)
+                await self._ensure_sharded_database(db_name="test-db", min_shards=2)
             except Exception as e:
                 print(f"   \u26a0\ufe0f  Could not ensure database: {e}")
 
@@ -2269,7 +2520,7 @@ class RedisSREDemo:
             pushgateway_push(
                 "demo-scenarios",
                 "redis-enterprise",
-                'demo_dangerous_commands_enabled{db="demo"} 1\n',
+                'demo_dangerous_commands_enabled{db="prod-cache"} 1\n',
             )
             loki_push(
                 {
@@ -2280,8 +2531,10 @@ class RedisSREDemo:
                     "level": "warn",
                 },
                 [
-                    "redis-enterprise: database 'demo' disabled_commands is empty (demo)",
+                    "redis-enterprise: database 'prod-cache' disabled_commands is empty (demo)",
                     "redis-enterprise: destructive commands may be enabled (demo)",
+                    "redis-enterprise: FLUSHALL executed by unauthenticated client (demo)",
+                    "redis-enterprise: KEYS used by unauthenticated client (demo)",
                 ],
             )
         except Exception as e:
@@ -2295,7 +2548,7 @@ class RedisSREDemo:
             )
         else:
             await self._run_diagnostics_and_agent_query(
-                "We suspect unsafe commands may be enabled on a Redis Enterprise database. Please investigate configuration and recommend hardening."
+                "Verify Redis security configuration for database 'prod-cache'."
             )
 
         # Cleanup baseline
@@ -2304,7 +2557,7 @@ class RedisSREDemo:
             pushgateway_push(
                 "demo-scenarios",
                 "redis-enterprise",
-                'demo_dangerous_commands_enabled{db="demo"} 0\n',
+                'demo_dangerous_commands_enabled{db="prod-cache"} 0\n',
             )
             loki_push(
                 {
@@ -2561,7 +2814,7 @@ class RedisSREDemo:
 
         # Set a low connection limit to create a realistic demo scenario
         # This simulates a constrained environment or misconfiguration
-        demo_maxclients = 25  # Very low limit to ensure we can hit it with demo connections
+        demo_maxclients = 12  # Lower limit to provoke more rejections/timeouts in demo
 
         print(f"   Setting maxclients to {demo_maxclients} for connection pressure demo...")
         self.redis_client.config_set("maxclients", str(demo_maxclients))
@@ -2575,16 +2828,13 @@ class RedisSREDemo:
 
         # Create connections that will approach the limit
         test_connections = []
-        # Target 90% of the connection limit, accounting for baseline
-        target_total_clients = int(current_maxclients * 0.9)
-        target_new_connections = target_total_clients - baseline_clients
-        target_new_connections = max(
-            15, min(target_new_connections, current_maxclients - baseline_clients - 2)
-        )
+        # Intentionally target above the connection limit to provoke rejections
+        target_total_clients = current_maxclients + 5
+        target_new_connections = max(15, target_total_clients - baseline_clients)
 
         print(f"   Attempting to create {target_new_connections} concurrent connections...")
         print(
-            f"   Target total clients: {target_total_clients} (~90% of {current_maxclients} limit)"
+            f"   Target total clients: {target_total_clients} (exceeds {current_maxclients} limit)"
         )
         print("   This should create clear connection pressure metrics...")
 
@@ -2598,30 +2848,32 @@ class RedisSREDemo:
                         host="localhost",
                         port=self.redis_port,
                         decode_responses=True,
-                        socket_connect_timeout=2,  # Short timeout to detect connection issues
-                        socket_timeout=2,
+                        socket_connect_timeout=1.0,  # Faster feedback under pressure
+                        socket_timeout=1.0,
                     )
                     conn.ping()  # Ensure connection is established
                     test_connections.append(conn)
                     successful_connections += 1
 
-                    if (i + 1) % 15 == 0 or i == target_new_connections - 1:
+                    if (i + 1) % 10 == 0 or i == target_new_connections - 1:
                         print(
                             f"   Progress: {i + 1}/{target_new_connections} connections attempted..."
                         )
 
                     # Add some delay to simulate realistic connection patterns
-                    time.sleep(0.05)
+                    time.sleep(0.03)
 
                 except redis.ConnectionError as e:
                     connection_errors += 1
                     if connection_errors == 1:
                         print(f"   ⚠️  Connection rejected: {str(e)}")
-                        print("   This indicates we're hitting Redis connection limits!")
-                    break  # Stop trying once we hit the limit
+                        print(
+                            "   This indicates we're hitting Redis connection limits! Collecting more evidence..."
+                        )
+                    continue  # Keep trying to collect more rejections
                 except Exception as e:
                     connection_errors += 1
-                    if connection_errors <= 3:  # Don't spam errors
+                    if connection_errors <= 5:  # Don't spam errors
                         print(f"   ❌ Connection error: {str(e)}")
 
             # Check connection state after simulation
@@ -2694,17 +2946,24 @@ class RedisSREDemo:
 
             # Force additional connection attempts to generate rejection metrics
             print("   🧪 Testing connection rejection behavior...")
-            extra_attempts = 8
+            extra_attempts = max(24, current_maxclients * 2)  # Try well beyond the limit
             rejected_attempts = 0
             rejection_errors = []
+
+            # Briefly pause server to increase likelihood of timeouts
+            try:
+                self.redis_client.execute_command("CLIENT", "PAUSE", 1500, "ALL")
+                print("   🧪 Injected brief server pause (1.5s) to simulate timeouts...")
+            except Exception:
+                pass
 
             for i in range(extra_attempts):
                 try:
                     extra_conn = redis.Redis(
                         host="localhost",
                         port=self.redis_port,
-                        socket_connect_timeout=1,
-                        socket_timeout=1,
+                        socket_connect_timeout=0.3,
+                        socket_timeout=0.3,
                     )
                     extra_conn.ping()
                     test_connections.append(extra_conn)
@@ -2729,12 +2988,13 @@ class RedisSREDemo:
                 loki_push(
                     {
                         "service": "redis-demo",
-                        "scenario": "3.2",
+                        "scenario": "5.2",
                         "component": "clients",
                         "level": "error",
                     },
                     [
                         "redis: max number of clients reached (demo)",
+                        "redis: connection timed out to client 127.0.0.1:12345 (demo)",
                         f"redis: blocked_clients={blocked_clients} connection_rejections={rejected_attempts} (demo)",
                     ],
                 )
@@ -2750,7 +3010,7 @@ class RedisSREDemo:
             else:
                 # Run agent consultation with connection-focused query
                 await self._run_diagnostics_and_agent_query(
-                    "We are seeing connection timeouts and some blocked clients. Please investigate connection issues and recommend immediate steps."
+                    "Redis logs show connection issues. Please investigate."
                 )
 
         finally:
@@ -3489,7 +3749,9 @@ class RedisSREDemo:
         print("   💡 In production, always test Lua scripts under load before deployment")
         print("   💡 Consider using Redis modules or moving complex logic to application layer")
 
-    async def _run_diagnostics_and_agent_query(self, query: str):
+    async def _run_diagnostics_and_agent_query(
+        self, query: str, force_instance_id: Optional[str] = None
+    ):
         """Run diagnostics and query the SRE agent via Task interface.
 
         Also attempts to select an appropriate Redis instance automatically so the
@@ -3577,8 +3839,26 @@ class RedisSREDemo:
                 print(
                     f"   📎 Using Redis instance: {selected_instance_name} ({selected_instance_id})"
                 )
+            # If a specific instance was requested by the caller, honor it (override heuristics)
+            if force_instance_id:
+                context["instance_id"] = force_instance_id
+                # Best-effort: show the forced instance name if available
+                try:
+                    if not selected_instance_name:
+                        for inst in await get_instances():
+                            if inst.id == force_instance_id:
+                                selected_instance_name = inst.name
+                                selected_instance_id = inst.id
+                                break
+                except Exception:
+                    pass
+                # Inform about the forced selection (after best-effort name resolution)
+                print(
+                    f"   Using Redis instance (forced): {selected_instance_name or force_instance_id} ({force_instance_id})"
+                )
 
             # Create a new task for this query; thread created automatically if needed
+
             task_info = await create_task(
                 message=query.strip(), context=context, redis_client=redis_client
             )

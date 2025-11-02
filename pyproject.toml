@@ -56,6 +56,7 @@ dependencies = [
     "opentelemetry-instrumentation-asyncio>=0.57b0",
     "opentelemetry-instrumentation-httpx>=0.57b0",
     "opentelemetry-instrumentation-aiohttp-client>=0.57b0",
+    "opentelemetry-instrumentation-openai>=0.47.5",
 ]
 
 [project.scripts]

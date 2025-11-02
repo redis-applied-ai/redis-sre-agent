@@ -2,14 +2,24 @@
 
 The agent exposes capabilities to the LLM via a provider system managed by ToolManager.
 
-What loads
-- Always-on providers: knowledge base, utilities
-- Instance-scoped providers from settings.tool_providers (env: TOOL_PROVIDERS)
-- Conditional providers by instance type (e.g., Redis Enterprise admin API, Redis Cloud)
+This is an early release with an initial set of built-in providers. More providers for popular observability systems are coming. The tool system is fully extensible - you can write your own providers to integrate with any system.
 
-Built-in example
-- Prometheus metrics: redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider
-  - Config via env: TOOLS_PROMETHEUS_URL, TOOLS_PROMETHEUS_DISABLE_SSL
+### What loads
+- **Without an instance**: Knowledge base and basic utilities (date conversions, calculator)
+- **With an instance**: All of the above plus the providers configured in `settings.tool_providers` (Prometheus, Loki, Redis CLI, Host Telemetry)
+- **Conditional providers**: Additional providers based on instance type (e.g., Redis Enterprise admin API, Redis Cloud API)
+
+### Built-in providers (v0.1)
+- **Prometheus metrics**: `redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider`
+  - Config: `TOOLS_PROMETHEUS_URL`, `TOOLS_PROMETHEUS_DISABLE_SSL`
+- **Loki logs**: `redis_sre_agent.tools.logs.loki.provider.LokiToolProvider`
+  - Config: `TOOLS_LOKI_URL`, `TOOLS_LOKI_TENANT_ID`, `TOOLS_LOKI_TIMEOUT`
+- **Redis CLI diagnostics**: `redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider`
+  - Runs Redis CLI commands against target instances
+- **Host telemetry**: `redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider`
+  - System-level metrics and diagnostics
+
+More providers coming for popular observability and cloud platforms.
 
 Configure providers (environment override)
 ```bash

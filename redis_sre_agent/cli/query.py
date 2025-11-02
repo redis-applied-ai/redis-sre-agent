@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Optional
 
 import click
 
@@ -14,8 +15,8 @@ from redis_sre_agent.core.instances import get_instance_by_id
 
 @click.command()
 @click.argument("query")
-@click.option("--redis-instance", "-r", help="Redis instance ID to investigate")
-def query(query: str, redis_instance_id: str):
+@click.option("--redis-instance-id", "-r", help="Redis instance ID to investigate")
+def query(query: str, redis_instance_id: Optional[str]):
     """Execute an agent query."""
 
     async def _query():
@@ -33,7 +34,7 @@ def query(query: str, redis_instance_id: str):
             agent = get_knowledge_agent()
 
         try:
-            response = await agent._process_query(
+            response = await agent.process_query(
                 query,
                 session_id="cli",
                 user_id="cli_user",

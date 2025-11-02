@@ -12,14 +12,14 @@ from redis_sre_agent.core.instances import (
     get_instances,
     save_instances,
 )
-from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.threads import ThreadManager
 
 
 @pytest.fixture
-async def thread_manager(async_redis_client):
-    """Get the thread manager for testing."""
-    manager = ThreadManager(redis_client=async_redis_client)
+async def thread_manager():
+    """Get the ThreadManager bound to the test Redis."""
+    manager = ThreadManager(redis_client=get_redis_client())
     yield manager
 
 
@@ -187,7 +187,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
 async def test_instance_context_passed_to_agent(thread_manager, async_redis_client):
     """Test that instance context is properly passed through the agent workflow."""
 
-    # Register instance
+    # Register instance (not strictly needed for this test; we only verify context)
     test_instance = RedisInstance(
         id="redis-test-context",
         name="Test Instance",
@@ -198,27 +198,7 @@ async def test_instance_context_passed_to_agent(thread_manager, async_redis_clie
         instance_type="oss_single",
     )
 
-    instance_key = RedisKeys.instance(test_instance.id)
-    # Extract secret value from SecretStr for Redis storage
-    from pydantic import SecretStr
-
-    connection_url_value = (
-        test_instance.connection_url.get_secret_value()
-        if isinstance(test_instance.connection_url, SecretStr)
-        else test_instance.connection_url
-    )
-    await async_redis_client.hset(
-        instance_key,
-        mapping={
-            "id": test_instance.id,
-            "name": test_instance.name,
-            "connection_url": connection_url_value,
-            "environment": test_instance.environment,
-            "usage": test_instance.usage,
-            "description": test_instance.description,
-        },
-    )
-    await async_redis_client.sadd(RedisKeys.instances_set(), test_instance.id)
+    # No direct Redis writes here; we only test that instance_id is stored in thread context.
 
     # Create thread WITH instance context
     thread_id = await thread_manager.create_thread(
@@ -239,8 +219,6 @@ async def test_instance_context_passed_to_agent(thread_manager, async_redis_clie
     print(f"   Instance ID: {thread_state.context.get('instance_id')}")
 
     # Cleanup
-    await async_redis_client.delete(instance_key)
-    await async_redis_client.srem(RedisKeys.instances_set(), test_instance.id)
     await thread_manager.delete_thread(thread_id)
 
 

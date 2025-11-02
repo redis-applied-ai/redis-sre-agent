@@ -108,38 +108,51 @@ for i in {1..30}; do
     sleep 2
 done
 
-# Create database via REST API
+# Create database via REST API (delete preexisting via rladmin if present)
 echo
 echo "📋 Step 5: Creating test database..."
-if curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs 2>/dev/null | grep -q '"name":"test-db"'; then
-    echo "   ✅ Database 'test-db' already exists"
-else
-    RESPONSE=$(curl -k -s -u "admin@redis.com:admin" \
-      -X POST https://localhost:9443/v1/bdbs \
-      -H "Content-Type: application/json" \
-      -d '{
-        "name": "test-db",
-        "type": "redis",
-        "memory_size": 33554432,
-        "port": 12000,
-        "replication": true,
-        "sharding": true,
-        "oss_sharding": true,
-        "shards_count": 3,
-        "shards_placement": "sparse",
-        "proxy_policy": "all-master-shards"
-      }')
-
-    if echo "$RESPONSE" | grep -q '"uid"'; then
-        echo "   ✅ Database created successfully"
-    else
-        echo "   ❌ Database creation failed"
-        echo "   Response: $RESPONSE"
-        exit 1
-    fi
-
-    sleep 10
+# If a preexisting DB exists, delete it via rladmin to ensure a clean state
+if docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | grep -q 'test-db'; then
+    echo "   ⚠️  Database 'test-db' already exists; deleting via rladmin..."
+    docker exec redis-enterprise-node1 rladmin delete db test-db || true
+    # Wait for deletion to complete
+    for i in {1..30}; do
+        if docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | grep -q 'test-db'; then
+            echo "      Waiting for database deletion... ($i/30)"
+            sleep 2
+        else
+            echo "   ✅ Database 'test-db' deleted"
+            break
+        fi
+    done
 fi
+
+# Create database
+RESPONSE=$(curl -k -s -u "admin@redis.com:admin" \
+  -X POST https://localhost:9443/v1/bdbs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "test-db",
+    "type": "redis",
+    "memory_size": 33554432,
+    "port": 12000,
+    "replication": true,
+    "sharding": true,
+    "oss_sharding": true,
+    "shards_count": 2,
+    "shards_placement": "sparse",
+    "proxy_policy": "all-master-shards"
+  }')
+
+if echo "$RESPONSE" | grep -q '"uid"'; then
+    echo "   ✅ Database created successfully"
+else
+    echo "   ❌ Database creation failed"
+    echo "   Response: $RESPONSE"
+    exit 1
+fi
+
+sleep 10
 
 # Wait for database to be active
 echo "⏳ Waiting for database to be active..."
@@ -152,7 +165,7 @@ for i in {1..30}; do
     sleep 2
 done
 echo
-echo "📋 Step 6: Ensuring 'test-db' has 3 shards across 3 nodes..."
+echo "📋 Step 6: Ensuring 'test-db' has 2 shards across nodes..."
 # Determine DB UID
 DB_UID=""
 DB_UID=$(docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | awk '/test-db/ {print $1}' | sed 's/db://')
@@ -163,14 +176,14 @@ if [ -z "$DB_UID" ]; then
     echo "   ❌ Could not determine database UID for 'test-db'"
 else
     echo "   → test-db UID: $DB_UID"
-    # Enforce sharded config: 3 shards, spread across nodes
+    # Enforce sharded config: 2 shards, spread across nodes (fits 4-shard license with replication)
     RECONF_RESP=$(curl -k -s -u "admin@redis.com:admin" \
       -X PUT "https://localhost:9443/v1/bdbs/$DB_UID" \
       -H "Content-Type: application/json" \
       -d '{
         "sharding": true,
         "oss_sharding": true,
-        "shards_count": 3,
+        "shards_count": 2,
         "shards_placement": "sparse",
         "proxy_policy": "all-master-shards"
       }')

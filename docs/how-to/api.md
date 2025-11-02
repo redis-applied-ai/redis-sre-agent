@@ -2,7 +2,7 @@
 
 This guide shows how to use the HTTP API end-to-end: check health, add an instance, triage using tasks/threads, ingest and search knowledge, schedule recurring checks, and view status. It focuses on concrete workflows rather than a full reference.
 
-Prerequisites
+### Prerequisites
 - Services running (Docker Compose or local uvicorn + worker)
 - If you enabled auth in your environment, include your API key header as needed
 
@@ -62,7 +62,7 @@ curl -fsS -X POST http://localhost:8000/api/v1/instances/test-connection-url \
   -d '{"connection_url": "redis://host:6379/0"}' | jq
 ```
 
-Notes
+### Notes
 - The API masks credentials in returned `connection_url`
 - Use `PUT /api/v1/instances/{id}` to update fields (masked secrets are preserved)
 - Use `DELETE /api/v1/instances/{id}` to remove
@@ -97,6 +97,9 @@ Real-time updates via WebSocket:
 wscat -c ws://localhost:8000/api/v1/ws/tasks/<thread_id>
 # You will receive an initial_state event and subsequent progress updates
 ```
+
+#### Alternative flow
+
 Alternative flow: create a thread first, then submit a task on that thread.
 ```bash
 # Create thread
@@ -178,7 +181,7 @@ curl -fsS http://localhost:8000/api/v1/schedules/<schedule_id>/runs | jq
 - Health: `GET /api/v1/health` (checks Redis, vector index, workers); status may be degraded when workers aren’t running
 - Grafana: http://localhost:3001 (default admin/admin)
 
-Tips
+### Tips
 - Set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL to enable metrics/logs tools during triage
 - For Docker, prefer in-cluster addresses from within the sre-agent container when invoking the CLI
 - See How-to: Using the CLI & API for a CLI-first walkthrough of the same flows

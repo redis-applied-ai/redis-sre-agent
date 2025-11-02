@@ -12,6 +12,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.openai import OpenAIInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -75,6 +76,8 @@ def worker(concurrency: int):
             HTTPXClientInstrumentor().instrument()
             AioHttpClientInstrumentor().instrument()
             AsyncioInstrumentor().instrument()
+            OpenAIInstrumentor().instrument()
+
             logger.info("OTel tracing enabled in worker (redis/httpx/aiohttp/asyncio)")
 
         # Start a Prometheus metrics HTTP server to expose worker metrics (incl. LLM tokens)

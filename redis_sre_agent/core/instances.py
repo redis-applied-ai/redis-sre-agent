@@ -14,6 +14,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
+from redisvl.query import CountQuery, FilterQuery
 
 from .encryption import encrypt_secret, get_secret_value
 from .keys import RedisKeys
@@ -303,26 +304,33 @@ class RedisInstance(BaseModel):
 
 
 async def get_instances() -> List[RedisInstance]:
-    """Load configured instances from per-instance storage with decrypted secrets."""
+    """Load configured instances using a single FT.SEARCH over the instances index."""
     try:
-        # Ensure index exists (best-effort) and read instance docs from hash storage
+        # Ensure index exists (best-effort) and read instance docs from RediSearch
         await _ensure_instances_index_exists()
-        client = get_redis_client()
-        prefix = f"{SRE_INSTANCES_INDEX}:"
-        cursor: int = 0
-        keys: List[bytes] = []
-        while True:
-            cursor, batch = await client.scan(cursor=cursor, match=f"{prefix}*")
-            if batch:
-                keys.extend(batch)
-            if cursor == 0:
-                break
+        index = await get_instances_index()
+
+        # Determine how many docs exist, then fetch them in one search call
+        try:
+            total = await index.query(CountQuery(filter_expression="*"))
+        except Exception:
+            total = 1000  # sensible fallback
+
+        if not total:
+            return []
+
+        q = FilterQuery(
+            filter_expression="*",
+            return_fields=["data"],  # full JSON payload is stored under 'data'
+            num_results=int(total) if isinstance(total, int) else 1000,
+        )
+        results = await index.query(q)
+
         out: List[RedisInstance] = []
-        for key in keys:
+        for doc in results or []:
             try:
-                raw = await client.hget(key, "data")
+                raw = doc.get("data")
                 if not raw:
-                    # Skip incomplete docs (no full JSON payload)
                     continue
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
@@ -333,11 +341,7 @@ async def get_instances() -> List[RedisInstance]:
                     inst_data["admin_password"] = get_secret_value(inst_data["admin_password"])
                 out.append(RedisInstance(**inst_data))
             except Exception as e:
-                logger.error(
-                    "Failed to load instance from %s: %s. Skipping.",
-                    key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key),
-                    e,
-                )
+                logger.error("Failed to load instance from search result: %s. Skipping.", e)
         return out
     except Exception as e:
         logger.error("Failed to get instances from Redis: %s", e)
@@ -443,29 +447,61 @@ async def save_instances(instances: List[RedisInstance]) -> bool:
 
         # Replace semantics: delete any stored docs not in the provided set
         keep_ids = {inst.id for inst in instances}
-        prefix = f"{SRE_INSTANCES_INDEX}:"
-        cursor: int = 0
-        to_delete: List[bytes] = []
-        while True:
-            cursor, batch = await client.scan(cursor=cursor, match=f"{prefix}*")
-            if not batch:
+
+        # Prefer RediSearch enumeration (single FT.SEARCH) and fall back to SCAN if needed
+        stale_ids: List[str] = []
+        try:
+            index = await get_instances_index()
+            try:
+                total = await index.query(CountQuery(filter_expression="*"))
+            except Exception:
+                total = 1000
+
+            if total:
+                q = FilterQuery(
+                    filter_expression="*",
+                    return_fields=["data"],
+                    num_results=int(total) if isinstance(total, int) else 1000,
+                )
+                results = await index.query(q)
+                for doc in results or []:
+                    try:
+                        raw = doc.get("data")
+                        if not raw:
+                            continue
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8")
+                        d = json.loads(raw)
+                        doc_id = d.get("id")
+                        if doc_id and doc_id not in keep_ids:
+                            stale_ids.append(doc_id)
+                    except Exception:
+                        continue
+        except Exception:
+            # Fallback: SCAN keys by prefix
+            prefix = f"{SRE_INSTANCES_INDEX}:"
+            cursor: int = 0
+            while True:
+                cursor, batch = await client.scan(cursor=cursor, match=f"{prefix}*")
+                if not batch:
+                    if cursor == 0:
+                        break
+                    continue
+                for key in batch:
+                    try:
+                        k = key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key)
+                        instance_id = k.split(":", 1)[1]
+                        if instance_id not in keep_ids:
+                            stale_ids.append(instance_id)
+                    except Exception:
+                        continue
                 if cursor == 0:
                     break
-                continue
-            for key in batch:
-                try:
-                    # Extract id from key suffix
-                    k = key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key)
-                    instance_id = k.split(":", 1)[1]
-                    if instance_id not in keep_ids:
-                        to_delete.append(key)
-                except Exception:
-                    continue
-            if cursor == 0:
-                break
-        for key in to_delete:
+
+        # Delete stale docs
+        for sid in stale_ids:
             try:
-                await client.delete(key)
+                await client.delete(f"{SRE_INSTANCES_INDEX}:{sid}")
             except Exception:
                 pass
         return True

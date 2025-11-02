@@ -15,12 +15,12 @@ npm install
 npm run dev
 # Open http://localhost:3000
 ```
-The dev server proxies `/api`, `/health`, `/metrics` to `VITE_API_URL` (defaults to http://localhost:8000). To override:
+The dev server proxies `/api/v1` to `VITE_API_URL` (defaults to http://localhost:8000). To override:
 ```bash
 VITE_API_URL=http://localhost:8000 npm run dev
 ```
 
 ### Notes
 - Compose sets `VITE_API_URL=http://sre-agent:8000` for in‑container proxying
-- API endpoints are under `/api/v1` (health and metrics also at `/api/v1/health` and `/api/v1/metrics`)
+- API endpoints are under `/api/v1` (e.g., `/api/v1/health`, `/api/v1/metrics`, `/api/v1/tasks`)
 - Do not expose the UI publicly without proper authentication while experimental
