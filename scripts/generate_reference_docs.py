@@ -82,7 +82,7 @@ def _write_cli_md(dest: Path, items: List[Tuple[str, str]]):
         else:
             lines.append(f"- {path} — {help_text}")
     lines.append("\nSee How-to guides for examples.")
-    dest.write_text("\n".join(lines), encoding="utf-8")
+    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_api_md(dest: Path, routes: List[Tuple[str, str, str]]):
@@ -92,7 +92,7 @@ def _write_api_md(dest: Path, routes: List[Tuple[str, str, str]]):
     lines.append("### Endpoints\n\n")
     for method, path, summary in routes:
         lines.append(f"- {method} {path} — {summary}")
-    dest.write_text("\n".join(lines), encoding="utf-8")
+    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main():
