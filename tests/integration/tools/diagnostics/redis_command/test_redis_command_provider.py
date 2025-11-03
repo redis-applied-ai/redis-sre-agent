@@ -1,12 +1,12 @@
-"""Tests for Redis CLI diagnostics tool provider."""
+"""Tests for Redis Command Diagnostics tool provider."""
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from testcontainers.redis import RedisContainer
 
-from redis_sre_agent.tools.diagnostics.redis_cli import (
-    RedisCliToolProvider,
+from redis_sre_agent.tools.diagnostics.redis_command import (
+    RedisCommandToolProvider,
 )
 
 
@@ -28,15 +28,15 @@ def redis_url(redis_container):
 @pytest.mark.asyncio
 async def test_provider_initialization(redis_url):
     """Test that provider initializes correctly."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
-        assert provider.provider_name == "redis_cli"
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
+        assert provider.provider_name == "redis_command"
         assert provider.connection_url == redis_url
 
 
 @pytest.mark.asyncio
 async def test_create_tool_schemas(redis_url):
     """Test that tool schemas are created correctly."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
 
         assert len(schemas) == 11  # All 11 diagnostic tools
@@ -68,7 +68,7 @@ async def test_create_tool_schemas(redis_url):
 @pytest.mark.asyncio
 async def test_info_command(redis_url):
     """Test INFO command execution."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         # Test without section
         result = await provider.info()
         assert result["status"] == "success"
@@ -84,7 +84,7 @@ async def test_info_command(redis_url):
 @pytest.mark.asyncio
 async def test_slowlog_command(redis_url):
     """Test SLOWLOG command execution."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         result = await provider.slowlog(count=5)
 
         assert result["status"] == "success"
@@ -96,7 +96,7 @@ async def test_slowlog_command(redis_url):
 @pytest.mark.asyncio
 async def test_config_get_command(redis_url):
     """Test CONFIG GET command execution."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         result = await provider.config_get(pattern="maxmemory")
 
         assert result["status"] == "success"
@@ -107,7 +107,7 @@ async def test_config_get_command(redis_url):
 @pytest.mark.asyncio
 async def test_client_list_command(redis_url):
     """Test CLIENT LIST command execution."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         result = await provider.client_list()
 
         assert result["status"] == "success"
@@ -119,7 +119,7 @@ async def test_client_list_command(redis_url):
 @pytest.mark.asyncio
 async def test_memory_stats_command(redis_url):
     """Test MEMORY STATS command execution."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         result = await provider.memory_stats()
 
         assert result["status"] == "success"
@@ -129,7 +129,7 @@ async def test_memory_stats_command(redis_url):
 @pytest.mark.asyncio
 async def test_replication_info_command(redis_url):
     """Test replication info command execution."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         result = await provider.replication_info()
 
         assert result["status"] == "success"
@@ -140,7 +140,7 @@ async def test_replication_info_command(redis_url):
 @pytest.mark.asyncio
 async def test_resolve_tool_call_info(redis_url):
     """Test resolving info tool call."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         tool_name = provider._make_tool_name("info")
 
         result = await provider.resolve_tool_call(tool_name=tool_name, args={"section": "memory"})
@@ -152,7 +152,7 @@ async def test_resolve_tool_call_info(redis_url):
 @pytest.mark.asyncio
 async def test_resolve_tool_call_slowlog(redis_url):
     """Test resolving slowlog tool call."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         tool_name = provider._make_tool_name("slowlog")
 
         result = await provider.resolve_tool_call(tool_name=tool_name, args={"count": 10})
@@ -176,16 +176,16 @@ async def test_provider_with_redis_instance(redis_url):
         instance_type="oss_single",
     )
 
-    async with RedisCliToolProvider(redis_instance=redis_instance) as provider:
+    async with RedisCommandToolProvider(redis_instance=redis_instance) as provider:
         # Tool names should include instance hash
         schemas = provider.create_tool_schemas()
         tool_name = schemas[0].name
 
-        # Should have format: redis_cli_{hash}_info
+        # Should have format: redis_command_{hash}_info
         parts = tool_name.split("_")
         assert len(parts) >= 3
         assert parts[0] == "redis"
-        assert parts[1] == "cli"
+        assert parts[1] == "command"
 
         # Should still work
         result = await provider.info()
@@ -198,13 +198,13 @@ async def test_provider_requires_connection_url_or_instance():
     with pytest.raises(
         ValueError, match="Either redis_instance or connection_url must be provided"
     ):
-        RedisCliToolProvider()
+        RedisCommandToolProvider()
 
 
 @pytest.mark.asyncio
 async def test_sample_keys(redis_url, redis_container):
     """Test sampling keys from the keyspace."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         # First, populate some test keys
         client = provider.get_client()
         await client.set("test:key1", "value1")
@@ -237,7 +237,7 @@ async def test_sample_keys(redis_url, redis_container):
 @pytest.mark.asyncio
 async def test_search_indexes(redis_url):
     """Test listing search indexes."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         result = await provider.search_indexes()
 
         # Should succeed even if no RediSearch module (will return error)
@@ -256,7 +256,7 @@ async def test_search_indexes(redis_url):
 @pytest.mark.asyncio
 async def test_search_index_info(redis_url):
     """Test getting search index info."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         result = await provider.search_index_info(index_name="test_index")
 
         # Should return error if index doesn't exist or RediSearch not loaded
@@ -270,7 +270,7 @@ async def test_search_index_info(redis_url):
 @pytest.mark.asyncio
 async def test_sample_keys_count_limit(redis_url, redis_container):
     """Test that sample_keys respects the count limit."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
 
         # Create more keys than we'll sample
@@ -293,7 +293,7 @@ async def test_sample_keys_count_limit(redis_url, redis_container):
 @pytest.mark.asyncio
 async def test_sample_keys_type_distribution(redis_url, redis_container):
     """Test that type distribution is calculated correctly."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
 
         # Create keys of different types
@@ -326,7 +326,7 @@ async def test_sample_keys_type_distribution(redis_url, redis_container):
 @pytest.mark.asyncio
 async def test_resolve_tool_call_sample_keys(redis_url, redis_container):
     """Test routing for sample_keys tool."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
         await client.set("route:test", "value")
 
@@ -344,7 +344,7 @@ async def test_resolve_tool_call_sample_keys(redis_url, redis_container):
 @pytest.mark.asyncio
 async def test_resolve_tool_call_search_indexes(redis_url):
     """Test routing for search_indexes tool."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
         search_indexes_tool = [s for s in schemas if "search_indexes" in s.name][0]
 
@@ -362,7 +362,7 @@ async def test_resolve_tool_call_search_indexes(redis_url):
 @pytest.mark.asyncio
 async def test_resolve_tool_call_search_index_info(redis_url):
     """Test routing for search_index_info tool."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
         search_info_tool = [s for s in schemas if "search_index_info" in s.name][0]
 
@@ -376,7 +376,7 @@ async def test_resolve_tool_call_search_index_info(redis_url):
 @pytest.mark.asyncio
 async def test_sample_keys_default_parameters(redis_url, redis_container):
     """Test sample_keys with default parameters."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
 
         # Create a few test keys
@@ -397,7 +397,7 @@ async def test_sample_keys_default_parameters(redis_url, redis_container):
 @pytest.mark.asyncio
 async def test_sample_keys_with_bytes_keys(redis_url, redis_container):
     """Test that sample_keys handles byte-encoded keys properly."""
-    async with RedisCliToolProvider(connection_url=redis_url) as provider:
+    async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
 
         # Create keys (redis-py returns bytes by default)
@@ -427,7 +427,7 @@ async def test_sample_keys_with_bytes_keys(redis_url, redis_container):
 async def test_sample_keys_error_handling():
     """Test sample_keys error handling with invalid connection."""
     # Use an invalid connection URL to trigger error
-    async with RedisCliToolProvider(connection_url="redis://invalid-host:9999") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://invalid-host:9999") as provider:
         result = await provider.sample_keys(count=10)
 
         assert result["status"] == "error"
@@ -438,7 +438,7 @@ async def test_sample_keys_error_handling():
 async def test_search_indexes_error_handling():
     """Test search_indexes error handling with invalid connection."""
     # Use an invalid connection URL to trigger error
-    async with RedisCliToolProvider(connection_url="redis://invalid-host:9999") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://invalid-host:9999") as provider:
         result = await provider.search_indexes()
 
         assert result["status"] == "error"
@@ -450,7 +450,7 @@ async def test_search_indexes_error_handling():
 async def test_search_index_info_error_handling():
     """Test search_index_info error handling with invalid connection."""
     # Use an invalid connection URL to trigger error
-    async with RedisCliToolProvider(connection_url="redis://invalid-host:9999") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://invalid-host:9999") as provider:
         result = await provider.search_index_info(index_name="test_index")
 
         assert result["status"] == "error"
@@ -461,7 +461,7 @@ async def test_search_index_info_error_handling():
 
 @pytest.mark.asyncio
 async def test_system_hosts_cluster_parsing():
-    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://localhost:6379") as provider:
         cluster_nodes = (
             "a1 10.0.0.1:6379@16379 master - 0 0 1 connected 0-5460\n"
             "b2 10.0.0.2:6379@16379 slave a1 0 0 2 connected\n"
@@ -479,7 +479,7 @@ async def test_system_hosts_cluster_parsing():
 
 @pytest.mark.asyncio
 async def test_system_hosts_replication_parsing():
-    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://localhost:6379") as provider:
         fake_client = AsyncMock()
         # cluster nodes not available
         fake_client.cluster = AsyncMock(side_effect=Exception("no cluster"))
@@ -500,7 +500,7 @@ async def test_system_hosts_replication_parsing():
 
 @pytest.mark.asyncio
 async def test_system_hosts_single_uses_laddr():
-    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://localhost:6379") as provider:
         fake_client = AsyncMock()
         fake_client.cluster = AsyncMock(side_effect=Exception("no cluster"))
         fake_client.info = AsyncMock(return_value={"role": "master", "connected_slaves": 0})
@@ -516,7 +516,7 @@ async def test_system_hosts_single_uses_laddr():
 
 @pytest.mark.asyncio
 async def test_system_hosts_handles_errors():
-    async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://localhost:6379") as provider:
         fake_client = AsyncMock()
         fake_client.cluster = AsyncMock(side_effect=Exception("boom"))
         fake_client.info = AsyncMock(side_effect=Exception("boom"))
@@ -528,7 +528,7 @@ async def test_system_hosts_handles_errors():
 
 @pytest.mark.asyncio
 async def test_system_hosts_fallbacks_to_connection_url():
-    async with RedisCliToolProvider(connection_url="redis://example-host:6380") as provider:
+    async with RedisCommandToolProvider(connection_url="redis://example-host:6380") as provider:
         fake_client = AsyncMock()
         fake_client.cluster = AsyncMock(side_effect=Exception("no cluster"))
         fake_client.info = AsyncMock(side_effect=Exception("no info"))

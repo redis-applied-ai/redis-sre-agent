@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     tool_providers: List[str] = Field(
         default_factory=lambda: [
             "redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider",
-            "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider",
+            "redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider",
             "redis_sre_agent.tools.logs.loki.provider.LokiToolProvider",
             "redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider",
         ],

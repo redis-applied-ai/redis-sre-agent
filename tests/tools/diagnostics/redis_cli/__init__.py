@@ -1,1 +1,1 @@
-"""Tests for Redis CLI diagnostics tool provider."""
+"""Tests for Redis Command Diagnostics tool provider."""

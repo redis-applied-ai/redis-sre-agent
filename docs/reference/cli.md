@@ -60,7 +60,7 @@ Generated from the Click command tree.
 - pipeline full — Run the complete pipeline: scraping + ingestion.
 - pipeline ingest — Run the ingestion pipeline to process scraped documents.
 - pipeline prepare-sources — Prepare source documents as batch artifacts, optionally ingest them.
-- pipeline runbooks — Generate standardized runbooks from web sources using GPT-4o.
+- pipeline runbooks — Generate standardized runbooks from web sources using GPT-5.
 - pipeline scrape — Run the scraping pipeline to collect SRE documents.
 - pipeline show-batch — Show detailed information about a specific batch.
 - pipeline status — Show pipeline status and available batches.

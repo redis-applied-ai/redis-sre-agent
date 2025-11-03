@@ -1,4 +1,4 @@
-"""Redis CLI diagnostics tool provider.
+"""Redis Command Diagnostics tool provider.
 
 This provider executes Redis diagnostic commands directly via redis-py.
 All commands are read-only for safety.
@@ -24,7 +24,7 @@ tracer = trace.get_tracer(__name__)
 
 
 class RedisCliConfig(BaseModel):
-    """Configuration for Redis CLI diagnostics provider.
+    """Configuration for Redis Command Diagnostics provider.
 
     Note: This provider does not use configuration. All tools require
     a connection_url parameter to be passed at runtime.
@@ -33,8 +33,8 @@ class RedisCliConfig(BaseModel):
     pass
 
 
-class RedisCliToolProvider(ToolProvider):
-    """Redis CLI diagnostics provider using redis-py.
+class RedisCommandToolProvider(ToolProvider):
+    """Redis Command Diagnostics provider using redis-py.
 
     Provides read-only diagnostic tools for Redis troubleshooting:
 
@@ -66,7 +66,7 @@ class RedisCliToolProvider(ToolProvider):
         connection_url: Optional[str] = None,
         _config: Optional[RedisCliConfig] = None,
     ):
-        """Initialize the Redis CLI diagnostics provider.
+        """Initialize the Redis Command Diagnostics provider.
 
         Args:
             redis_instance: Optional Redis instance for scoped diagnostics.
@@ -122,7 +122,7 @@ class RedisCliToolProvider(ToolProvider):
 
     @property
     def provider_name(self) -> str:
-        return "redis_cli"
+        return "redis_command"
 
     def get_client(self) -> Redis:
         """Get or create the Redis client (lazy initialization).
@@ -148,7 +148,7 @@ class RedisCliToolProvider(ToolProvider):
         self._client = None
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
-        """Create tool schemas for Redis CLI diagnostic operations."""
+        """Create tool schemas for Redis Command diagnostic operations."""
         return [
             ToolDefinition(
                 name=self._make_tool_name("info"),
@@ -396,7 +396,7 @@ class RedisCliToolProvider(ToolProvider):
         """Route tool call to appropriate method.
 
         Args:
-            tool_name: Tool name (e.g., "redis_cli_a3f2b1_info")
+            tool_name: Tool name (e.g., "redis_command_a3f2b1_info")
             args: Tool arguments
 
         Returns:
@@ -779,7 +779,7 @@ class RedisCliToolProvider(ToolProvider):
                 }
 
             with tracer.start_as_current_span(
-                "tool.redis_cli.sample_keys",
+                "tool.redis_command.sample_keys",
                 attributes={"requested_count": int(count)},
             ) as span:
                 return await _run_sample(span)

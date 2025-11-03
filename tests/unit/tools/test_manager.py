@@ -73,7 +73,7 @@ async def test_tool_manager_with_instance():
         # Should have knowledge, prometheus, and redis_cli tools
         knowledge_tools = [n for n in tool_names if "knowledge_" in n]
         prometheus_tools = [n for n in tool_names if "prometheus_" in n]
-        redis_cli_tools = [n for n in tool_names if "redis_cli_" in n]
+        redis_cli_tools = [n for n in tool_names if "redis_command_" in n]
 
         # Knowledge tools (always loaded)
         assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments

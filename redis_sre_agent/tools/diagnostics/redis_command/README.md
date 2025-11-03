@@ -1,4 +1,4 @@
-# Redis CLI Diagnostics Tool Provider
+# Redis CLI Command Tool Provider
 
 Provides direct access to Redis diagnostic commands via redis-py for troubleshooting and monitoring.
 
@@ -11,9 +11,11 @@ This provider executes read-only Redis diagnostic commands to help troubleshoot 
 ### Direct Configuration
 
 ```python
-from redis_sre_agent.tools.diagnostics.redis_cli import RedisCliToolProvider
+from redis_sre_agent.tools.diagnostics.redis_command import RedisCommandToolProvider
 
-async with RedisCliToolProvider(connection_url="redis://localhost:6379") as provider:
+async with RedisCommandToolProvider(
+    connection_url="redis://localhost:6379"
+) as provider:
     result = await provider.info(section="memory")
     print(result)
 ```
@@ -22,6 +24,7 @@ async with RedisCliToolProvider(connection_url="redis://localhost:6379") as prov
 
 ```python
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.tools.diagnostics.redis_command import RedisCommandToolProvider
 
 redis_instance = RedisInstance(
     id="prod-cache",
@@ -31,7 +34,7 @@ redis_instance = RedisInstance(
     usage="cache"
 )
 
-async with RedisCliToolProvider(redis_instance=redis_instance) as provider:
+async with RedisCommandToolProvider(redis_instance=redis_instance) as provider:
     result = await provider.slowlog(count=20)
 ```
 
