@@ -103,7 +103,7 @@ source_documents/
 
 ```bash
 # Prepare artifacts from source_documents/
-uv run redis-sre-agent pipeline prepare_sources \
+uv run redis-sre-agent pipeline prepare-sources \
     --source-dir ./source_documents \
     --prepare-only
 
@@ -115,7 +115,7 @@ uv run redis-sre-agent pipeline ingest
 Or do both in one step:
 ```bash
 # Prepare and ingest in one command
-uv run redis-sre-agent pipeline prepare_sources \
+uv run redis-sre-agent pipeline prepare-sources \
     --source-dir ./source_documents
 ```
 
@@ -137,7 +137,7 @@ uv run redis-sre-agent pipeline prepare_sources \
 
 2. Prepare and ingest:
    ```bash
-   uv run redis-sre-agent pipeline prepare_sources
+   uv run redis-sre-agent pipeline prepare-sources
    ```
 
 The document will be chunked, embedded, and indexed in Redis.
@@ -192,7 +192,7 @@ Runs both scraping and ingestion in sequence.
 ### `prepare_sources` - User Documents → Artifacts
 
 ```bash
-uv run redis-sre-agent pipeline prepare_sources \
+uv run redis-sre-agent pipeline prepare-sources \
     --source-dir ./source_documents \
     --batch-date 2025-01-15 \
     --prepare-only \
@@ -219,7 +219,7 @@ Shows:
 ### `show_batch` - Batch Details
 
 ```bash
-uv run redis-sre-agent pipeline show_batch \
+uv run redis-sre-agent pipeline show-batch \
     --batch-date 2025-01-15 \
     --artifacts-path ./artifacts
 ```
@@ -433,7 +433,7 @@ Use meaningful batch dates and clean up old batches regularly:
 
 ```bash
 # Use explicit batch dates for important ingestions
-uv run redis-sre-agent pipeline prepare_sources \
+uv run redis-sre-agent pipeline prepare-sources \
     --batch-date 2025-01-15 \
     --source-dir ./custom_runbooks
 
@@ -456,7 +456,7 @@ uv run redis-sre-agent pipeline ingest --batch-date 2025-01-15
 Use `show_batch` to see detailed results:
 
 ```bash
-uv run redis-sre-agent pipeline show_batch --batch-date 2025-01-15
+uv run redis-sre-agent pipeline show-batch --batch-date 2025-01-15
 ```
 
 ---
