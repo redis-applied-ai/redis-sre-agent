@@ -7,6 +7,7 @@ Key environment variables and pointers. For step-by-step setup, see: how-to/conf
 - TOOLS_PROMETHEUS_URL, TOOLS_LOKI_URL: Provider endpoints
 - REDIS_URL: Agent storage Redis URL (for local/dev)
 
-See also
+### See also
+
 - Advanced Encryption: how-to/configuration/encryption.md
 - Tool Providers: how-to/tool-providers.md

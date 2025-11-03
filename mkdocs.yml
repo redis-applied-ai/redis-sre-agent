@@ -32,8 +32,8 @@ plugins:
 nav:
   - Home: index.md
   - Quickstarts:
-      - Local: quickstarts/local.md
-      - Minimal Production: quickstarts/production.md
+      - Local Development: quickstarts/local.md
+      - VM Deployment (Redis Enterprise): quickstarts/vm-deployment.md
   - How-to:
       - Configuration: how-to/configuration.md
       - Tool Providers: how-to/tool-providers.md
@@ -50,6 +50,7 @@ nav:
       - Overview: concepts/core.md
   - Operations:
       - Observability & Health: operations/observability.md
+      - Gotchas & Rough Spots: operations/gotchas.md
   - Reference:
       - CLI Reference: reference/cli.md
       - REST API: reference/api.md

@@ -38,7 +38,8 @@ Per-instance configuration
 
 Implement a ToolProvider subclass that defines tool schemas and resolves calls.
 
-Minimal skeleton
+### Minimal skeleton
+
 ```python
 from typing import Any, Dict, List, Optional
 from redis_sre_agent.tools.protocols import ToolProvider
@@ -71,17 +72,20 @@ class MyMetricsProvider(ToolProvider):
         return {"status": "success", "query": query, "data": []}
 ```
 
-Register your provider
-- Install your package into the same environment as the agent (e.g., pip install -e /path/to/pkg)
+### Register your provider
+
+- Install your package into the same environment as the agent (e.g., `pip install -e /path/to/pkg`)
 - Add your dotted class path to TOOL_PROVIDERS (see example above)
 
-Design guidelines
-- Use descriptive names and rich descriptions (the LLM relies on them)
-- Return structured results: {"status": "success"|"error", ...}
-- Use _make_tool_name("operation") to generate unique, instance-scoped tool names
-- Implement get_status_update via @status_update decorator for better UX
+### Design guidelines
 
-Reference
-- Base class and protocols: redis_sre_agent/tools/protocols.py
-- Manager lifecycle and routing: redis_sre_agent/tools/manager.py
-- Built-in Prometheus provider: redis_sre_agent/tools/metrics/prometheus/provider.py
+- Use descriptive names and rich descriptions (the LLM relies on them)
+- Return structured results: `{"status": "success"|"error", ...}`
+- Use `_make_tool_name("operation")` to generate unique, instance-scoped tool names
+- Implement `get_status_update` via `@status_update` decorator for better UX
+
+### Reference
+
+- Base class and protocols: `redis_sre_agent/tools/protocols.py`
+- Manager lifecycle and routing: `redis_sre_agent/tools/manager.py`
+- Built-in Prometheus provider: `redis_sre_agent/tools/metrics/prometheus/provider.py`
