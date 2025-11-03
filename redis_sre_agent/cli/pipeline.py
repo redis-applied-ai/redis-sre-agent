@@ -297,7 +297,7 @@ def cleanup(keep_days: int, artifacts_path: str):
 @click.option("--list-urls", is_flag=True, help="List currently configured URLs")
 @click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
 def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
-    """Generate standardized runbooks from web sources using GPT-4o."""
+    """Generate standardized runbooks from web sources using GPT-5."""
 
     async def run_runbook_operations():
         from ..pipelines.orchestrator import PipelineOrchestrator
