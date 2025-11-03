@@ -55,14 +55,14 @@ The Redis Command diagnostics provider is useful (especially if you're not alrea
 ### Triage sessions can be slow (7-10 minutes)
 The agent's deep-research approach is thorough but slow. A single triage session can take 7-10 minutes due to:
 - **Deep research**: Parallel research tracks with multiple tool-calling loops
-- **GPT-4o**: Default model choice (high quality, but slower than GPT-3.5)
+- **GPT-5**: Default model choice (high quality, but slower than GPT-5-mini)
 - **Large context**: Metrics and log data can be substantial (thousands of lines)
 - **Multiple LLM calls**: Each research track makes 1-2 generation calls, often 1-2 minutes each
 
 **The tradeoff**: Slow but valuable. The agent produces thorough analysis with actionable recommendations.
 
 **Workarounds**:
-- Use a faster model: Set `OPENAI_MODEL=gpt-3.5-turbo` (lower quality, faster)
+- Use a faster model: Set `OPENAI_MODEL=gpt-5-mini` (lower quality, faster)
 - Reduce max iterations: Set `MAX_ITERATIONS=15` (less thorough, faster)
 - Limit tool timeouts: Set `TOOL_TIMEOUT=30` (less data gathering, faster)
 - Use schedules for non-urgent checks (run overnight, review results in the morning)

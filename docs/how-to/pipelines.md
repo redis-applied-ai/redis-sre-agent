@@ -24,7 +24,7 @@ Scrapers collect documents from various sources and save them as **artifacts** (
 - `redis_runbooks`: Scrape Redis runbooks from redis.io
 - `redis_kb`: Scrape Redis Knowledge Base articles from redis.io/kb with product labels
 - `redis_cloud_api`: Scrape Redis Cloud API documentation from OpenAPI/Swagger spec
-- `runbook_generator`: Generate runbooks from web sources using GPT-4o
+- `runbook_generator`: Generate runbooks from web sources using GPT-5
 - User-added documents in `source_documents/` (via `prepare_sources`)
 
 ### Phase 2: Ingestion → Redis Vector Index
@@ -168,7 +168,7 @@ uv run redis-sre-agent pipeline scrape \
 - `redis_runbooks`: Scrape runbooks from redis.io
 - `redis_kb`: Scrape Knowledge Base articles from redis.io/kb (includes product labels: Cloud, Enterprise, OSS)
 - `redis_cloud_api`: Scrape Redis Cloud API docs from OpenAPI/Swagger spec (REST API reference)
-- `runbook_generator`: Generate runbooks from web sources using GPT-4o
+- `runbook_generator`: Generate runbooks from web sources using GPT-5
 
 **Output**: Artifacts saved to `./artifacts/YYYY-MM-DD/`
 
@@ -340,7 +340,7 @@ Deduplication ensures the same document isn't indexed twice.
 
 ### Runbook Generation
 
-The `runbook_generator` scraper uses GPT-4o to generate standardized runbooks from web sources:
+The `runbook_generator` scraper uses GPT-5 to generate standardized runbooks from web sources:
 
 ```bash
 # List configured URLs
