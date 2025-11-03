@@ -290,13 +290,13 @@ Agent won't start without `OPENAI_API_KEY`. Check:
 ### "No module named 'redis_sre_agent'"
 You're not in the virtual environment. Run:
 ```bash
-uv run redis-sre-agent <command>
+uv run redis-sre-agent --help
 ```
 
 Or activate the venv:
 ```bash
 source .venv/bin/activate
-redis-sre-agent <command>
+redis-sre-agent --help
 ```
 
 ### "Task not found" or "Thread not found"
