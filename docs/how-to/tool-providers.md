@@ -86,6 +86,6 @@ class MyMetricsProvider(ToolProvider):
 
 ### Reference
 
-- Base class and protocols: `redis_sre_agent/tools/protocols.py`
-- Manager lifecycle and routing: `redis_sre_agent/tools/manager.py`
-- Built-in Prometheus provider: `redis_sre_agent/tools/metrics/prometheus/provider.py`
+- [Base class and protocols](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/redis_sre_agent/tools/protocols.py)
+- [Manager lifecycle and routing](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/redis_sre_agent/tools/manager.py)
+- [Built-in Prometheus provider](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/redis_sre_agent/tools/metrics/prometheus/provider.py)

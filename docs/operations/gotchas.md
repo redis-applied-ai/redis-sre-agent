@@ -12,6 +12,8 @@ Each Redis instance may need specific configuration for tool providers (e.g., di
 - Store secrets in `extension_secrets` (tool provider secrets)
 - Access via instance API or CLI
 
+**Note**: The preferred approach for tool provider secrets is environment variables, but there may be cases where you need to store instance-specific secrets for a tool provider.
+
 **The problem**: This works but isn't elegant. You're managing per-instance config in JSON blobs rather than a structured interface.
 
 **Future direction**: We're exploring better patterns for per-instance tool configuration, possibly with provider-specific schemas and validation.
@@ -30,19 +32,19 @@ The agent uses envelope encryption to protect secrets (connection URLs, password
 
 **Future direction**: Direct integration with secrets stores is on the roadmap.
 
-### AI agent connecting to production databases is risky
-The Redis CLI diagnostics provider is useful (especially if you're not already scraping `INFO` metrics), but it requires storing the target database's connection URL. This means:
-- The agent can connect directly to production Redis instances
-- Connection URLs are stored in the agent's operational Redis (encrypted, but still)
-- An AI agent has direct database access
+### AI agent connecting to production databases requires storing connection secrets
+The Redis Command diagnostics provider is useful (especially if you're not already scraping `INFO` metrics), but it requires storing the target database's connection URL.
+
+**Important**: The agent can never run commands directly on the target instance. It can only use the tool provider interface, which exposes read-only commands indirectly (via redis-py, not CLI access).
 
 **The risks**:
-- Misconfigured agent could run commands against the wrong instance
+- Connection URLs must be stored in the agent's operational Redis (encrypted, but still stored)
+- Misconfigured agent could connect to the wrong instance
 - Compromised agent deployment could leak connection credentials
 - Audit trail for agent actions may not meet compliance requirements
 
 **Mitigations**:
-- **Disable the Redis CLI provider entirely**: Remove `redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider` from `TOOL_PROVIDERS` env var. The agent will rely on Prometheus/Loki instead.
+- **Disable the Redis Command provider entirely**: Remove `redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider` from `TOOL_PROVIDERS` env var. The agent will rely on Prometheus/Loki instead.
 - Use read-only Redis users for the agent (ACLs with `+@read -@write -@dangerous`)
 - Deploy agent as a sidecar to the database and inject connection URL at runtime (requires custom scripting currently)
 - Monitor agent actions via OpenTelemetry traces and logs
@@ -228,8 +230,8 @@ Loki queries use LogQL, not PromQL. The agent knows this, but if you're debuggin
 - Use `|= "error"` for line filters
 - Use `| json` for JSON parsing
 
-### Redis CLI provider needs network access
-The Redis CLI provider connects directly to target instances. Ensure:
+### Redis Command provider needs network access
+The Redis Command provider connects to target instances via redis-py. Ensure:
 - Network connectivity from agent to target Redis
 - Correct connection URL (including auth)
 - Firewall rules allow access
@@ -265,42 +267,10 @@ Worker metrics are on port 9101, not 8000. Configure Prometheus to scrape both:
 - API: `http://agent:8000/api/v1/metrics`
 - Worker: `http://agent:9101/`
 
+**Note**: It's awkward that these aren't both on `/api/v1/metrics`, but the worker is a separate process without the FastAPI app.
+
 ### OpenTelemetry is opt-in
 OTel tracing is disabled by default. Enable with `OTEL_EXPORTER_OTLP_ENDPOINT`. Without it:
 - No distributed traces
-- No LangGraph node visibility in trace tools
+- No LangGraph node visibility in trace tools (other than LangSmith, if you've enabled that)
 - Debugging complex workflows is harder
-
----
-
-## Common Errors
-
-### "Redis URL not configured"
-Worker won't start without `REDIS_URL`. Check:
-- `.env` file exists and has `REDIS_URL`
-- Environment variable is set in production
-- URL format is correct: `redis://host:port/db`
-
-### "OpenAI API key not found"
-Agent won't start without `OPENAI_API_KEY`. Check:
-- `.env` file has the key
-- Environment variable is set
-- Key is valid (test with `curl` to OpenAI API)
-
-### "No module named 'redis_sre_agent'"
-You're not in the virtual environment. Run:
-```bash
-uv run redis-sre-agent --help
-```
-
-Or activate the venv:
-```bash
-source .venv/bin/activate
-redis-sre-agent --help
-```
-
-### "Task not found" or "Thread not found"
-Tasks and threads have TTLs in Redis. Old tasks/threads may be expired. Check:
-- Task was created recently
-- Redis isn't evicting keys (use `noeviction` policy)
-- Redis has enough memory

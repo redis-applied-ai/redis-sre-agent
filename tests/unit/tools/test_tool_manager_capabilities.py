@@ -27,8 +27,8 @@ async def test_tool_manager_capability_lookup_loads_providers():
 
         assert metrics_providers, "Expected a metrics provider (Prometheus) to be loaded"
         assert logs_providers, "Expected a logs provider (Loki) to be loaded"
-        assert diag_providers, "Expected a diagnostics provider (redis_cli) to be loaded"
+        assert diag_providers, "Expected a diagnostics provider (redis_command) to be loaded"
 
         # Sanity: provider_name values are as expected (not relying on class names)
         names = {p.provider_name for p in metrics_providers + logs_providers + diag_providers}
-        assert {"prometheus", "loki", "redis_cli"}.issubset(names)
+        assert {"prometheus", "loki", "redis_command"}.issubset(names)

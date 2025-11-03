@@ -1,4 +1,4 @@
-"""Integration tests for Redis CLI diagnostics provider with ToolManager."""
+"""Integration tests for Redis Command Diagnostics provider with ToolManager."""
 
 import pytest
 from testcontainers.redis import RedisContainer
@@ -20,8 +20,8 @@ def redis_url(redis_container):
 
 
 @pytest.mark.asyncio
-async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
-    """Test that Redis CLI provider loads correctly via ToolManager."""
+async def test_redis_command_provider_loads_via_tool_manager(redis_url):
+    """Test that Redis Command provider loads correctly via ToolManager."""
     from redis_sre_agent.core.config import Settings
     from redis_sre_agent.core.instances import RedisInstance
 
@@ -38,7 +38,7 @@ async def test_redis_cli_provider_loads_via_tool_manager(redis_url):
     # Create settings with Redis CLI provider configured
     settings = Settings()
     settings.tool_providers = [
-        "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider"
+        "redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider"
     ]
 
     import redis_sre_agent.core.config as config_module
@@ -94,7 +94,7 @@ async def test_redis_cli_tool_execution_via_manager(redis_url):
 
     settings = Settings()
     settings.tool_providers = [
-        "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider"
+        "redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider"
     ]
 
     import redis_sre_agent.core.config as config_module
@@ -132,7 +132,7 @@ async def test_redis_cli_with_redis_instance(redis_url):
 
     settings = Settings()
     settings.tool_providers = [
-        "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider"
+        "redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider"
     ]
 
     import redis_sre_agent.core.config as config_module
@@ -184,7 +184,7 @@ async def test_multiple_providers_coexist(redis_url, monkeypatch):
     settings = Settings()
     settings.tool_providers = [
         "redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider",
-        "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider",
+        "redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider",
     ]
 
     # Set Prometheus env vars
@@ -237,6 +237,6 @@ async def test_default_providers_enabled(redis_url):
         in settings.tool_providers
     )
     assert (
-        "redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider"
+        "redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider"
         in settings.tool_providers
     )
