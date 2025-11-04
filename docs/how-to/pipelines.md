@@ -19,6 +19,7 @@ Scrapers collect documents from various sources and save them as **artifacts** (
 - Content hash (for deduplication)
 
 **Available scrapers**:
+
 - `redis_docs`: Scrape Redis documentation from redis.io (slow, downloads from web)
 - `redis_docs_local`: Scrape Redis documentation from local clone (fast, recommended)
 - `redis_runbooks`: Scrape Redis runbooks from redis.io
@@ -37,6 +38,7 @@ The ingestion pipeline processes artifacts and indexes them in Redis:
 4. **Index in Redis** using RediSearch vector search
 
 **Chunking strategy**:
+
 - **Default**: 1000 characters per chunk, 200 character overlap
 - **CLI/API docs**: Keep whole (up to 6KB for CLI, 12KB for API) to preserve command examples
 - **Small docs**: Keep whole if under chunk size
@@ -61,6 +63,7 @@ The fastest way to get started is to clone Redis docs locally and scrape from th
 ```
 
 Then ingest:
+
 ```bash
 uv run redis-sre-agent pipeline ingest --latest-only
 ```
@@ -115,6 +118,7 @@ uv run redis-sre-agent pipeline ingest
 ```
 
 Or do both in one step:
+
 ```bash
 # Prepare and ingest in one command
 uv run redis-sre-agent pipeline prepare-sources \
@@ -222,6 +226,7 @@ uv run redis-sre-agent pipeline status --artifacts-path ./artifacts
 ```
 
 Shows:
+
 - Available batches
 - Scrapers configured
 - Ingestion status
@@ -235,6 +240,7 @@ uv run redis-sre-agent pipeline show-batch \
 ```
 
 Shows detailed information about a specific batch:
+
 - Document count by category
 - Document types
 - Ingestion status (if ingested)
@@ -275,6 +281,7 @@ You can adjust these via the Knowledge API (see `docs/reference/api.md`).
 Default: OpenAI `text-embedding-3-small` (1536 dimensions)
 
 This model is:
+
 - Fast and cost-effective
 - Good quality for technical documentation
 - Widely supported
@@ -284,11 +291,13 @@ To change the embedding model, update via the Knowledge API or environment varia
 ### Deduplication
 
 The pipeline uses content hashing for deduplication:
+
 - **Document hash**: SHA-256 of content
 - **Chunk hash**: SHA-256 of chunk content
 - **Deterministic IDs**: `{document_hash}_{chunk_index}`
 
 When re-ingesting:
+
 - Unchanged chunks reuse existing embeddings (fast, no API calls)
 - Changed chunks generate new embeddings
 - Deleted chunks are removed from the index
@@ -313,12 +322,14 @@ artifacts/2025-01-15/
 ```
 
 **manifest.json** contains:
+
 - Batch creation timestamp
 - Total document count
 - Document counts by category and type
 - Scraper metadata
 
 **ingestion_manifest.json** contains:
+
 - Ingestion timestamp
 - Documents processed
 - Chunks created and indexed
@@ -378,6 +389,7 @@ Generated runbooks are saved to `./artifacts/YYYY-MM-DD/runbooks/`.
 **Cause**: OpenAI API key is invalid or rate limited.
 
 **Solution**:
+
 - Check `OPENAI_API_KEY` environment variable
 - Verify API key is valid
 - Check OpenAI rate limits and quotas
@@ -396,6 +408,7 @@ Generated runbooks are saved to `./artifacts/YYYY-MM-DD/runbooks/`.
 **Cause**: Multiple batches accumulated over time.
 
 **Solution**: Run cleanup to remove old batches:
+
 ```bash
 uv run redis-sre-agent pipeline cleanup --keep-days 30
 ```

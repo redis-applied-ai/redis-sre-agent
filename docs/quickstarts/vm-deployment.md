@@ -95,6 +95,7 @@ uv run redis-sre-agent --help
 
 ### Create a Database
 In Redis Enterprise, create a database with:
+
 - **Modules**: RediSearch enabled
 - **Memory**: 2GB+ recommended
 - **Eviction policy**: `noeviction` (recommended for operational data)
@@ -195,6 +196,7 @@ This creates vector embeddings and indexes them in Redis Enterprise using RediSe
 ## 8. Start the Agent and Worker
 
 The agent consists of two processes:
+
 - **API**: FastAPI server (port 8000)
 - **Worker**: Background task processor
 
@@ -274,10 +276,11 @@ uv run redis-sre-agent query \
 ```
 
 The agent will:
+
 1. Create a task and thread
 2. Use the triage agent with parallel research tracks
 3. Query Prometheus metrics (if configured)
-4. Run Redis CLI diagnostics (INFO, SLOWLOG, etc.)
+4. Run Redis command diagnostics (INFO, SLOWLOG, etc.)
 5. Analyze findings and provide recommendations
 
 Expected output:
@@ -352,6 +355,7 @@ sudo journalctl -u redis-sre-api -f
 
 ### Reverse Proxy (Optional)
 Put the API behind nginx or similar:
+
 ```nginx
 server {
     listen 443 ssl;
@@ -383,6 +387,7 @@ server {
 
 ### Prometheus Metrics
 The agent exposes metrics at:
+
 - API: `http://localhost:8000/api/v1/metrics`
 - Worker: `http://localhost:9101/`
 
