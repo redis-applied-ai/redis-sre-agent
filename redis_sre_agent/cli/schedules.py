@@ -14,7 +14,7 @@ from rich.table import Table
 from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.schedule_storage import get_schedule
+from redis_sre_agent.core.schedules import get_schedule
 from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.core.threads import ThreadManager
 
@@ -43,7 +43,7 @@ def schedules_list(as_json: bool, tz: str | None, limit: int):
         from rich.console import Console
         from rich.table import Table
 
-        from redis_sre_agent.core.schedule_storage import list_schedules
+        from redis_sre_agent.core.schedules import list_schedules
 
         try:
             items = await list_schedules()
@@ -129,7 +129,7 @@ def schedules_get(schedule_id: str, as_json: bool, tz: str | None):
         from rich.console import Console
         from rich.table import Table
 
-        from redis_sre_agent.core.schedule_storage import get_schedule
+        from redis_sre_agent.core.schedules import get_schedule
 
         try:
             s = await get_schedule(schedule_id)
@@ -232,7 +232,7 @@ def schedules_create(
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedule_storage import store_schedule
+        from redis_sre_agent.core.schedules import store_schedule
         from redis_sre_agent.core.schedules import Schedule
 
         try:
@@ -304,7 +304,7 @@ def schedules_update(
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedule_storage import get_schedule, store_schedule
+        from redis_sre_agent.core.schedules import get_schedule, store_schedule
         from redis_sre_agent.core.schedules import Schedule
 
         try:
@@ -372,7 +372,7 @@ def schedules_enable(schedule_id: str, as_json: bool):
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedule_storage import get_schedule, store_schedule
+        from redis_sre_agent.core.schedules import get_schedule, store_schedule
         from redis_sre_agent.core.schedules import Schedule
 
         try:
@@ -415,7 +415,7 @@ def schedules_disable(schedule_id: str, as_json: bool):
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedule_storage import get_schedule, store_schedule
+        from redis_sre_agent.core.schedules import get_schedule, store_schedule
         from redis_sre_agent.core.schedules import Schedule
 
         try:
@@ -455,7 +455,7 @@ def schedules_delete(schedule_id: str, yes: bool, as_json: bool):
     async def _delete():
         import json as _json
 
-        from redis_sre_agent.core.schedule_storage import delete_schedule
+        from redis_sre_agent.core.schedules import delete_schedule
 
         try:
             if not yes and not as_json:
@@ -491,7 +491,7 @@ def schedules_run_now(schedule_id: str, as_json: bool):
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedule_storage import get_schedule
+        from redis_sre_agent.core.schedules import get_schedule
 
         try:
             schedule = await get_schedule(schedule_id)

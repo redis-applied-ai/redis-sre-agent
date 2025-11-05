@@ -10,16 +10,16 @@ from fastapi import APIRouter, HTTPException, status
 from ..core.docket_tasks import get_redis_url, process_agent_turn, scheduler_task
 from ..core.keys import RedisKeys
 from ..core.redis import get_redis_client
-from ..core.schedule_storage import (
+from ..core.schedules import (
     delete_schedule as _delete_schedule,
 )
-from ..core.schedule_storage import (
+from ..core.schedules import (
     get_schedule as _get_schedule,
 )
-from ..core.schedule_storage import (
+from ..core.schedules import (
     list_schedules as _list_schedules,
 )
-from ..core.schedule_storage import (
+from ..core.schedules import (
     store_schedule,
 )
 from ..core.schedules import Schedule

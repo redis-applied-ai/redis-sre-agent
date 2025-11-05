@@ -156,7 +156,7 @@ async def scheduler_task(
         current_time = datetime.now(timezone.utc)
 
         # Import schedule storage functions
-        from ..core.schedule_storage import (
+        from ..core.schedules import (
             find_schedules_needing_runs,
             update_schedule_last_run,
             update_schedule_next_run,
