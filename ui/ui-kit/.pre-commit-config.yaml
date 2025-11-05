@@ -21,9 +21,9 @@ repos:
     hooks:
       - id: eslint
         name: ESLint
-        entry: npm run lint
+        entry: npm --prefix ui/ui-kit run lint
         language: system
-        files: \.(ts|tsx|js|jsx)$
+        files: ^ui/ui-kit/.*\.(ts|tsx|js|jsx)$
         pass_filenames: false
 
   # TypeScript type checking
@@ -31,9 +31,9 @@ repos:
     hooks:
       - id: typescript
         name: TypeScript Check
-        entry: npm run typecheck
+        entry: npm --prefix ui/ui-kit run typecheck
         language: system
-        files: \.(ts|tsx)$
+        files: ^ui/ui-kit/.*\.(ts|tsx)$
         pass_filenames: false
 
   # Prettier formatting
@@ -41,9 +41,20 @@ repos:
     hooks:
       - id: prettier
         name: Prettier
-        entry: npm run format:check
+        entry: npm --prefix ui/ui-kit run format:check
         language: system
-        files: \.(ts|tsx|js|jsx|json|css|md)$
+        files: ^ui/ui-kit/.*\.(ts|tsx|js|jsx|json|css|md)$
+        pass_filenames: false
+
+
+  # Prettier for UI root app
+  - repo: local
+    hooks:
+      - id: prettier-ui-root
+        name: Prettier (UI root)
+        entry: npm --prefix ui run format
+        language: system
+        files: ^ui/src/.*\.(ts|tsx|js|jsx|css|md)$
         pass_filenames: false
 
   # Run tests on staged files
@@ -51,9 +62,9 @@ repos:
     hooks:
       - id: vitest
         name: Vitest
-        entry: npm run test
+        entry: npm --prefix ui/ui-kit run test
         language: system
-        files: \.(ts|tsx)$
+        files: ^ui/ui-kit/.*\.(ts|tsx)$
         pass_filenames: false
 
   # Package.json validation
@@ -61,9 +72,9 @@ repos:
     hooks:
       - id: package-json-sorting
         name: Sort package.json
-        entry: npx sort-package-json
+        entry: npx sort-package-json ui/ui-kit/package.json
         language: system
-        files: package\.json$
+        files: ^ui/ui-kit/package\.json$
 
   # Security checks
   - repo: local

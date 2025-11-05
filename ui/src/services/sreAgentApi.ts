@@ -1,6 +1,6 @@
 // SRE Agent API service - Task-based implementation
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'tool' | 'system';
+  role: "user" | "assistant" | "tool" | "system";
   content: string;
   timestamp?: string;
 }
@@ -14,7 +14,13 @@ export interface TaskUpdate {
 
 export interface TaskStatusResponse {
   thread_id: string;
-  status: 'queued' | 'in_progress' | 'completed' | 'done' | 'failed' | 'cancelled';
+  status:
+    | "queued"
+    | "in_progress"
+    | "completed"
+    | "done"
+    | "failed"
+    | "cancelled";
   updates: TaskUpdate[];
   result?: Record<string, any>;
   error_message?: string;
@@ -70,7 +76,7 @@ export interface RedisInstance {
   redis_cloud_subscription_id?: number;
   redis_cloud_database_id?: number;
   // Redis Cloud metadata
-  redis_cloud_subscription_type?: 'pro' | 'essentials';
+  redis_cloud_subscription_type?: "pro" | "essentials";
   redis_cloud_database_name?: string;
   status?: string;
   version?: string;
@@ -99,7 +105,7 @@ export interface CreateInstanceRequest {
   redis_cloud_subscription_id?: number;
   redis_cloud_database_id?: number;
   // Redis Cloud metadata
-  redis_cloud_subscription_type?: 'pro' | 'essentials';
+  redis_cloud_subscription_type?: "pro" | "essentials";
   redis_cloud_database_name?: string;
 }
 
@@ -121,7 +127,7 @@ export interface UpdateInstanceRequest {
   redis_cloud_subscription_id?: number;
   redis_cloud_database_id?: number;
   // Redis Cloud metadata
-  redis_cloud_subscription_type?: 'pro' | 'essentials';
+  redis_cloud_subscription_type?: "pro" | "essentials";
   redis_cloud_database_name?: string;
   status?: string;
   version?: string;
@@ -172,20 +178,26 @@ class SREAgentAPI {
     }
 
     // 2. Use environment variable if available (for build-time configuration)
-    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) {
+    if (
+      typeof import.meta !== "undefined" &&
+      import.meta.env?.VITE_API_BASE_URL
+    ) {
       return import.meta.env.VITE_API_BASE_URL;
     }
 
     // 3. In production builds or when using nginx proxy, use relative URLs
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       // Check if we're in development mode (Vite dev server)
       // Vite typically uses ports 3000, 3001, etc. and serves from localhost
-      const isDevelopment = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
-                           (window.location.port.startsWith('30') || window.location.port === '5173'); // 5173 is Vite's default
+      const isDevelopment =
+        (window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1") &&
+        (window.location.port.startsWith("30") ||
+          window.location.port === "5173"); // 5173 is Vite's default
 
       if (!isDevelopment) {
         // In production, use relative URLs (nginx will proxy to backend)
-        return '/api/v1';
+        return "/api/v1";
       }
 
       // In development, construct URL using current host but backend port
@@ -197,22 +209,22 @@ class SREAgentAPI {
     }
 
     // 4. Fallback for server-side rendering or other edge cases
-    return '/api/v1';
+    return "/api/v1";
   }
 
   private createURL(urlString: string): URL {
     // If the URL is already absolute, use it directly
-    if (urlString.startsWith('http://') || urlString.startsWith('https://')) {
+    if (urlString.startsWith("http://") || urlString.startsWith("https://")) {
       return new URL(urlString);
     }
 
     // For relative URLs, use the current window location as base
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       return new URL(urlString, window.location.origin);
     }
 
     // Fallback for server-side rendering - assume localhost
-    return new URL(urlString, 'http://localhost:3000');
+    return new URL(urlString, "http://localhost:3000");
   }
 
   async submitTriageRequest(
@@ -221,12 +233,12 @@ class SREAgentAPI {
     sessionId?: string,
     priority: number = 0,
     tags?: string[],
-    instanceId?: string
+    instanceId?: string,
   ): Promise<TriageResponse> {
     const response = await fetch(`${this.tasksBaseUrl}/tasks`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         message,
@@ -235,8 +247,8 @@ class SREAgentAPI {
           session_id: sessionId,
           priority,
           tags,
-          ...(instanceId && { instance_id: instanceId })
-        }
+          ...(instanceId && { instance_id: instanceId }),
+        },
       }),
     });
 
@@ -257,12 +269,12 @@ class SREAgentAPI {
     threadId: string,
     message: string,
     userId: string,
-    context?: Record<string, any>
+    context?: Record<string, any>,
   ): Promise<TriageResponse> {
     const response = await fetch(`${this.tasksBaseUrl}/tasks`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         message,
@@ -296,10 +308,10 @@ class SREAgentAPI {
     const thread = await response.json();
     // Derive a task-like status from thread data
     const status = thread?.error_message
-      ? 'failed'
+      ? "failed"
       : thread?.result
-      ? 'completed'
-      : 'in_progress';
+        ? "completed"
+        : "in_progress";
 
     return {
       thread_id: thread.thread_id,
@@ -309,7 +321,7 @@ class SREAgentAPI {
             timestamp: u.timestamp,
             message: u.message,
             type: u.update_type,
-            metadata: u.metadata || {}
+            metadata: u.metadata || {},
           }))
         : [],
       result: thread.result,
@@ -330,14 +342,14 @@ class SREAgentAPI {
   async listTasks(
     userId?: string,
     statusFilter?: string,
-    limit: number = 50
+    limit: number = 50,
   ): Promise<TaskStatusResponse[]> {
     try {
       const baseUrl = `${this.tasksBaseUrl}/tasks`;
       const url = this.createURL(baseUrl);
-      if (userId) url.searchParams.append('user_id', userId);
-      if (statusFilter) url.searchParams.append('status_filter', statusFilter);
-      url.searchParams.append('limit', limit.toString());
+      if (userId) url.searchParams.append("user_id", userId);
+      if (statusFilter) url.searchParams.append("status_filter", statusFilter);
+      url.searchParams.append("limit", limit.toString());
 
       const response = await fetch(url.toString());
 
@@ -364,9 +376,9 @@ class SREAgentAPI {
     try {
       const baseUrl = `${this.tasksBaseUrl}/threads`;
       const url = this.createURL(baseUrl);
-      if (userId) url.searchParams.append('user_id', userId);
-      url.searchParams.append('limit', String(limit));
-      url.searchParams.append('offset', String(offset));
+      if (userId) url.searchParams.append("user_id", userId);
+      url.searchParams.append("limit", String(limit));
+      url.searchParams.append("offset", String(offset));
 
       const response = await fetch(url.toString());
       if (!response.ok) {
@@ -380,26 +392,31 @@ class SREAgentAPI {
       // Ensure shape matches ThreadSummary
       return (data || []).map((t: any) => ({
         thread_id: t.thread_id,
-        subject: t.subject || 'Untitled',
+        subject: t.subject || "Untitled",
         created_at: t.created_at,
         updated_at: t.updated_at,
         user_id: t.user_id,
-        latest_message: t.latest_message || 'No updates',
+        latest_message: t.latest_message || "No updates",
         tags: Array.isArray(t.tags) ? t.tags : [],
-        priority: typeof t.priority === 'number' ? t.priority : 0,
+        priority: typeof t.priority === "number" ? t.priority : 0,
         instance_id: t.instance_id,
-        message_count: typeof t.message_count === 'number' ? t.message_count : undefined,
+        message_count:
+          typeof t.message_count === "number" ? t.message_count : undefined,
       })) as ThreadSummary[];
     } catch {
       return [];
     }
   }
 
-
-  async cancelTask(threadId: string, deleteThread: boolean = false): Promise<void> {
+  async cancelTask(
+    threadId: string,
+    deleteThread: boolean = false,
+  ): Promise<void> {
     if (deleteThread) {
       // Deleting a conversation maps to deleting the thread
-      const response = await fetch(`${this.tasksBaseUrl}/threads/${threadId}`, { method: 'DELETE' });
+      const response = await fetch(`${this.tasksBaseUrl}/threads/${threadId}`, {
+        method: "DELETE",
+      });
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
@@ -416,18 +433,22 @@ class SREAgentAPI {
   async pollTaskUntilComplete(
     threadId: string,
     maxWaitMs: number = 300000, // 5 minutes
-    pollIntervalMs: number = 2000 // 2 seconds
+    pollIntervalMs: number = 2000, // 2 seconds
   ): Promise<TaskStatusResponse> {
     const startTime = Date.now();
 
     while (Date.now() - startTime < maxWaitMs) {
       const status = await this.getTaskStatus(threadId);
 
-      if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
+      if (
+        status.status === "completed" ||
+        status.status === "failed" ||
+        status.status === "cancelled"
+      ) {
         return status;
       }
 
-      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
 
     throw new Error(`Task ${threadId} did not complete within ${maxWaitMs}ms`);
@@ -438,26 +459,33 @@ class SREAgentAPI {
     message: string,
     threadId: string,
     userId: string,
-    _maxIterations: number = 10
+    _maxIterations: number = 10,
   ): Promise<{ response: string; thread_id: string }> {
     // For existing threads, continue the conversation
-    const triageResponse = await this.continueConversation(threadId, message, userId);
+    const triageResponse = await this.continueConversation(
+      threadId,
+      message,
+      userId,
+    );
 
     // Poll for completion
-    const finalStatus = await this.pollTaskUntilComplete(triageResponse.thread_id);
+    const finalStatus = await this.pollTaskUntilComplete(
+      triageResponse.thread_id,
+    );
 
-    if (finalStatus.status === 'failed') {
-      throw new Error(finalStatus.error_message || 'Task failed');
+    if (finalStatus.status === "failed") {
+      throw new Error(finalStatus.error_message || "Task failed");
     }
 
-
     // Extract the response from the final result or latest update
-    let response = 'No response available';
+    let response = "No response available";
     if (finalStatus.result && finalStatus.result.response) {
       response = finalStatus.result.response;
     } else if (finalStatus.updates.length > 0) {
       // Find the last assistant response
-      const assistantUpdates = finalStatus.updates.filter(u => u.type === 'response' || u.type === 'completion');
+      const assistantUpdates = finalStatus.updates.filter(
+        (u) => u.type === "response" || u.type === "completion",
+      );
       if (assistantUpdates.length > 0) {
         response = assistantUpdates[assistantUpdates.length - 1].message;
       }
@@ -474,7 +502,9 @@ class SREAgentAPI {
     const status = await this.getTaskStatus(threadId);
 
     // Preferred: context.messages contains the entire transcript
-    const ctxMsgs = Array.isArray(status?.context?.messages) ? status.context.messages : [];
+    const ctxMsgs = Array.isArray(status?.context?.messages)
+      ? status.context.messages
+      : [];
     if (ctxMsgs.length > 0) {
       return ctxMsgs.map((msg: any) => ({
         role: msg.role,
@@ -485,38 +515,75 @@ class SREAgentAPI {
 
     // Fallback: reconstruct from updates and metadata
     const messages: ChatMessage[] = [];
-    const initial = (status.context as any)?.original_query || status.metadata.subject;
+    const initial =
+      (status.context as any)?.original_query || status.metadata.subject;
     if (initial) {
       messages.push({
-        role: 'user',
+        role: "user",
         content: initial,
         timestamp: status.metadata.created_at,
       });
     }
 
     for (const update of status.updates) {
-      if ((update.type === 'response' || update.type === 'completion') && update.message) {
-        messages.push({ role: 'assistant', content: update.message, timestamp: update.timestamp });
-      } else if (update.type === 'user_message' && update.message) {
-        messages.push({ role: 'user', content: update.message, timestamp: update.timestamp });
-      } else if ((update.type === 'agent_reflection' || update.type === 'agent_processing' || update.type === 'agent_start') && update.message && update.message.length > 10 && !/completed/i.test(update.message)) {
-        messages.push({ role: 'assistant', content: update.message, timestamp: update.timestamp });
+      if (
+        (update.type === "response" || update.type === "completion") &&
+        update.message
+      ) {
+        messages.push({
+          role: "assistant",
+          content: update.message,
+          timestamp: update.timestamp,
+        });
+      } else if (update.type === "user_message" && update.message) {
+        messages.push({
+          role: "user",
+          content: update.message,
+          timestamp: update.timestamp,
+        });
+      } else if (
+        (update.type === "agent_reflection" ||
+          update.type === "agent_processing" ||
+          update.type === "agent_start") &&
+        update.message &&
+        update.message.length > 10 &&
+        !/completed/i.test(update.message)
+      ) {
+        messages.push({
+          role: "assistant",
+          content: update.message,
+          timestamp: update.timestamp,
+        });
       }
     }
 
-    if ((status.status === 'done' || status.status === 'completed') && (status as any).result?.response) {
-      messages.push({ role: 'assistant', content: (status as any).result.response, timestamp: (status as any).result.turn_completed_at || status.metadata.updated_at });
+    if (
+      (status.status === "done" || status.status === "completed") &&
+      (status as any).result?.response
+    ) {
+      messages.push({
+        role: "assistant",
+        content: (status as any).result.response,
+        timestamp:
+          (status as any).result.turn_completed_at ||
+          status.metadata.updated_at,
+      });
     }
-    if (status.status === 'failed' && status.error_message) {
-      messages.push({ role: 'assistant', content: `❌ ${status.error_message}`, timestamp: status.metadata.updated_at });
+    if (status.status === "failed" && status.error_message) {
+      messages.push({
+        role: "assistant",
+        content: `❌ ${status.error_message}`,
+        timestamp: status.metadata.updated_at,
+      });
     }
 
     return messages;
   }
 
-
-
-  async getConversationHistory(threadId: string, _userId?: string): Promise<{ messages: ChatMessage[] }> {
+  async getConversationHistory(
+    threadId: string,
+    _userId?: string,
+  ): Promise<{ messages: ChatMessage[] }> {
     try {
       const status = await this.getTaskStatus(threadId);
 
@@ -526,7 +593,7 @@ class SREAgentAPI {
       // Add original query if available
       if (status.metadata.subject) {
         messages.push({
-          role: 'user',
+          role: "user",
           content: status.metadata.subject,
           timestamp: status.metadata.created_at,
         });
@@ -534,15 +601,15 @@ class SREAgentAPI {
 
       // Convert updates to messages
       for (const update of status.updates) {
-        if (update.type === 'response' || update.type === 'completion') {
+        if (update.type === "response" || update.type === "completion") {
           messages.push({
-            role: 'assistant',
+            role: "assistant",
             content: update.message,
             timestamp: update.timestamp,
           });
-        } else if (update.type === 'user_message') {
+        } else if (update.type === "user_message") {
           messages.push({
-            role: 'user',
+            role: "user",
             content: update.message,
             timestamp: update.timestamp,
           });
@@ -556,13 +623,15 @@ class SREAgentAPI {
     }
   }
 
-  async clearConversation(threadId: string): Promise<{ session_id: string; cleared: boolean; message: string }> {
+  async clearConversation(
+    threadId: string,
+  ): Promise<{ session_id: string; cleared: boolean; message: string }> {
     try {
       await this.cancelTask(threadId, true); // Pass true to delete the thread
       return {
         session_id: threadId,
         cleared: true,
-        message: 'Conversation cleared successfully',
+        message: "Conversation cleared successfully",
       };
     } catch (error) {
       return {
@@ -586,16 +655,18 @@ class SREAgentAPI {
 
     // Transform health endpoint response to AgentStatus format
     return {
-      agent_available: healthData.status === 'healthy' || healthData.status === 'degraded',
-      workers_available: healthData.components?.workers === 'available',
+      agent_available:
+        healthData.status === "healthy" || healthData.status === "degraded",
+      workers_available: healthData.components?.workers === "available",
       system_health: {
-        redis_connection: healthData.components?.redis_connection === 'available',
-        vectorizer: healthData.components?.vectorizer === 'available',
-        vector_search: healthData.components?.vector_search === 'available',
-        task_queue: healthData.components?.task_system === 'available',
+        redis_connection:
+          healthData.components?.redis_connection === "available",
+        vectorizer: healthData.components?.vectorizer === "available",
+        vector_search: healthData.components?.vector_search === "available",
+        task_queue: healthData.components?.task_system === "available",
       },
       tools_available: [], // Not provided by health endpoint
-      version: healthData.version || '0.1.0',
+      version: healthData.version || "0.1.0",
       status: healthData.status,
     };
   }
@@ -615,9 +686,16 @@ class SREAgentAPI {
     userId: string,
     priority: number = 0,
     tags?: string[],
-    instanceId?: string
+    instanceId?: string,
   ): Promise<string> {
-    const triageResponse = await this.submitTriageRequest(message, userId, undefined, priority, tags, instanceId);
+    const triageResponse = await this.submitTriageRequest(
+      message,
+      userId,
+      undefined,
+      priority,
+      tags,
+      instanceId,
+    );
     return triageResponse.thread_id;
   }
 
@@ -632,84 +710,115 @@ class SREAgentAPI {
 
   async createInstance(request: CreateInstanceRequest): Promise<RedisInstance> {
     const response = await fetch(`${this.tasksBaseUrl}/instances`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(request),
     });
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.detail || `Failed to create instance: ${response.statusText}`);
+      throw new Error(
+        error.detail || `Failed to create instance: ${response.statusText}`,
+      );
     }
 
     return response.json();
   }
 
   async getInstance(instanceId: string): Promise<RedisInstance> {
-    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}`);
+    const response = await fetch(
+      `${this.tasksBaseUrl}/instances/${instanceId}`,
+    );
     if (!response.ok) {
       throw new Error(`Failed to get instance: ${response.statusText}`);
     }
     return response.json();
   }
 
-  async updateInstance(instanceId: string, request: UpdateInstanceRequest): Promise<RedisInstance> {
-    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
+  async updateInstance(
+    instanceId: string,
+    request: UpdateInstanceRequest,
+  ): Promise<RedisInstance> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/instances/${instanceId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
       },
-      body: JSON.stringify(request),
-    });
+    );
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.detail || `Failed to update instance: ${response.statusText}`);
+      throw new Error(
+        error.detail || `Failed to update instance: ${response.statusText}`,
+      );
     }
 
     return response.json();
   }
 
   async deleteInstance(instanceId: string): Promise<{ message: string }> {
-    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}`, {
-      method: 'DELETE',
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || `Failed to delete instance: ${response.statusText}`);
-    }
-
-    return response.json();
-  }
-
-  async testInstanceConnection(instanceId: string): Promise<ConnectionTestResult> {
-    const response = await fetch(`${this.tasksBaseUrl}/instances/${instanceId}/test-connection`, {
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || `Failed to test connection: ${response.statusText}`);
-    }
-
-    return response.json();
-  }
-
-  async testConnectionUrl(connectionUrl: string): Promise<ConnectionTestResult> {
-    const response = await fetch(`${this.tasksBaseUrl}/instances/test-connection-url`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const response = await fetch(
+      `${this.tasksBaseUrl}/instances/${instanceId}`,
+      {
+        method: "DELETE",
       },
-      body: JSON.stringify({ connection_url: connectionUrl }),
-    });
+    );
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.detail || `Failed to test connection URL: ${response.statusText}`);
+      throw new Error(
+        error.detail || `Failed to delete instance: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async testInstanceConnection(
+    instanceId: string,
+  ): Promise<ConnectionTestResult> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/instances/${instanceId}/test-connection`,
+      {
+        method: "POST",
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        error.detail || `Failed to test connection: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async testConnectionUrl(
+    connectionUrl: string,
+  ): Promise<ConnectionTestResult> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/instances/test-connection-url`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ connection_url: connectionUrl }),
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        error.detail || `Failed to test connection URL: ${response.statusText}`,
+      );
     }
 
     return response.json();
@@ -718,7 +827,7 @@ class SREAgentAPI {
   async testAdminApiConnection(
     adminUrl: string,
     adminUsername: string,
-    adminPassword: string
+    adminPassword: string,
   ): Promise<{
     success: boolean;
     message: string;
@@ -727,21 +836,27 @@ class SREAgentAPI {
     cluster_name?: string;
     tested_at: string;
   }> {
-    const response = await fetch(`${this.tasksBaseUrl}/instances/test-admin-api`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const response = await fetch(
+      `${this.tasksBaseUrl}/instances/test-admin-api`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          admin_url: adminUrl,
+          admin_username: adminUsername,
+          admin_password: adminPassword,
+        }),
       },
-      body: JSON.stringify({
-        admin_url: adminUrl,
-        admin_username: adminUsername,
-        admin_password: adminPassword,
-      }),
-    });
+    );
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.detail || `Failed to test admin API connection: ${response.statusText}`);
+      throw new Error(
+        error.detail ||
+          `Failed to test admin API connection: ${response.statusText}`,
+      );
     }
 
     return response.json();

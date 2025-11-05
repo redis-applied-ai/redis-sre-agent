@@ -17,7 +17,7 @@ export function maskRedisUrl(url: string): string {
       // Reconstruct URL with masked credentials
       const protocol = urlObj.protocol; // e.g., "redis:"
       const host = urlObj.hostname;
-      const port = urlObj.port ? `:${urlObj.port}` : '';
+      const port = urlObj.port ? `:${urlObj.port}` : "";
       const path = urlObj.pathname;
       const search = urlObj.search;
       const hash = urlObj.hash;
@@ -27,7 +27,7 @@ export function maskRedisUrl(url: string): string {
 
     return url;
   } catch (error) {
-    console.warn('Failed to mask URL credentials:', error);
-    return 'redis://***:***@<host>:<port>';
+    console.warn("Failed to mask URL credentials:", error);
+    return "redis://***:***@<host>:<port>";
   }
 }

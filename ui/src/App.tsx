@@ -51,7 +51,10 @@ function App() {
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/settings" element={<Settings />} />
         {/* Redirect instances to settings with instances section */}
-        <Route path="/instances" element={<Navigate to="/settings?section=instances" replace />} />
+        <Route
+          path="/instances"
+          element={<Navigate to="/settings?section=instances" replace />}
+        />
       </Routes>
     </Layout>
   );

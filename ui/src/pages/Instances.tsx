@@ -1,28 +1,41 @@
-import { useState, useEffect } from 'react';
-import {
-  Card,
-  CardContent,
-  Button,
-} from '@radar/ui-kit';
-import sreAgentApi, { RedisInstance as APIRedisInstance, CreateInstanceRequest } from '../services/sreAgentApi';
-import { ConfirmDialog } from '../components/Modal';
-import { maskRedisUrl } from '../utils/urlMasking';
+import { useState, useEffect } from "react";
+import { Card, CardContent, Button } from "@radar/ui-kit";
+import sreAgentApi, {
+  RedisInstance as APIRedisInstance,
+  CreateInstanceRequest,
+} from "../services/sreAgentApi";
+import { ConfirmDialog } from "../components/Modal";
+import { maskRedisUrl } from "../utils/urlMasking";
 
 // Simple components for missing UI kit elements
-const Loader = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => (
-  <div className={`animate-spin rounded-full border-2 border-redis-blue-03 border-t-transparent ${
-    size === 'sm' ? 'h-4 w-4' : size === 'lg' ? 'h-8 w-8' : 'h-6 w-6'
-  }`} />
+const Loader = ({ size = "md" }: { size?: "sm" | "md" | "lg" }) => (
+  <div
+    className={`animate-spin rounded-full border-2 border-redis-blue-03 border-t-transparent ${
+      size === "sm" ? "h-4 w-4" : size === "lg" ? "h-8 w-8" : "h-6 w-6"
+    }`}
+  />
 );
 
-const ErrorMessage = ({ message, title }: { message: string; title?: string }) => (
+const ErrorMessage = ({
+  message,
+  title,
+}: {
+  message: string;
+  title?: string;
+}) => (
   <div className="bg-red-50 border border-red-200 rounded-redis-sm p-4">
     {title && <h4 className="font-semibold text-red-800 mb-2">{title}</h4>}
     <p className="text-red-700 text-redis-sm">{message}</p>
   </div>
 );
 
-const Tooltip = ({ content, children }: { content: string; children: React.ReactNode }) => (
+const Tooltip = ({
+  content,
+  children,
+}: {
+  content: string;
+  children: React.ReactNode;
+}) => (
   <div className="relative group">
     {children}
     <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-redis-dusk-01 text-white text-redis-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
@@ -32,7 +45,25 @@ const Tooltip = ({ content, children }: { content: string; children: React.React
 );
 
 // Use the API interface but with camelCase for UI consistency
-interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checked' | 'created_at' | 'updated_at' | 'connection_url' | 'monitoring_identifier' | 'logging_identifier' | 'instance_type' | 'admin_url' | 'admin_username' | 'admin_password' | 'redis_cloud_subscription_id' | 'redis_cloud_database_id' | 'redis_cloud_subscription_type' | 'redis_cloud_database_name'> {
+interface RedisInstance
+  extends Omit<
+    APIRedisInstance,
+    | "repo_url"
+    | "last_checked"
+    | "created_at"
+    | "updated_at"
+    | "connection_url"
+    | "monitoring_identifier"
+    | "logging_identifier"
+    | "instance_type"
+    | "admin_url"
+    | "admin_username"
+    | "admin_password"
+    | "redis_cloud_subscription_id"
+    | "redis_cloud_database_id"
+    | "redis_cloud_subscription_type"
+    | "redis_cloud_database_name"
+  > {
   connectionUrl: string;
   repoUrl?: string;
   lastChecked?: string;
@@ -45,7 +76,7 @@ interface RedisInstance extends Omit<APIRedisInstance, 'repo_url' | 'last_checke
   adminUsername?: string;
   adminPassword?: string;
   // Redis Cloud identifiers (UI camelCase)
-  cloudSubscriptionType?: 'pro' | 'essentials';
+  cloudSubscriptionType?: "pro" | "essentials";
   cloudSubscriptionId?: string;
   cloudDatabaseId?: string;
   cloudDatabaseName?: string;
@@ -58,44 +89,62 @@ interface AddInstanceFormProps {
   initialData?: RedisInstance;
 }
 
-const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormProps) => {
+const AddInstanceForm = ({
+  onSubmit,
+  onCancel,
+  initialData,
+}: AddInstanceFormProps) => {
   // Check if the initial usage is a custom type (not in predefined list)
-  const predefinedUsageTypes = ['cache', 'analytics', 'session', 'queue', 'application_data'];
-  const isCustomUsage = initialData?.usage && !predefinedUsageTypes.includes(initialData.usage);
+  const predefinedUsageTypes = [
+    "cache",
+    "analytics",
+    "session",
+    "queue",
+    "application_data",
+  ];
+  const isCustomUsage =
+    initialData?.usage && !predefinedUsageTypes.includes(initialData.usage);
 
   const [formData, setFormData] = useState({
-    name: initialData?.name || '',
-    connectionUrl: initialData?.connectionUrl || 'redis://localhost:6379',
-    environment: initialData?.environment || 'development',
-    usage: isCustomUsage ? 'custom' : (initialData?.usage || 'cache'),
-    customUsage: isCustomUsage ? initialData?.usage || '' : '',
-    description: initialData?.description || '',
-    repoUrl: initialData?.repoUrl || '',
-    notes: initialData?.notes || '',
-    monitoringIdentifier: initialData?.monitoringIdentifier || '',
-    loggingIdentifier: initialData?.loggingIdentifier || '',
-    instanceType: initialData?.instanceType || 'unknown',
-    adminUrl: (initialData as any)?.adminUrl || '',
-    adminUsername: (initialData as any)?.adminUsername || '',
-    adminPassword: (initialData as any)?.adminPassword || '',
+    name: initialData?.name || "",
+    connectionUrl: initialData?.connectionUrl || "redis://localhost:6379",
+    environment: initialData?.environment || "development",
+    usage: isCustomUsage ? "custom" : initialData?.usage || "cache",
+    customUsage: isCustomUsage ? initialData?.usage || "" : "",
+    description: initialData?.description || "",
+    repoUrl: initialData?.repoUrl || "",
+    notes: initialData?.notes || "",
+    monitoringIdentifier: initialData?.monitoringIdentifier || "",
+    loggingIdentifier: initialData?.loggingIdentifier || "",
+    instanceType: initialData?.instanceType || "unknown",
+    adminUrl: (initialData as any)?.adminUrl || "",
+    adminUsername: (initialData as any)?.adminUsername || "",
+    adminPassword: (initialData as any)?.adminPassword || "",
     // Redis Cloud identifiers
-    cloudSubscriptionType: (initialData as any)?.cloudSubscriptionType || '',
-    cloudSubscriptionId: (initialData as any)?.cloudSubscriptionId || '',
-    cloudDatabaseId: (initialData as any)?.cloudDatabaseId || '',
-    cloudDatabaseName: (initialData as any)?.cloudDatabaseName || ''
+    cloudSubscriptionType: (initialData as any)?.cloudSubscriptionType || "",
+    cloudSubscriptionId: (initialData as any)?.cloudSubscriptionId || "",
+    cloudDatabaseId: (initialData as any)?.cloudDatabaseId || "",
+    cloudDatabaseName: (initialData as any)?.cloudDatabaseName || "",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
-  const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [connectionResult, setConnectionResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
   const [testingAdminApi, setTestingAdminApi] = useState(false);
-  const [adminApiResult, setAdminApiResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [adminApiResult, setAdminApiResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
     try {
-      const finalUsage = formData.usage === 'custom' ? formData.customUsage : formData.usage;
+      const finalUsage =
+        formData.usage === "custom" ? formData.customUsage : formData.usage;
 
       const instance: RedisInstance = {
         id: initialData?.id || `redis-${formData.environment}-${Date.now()}`,
@@ -109,27 +158,29 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         monitoringIdentifier: formData.monitoringIdentifier || undefined,
         loggingIdentifier: formData.loggingIdentifier || undefined,
         instanceType: formData.instanceType,
-        status: initialData?.status || 'unknown',
+        status: initialData?.status || "unknown",
         version: initialData?.version,
         memory: initialData?.memory,
         connections: initialData?.connections,
         lastChecked: initialData?.lastChecked || new Date().toISOString(),
-        ...(formData.instanceType === 'redis_enterprise' && formData.adminUrl && {
-          adminUrl: formData.adminUrl,
-          adminUsername: formData.adminUsername || undefined,
-          adminPassword: formData.adminPassword || undefined
-        }),
-        ...(formData.instanceType === 'redis_cloud' && {
-          cloudSubscriptionType: (formData.cloudSubscriptionType || undefined) as 'pro' | 'essentials' | undefined,
+        ...(formData.instanceType === "redis_enterprise" &&
+          formData.adminUrl && {
+            adminUrl: formData.adminUrl,
+            adminUsername: formData.adminUsername || undefined,
+            adminPassword: formData.adminPassword || undefined,
+          }),
+        ...(formData.instanceType === "redis_cloud" && {
+          cloudSubscriptionType: (formData.cloudSubscriptionType ||
+            undefined) as "pro" | "essentials" | undefined,
           cloudSubscriptionId: formData.cloudSubscriptionId || undefined,
           cloudDatabaseId: formData.cloudDatabaseId || undefined,
           cloudDatabaseName: formData.cloudDatabaseName || undefined,
-        })
+        }),
       } as RedisInstance;
 
       onSubmit(instance);
     } catch (error) {
-      console.error('Error saving instance:', error);
+      console.error("Error saving instance:", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -139,15 +190,15 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     try {
       const parsed = new URL(url);
       return {
-        host: parsed.hostname || 'unknown',
-        port: parsed.port || (parsed.protocol === 'rediss:' ? '6380' : '6379'),
-        protocol: parsed.protocol
+        host: parsed.hostname || "unknown",
+        port: parsed.port || (parsed.protocol === "rediss:" ? "6380" : "6379"),
+        protocol: parsed.protocol,
       };
     } catch (error) {
       return {
-        host: 'unknown',
-        port: 'unknown',
-        protocol: 'redis:'
+        host: "unknown",
+        port: "unknown",
+        protocol: "redis:",
       };
     }
   };
@@ -159,31 +210,39 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     try {
       if (!initialData) {
         // For new instances, provide URL format validation and helpful feedback
-        const { host, port, protocol } = parseConnectionUrl(formData.connectionUrl);
+        const { host, port, protocol } = parseConnectionUrl(
+          formData.connectionUrl,
+        );
 
         // Basic URL validation
-        if (host === 'unknown' || port === 'unknown') {
+        if (host === "unknown" || port === "unknown") {
           setConnectionResult({
             success: false,
-            message: `❌ Invalid connection URL format. Please use format: redis://[username:password@]host:port[/database]`
+            message: `❌ Invalid connection URL format. Please use format: redis://[username:password@]host:port[/database]`,
           });
           return;
         }
 
         // Simulate connection test with realistic timing
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // Provide helpful feedback based on URL patterns
-        let message = '';
+        let message = "";
         let success = true; // Default to success for URL format validation
 
-        if (host.includes('localhost') || host === '127.0.0.1') {
+        if (host.includes("localhost") || host === "127.0.0.1") {
           message = `✅ Connection URL format is valid for ${host}:${port}. Note: Create the instance to test actual connectivity.`;
-        } else if (host.includes('redis.cloud') || host.includes('redislabs.com')) {
+        } else if (
+          host.includes("redis.cloud") ||
+          host.includes("redislabs.com")
+        ) {
           message = `✅ Redis Cloud URL detected for ${host}:${port}. Format appears valid for cloud service.`;
-        } else if (host.includes('cache.amazonaws.com')) {
+        } else if (host.includes("cache.amazonaws.com")) {
           message = `✅ AWS ElastiCache URL detected for ${host}:${port}. Format appears valid for AWS service.`;
-        } else if (port === '12000' || (parseInt(port) >= 12000 && parseInt(port) <= 12005)) {
+        } else if (
+          port === "12000" ||
+          (parseInt(port) >= 12000 && parseInt(port) <= 12005)
+        ) {
           message = `✅ Redis Enterprise port detected for ${host}:${port}. Format appears valid for Enterprise deployment.`;
         } else {
           message = `✅ Connection URL format is valid for ${host}:${port}. Create the instance to test actual connectivity.`;
@@ -193,17 +252,21 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       } else {
         // For existing instances, test the current form URL (not the stored one)
         // This allows testing a new URL before saving
-        const result = await sreAgentApi.testConnectionUrl(formData.connectionUrl);
+        const result = await sreAgentApi.testConnectionUrl(
+          formData.connectionUrl,
+        );
         setConnectionResult({
           success: result.success,
-          message: result.success ? `✅ ${result.message}` : `❌ ${result.message}`
+          message: result.success
+            ? `✅ ${result.message}`
+            : `❌ ${result.message}`,
         });
       }
     } catch (error) {
       const { host, port } = parseConnectionUrl(formData.connectionUrl);
       setConnectionResult({
         success: false,
-        message: `❌ Connection test failed for ${host}:${port}. ${error instanceof Error ? error.message : 'Please try again.'}`
+        message: `❌ Connection test failed for ${host}:${port}. ${error instanceof Error ? error.message : "Please try again."}`,
       });
     } finally {
       setTestingConnection(false);
@@ -215,10 +278,15 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
     setAdminApiResult(null);
 
     try {
-      if (!formData.adminUrl || !formData.adminUsername || !formData.adminPassword) {
+      if (
+        !formData.adminUrl ||
+        !formData.adminUsername ||
+        !formData.adminPassword
+      ) {
         setAdminApiResult({
           success: false,
-          message: '❌ Please fill in all admin API fields (URL, username, and password) before testing.'
+          message:
+            "❌ Please fill in all admin API fields (URL, username, and password) before testing.",
         });
         return;
       }
@@ -226,19 +294,19 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       const result = await sreAgentApi.testAdminApiConnection(
         formData.adminUrl,
         formData.adminUsername,
-        formData.adminPassword
+        formData.adminPassword,
       );
 
       setAdminApiResult({
         success: result.success,
         message: result.success
           ? `✅ ${result.message}`
-          : `❌ ${result.message}`
+          : `❌ ${result.message}`,
       });
     } catch (error) {
       setAdminApiResult({
         success: false,
-        message: `❌ Admin API test failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `❌ Admin API test failed: ${error instanceof Error ? error.message : "Unknown error"}`,
       });
     } finally {
       setTestingAdminApi(false);
@@ -256,7 +324,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
             type="text"
             required
             value={formData.name}
-            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({ ...prev, name: e.target.value }))
+            }
             className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
             placeholder="e.g., Production Cache"
           />
@@ -269,7 +339,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           <select
             required
             value={formData.environment}
-            onChange={(e) => setFormData(prev => ({ ...prev, environment: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({ ...prev, environment: e.target.value }))
+            }
             className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           >
             <option value="development">Development</option>
@@ -287,12 +359,15 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           type="text"
           required
           value={formData.connectionUrl}
-          onChange={(e) => setFormData(prev => ({ ...prev, connectionUrl: e.target.value }))}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, connectionUrl: e.target.value }))
+          }
           className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           placeholder="redis://localhost:6379 or redis://user:pass@host:port/db"
         />
         <p className="text-redis-xs text-redis-dusk-04 mt-1">
-          Redis connection URL including protocol, host, port, and optional authentication
+          Redis connection URL including protocol, host, port, and optional
+          authentication
         </p>
       </div>
 
@@ -303,7 +378,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         <select
           required
           value={formData.usage}
-          onChange={(e) => setFormData(prev => ({ ...prev, usage: e.target.value }))}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, usage: e.target.value }))
+          }
           className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
         >
           <option value="cache">Cache</option>
@@ -313,13 +390,18 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           <option value="custom">Custom (specify below)</option>
         </select>
 
-        {formData.usage === 'custom' && (
+        {formData.usage === "custom" && (
           <div className="mt-2">
             <input
               type="text"
               required
               value={formData.customUsage}
-              onChange={(e) => setFormData(prev => ({ ...prev, customUsage: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  customUsage: e.target.value,
+                }))
+              }
               className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
               placeholder="Enter custom usage type (e.g., 'pub/sub', 'timeseries', 'search')"
             />
@@ -333,7 +415,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         </label>
         <select
           value={formData.instanceType}
-          onChange={(e) => setFormData(prev => ({ ...prev, instanceType: e.target.value }))}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, instanceType: e.target.value }))
+          }
           className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
         >
           <option value="unknown">Unknown / Auto-detect</option>
@@ -344,18 +428,20 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           <option value="redis_cloud">Redis Cloud / Managed Service</option>
         </select>
         <p className="text-redis-xs text-redis-dusk-04 mt-1">
-          Specify the type of Redis instance. Choose "Unknown" to auto-detect during health checks.
+          Specify the type of Redis instance. Choose "Unknown" to auto-detect
+          during health checks.
         </p>
       </div>
 
       {/* Redis Enterprise Admin API Fields */}
-      {formData.instanceType === 'redis_enterprise' && (
+      {formData.instanceType === "redis_enterprise" && (
         <div className="space-y-4 p-4 bg-redis-blue-01/5 border border-redis-blue-03/30 rounded-redis-sm">
           <h4 className="text-redis-sm font-semibold text-redis-blue-03">
             Redis Enterprise Admin API Configuration
           </h4>
           <p className="text-redis-xs text-redis-dusk-04">
-            Provide admin API credentials to enable cluster-level diagnostics and monitoring.
+            Provide admin API credentials to enable cluster-level diagnostics
+            and monitoring.
           </p>
 
           <div>
@@ -365,7 +451,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
             <input
               type="url"
               value={formData.adminUrl}
-              onChange={(e) => setFormData(prev => ({ ...prev, adminUrl: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, adminUrl: e.target.value }))
+              }
               className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
               placeholder="https://redis-enterprise:9443"
             />
@@ -381,9 +469,13 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
               </label>
               <input
                 type="text"
-
                 value={formData.adminUsername}
-                onChange={(e) => setFormData(prev => ({ ...prev, adminUsername: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    adminUsername: e.target.value,
+                  }))
+                }
                 className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                 placeholder="admin@redis.com"
               />
@@ -396,7 +488,12 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
               <input
                 type="password"
                 value={formData.adminPassword}
-                onChange={(e) => setFormData(prev => ({ ...prev, adminPassword: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    adminPassword: e.target.value,
+                  }))
+                }
                 className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                 placeholder="••••••••"
               />
@@ -410,16 +507,25 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
               variant="secondary"
               onClick={testAdminApi}
               isLoading={testingAdminApi}
-              disabled={testingAdminApi || !formData.adminUrl || !formData.adminUsername || !formData.adminPassword}
+              disabled={
+                testingAdminApi ||
+                !formData.adminUrl ||
+                !formData.adminUsername ||
+                !formData.adminPassword
+              }
             >
-              {testingAdminApi ? 'Testing Admin API...' : 'Test Admin API Connection'}
+              {testingAdminApi
+                ? "Testing Admin API..."
+                : "Test Admin API Connection"}
             </Button>
             {adminApiResult && (
-              <div className={`mt-2 p-3 rounded-redis-sm text-redis-sm ${
-                adminApiResult.success
-                  ? 'bg-redis-green/10 text-redis-green border border-redis-green/30'
-                  : 'bg-redis-red/10 text-redis-red border border-redis-red/30'
-              }`}>
+              <div
+                className={`mt-2 p-3 rounded-redis-sm text-redis-sm ${
+                  adminApiResult.success
+                    ? "bg-redis-green/10 text-redis-green border border-redis-green/30"
+                    : "bg-redis-red/10 text-redis-red border border-redis-red/30"
+                }`}
+              >
                 {adminApiResult.message}
               </div>
             )}
@@ -428,20 +534,28 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       )}
 
       {/* Redis Cloud Configuration Fields */}
-      {formData.instanceType === 'redis_cloud' && (
+      {formData.instanceType === "redis_cloud" && (
         <div className="space-y-4 p-4 bg-blue-50 border border-blue-200 rounded-redis-sm">
           <h4 className="text-redis-sm font-semibold text-blue-700">
             Redis Cloud Configuration
           </h4>
           <p className="text-redis-xs text-redis-dusk-04">
-            Provide subscription details for this Redis Cloud instance. These will be used automatically by Redis Cloud tools.
+            Provide subscription details for this Redis Cloud instance. These
+            will be used automatically by Redis Cloud tools.
           </p>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">Subscription Type</label>
+            <label className="block text-redis-sm font-medium mb-1">
+              Subscription Type
+            </label>
             <select
               value={formData.cloudSubscriptionType}
-              onChange={(e) => setFormData(prev => ({ ...prev, cloudSubscriptionType: e.target.value as 'pro' | 'essentials' }))}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  cloudSubscriptionType: e.target.value as "pro" | "essentials",
+                }))
+              }
               className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
             >
               <option value="">Unknown / Auto-detect</option>
@@ -451,40 +565,62 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           </div>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">Subscription ID</label>
+            <label className="block text-redis-sm font-medium mb-1">
+              Subscription ID
+            </label>
             <input
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
               value={formData.cloudSubscriptionId}
-              onChange={(e) => setFormData(prev => ({ ...prev, cloudSubscriptionId: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  cloudSubscriptionId: e.target.value,
+                }))
+              }
               className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03 text-foreground"
               placeholder="e.g., 123456"
             />
           </div>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">Database ID</label>
+            <label className="block text-redis-sm font-medium mb-1">
+              Database ID
+            </label>
             <input
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
               value={formData.cloudDatabaseId}
-              onChange={(e) => setFormData(prev => ({ ...prev, cloudDatabaseId: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  cloudDatabaseId: e.target.value,
+                }))
+              }
               className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03 text-foreground"
               placeholder="e.g., 987654"
             />
             <p className="text-redis-xs text-redis-dusk-04 mt-1">
-              If only the subscription is relevant, you can leave Database ID blank.
+              If only the subscription is relevant, you can leave Database ID
+              blank.
             </p>
           </div>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">Database Name</label>
+            <label className="block text-redis-sm font-medium mb-1">
+              Database Name
+            </label>
             <input
               type="text"
               value={formData.cloudDatabaseName}
-              onChange={(e) => setFormData(prev => ({ ...prev, cloudDatabaseName: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  cloudDatabaseName: e.target.value,
+                }))
+              }
               className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
               placeholder="e.g., prod-cache"
             />
@@ -495,7 +631,6 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         </div>
       )}
 
-
       <div>
         <label className="block text-redis-sm font-medium text-foreground mb-1">
           Description *
@@ -503,7 +638,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         <textarea
           required
           value={formData.description}
-          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, description: e.target.value }))
+          }
           className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           rows={3}
           placeholder="Describe what this Redis instance is used for..."
@@ -517,7 +654,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         <input
           type="url"
           value={formData.repoUrl}
-          onChange={(e) => setFormData(prev => ({ ...prev, repoUrl: e.target.value }))}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, repoUrl: e.target.value }))
+          }
           className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           placeholder="https://github.com/company/redis-config"
         />
@@ -531,12 +670,18 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           <input
             type="text"
             value={formData.monitoringIdentifier}
-            onChange={(e) => setFormData(prev => ({ ...prev, monitoringIdentifier: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({
+                ...prev,
+                monitoringIdentifier: e.target.value,
+              }))
+            }
             className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
             placeholder="e.g., prod-cache-01"
           />
           <p className="text-redis-xs text-redis-dusk-04 mt-1">
-            Name used in monitoring systems. If empty, Instance Name will be used.
+            Name used in monitoring systems. If empty, Instance Name will be
+            used.
           </p>
         </div>
 
@@ -547,7 +692,12 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           <input
             type="text"
             value={formData.loggingIdentifier}
-            onChange={(e) => setFormData(prev => ({ ...prev, loggingIdentifier: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({
+                ...prev,
+                loggingIdentifier: e.target.value,
+              }))
+            }
             className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
             placeholder="e.g., redis-prod-cache"
           />
@@ -563,7 +713,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
         </label>
         <textarea
           value={formData.notes}
-          onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, notes: e.target.value }))
+          }
           className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
           rows={2}
           placeholder="Any additional notes about this instance..."
@@ -573,7 +725,9 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
       {/* Connection Test */}
       <div className="border-t pt-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-redis-sm font-medium text-foreground">Test Connection</span>
+          <span className="text-redis-sm font-medium text-foreground">
+            Test Connection
+          </span>
           <Button
             type="button"
             variant="outline"
@@ -582,24 +736,42 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
             isLoading={testingConnection}
             disabled={!formData.connectionUrl}
           >
-            {testingConnection ? 'Testing...' : 'Test Connection'}
+            {testingConnection ? "Testing..." : "Test Connection"}
           </Button>
         </div>
 
         {connectionResult && (
-          <div className={`p-3 rounded-redis-sm text-redis-sm border ${
-            connectionResult.success
-              ? 'bg-green-50 text-green-800 border-green-200'
-              : 'bg-red-50 text-red-800 border-red-200'
-          }`}>
+          <div
+            className={`p-3 rounded-redis-sm text-redis-sm border ${
+              connectionResult.success
+                ? "bg-green-50 text-green-800 border-green-200"
+                : "bg-red-50 text-red-800 border-red-200"
+            }`}
+          >
             <div className="flex items-center gap-2">
               {connectionResult.success ? (
-                <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                <svg
+                  className="w-4 h-4 text-green-600"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                    clipRule="evenodd"
+                  />
                 </svg>
               ) : (
-                <svg className="w-4 h-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                <svg
+                  className="w-4 h-4 text-red-600"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                    clipRule="evenodd"
+                  />
                 </svg>
               )}
               <span>{connectionResult.message}</span>
@@ -625,9 +797,12 @@ const AddInstanceForm = ({ onSubmit, onCancel, initialData }: AddInstanceFormPro
           disabled={isSubmitting}
         >
           {isSubmitting
-            ? (initialData ? 'Updating Instance...' : 'Adding Instance...')
-            : (initialData ? 'Update Instance' : 'Add Instance')
-          }
+            ? initialData
+              ? "Updating Instance..."
+              : "Adding Instance..."
+            : initialData
+              ? "Update Instance"
+              : "Add Instance"}
         </Button>
       </div>
     </form>
@@ -638,12 +813,15 @@ const Instances = () => {
   const [instances, setInstances] = useState<RedisInstance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [selectedEnvironment, setSelectedEnvironment] = useState('all');
-  const [selectedUsage, setSelectedUsage] = useState('all');
+  const [error, setError] = useState("");
+  const [selectedEnvironment, setSelectedEnvironment] = useState("all");
+  const [selectedUsage, setSelectedUsage] = useState("all");
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingInstance, setEditingInstance] = useState<RedisInstance | null>(null);
-  const [deletingInstance, setDeletingInstance] = useState<RedisInstance | null>(null);
+  const [editingInstance, setEditingInstance] = useState<RedisInstance | null>(
+    null,
+  );
+  const [deletingInstance, setDeletingInstance] =
+    useState<RedisInstance | null>(null);
 
   // Load instances on component mount
   useEffect(() => {
@@ -653,13 +831,13 @@ const Instances = () => {
   const loadInstances = async () => {
     try {
       setIsLoading(true);
-      setError('');
+      setError("");
 
       // Load instances from API
       const apiInstances = await sreAgentApi.listInstances();
 
       // Convert API format to UI format
-      const uiInstances: RedisInstance[] = apiInstances.map(instance => ({
+      const uiInstances: RedisInstance[] = apiInstances.map((instance) => ({
         ...instance,
         connectionUrl: instance.connection_url,
         repoUrl: instance.repo_url,
@@ -668,21 +846,26 @@ const Instances = () => {
         updatedAt: instance.updated_at,
         monitoringIdentifier: instance.monitoring_identifier,
         loggingIdentifier: instance.logging_identifier,
-        instanceType: instance.instance_type || 'unknown',
+        instanceType: instance.instance_type || "unknown",
         adminUrl: instance.admin_url,
         adminUsername: instance.admin_username,
         adminPassword: instance.admin_password,
         // Redis Cloud identifiers to UI camelCase
-        cloudSubscriptionType: (instance as any).redis_cloud_subscription_type || '',
-        cloudSubscriptionId: (instance as any).redis_cloud_subscription_id ? String((instance as any).redis_cloud_subscription_id) : '',
-        cloudDatabaseId: (instance as any).redis_cloud_database_id ? String((instance as any).redis_cloud_database_id) : '',
-        cloudDatabaseName: (instance as any).redis_cloud_database_name || '',
+        cloudSubscriptionType:
+          (instance as any).redis_cloud_subscription_type || "",
+        cloudSubscriptionId: (instance as any).redis_cloud_subscription_id
+          ? String((instance as any).redis_cloud_subscription_id)
+          : "",
+        cloudDatabaseId: (instance as any).redis_cloud_database_id
+          ? String((instance as any).redis_cloud_database_id)
+          : "",
+        cloudDatabaseName: (instance as any).redis_cloud_database_name || "",
       }));
 
       setInstances(uiInstances);
     } catch (err) {
-      setError('Failed to load Redis instances. Please try again.');
-      console.error('Error loading instances:', err);
+      setError("Failed to load Redis instances. Please try again.");
+      console.error("Error loading instances:", err);
       setInstances([]);
     } finally {
       setIsLoading(false);
@@ -707,7 +890,9 @@ const Instances = () => {
 
       alert(message);
     } catch (error) {
-      alert(`❌ Connection test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      alert(
+        `❌ Connection test failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
     }
   };
 
@@ -715,70 +900,101 @@ const Instances = () => {
     if (!deletingInstance) return;
 
     try {
-      setError('');
+      setError("");
       await sreAgentApi.deleteInstance(deletingInstance.id);
 
       // Reload instances after successful deletion
       await loadInstances();
       setDeletingInstance(null);
     } catch (err) {
-      setError(`Failed to delete instance: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setError(
+        `Failed to delete instance: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
       setDeletingInstance(null);
     }
   };
 
   const getEnvironmentColor = (environment: string) => {
     switch (environment) {
-      case 'production': return 'bg-redis-red text-white';
-      case 'staging': return 'bg-redis-yellow-500 text-redis-midnight';
-      case 'development': return 'bg-redis-blue-03 text-white';
-      default: return 'bg-redis-dusk-06 text-white';
+      case "production":
+        return "bg-redis-red text-white";
+      case "staging":
+        return "bg-redis-yellow-500 text-redis-midnight";
+      case "development":
+        return "bg-redis-blue-03 text-white";
+      default:
+        return "bg-redis-dusk-06 text-white";
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'healthy': return 'text-redis-green';
-      case 'warning': return 'text-redis-yellow-500';
-      case 'critical': return 'text-redis-red';
-      case 'offline': return 'text-redis-dusk-04';
-      default: return 'text-redis-dusk-04';
+      case "healthy":
+        return "text-redis-green";
+      case "warning":
+        return "text-redis-yellow-500";
+      case "critical":
+        return "text-redis-red";
+      case "offline":
+        return "text-redis-dusk-04";
+      default:
+        return "text-redis-dusk-04";
     }
   };
 
   const getUsageColor = (usage: string) => {
     switch (usage.toLowerCase()) {
-      case 'cache': return 'bg-redis-blue-03 text-white';
-      case 'analytics': return 'bg-redis-green text-white';
-      case 'session': return 'bg-redis-lime text-white';
-      case 'queue': return 'bg-redis-yellow-300 text-redis-midnight';
-      case 'pub/sub':
-      case 'pubsub': return 'bg-purple-500 text-white';
-      case 'timeseries': return 'bg-orange-500 text-white';
-      case 'search': return 'bg-teal-500 text-white';
-      default: return 'bg-redis-dusk-06 text-white';
+      case "cache":
+        return "bg-redis-blue-03 text-white";
+      case "analytics":
+        return "bg-redis-green text-white";
+      case "session":
+        return "bg-redis-lime text-white";
+      case "queue":
+        return "bg-redis-yellow-300 text-redis-midnight";
+      case "pub/sub":
+      case "pubsub":
+        return "bg-purple-500 text-white";
+      case "timeseries":
+        return "bg-orange-500 text-white";
+      case "search":
+        return "bg-teal-500 text-white";
+      default:
+        return "bg-redis-dusk-06 text-white";
     }
   };
 
   const getInstanceTypeColor = (instanceType: string) => {
     switch (instanceType) {
-      case 'redis_enterprise': return 'bg-gradient-to-r from-redis-red to-red-600 text-white';
-      case 'redis_cloud': return 'bg-gradient-to-r from-blue-500 to-blue-600 text-white';
-      case 'oss_cluster': return 'bg-gradient-to-r from-green-500 to-green-600 text-white';
-      case 'oss_single': return 'bg-redis-blue-03 text-white';
-      case 'unknown': return 'bg-redis-dusk-06 text-white';
-      default: return 'bg-redis-dusk-06 text-white';
+      case "redis_enterprise":
+        return "bg-gradient-to-r from-redis-red to-red-600 text-white";
+      case "redis_cloud":
+        return "bg-gradient-to-r from-blue-500 to-blue-600 text-white";
+      case "oss_cluster":
+        return "bg-gradient-to-r from-green-500 to-green-600 text-white";
+      case "oss_single":
+        return "bg-redis-blue-03 text-white";
+      case "unknown":
+        return "bg-redis-dusk-06 text-white";
+      default:
+        return "bg-redis-dusk-06 text-white";
     }
   };
 
   const getInstanceTypeLabel = (instanceType: string) => {
     switch (instanceType) {
-      case 'redis_enterprise': return 'Enterprise';
-      case 'redis_cloud': return 'Cloud';
-      case 'oss_cluster': return 'OSS Cluster';
-      case 'oss_single': return 'OSS Single';
-      case 'unknown': return 'Unknown';
-      default: return 'Unknown';
+      case "redis_enterprise":
+        return "Enterprise";
+      case "redis_cloud":
+        return "Cloud";
+      case "oss_cluster":
+        return "OSS Cluster";
+      case "oss_single":
+        return "OSS Single";
+      case "unknown":
+        return "Unknown";
+      default:
+        return "Unknown";
     }
   };
 
@@ -786,9 +1002,12 @@ const Instances = () => {
     return new Date(dateString).toLocaleString();
   };
 
-  const filteredInstances = instances.filter(instance => {
-    const environmentMatch = selectedEnvironment === 'all' || instance.environment === selectedEnvironment;
-    const usageMatch = selectedUsage === 'all' || instance.usage === selectedUsage;
+  const filteredInstances = instances.filter((instance) => {
+    const environmentMatch =
+      selectedEnvironment === "all" ||
+      instance.environment === selectedEnvironment;
+    const usageMatch =
+      selectedUsage === "all" || instance.usage === selectedUsage;
     return environmentMatch && usageMatch;
   });
 
@@ -797,9 +1016,12 @@ const Instances = () => {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-redis-xl font-bold text-foreground">Redis Instances</h1>
+          <h1 className="text-redis-xl font-bold text-foreground">
+            Redis Instances
+          </h1>
           <p className="text-redis-sm text-redis-dusk-04 mt-1">
-            Manage and monitor Redis instances that the SRE agent can triage and analyze.
+            Manage and monitor Redis instances that the SRE agent can triage and
+            analyze.
           </p>
         </div>
         <div className="flex gap-2">
@@ -809,25 +1031,17 @@ const Instances = () => {
               onClick={handleRefresh}
               isLoading={isRefreshing}
             >
-              {isRefreshing ? <Loader size="sm" /> : 'Refresh'}
+              {isRefreshing ? <Loader size="sm" /> : "Refresh"}
             </Button>
           </Tooltip>
-          <Button
-            variant="primary"
-            onClick={() => setShowAddForm(true)}
-          >
+          <Button variant="primary" onClick={() => setShowAddForm(true)}>
             Add Instance
           </Button>
         </div>
       </div>
 
       {/* Error Message */}
-      {error && (
-        <ErrorMessage
-          message={error}
-          title="Redis Instances Error"
-        />
-      )}
+      {error && <ErrorMessage message={error} title="Redis Instances Error" />}
 
       {/* Filters - Only show if we have instances */}
       {instances.length > 0 && (
@@ -835,7 +1049,9 @@ const Instances = () => {
           <CardContent>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
-                <label className="text-redis-sm text-redis-dusk-04">Environment:</label>
+                <label className="text-redis-sm text-redis-dusk-04">
+                  Environment:
+                </label>
                 <select
                   value={selectedEnvironment}
                   onChange={(e) => setSelectedEnvironment(e.target.value)}
@@ -848,7 +1064,9 @@ const Instances = () => {
                 </select>
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-redis-sm text-redis-dusk-04">Usage:</label>
+                <label className="text-redis-sm text-redis-dusk-04">
+                  Usage:
+                </label>
                 <select
                   value={selectedUsage}
                   onChange={(e) => setSelectedUsage(e.target.value)}
@@ -861,14 +1079,22 @@ const Instances = () => {
                   <option value="queue">Message Queue</option>
                   <option value="application_data">Application Data</option>
                   {/* Add dynamic options for custom usage types */}
-                  {Array.from(new Set(instances.map(i => i.usage)))
-                    .filter(usage => !['cache', 'analytics', 'session', 'queue', 'application_data'].includes(usage))
-                    .map(usage => (
+                  {Array.from(new Set(instances.map((i) => i.usage)))
+                    .filter(
+                      (usage) =>
+                        ![
+                          "cache",
+                          "analytics",
+                          "session",
+                          "queue",
+                          "application_data",
+                        ].includes(usage),
+                    )
+                    .map((usage) => (
                       <option key={usage} value={usage}>
                         {usage.charAt(0).toUpperCase() + usage.slice(1)}
                       </option>
-                    ))
-                  }
+                    ))}
                 </select>
               </div>
             </div>
@@ -897,15 +1123,27 @@ const Instances = () => {
                 <CardContent className="flex items-center justify-center py-16">
                   <div className="text-center max-w-md">
                     <div className="w-16 h-16 mx-auto mb-6 bg-redis-dusk-08 rounded-full flex items-center justify-center">
-                      <svg className="h-8 w-8 text-redis-dusk-04" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                      <svg
+                        className="h-8 w-8 text-redis-dusk-04"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
+                        />
                       </svg>
                     </div>
                     <h3 className="text-redis-xl font-semibold text-foreground mb-3">
                       No Redis instances configured
                     </h3>
                     <p className="text-redis-sm text-redis-dusk-04 mb-6">
-                      Get started by adding your first Redis instance. The SRE agent will be able to monitor, diagnose, and help troubleshoot issues with your Redis infrastructure.
+                      Get started by adding your first Redis instance. The SRE
+                      agent will be able to monitor, diagnose, and help
+                      troubleshoot issues with your Redis infrastructure.
                     </p>
                     <Button
                       variant="primary"
@@ -919,7 +1157,10 @@ const Instances = () => {
               </Card>
             ) : (
               filteredInstances.map((instance) => (
-                <Card key={instance.id} className="hover:shadow-lg transition-shadow">
+                <Card
+                  key={instance.id}
+                  className="hover:shadow-lg transition-shadow"
+                >
                   <CardContent>
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -927,19 +1168,27 @@ const Instances = () => {
                           <span className="text-redis-sm font-mono text-redis-dusk-04">
                             {instance.id}
                           </span>
-                          <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getEnvironmentColor(instance.environment)}`}>
+                          <span
+                            className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getEnvironmentColor(instance.environment)}`}
+                          >
                             {instance.environment.toUpperCase()}
                           </span>
-                          <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getUsageColor(instance.usage)}`}>
+                          <span
+                            className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getUsageColor(instance.usage)}`}
+                          >
                             {instance.usage.toUpperCase()}
                           </span>
                           {instance.instanceType && (
-                            <span className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getInstanceTypeColor(instance.instanceType)}`}>
+                            <span
+                              className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getInstanceTypeColor(instance.instanceType)}`}
+                            >
                               {getInstanceTypeLabel(instance.instanceType)}
                             </span>
                           )}
                           {instance.status && (
-                            <span className={`text-redis-xs font-medium capitalize ${getStatusColor(instance.status)}`}>
+                            <span
+                              className={`text-redis-xs font-medium capitalize ${getStatusColor(instance.status)}`}
+                            >
                               ● {instance.status}
                             </span>
                           )}
@@ -952,30 +1201,71 @@ const Instances = () => {
                         </p>
                         <div className="grid grid-cols-2 gap-4 mb-3">
                           <div className="text-redis-xs text-redis-dusk-05">
-                            <div><strong>Connection:</strong> {maskRedisUrl(instance.connectionUrl)}</div>
-                            {instance.version && <div><strong>Version:</strong> {instance.version}</div>}
-                            {instance.memory && <div><strong>Memory:</strong> {instance.memory}</div>}
+                            <div>
+                              <strong>Connection:</strong>{" "}
+                              {maskRedisUrl(instance.connectionUrl)}
+                            </div>
+                            {instance.version && (
+                              <div>
+                                <strong>Version:</strong> {instance.version}
+                              </div>
+                            )}
+                            {instance.memory && (
+                              <div>
+                                <strong>Memory:</strong> {instance.memory}
+                              </div>
+                            )}
                           </div>
                           <div className="text-redis-xs text-redis-dusk-05">
-                            {instance.connections && <div><strong>Connections:</strong> {instance.connections}</div>}
-                            {instance.lastChecked && <div><strong>Last Checked:</strong> {formatDate(instance.lastChecked)}</div>}
-                            {instance.monitoringIdentifier && <div><strong>Monitoring ID:</strong> {instance.monitoringIdentifier}</div>}
-                            {instance.loggingIdentifier && <div><strong>Logging ID:</strong> {instance.loggingIdentifier}</div>}
+                            {instance.connections && (
+                              <div>
+                                <strong>Connections:</strong>{" "}
+                                {instance.connections}
+                              </div>
+                            )}
+                            {instance.lastChecked && (
+                              <div>
+                                <strong>Last Checked:</strong>{" "}
+                                {formatDate(instance.lastChecked)}
+                              </div>
+                            )}
+                            {instance.monitoringIdentifier && (
+                              <div>
+                                <strong>Monitoring ID:</strong>{" "}
+                                {instance.monitoringIdentifier}
+                              </div>
+                            )}
+                            {instance.loggingIdentifier && (
+                              <div>
+                                <strong>Logging ID:</strong>{" "}
+                                {instance.loggingIdentifier}
+                              </div>
+                            )}
                           </div>
                         </div>
                         {instance.repoUrl && (
                           <div className="mb-2">
-                            <span className="text-redis-xs text-redis-dusk-04">Repository: </span>
-                            <a href={instance.repoUrl} target="_blank" rel="noopener noreferrer"
-                               className="text-redis-xs text-redis-blue-03 hover:underline">
+                            <span className="text-redis-xs text-redis-dusk-04">
+                              Repository:{" "}
+                            </span>
+                            <a
+                              href={instance.repoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-redis-xs text-redis-blue-03 hover:underline"
+                            >
                               {instance.repoUrl}
                             </a>
                           </div>
                         )}
                         {instance.notes && (
                           <div className="mt-2 p-2 bg-redis-dusk-09 rounded-redis-sm">
-                            <span className="text-redis-xs text-redis-dusk-04">Notes: </span>
-                            <span className="text-redis-xs text-foreground">{instance.notes}</span>
+                            <span className="text-redis-xs text-redis-dusk-04">
+                              Notes:{" "}
+                            </span>
+                            <span className="text-redis-xs text-foreground">
+                              {instance.notes}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -990,7 +1280,9 @@ const Instances = () => {
                         <Button
                           variant="primary"
                           size="sm"
-                          onClick={() => handleTestInstanceConnection(instance.id)}
+                          onClick={() =>
+                            handleTestInstanceConnection(instance.id)
+                          }
                         >
                           Test Connection
                         </Button>
@@ -1011,15 +1303,22 @@ const Instances = () => {
         </>
       )}
 
-
-
       {/* Add/Edit Instance Form Modal */}
       {(showAddForm || editingInstance) && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="rounded-redis-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--card)', color: 'var(--card-foreground)' }}>
+          <div
+            className="rounded-redis-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto"
+            style={{
+              backgroundColor: "var(--card)",
+              color: "var(--card-foreground)",
+            }}
+          >
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-redis-xl font-bold" style={{ color: 'var(--foreground)' }}>
-                {editingInstance ? 'Edit Redis Instance' : 'Add Redis Instance'}
+              <h2
+                className="text-redis-xl font-bold"
+                style={{ color: "var(--foreground)" }}
+              >
+                {editingInstance ? "Edit Redis Instance" : "Add Redis Instance"}
               </h2>
               <Button
                 variant="outline"
@@ -1054,14 +1353,24 @@ const Instances = () => {
                       admin_username: instance.adminUsername,
                       admin_password: instance.adminPassword,
                       // Redis Cloud identifiers
-                      ...(instance.instanceType === 'redis_cloud' && {
-                        redis_cloud_subscription_type: instance.cloudSubscriptionType || undefined,
-                        redis_cloud_subscription_id: instance.cloudSubscriptionId ? parseInt(instance.cloudSubscriptionId, 10) : undefined,
-                        redis_cloud_database_id: instance.cloudDatabaseId ? parseInt(instance.cloudDatabaseId, 10) : undefined,
-                        redis_cloud_database_name: instance.cloudDatabaseName || undefined,
+                      ...(instance.instanceType === "redis_cloud" && {
+                        redis_cloud_subscription_type:
+                          instance.cloudSubscriptionType || undefined,
+                        redis_cloud_subscription_id:
+                          instance.cloudSubscriptionId
+                            ? parseInt(instance.cloudSubscriptionId, 10)
+                            : undefined,
+                        redis_cloud_database_id: instance.cloudDatabaseId
+                          ? parseInt(instance.cloudDatabaseId, 10)
+                          : undefined,
+                        redis_cloud_database_name:
+                          instance.cloudDatabaseName || undefined,
                       }),
                     };
-                    await sreAgentApi.updateInstance(instance.id, updateRequest);
+                    await sreAgentApi.updateInstance(
+                      instance.id,
+                      updateRequest,
+                    );
                   } else {
                     // Create new instance via API
                     const createRequest: CreateInstanceRequest = {
@@ -1079,11 +1388,18 @@ const Instances = () => {
                       admin_username: instance.adminUsername,
                       admin_password: instance.adminPassword,
                       // Redis Cloud identifiers
-                      ...(instance.instanceType === 'redis_cloud' && {
-                        redis_cloud_subscription_type: instance.cloudSubscriptionType || undefined,
-                        redis_cloud_subscription_id: instance.cloudSubscriptionId ? parseInt(instance.cloudSubscriptionId, 10) : undefined,
-                        redis_cloud_database_id: instance.cloudDatabaseId ? parseInt(instance.cloudDatabaseId, 10) : undefined,
-                        redis_cloud_database_name: instance.cloudDatabaseName || undefined,
+                      ...(instance.instanceType === "redis_cloud" && {
+                        redis_cloud_subscription_type:
+                          instance.cloudSubscriptionType || undefined,
+                        redis_cloud_subscription_id:
+                          instance.cloudSubscriptionId
+                            ? parseInt(instance.cloudSubscriptionId, 10)
+                            : undefined,
+                        redis_cloud_database_id: instance.cloudDatabaseId
+                          ? parseInt(instance.cloudDatabaseId, 10)
+                          : undefined,
+                        redis_cloud_database_name:
+                          instance.cloudDatabaseName || undefined,
                       }),
                     };
                     await sreAgentApi.createInstance(createRequest);
@@ -1094,7 +1410,9 @@ const Instances = () => {
                   setShowAddForm(false);
                   setEditingInstance(null);
                 } catch (err) {
-                  setError(`Failed to ${editingInstance ? 'update' : 'create'} instance: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                  setError(
+                    `Failed to ${editingInstance ? "update" : "create"} instance: ${err instanceof Error ? err.message : "Unknown error"}`,
+                  );
                 }
               }}
               onCancel={() => {

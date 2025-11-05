@@ -7,12 +7,13 @@
 UV ?= uv
 NPM ?= npm
 UI_DIR ?= ui
+UI_KIT_DIR ?= $(UI_DIR)/ui-kit
 UI_DIST ?= $(UI_DIR)/dist
 
 REDIS_DOCS_REPO_URL ?= https://github.com/redis/docs.git
 REDIS_DOCS_BRANCH ?= main
 
-.PHONY: help venv sync docs-build docs-serve local-services local-services-down local-services-logs test test-integration test-all ui-install ui-dev ui-build redis-docs-sync redis-docs-index
+.PHONY: help venv sync docs-build docs-serve local-services local-services-down local-services-logs test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
 
 help: ## Show this help and available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9][^:]*:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -79,13 +80,23 @@ test-all: sync ## Run the full test suite (unit + integration)
 
 # --- UI ---
 
+ui-kit-install: ## Install UI Kit dependencies (npm ci in ./ui/ui-kit)
+	cd $(UI_KIT_DIR) && $(NPM) ci
+
+ui-kit-build: ui-kit-install ## Build the UI Kit (produces dist/ for local package)
+	cd $(UI_KIT_DIR) && $(NPM) run build
+
+ui-kit-dev: ui-kit-install ## Watch-build the UI Kit (runs in watch mode)
+	cd $(UI_KIT_DIR) && $(NPM) run dev
+
 ui-install: ## Install UI dependencies (npm ci in ./ui)
 	cd $(UI_DIR) && $(NPM) ci
 
-ui-dev: ui-install ## Run the UI dev server (Vite)
+ui-dev: ui-install ui-kit-build ## Run the UI dev server (Vite) and watch-build kit
+	$(MAKE) -s ui-kit-dev &
 	cd $(UI_DIR) && $(NPM) run dev
 
-ui-build: ui-install ## Build the UI for production into $(UI_DIST)
+ui-build: ui-install ui-kit-build ## Build the UI for production into $(UI_DIST)
 	cd $(UI_DIR) && $(NPM) run build
 
 # --- Redis docs ---

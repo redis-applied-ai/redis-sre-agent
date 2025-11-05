@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { Button } from '@radar/ui-kit';
+import { useEffect } from "react";
+import { createPortal } from "react-dom";
+import { Button } from "@radar/ui-kit";
 
 // Modal Component
 interface ModalProps {
@@ -8,7 +8,7 @@ interface ModalProps {
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
+  size?: "sm" | "md" | "lg" | "xl" | "full";
   showCloseButton?: boolean;
   closeOnOverlayClick?: boolean;
   closeOnEsc?: boolean;
@@ -19,37 +19,37 @@ const Modal = ({
   onClose,
   title,
   children,
-  size = 'md',
+  size = "md",
   showCloseButton = true,
   closeOnOverlayClick = true,
-  closeOnEsc = true
+  closeOnEsc = true,
 }: ModalProps) => {
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (closeOnEsc && e.key === 'Escape') {
+      if (closeOnEsc && e.key === "Escape") {
         onClose();
       }
     };
 
     if (isOpen) {
-      document.addEventListener('keydown', handleEsc);
-      document.body.style.overflow = 'hidden';
+      document.addEventListener("keydown", handleEsc);
+      document.body.style.overflow = "hidden";
     }
 
     return () => {
-      document.removeEventListener('keydown', handleEsc);
-      document.body.style.overflow = 'unset';
+      document.removeEventListener("keydown", handleEsc);
+      document.body.style.overflow = "unset";
     };
   }, [isOpen, onClose, closeOnEsc]);
 
   if (!isOpen) return null;
 
   const sizeClasses = {
-    sm: 'max-w-md',
-    md: 'max-w-lg',
-    lg: 'max-w-2xl',
-    xl: 'max-w-4xl',
-    full: 'max-w-full mx-4'
+    sm: "max-w-md",
+    md: "max-w-lg",
+    lg: "max-w-2xl",
+    xl: "max-w-4xl",
+    full: "max-w-full mx-4",
   };
 
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -69,13 +69,22 @@ const Modal = ({
       {/* Modal */}
       <div
         className={`relative rounded-redis-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}
-        style={{ backgroundColor: 'var(--card)', color: 'var(--card-foreground)' }}
+        style={{
+          backgroundColor: "var(--card)",
+          color: "var(--card-foreground)",
+        }}
       >
         {/* Header */}
         {(title || showCloseButton) && (
-          <div className="flex items-center justify-between p-6 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div
+            className="flex items-center justify-between p-6 border-b"
+            style={{ borderColor: "var(--border)" }}
+          >
             {title && (
-              <h2 className="text-redis-lg font-semibold" style={{ color: 'var(--foreground)' }}>
+              <h2
+                className="text-redis-lg font-semibold"
+                style={{ color: "var(--foreground)" }}
+              >
                 {title}
               </h2>
             )}
@@ -83,12 +92,26 @@ const Modal = ({
               <button
                 onClick={onClose}
                 className="transition-colors p-1"
-                style={{ color: 'var(--muted-foreground)' }}
-                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--foreground)'}
-                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--muted-foreground)'}
+                style={{ color: "var(--muted-foreground)" }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.color = "var(--foreground)")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.color = "var(--muted-foreground)")
+                }
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             )}
@@ -96,9 +119,7 @@ const Modal = ({
         )}
 
         {/* Content */}
-        <div className="p-6">
-          {children}
-        </div>
+        <div className="p-6">{children}</div>
       </div>
     </div>
   );
@@ -115,7 +136,7 @@ interface ConfirmDialogProps {
   message: string;
   confirmText?: string;
   cancelText?: string;
-  variant?: 'default' | 'destructive';
+  variant?: "default" | "destructive";
 }
 
 const ConfirmDialog = ({
@@ -124,9 +145,9 @@ const ConfirmDialog = ({
   onConfirm,
   title,
   message,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
-  variant = 'default'
+  confirmText = "Confirm",
+  cancelText = "Cancel",
+  variant = "default",
 }: ConfirmDialogProps) => {
   const handleConfirm = () => {
     onConfirm();
@@ -136,13 +157,18 @@ const ConfirmDialog = ({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm">
       <div className="space-y-4">
-        <p className="text-redis-sm" style={{ color: 'var(--muted-foreground)' }}>{message}</p>
+        <p
+          className="text-redis-sm"
+          style={{ color: "var(--muted-foreground)" }}
+        >
+          {message}
+        </p>
         <div className="flex gap-3 justify-end">
           <Button variant="outline" onClick={onClose}>
             {cancelText}
           </Button>
           <Button
-            variant={variant === 'destructive' ? 'destructive' : 'primary'}
+            variant={variant === "destructive" ? "destructive" : "primary"}
             onClick={handleConfirm}
           >
             {confirmText}

@@ -1,4 +1,4 @@
-@import '../ui-kit/src/styles/index.css';
+@import "../ui-kit/src/styles/index.css";
 
 body {
   margin: 0;
@@ -163,7 +163,7 @@ select option {
 }
 
 .markdown-content code {
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
   font-size: 0.75rem;
 }
 

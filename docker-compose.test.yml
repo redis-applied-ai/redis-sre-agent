@@ -105,6 +105,7 @@ services:
     command: uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - sre-network-test
+      - sre-network
 
   # SRE Agent Background Worker
   sre-worker:
@@ -126,6 +127,7 @@ services:
     command: uv run redis-sre-agent worker
     networks:
       - sre-network-test
+      - sre-network
 
 networks:
   sre-network-test:

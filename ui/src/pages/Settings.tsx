@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Card,
   CardHeader,
@@ -7,8 +7,8 @@ import {
   Button,
   Loader,
   ErrorMessage,
-} from '@radar/ui-kit';
-import Instances from './Instances';
+} from "@radar/ui-kit";
+import Instances from "./Instances";
 
 interface KnowledgeSettings {
   chunk_size: number;
@@ -29,7 +29,8 @@ const KnowledgeSettingsSection = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingSettings, setPendingSettings] = useState<Partial<KnowledgeSettings> | null>(null);
+  const [pendingSettings, setPendingSettings] =
+    useState<Partial<KnowledgeSettings> | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -38,14 +39,14 @@ const KnowledgeSettingsSection = () => {
   const loadSettings = async () => {
     try {
       setError(null);
-      const response = await fetch('/api/v1/knowledge/settings');
+      const response = await fetch("/api/v1/knowledge/settings");
       if (!response.ok) {
-        throw new Error('Failed to load knowledge settings');
+        throw new Error("Failed to load knowledge settings");
       }
       const data = await response.json();
       setSettings(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load settings');
+      setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
       setIsLoading(false);
     }
@@ -63,16 +64,16 @@ const KnowledgeSettingsSection = () => {
       setIsSaving(true);
       setError(null);
 
-      const response = await fetch('/api/v1/knowledge/settings', {
-        method: 'PUT',
+      const response = await fetch("/api/v1/knowledge/settings", {
+        method: "PUT",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(pendingSettings),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update settings');
+        throw new Error("Failed to update settings");
       }
 
       const updatedSettings = await response.json();
@@ -81,10 +82,13 @@ const KnowledgeSettingsSection = () => {
       setPendingSettings(null);
 
       // Note: In a real implementation, this would trigger a re-ingestion job
-      alert('Settings updated successfully! A new ingestion job will be started to apply these changes.');
-
+      alert(
+        "Settings updated successfully! A new ingestion job will be started to apply these changes.",
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update settings');
+      setError(
+        err instanceof Error ? err.message : "Failed to update settings",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -95,19 +99,18 @@ const KnowledgeSettingsSection = () => {
       setIsSaving(true);
       setError(null);
 
-      const response = await fetch('/api/v1/knowledge/settings/reset', {
-        method: 'POST',
+      const response = await fetch("/api/v1/knowledge/settings/reset", {
+        method: "POST",
       });
 
       if (!response.ok) {
-        throw new Error('Failed to reset settings');
+        throw new Error("Failed to reset settings");
       }
 
       const defaultSettings = await response.json();
       setSettings(defaultSettings);
-
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reset settings');
+      setError(err instanceof Error ? err.message : "Failed to reset settings");
     } finally {
       setIsSaving(false);
     }
@@ -134,38 +137,51 @@ const KnowledgeSettingsSection = () => {
 
   return (
     <div className="space-y-6">
-      {error && (
-        <ErrorMessage
-          message={error}
-          title="Settings Error"
-        />
-      )}
+      {error && <ErrorMessage message={error} title="Settings Error" />}
 
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <h3 className="text-redis-lg font-semibold text-foreground">Ingestion Settings</h3>
-            <Button variant="outline" onClick={resetToDefaults} disabled={isSaving}>
+            <h3 className="text-redis-lg font-semibold text-foreground">
+              Ingestion Settings
+            </h3>
+            <Button
+              variant="outline"
+              onClick={resetToDefaults}
+              disabled={isSaving}
+            >
               Reset to Defaults
             </Button>
           </div>
         </CardHeader>
         <CardContent>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
-            const newSettings = {
-              chunk_size: parseInt(formData.get('chunk_size') as string),
-              chunk_overlap: parseInt(formData.get('chunk_overlap') as string),
-              splitting_strategy: formData.get('splitting_strategy') as string,
-              embedding_model: formData.get('embedding_model') as string,
-              max_documents_per_batch: parseInt(formData.get('max_documents_per_batch') as string),
-              enable_metadata_extraction: formData.get('enable_metadata_extraction') === 'on',
-              enable_semantic_chunking: formData.get('enable_semantic_chunking') === 'on',
-              similarity_threshold: parseFloat(formData.get('similarity_threshold') as string),
-            };
-            handleSave(newSettings);
-          }}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const newSettings = {
+                chunk_size: parseInt(formData.get("chunk_size") as string),
+                chunk_overlap: parseInt(
+                  formData.get("chunk_overlap") as string,
+                ),
+                splitting_strategy: formData.get(
+                  "splitting_strategy",
+                ) as string,
+                embedding_model: formData.get("embedding_model") as string,
+                max_documents_per_batch: parseInt(
+                  formData.get("max_documents_per_batch") as string,
+                ),
+                enable_metadata_extraction:
+                  formData.get("enable_metadata_extraction") === "on",
+                enable_semantic_chunking:
+                  formData.get("enable_semantic_chunking") === "on",
+                similarity_threshold: parseFloat(
+                  formData.get("similarity_threshold") as string,
+                ),
+              };
+              handleSave(newSettings);
+            }}
+          >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-redis-sm font-medium text-foreground mb-2">
@@ -278,7 +294,10 @@ const KnowledgeSettingsSection = () => {
                     defaultChecked={settings.enable_metadata_extraction}
                     className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border-redis-dusk-06 rounded"
                   />
-                  <label htmlFor="enable_metadata_extraction" className="ml-2 text-redis-sm text-foreground">
+                  <label
+                    htmlFor="enable_metadata_extraction"
+                    className="ml-2 text-redis-sm text-foreground"
+                  >
                     Enable metadata extraction from documents
                   </label>
                 </div>
@@ -291,7 +310,10 @@ const KnowledgeSettingsSection = () => {
                     defaultChecked={settings.enable_semantic_chunking}
                     className="h-4 w-4 text-redis-blue-03 focus:ring-redis-blue-03 border-redis-dusk-06 rounded"
                   />
-                  <label htmlFor="enable_semantic_chunking" className="ml-2 text-redis-sm text-foreground">
+                  <label
+                    htmlFor="enable_semantic_chunking"
+                    className="ml-2 text-redis-sm text-foreground"
+                  >
                     Use semantic chunking instead of fixed-size chunks
                   </label>
                 </div>
@@ -300,7 +322,7 @@ const KnowledgeSettingsSection = () => {
 
             <div className="flex justify-end mt-6">
               <Button type="submit" variant="primary" disabled={isSaving}>
-                {isSaving ? <Loader size="sm" /> : 'Save Settings'}
+                {isSaving ? <Loader size="sm" /> : "Save Settings"}
               </Button>
             </div>
           </form>
@@ -315,7 +337,9 @@ const KnowledgeSettingsSection = () => {
               Confirm Settings Update
             </h3>
             <p className="text-redis-sm text-redis-dusk-04 mb-6">
-              Changing these settings will trigger a new ingestion job to reprocess all documents with the new configuration. This may take some time depending on the size of your knowledge base.
+              Changing these settings will trigger a new ingestion job to
+              reprocess all documents with the new configuration. This may take
+              some time depending on the size of your knowledge base.
             </p>
             <div className="flex justify-end gap-3">
               <Button
@@ -333,7 +357,7 @@ const KnowledgeSettingsSection = () => {
                 onClick={confirmSave}
                 disabled={isSaving}
               >
-                {isSaving ? <Loader size="sm" /> : 'Update & Re-ingest'}
+                {isSaving ? <Loader size="sm" /> : "Update & Re-ingest"}
               </Button>
             </div>
           </div>
@@ -346,22 +370,31 @@ const KnowledgeSettingsSection = () => {
 const Settings = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useState(() => {
-    return searchParams.get('section') || 'general';
+    return searchParams.get("section") || "general";
   });
 
   useEffect(() => {
-    const section = searchParams.get('section');
-    if (section && ['general', 'instances', 'knowledge', 'notifications', 'security'].includes(section)) {
+    const section = searchParams.get("section");
+    if (
+      section &&
+      [
+        "general",
+        "instances",
+        "knowledge",
+        "notifications",
+        "security",
+      ].includes(section)
+    ) {
       setActiveSection(section);
     }
   }, [searchParams]);
 
   const sections = [
-    { id: 'general', label: 'General' },
-    { id: 'instances', label: 'Instances' },
-    { id: 'knowledge', label: 'Knowledge' },
-    { id: 'notifications', label: 'Notifications' },
-    { id: 'security', label: 'Security' },
+    { id: "general", label: "General" },
+    { id: "instances", label: "Instances" },
+    { id: "knowledge", label: "Knowledge" },
+    { id: "notifications", label: "Notifications" },
+    { id: "security", label: "Security" },
   ];
 
   return (
@@ -389,8 +422,8 @@ const Settings = () => {
                     }}
                     className={`w-full flex items-center px-4 py-3 text-left text-sm font-medium rounded-none first:rounded-t-lg last:rounded-b-lg transition-colors ${
                       activeSection === section.id
-                        ? 'bg-redis-blue-03 text-white'
-                        : 'text-foreground hover:bg-redis-dusk-09'
+                        ? "bg-redis-blue-03 text-white"
+                        : "text-foreground hover:bg-redis-dusk-09"
                     }`}
                   >
                     {section.label}
@@ -403,11 +436,13 @@ const Settings = () => {
 
         {/* Main Content */}
         <div className="flex-1">
-          {activeSection === 'general' && (
+          {activeSection === "general" && (
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <h3 className="text-redis-lg font-semibold text-foreground">Agent Configuration</h3>
+                  <h3 className="text-redis-lg font-semibold text-foreground">
+                    Agent Configuration
+                  </h3>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
@@ -438,29 +473,43 @@ const Settings = () => {
             </div>
           )}
 
-          {activeSection === 'instances' && <Instances />}
+          {activeSection === "instances" && <Instances />}
 
-          {activeSection === 'knowledge' && <KnowledgeSettingsSection />}
+          {activeSection === "knowledge" && <KnowledgeSettingsSection />}
 
-          {activeSection === 'notifications' && (
+          {activeSection === "notifications" && (
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <h3 className="text-redis-lg font-semibold text-foreground">Notification Preferences</h3>
+                  <h3 className="text-redis-lg font-semibold text-foreground">
+                    Notification Preferences
+                  </h3>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-foreground">Email Notifications</span>
-                      <Button variant="outline" size="sm">Configure</Button>
+                      <span className="text-redis-sm text-foreground">
+                        Email Notifications
+                      </span>
+                      <Button variant="outline" size="sm">
+                        Configure
+                      </Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-foreground">Slack Integration</span>
-                      <Button variant="outline" size="sm">Setup</Button>
+                      <span className="text-redis-sm text-foreground">
+                        Slack Integration
+                      </span>
+                      <Button variant="outline" size="sm">
+                        Setup
+                      </Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-foreground">Alert Thresholds</span>
-                      <Button variant="outline" size="sm">Manage</Button>
+                      <span className="text-redis-sm text-foreground">
+                        Alert Thresholds
+                      </span>
+                      <Button variant="outline" size="sm">
+                        Manage
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
@@ -468,25 +517,39 @@ const Settings = () => {
             </div>
           )}
 
-          {activeSection === 'security' && (
+          {activeSection === "security" && (
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <h3 className="text-redis-lg font-semibold text-foreground">Security Settings</h3>
+                  <h3 className="text-redis-lg font-semibold text-foreground">
+                    Security Settings
+                  </h3>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-foreground">API Authentication</span>
-                      <Button variant="outline" size="sm">Configure</Button>
+                      <span className="text-redis-sm text-foreground">
+                        API Authentication
+                      </span>
+                      <Button variant="outline" size="sm">
+                        Configure
+                      </Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-foreground">Access Control</span>
-                      <Button variant="outline" size="sm">Manage</Button>
+                      <span className="text-redis-sm text-foreground">
+                        Access Control
+                      </span>
+                      <Button variant="outline" size="sm">
+                        Manage
+                      </Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-redis-sm text-foreground">Audit Logs</span>
-                      <Button variant="outline" size="sm">View</Button>
+                      <span className="text-redis-sm text-foreground">
+                        Audit Logs
+                      </span>
+                      <Button variant="outline" size="sm">
+                        View
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
@@ -495,7 +558,6 @@ const Settings = () => {
           )}
         </div>
       </div>
-
     </div>
   );
 };
