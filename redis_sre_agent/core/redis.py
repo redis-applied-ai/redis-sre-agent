@@ -360,9 +360,9 @@ async def create_indices() -> bool:
 
         if not knowledge_exists:
             await knowledge_index.create()
-            logger.info(f"Created vector index: {SRE_KNOWLEDGE_INDEX}")
+            logger.debug(f"Created vector index: {SRE_KNOWLEDGE_INDEX}")
         else:
-            logger.info(f"Vector index already exists: {SRE_KNOWLEDGE_INDEX}")
+            logger.debug(f"Vector index already exists: {SRE_KNOWLEDGE_INDEX}")
 
         # Create schedules index
         schedules_index = await get_schedules_index()
@@ -370,36 +370,36 @@ async def create_indices() -> bool:
 
         if not schedules_exists:
             await schedules_index.create()
-            logger.info(f"Created schedules index: {SRE_SCHEDULES_INDEX}")
+            logger.debug(f"Created schedules index: {SRE_SCHEDULES_INDEX}")
         else:
-            logger.info(f"Schedules index already exists: {SRE_SCHEDULES_INDEX}")
+            logger.debug(f"Schedules index already exists: {SRE_SCHEDULES_INDEX}")
 
         # Create threads index
         threads_index = await get_threads_index()
         threads_exists = await threads_index.exists()
         if not threads_exists:
             await threads_index.create()
-            logger.info(f"Created threads index: {SRE_THREADS_INDEX}")
+            logger.debug(f"Created threads index: {SRE_THREADS_INDEX}")
         else:
-            logger.info(f"Threads index already exists: {SRE_THREADS_INDEX}")
+            logger.debug(f"Threads index already exists: {SRE_THREADS_INDEX}")
 
         # Create tasks index
         tasks_index = await get_tasks_index()
         tasks_exists = await tasks_index.exists()
         if not tasks_exists:
             await tasks_index.create()
-            logger.info(f"Created tasks index: {SRE_TASKS_INDEX}")
+            logger.debug(f"Created tasks index: {SRE_TASKS_INDEX}")
         else:
-            logger.info(f"Tasks index already exists: {SRE_TASKS_INDEX}")
+            logger.debug(f"Tasks index already exists: {SRE_TASKS_INDEX}")
 
         # Create instances index
         instances_index = await get_instances_index()
         instances_exists = await instances_index.exists()
         if not instances_exists:
             await instances_index.create()
-            logger.info(f"Created instances index: {SRE_INSTANCES_INDEX}")
+            logger.debug(f"Created instances index: {SRE_INSTANCES_INDEX}")
         else:
-            logger.info(f"Instances index already exists: {SRE_INSTANCES_INDEX}")
+            logger.debug(f"Instances index already exists: {SRE_INSTANCES_INDEX}")
 
         return True
     except Exception as e:

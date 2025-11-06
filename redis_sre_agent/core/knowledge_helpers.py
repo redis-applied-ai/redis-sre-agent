@@ -151,7 +151,7 @@ async def search_knowledge_base_helper(
     _embed_ms = int((_t1 - _t0) * 1000)
     _index_ms = int((_t3 - _t2) * 1000)
     _total_ms = int((_t3 - _t0) * 1000)
-    logger.info(
+    logger.debug(
         f"Knowledge search timings: embed_ms={_embed_ms} index_ms={_index_ms} total_ms={_total_ms}"
     )
 

@@ -124,3 +124,6 @@ ui/.vite/
 ui/tsconfig.tsbuildinfo
 .difflow
 site/
+
+# Misc
+.git

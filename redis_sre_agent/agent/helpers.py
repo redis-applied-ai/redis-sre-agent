@@ -173,7 +173,7 @@ def log_preflight_messages(
         head = f"{label}"
         if note:
             head = f"{head} ({note})"
-        _logger.info(f"{head} total={len(msgs)} tail={compact}")
+        _logger.debug(f"{head} total={len(msgs)} tail={compact}")
     except Exception:
         # Never fail due to logging
         pass
