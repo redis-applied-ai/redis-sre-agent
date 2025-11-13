@@ -128,7 +128,7 @@ mkdir src/components/NewComponent
 # Component implementation
 touch src/components/NewComponent/NewComponent.tsx
 
-# Tests  
+# Tests
 touch src/components/NewComponent/NewComponent.test.tsx
 
 # Storybook stories

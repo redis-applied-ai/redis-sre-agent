@@ -144,7 +144,7 @@ const userMenuItems = [
       ]}
       userEmail="user@example.com"
       rightContent={
-        <DropdownMenu 
+        <DropdownMenu
           trigger={<Avatar size="sm" />}
           items={userMenuItems}
         />
@@ -166,7 +166,7 @@ const userFormFields = [
     label: 'Email Address',
     type: 'email',
     required: true,
-    validation: (value) => 
+    validation: (value) =>
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? undefined : 'Invalid email'
   },
   {
@@ -278,7 +278,7 @@ const configSections = [
 ### Utility Classes
 ```css
 .redis-button-base  /* Button foundation */
-.redis-input-base   /* Input field foundation */  
+.redis-input-base   /* Input field foundation */
 .redis-card-base    /* Card foundation */
 /* High-contrast badge helpers */
 .badge .badge-success .badge-warning .badge-critical .badge-info .badge-neutral
@@ -297,7 +297,7 @@ const configSections = [
 ### Extend Components
 ```tsx
 const CustomButton = ({ className, ...props }) => (
-  <Button 
+  <Button
     className={cn('my-custom-styles', className)}
     {...props}
   />

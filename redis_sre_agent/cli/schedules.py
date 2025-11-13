@@ -232,8 +232,7 @@ def schedules_create(
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedules import store_schedule
-        from redis_sre_agent.core.schedules import Schedule
+        from redis_sre_agent.core.schedules import Schedule, store_schedule
 
         try:
             sched = Schedule(
@@ -304,8 +303,7 @@ def schedules_update(
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedules import get_schedule, store_schedule
-        from redis_sre_agent.core.schedules import Schedule
+        from redis_sre_agent.core.schedules import Schedule, get_schedule, store_schedule
 
         try:
             current = await get_schedule(schedule_id)
@@ -372,8 +370,7 @@ def schedules_enable(schedule_id: str, as_json: bool):
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedules import get_schedule, store_schedule
-        from redis_sre_agent.core.schedules import Schedule
+        from redis_sre_agent.core.schedules import Schedule, get_schedule, store_schedule
 
         try:
             current = await get_schedule(schedule_id)
@@ -415,8 +412,7 @@ def schedules_disable(schedule_id: str, as_json: bool):
         import json as _json
         from datetime import datetime, timezone
 
-        from redis_sre_agent.core.schedules import get_schedule, store_schedule
-        from redis_sre_agent.core.schedules import Schedule
+        from redis_sre_agent.core.schedules import Schedule, get_schedule, store_schedule
 
         try:
             current = await get_schedule(schedule_id)
