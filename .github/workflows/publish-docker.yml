@@ -20,22 +20,30 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Remove bulky directories from workspace
         run: |
           echo "Before cleanup:" && df -h
-          rm -rf htmlcov site eval_reports artifacts artifacts_tmp_for_test _tmp_artifacts ui redis-docs/build
+          rm -rf htmlcov site eval_reports artifacts artifacts_tmp_for_test _tmp_artifacts redis-docs/build \
+                 ui/node_modules ui/ui-kit
           echo "After cleanup:" && df -h
 
 
 
+
+      - name: Set up QEMU (for cross-arch builds)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Prune Docker disk space
         run: |
           docker builder prune -af || true
           docker system prune -af || true
           df -h
-
 
 
       - name: Log in to Docker Hub
