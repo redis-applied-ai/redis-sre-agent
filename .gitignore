@@ -130,3 +130,4 @@ site/
 .mypy_cache/
 redis-docs/
 artifacts/
+ui/node_modules/
