@@ -129,3 +129,4 @@ site/
 .git
 .mypy_cache/
 redis-docs/
+artifacts/
