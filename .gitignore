@@ -127,4 +127,4 @@ site/
 
 # Misc
 .git
-.mypy_cache
+.mypy_cache/
