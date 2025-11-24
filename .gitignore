@@ -128,3 +128,4 @@ site/
 # Misc
 .git
 .mypy_cache/
+redis-docs/
