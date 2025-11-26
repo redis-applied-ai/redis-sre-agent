@@ -62,6 +62,18 @@ jobs:
             type=raw,value=latest,enable=${{ github.event.inputs.push_latest }}
             type=sha,prefix={{branch}}-
 
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # Effectively free up ~30GB of space
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
