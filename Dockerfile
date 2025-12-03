@@ -65,22 +65,23 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the virtual environment from the builder stage
-COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/artifacts /app/artifacts
-COPY --from=builder /app /app
+# Create the application user and docker group before copying app files so we
+# can set ownership in a single COPY layer instead of a separate chown layer.
+RUN useradd --create-home --shell /bin/bash app && \
+    (groupadd -g 999 docker || true) && \
+    usermod -aG docker app
+
+# Copy the application and virtual environment from the builder stage with
+# correct ownership. This avoids an extra  chown -R layer over /app.
+COPY --from=builder --chown=app:app /app /app
 
 # Add the virtual environment to PATH
 # This allows us to run "uvicorn" or "python" directly without "uv run"
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Setup permissions
+# Install the entrypoint script
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
-    useradd --create-home --shell /bin/bash app && \
-    groupadd -g 999 docker || true && \
-    usermod -aG docker app && \
-    chown -R app:app /app
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER app
 

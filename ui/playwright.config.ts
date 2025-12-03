@@ -8,7 +8,7 @@ export default defineConfig({
   globalSetup: './e2e/support/global-setup.mjs',
   globalTeardown: './e2e/support/global-teardown.mjs',
   use: {
-    baseURL: 'http://localhost:3000',
+		baseURL: 'http://localhost:3002',
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
