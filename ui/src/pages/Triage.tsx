@@ -61,7 +61,7 @@ interface ChatThread {
 }
 
 const Triage = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -131,14 +131,23 @@ const Triage = () => {
   // Handle URL parameters to auto-select thread
   useEffect(() => {
     const threadParam = searchParams.get("thread");
-    if (threadParam && threads.length > 0 && !activeThreadId) {
+    if (
+      threadParam &&
+      threads.length > 0 &&
+      !activeThreadId &&
+      // If the user has explicitly chosen to start a new chat, do not
+      // auto-select a thread from the URL. This prevents the `?thread=`
+      // query param from re-activating an old conversation after clicking
+      // the "New Chat" button.
+      !showNewConversation
+    ) {
       // Check if the thread exists in our loaded threads
       const threadExists = threads.some((thread) => thread.id === threadParam);
       if (threadExists) {
         selectThread(threadParam);
       }
     }
-  }, [threads, searchParams, activeThreadId]);
+  }, [threads, searchParams, activeThreadId, showNewConversation]);
 
   // Auto-show new conversation when landing on the page or when threads exist but none selected
   useEffect(() => {
@@ -416,6 +425,20 @@ const Triage = () => {
     setError("");
     setShowNewConversation(true);
     setShowWebSocketMonitor(false);
+
+    // Clear any `thread` query parameter from the URL so that the page
+    // no longer treats an existing thread as selected. Without this, the
+    // URL effect above can immediately re-select the old thread after we
+    // clear `activeThreadId`, causing the UI to stay in "continue
+    // conversation" mode instead of showing the new chat form.
+    try {
+      const params = new URLSearchParams(searchParams);
+      params.delete("thread");
+      setSearchParams(params);
+    } catch {
+      // If anything goes wrong manipulating search params, fail soft and
+      // continue showing the new chat UI based on component state.
+    }
 
     // On mobile only, switch to chat view
     if (window.innerWidth < 768) {
