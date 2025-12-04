@@ -22,6 +22,9 @@ def query(query: str, redis_instance_id: Optional[str]):
     async def _query():
         if redis_instance_id:
             instance = await get_instance_by_id(redis_instance_id)
+            if not instance:
+                click.echo(f"❌ Instance not found: {redis_instance_id}")
+                exit(1)
         else:
             instance = None
 
@@ -51,5 +54,6 @@ def query(query: str, redis_instance_id: Optional[str]):
             console.print(Markdown(str(response)))
         except Exception as e:
             click.echo(f"❌ Error: {e}")
+            exit(1)
 
     asyncio.run(_query())

@@ -23,8 +23,9 @@ def test_query_without_instance_uses_knowledge_agent():
     mock_agent.process_query = AsyncMock(return_value="ok")
 
     with (
-        patch("redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent)
-        as mock_get_knowledge,
+        patch(
+            "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent
+        ) as mock_get_knowledge,
         patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
         patch(
             "redis_sre_agent.cli.query.get_instance_by_id",
@@ -90,7 +91,12 @@ def test_query_with_instance_uses_sre_agent_and_passes_instance_context():
     assert kwargs.get("context") == {"instance_id": instance.id}
 
 
-def test_query_with_unknown_instance_falls_back_to_knowledge_agent():
+def test_query_with_unknown_instance_exits_with_error_and_skips_agents():
+    """If -r is provided but the instance does not exist, CLI should error and exit.
+
+    This directly tests the new existence-check logic in redis_sre_agent.cli.query.
+    """
+
     runner = CliRunner()
 
     mock_agent = MagicMock()
@@ -117,16 +123,14 @@ def test_query_with_unknown_instance_falls_back_to_knowledge_agent():
             ],
         )
 
-    assert result.exit_code == 0, result.output
+    # CLI should exit with non-zero status (explicitly exit(1) in implementation)
+    assert result.exit_code == 1
+    assert f"Instance not found: {missing_id}" in result.output
 
-    # We attempted to resolve the instance ID
+    # We attempted to resolve the instance ID once
     mock_get_instance.assert_awaited_once_with(missing_id)
 
-    # Without a resolved instance, we should route to the knowledge agent
-    mock_get_knowledge.assert_called_once()
+    # Since the instance doesn't exist, no agent should be initialized or invoked
+    mock_get_knowledge.assert_not_called()
     mock_get_sre.assert_not_called()
-
-    # Knowledge agent is called once; it should not receive a non-None instance context
-    mock_agent.process_query.assert_awaited_once()
-    _, kwargs = mock_agent.process_query.call_args
-    assert kwargs.get("context") is None
+    mock_agent.process_query.assert_not_awaited()
