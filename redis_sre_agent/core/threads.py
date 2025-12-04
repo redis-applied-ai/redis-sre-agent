@@ -744,6 +744,10 @@ Subject:"""
             # Remove from indices
             await self._remove_from_thread_index(thread_id, user_id)
 
+            # Remove the hash document used by the threads search index
+            search_doc_key = f"{SRE_THREADS_INDEX}:{thread_id}"
+            await client.delete(search_doc_key)
+
             logger.info(f"Deleted thread {thread_id}")
             return True
 
@@ -887,17 +891,17 @@ async def cancel_thread(*, thread_id: str, redis_client=None) -> Dict[str, Any]:
 
 
 async def delete_thread(*, thread_id: str, redis_client=None) -> Dict[str, Any]:
-    """Permanently delete a thread."""
+    """Permanently delete a thread.
+
+    This operation is idempotent: it will succeed even if the thread has
+    already been deleted or never existed, as long as Redis is reachable.
+    """
     if redis_client is None:
         from redis_sre_agent.core.redis import get_redis_client as _get
 
         redis_client = _get()
 
     thread_manager = ThreadManager(redis_client=redis_client)
-    thread_state = await thread_manager.get_thread(thread_id)
-    if not thread_state:
-        raise ValueError(f"Thread {thread_id} not found")
-
     success = await thread_manager.delete_thread(thread_id)
     if not success:
         raise RuntimeError(f"Failed to delete thread {thread_id}")

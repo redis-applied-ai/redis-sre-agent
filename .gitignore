@@ -132,3 +132,4 @@ redis-docs/
 artifacts/
 ui/node_modules/
 ui/ui-kit/node_modules/
+ui/test-results/
