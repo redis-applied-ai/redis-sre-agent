@@ -37,9 +37,7 @@ async def test_thread_delete_integration(async_redis_client, redis_container):
         "user_id": "test-user",
         "session_id": "test-session",
         "subject": "Delete me",
-        "messages": [
-            {"role": "user", "content": "Please investigate delete behaviour."}
-        ],
+        "messages": [{"role": "user", "content": "Please investigate delete behaviour."}],
     }
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

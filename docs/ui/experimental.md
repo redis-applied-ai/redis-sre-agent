@@ -20,6 +20,16 @@ The dev server proxies `/api/v1` to `VITE_API_URL` (defaults to http://localhost
 VITE_API_URL=http://localhost:8000 npm run dev
 ```
 
+### Run UI end-to-end tests (Playwright)
+```bash
+cd ui
+npm install
+npm run e2e
+```
+
+The tests are located in `ui/e2e/`.
+
+
 ### Notes
 - Compose sets `VITE_API_URL=http://sre-agent:8000` for in‑container proxying
 - API endpoints are under `/api/v1` (e.g., `/api/v1/health`, `/api/v1/metrics`, `/api/v1/tasks`)
