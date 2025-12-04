@@ -419,7 +419,7 @@ class KnowledgeOnlyAgent:
             session_id: Session identifier
             user_id: User identifier
             max_iterations: Maximum number of agent iterations
-            context: Additional context (ignored for knowledge-only agent)
+            context: Additional context (currently ignored for knowledge-only agent)
             progress_callback: Optional callback for progress updates
             conversation_history: Optional list of previous messages for context
 
@@ -432,9 +432,9 @@ class KnowledgeOnlyAgent:
         if progress_callback:
             self.progress_callback = progress_callback
 
-        # Create ToolManager with only knowledge tools (no redis_instance)
+        # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:
-            logger.info(f"Loaded {len(tool_mgr.get_tools())} knowledge tools")
+            logger.info(f"Loaded {len(tool_mgr.get_tools())} usable without Redis instance details")
 
             # Build workflow with tools
             workflow = self._build_workflow(tool_mgr)

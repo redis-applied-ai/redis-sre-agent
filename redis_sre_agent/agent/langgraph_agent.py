@@ -1911,11 +1911,11 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         raise last_exception
 
 
-def get_sre_agent() -> SRELangGraphAgent:
+def get_sre_agent(*args, **kwargs) -> SRELangGraphAgent:
     """Create a new SRE agent instance for each task to prevent cross-contamination.
 
     Previously this was a singleton, but that caused cross-contamination between
     different tasks/threads when multiple tasks ran concurrently. Each task now
     gets its own isolated agent instance.
     """
-    return SRELangGraphAgent()
+    return SRELangGraphAgent(*args, **kwargs)
