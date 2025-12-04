@@ -34,11 +34,13 @@ def query(query: str, redis_instance_id: Optional[str]):
             agent = get_knowledge_agent()
 
         try:
+            context = {"instance_id": instance.id} if instance else None
             response = await agent.process_query(
                 query,
                 session_id="cli",
                 user_id="cli_user",
                 max_iterations=settings.max_iterations,
+                context=context,
             )
 
             from rich.console import Console
