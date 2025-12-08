@@ -16,8 +16,12 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.decorators import status_update
-from redis_sre_agent.tools.protocols import SystemHost, ToolCapability, ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import (
+    SystemHost,
+    ToolCapability,
+    ToolDefinition,
+)
+from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -56,9 +60,6 @@ class RedisCommandToolProvider(ToolProvider):
 
     The provider is initialized with a connection URL and manages the Redis client lifecycle.
     """
-
-    # Declare capabilities so orchestrators can obtain a diagnostics provider via ToolManager
-    capabilities = {ToolCapability.DIAGNOSTICS}
 
     def __init__(
         self,
@@ -124,6 +125,12 @@ class RedisCommandToolProvider(ToolProvider):
     def provider_name(self) -> str:
         return "redis_command"
 
+    @property
+    def default_requires_instance(self) -> Optional[bool]:
+        """Diagnostics tools for redis_command always require a Redis instance."""
+
+        return True
+
     def get_client(self) -> Redis:
         """Get or create the Redis client (lazy initialization).
 
@@ -158,6 +165,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "replication status, and performance metrics. Can query specific sections "
                     "or get all information."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -180,6 +188,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "performance issues by identifying commands that took longer than "
                     "the configured slowlog threshold to execute."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -199,6 +208,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "Use this to diagnose security issues, permission denials, and "
                     "authentication problems."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -217,6 +227,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "Get Redis configuration values using CONFIG GET. Use this to inspect "
                     "Redis configuration settings. Supports pattern matching with wildcards."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -238,6 +249,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "connection issues, identify problematic clients, or check client "
                     "connection details."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -261,6 +273,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "cluster state, slots distribution, and cluster health. Only works "
                     "if Redis is running in cluster mode."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -273,6 +286,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "Get Redis replication information including role, connected replicas, "
                     "and replication lag. Use this to diagnose replication issues."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -286,6 +300,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "for in-depth memory analysis including allocator stats, fragmentation, "
                     "and memory breakdown by category."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -299,6 +314,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "Returns a sample of unique keys with their types. Prefer this for lightweight "
                     "inspections of the data model and type distribution."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -317,6 +333,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "List all Redis Search (RediSearch) indexes using FT._LIST. "
                     "Use this to discover what search indexes exist in the Redis instance."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -330,6 +347,7 @@ class RedisCommandToolProvider(ToolProvider):
                     "Returns schema, statistics, and configuration for the specified index. "
                     "Use this to understand index structure, document count, and performance metrics."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -366,7 +384,14 @@ class RedisCommandToolProvider(ToolProvider):
         return None
 
     def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
-        """Map tool_name to concrete method names for decorator/status usage."""
+        """Map tool_name to concrete method names for decorator/status usage.
+
+        We preserve the richer mapping here so status_update messages can
+        distinguish between different INFO/CLIENT/CONFIG variants while the
+        new :meth:`ToolProvider.tools` wiring still calls the concrete
+        async methods directly.
+        """
+
         op = tool_name.split("_")[-1]
         if op == "info":
             if "cluster" in tool_name:
@@ -391,49 +416,6 @@ class RedisCommandToolProvider(ToolProvider):
         if op == "indexes":
             return "search_indexes"
         return op
-
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Route tool call to appropriate method.
-
-        Args:
-            tool_name: Tool name (e.g., "redis_command_a3f2b1_info")
-            args: Tool arguments
-
-        Returns:
-            Tool execution result
-        """
-        # Defensive: Remove connection_url if LLM passes it (provider already has it)
-        args = {k: v for k, v in args.items() if k != "connection_url"}
-
-        # Extract operation from tool name
-        operation = tool_name.split("_")[-1]
-
-        if operation == "info":
-            # Disambiguate between different info commands
-            if "cluster" in tool_name:
-                return await self.cluster_info()
-            elif "replication" in tool_name:
-                return await self.replication_info()
-            elif "index" in tool_name:
-                return await self.search_index_info(**args)
-            else:
-                return await self.info(**args)
-        elif operation == "slowlog":
-            return await self.slowlog(**args)
-        elif operation == "log" and "acl" in tool_name:
-            return await self.acl_log(**args)
-        elif operation == "get" and "config" in tool_name:
-            return await self.config_get(**args)
-        elif operation == "list" and "client" in tool_name:
-            return await self.client_list(**args)
-        elif operation == "stats" and "memory" in tool_name:
-            return await self.memory_stats()
-        elif operation == "keys":
-            return await self.sample_keys(**args)
-        elif operation == "indexes":
-            return await self.search_indexes()
-        else:
-            raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
     @status_update("I'm running Redis INFO to collect server metrics ({section}).")
     async def info(self, section: Optional[str] = None) -> Dict[str, Any]:
@@ -1013,7 +995,7 @@ class RedisCommandToolProvider(ToolProvider):
         # 4) Final fallback: use connection_url hostname/port
         if not hosts:
             try:
-                url = getattr(self, "connection_url", None)
+                url = self.connection_url
                 if url:
                     p = urlparse(url)
                     if p.hostname:

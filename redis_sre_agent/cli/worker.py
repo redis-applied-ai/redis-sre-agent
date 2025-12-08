@@ -42,10 +42,7 @@ def worker(concurrency: int):
         logger = logging.getLogger(__name__)
 
         # Validate Redis URL
-        if (
-            not settings.redis_url
-            or not getattr(settings.redis_url, "get_secret_value", lambda: "")()
-        ):
+        if not settings.redis_url or not settings.redis_url.get_secret_value():
             click.echo("\u274c Redis URL not configured")
             sys.exit(1)
 

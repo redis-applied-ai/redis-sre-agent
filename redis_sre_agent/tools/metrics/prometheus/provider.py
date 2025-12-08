@@ -16,8 +16,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.decorators import status_update
-from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,6 @@ class PrometheusConfig(BaseSettings):
 
 
 class PrometheusToolProvider(ToolProvider):
-    # Declare capabilities so orchestrators can obtain a metrics provider via ToolManager
-    capabilities = {ToolCapability.METRICS}
     """Prometheus metrics provider using prometheus-api-client.
 
     Provides tools for querying Prometheus metrics, including:
@@ -84,6 +82,101 @@ class PrometheusToolProvider(ToolProvider):
     @property
     def provider_name(self) -> str:
         return "prometheus"
+
+    def create_tool_schemas(self) -> List[ToolDefinition]:
+        """Create tool schemas for Prometheus metric queries."""
+
+        return [
+            ToolDefinition(
+                name=self._make_tool_name("query"),
+                description=(
+                    "Query Prometheus metrics at a single point in time using PromQL. "
+                    "Use this to get current metric values for infrastructure monitoring, "
+                    "such as CPU usage, memory consumption, network I/O, or disk space. "
+                    "Returns the most recent value for the specified metric."
+                ),
+                capability=ToolCapability.METRICS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "PromQL query expression. Examples: "
+                                "'node_memory_MemAvailable_bytes' for available memory, "
+                                "'rate(node_network_transmit_bytes_total[5m])' for network throughput, "
+                                "'node_disk_io_time_seconds_total' for disk I/O"
+                            ),
+                        }
+                    },
+                    "required": ["query"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("query_range"),
+                description=(
+                    "Query Prometheus metrics over a time range using PromQL. "
+                    "Use this to analyze trends, identify patterns, or investigate "
+                    "historical performance issues. Returns time-series data for the "
+                    "specified metric over the requested time period."
+                ),
+                capability=ToolCapability.METRICS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "PromQL query expression",
+                        },
+                        "start_time": {
+                            "type": "string",
+                            "description": (
+                                "Start time for the query. Can be relative (e.g., '1h', '2d', '7d') "
+                                "or absolute timestamp"
+                            ),
+                        },
+                        "end_time": {
+                            "type": "string",
+                            "description": "End time for the query (default: 'now')",
+                            "default": "now",
+                        },
+                    },
+                    "required": ["query", "start_time"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("search_metrics"),
+                description=(
+                    "Search for metrics by name pattern or label filters. "
+                    "Use this to find specific metrics when you know part of the name "
+                    "or need to filter by labels. Use an empty string pattern to list all metrics. "
+                    "Examples: 'redis_memory' finds Redis memory metrics, 'network' finds network metrics, "
+                    "'' (empty string) lists all available metrics."
+                ),
+                capability=ToolCapability.METRICS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": (
+                                "Search pattern for metric names. Can include keywords or be empty to list all. "
+                                "Examples: 'redis_memory', 'node_network', 'http_requests', '' (for all metrics)"
+                            ),
+                            "default": "",
+                        },
+                        "label_filters": {
+                            "type": "object",
+                            "description": (
+                                "Optional label filters to narrow results. "
+                                "Example: {'job': 'redis', 'instance': 'localhost:6379'}"
+                            ),
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+        ]
 
     def get_client(self) -> PrometheusConnect:
         """Get or create the Prometheus client (lazy initialization).
@@ -153,124 +246,6 @@ class PrometheusToolProvider(ToolProvider):
             return resp.json()
         except Exception:
             return {"status": "error", "error": f"Non-JSON response: {resp.text[:200]}"}
-
-    def create_tool_schemas(self) -> List[ToolDefinition]:
-        """Create tool schemas for Prometheus operations."""
-        return [
-            ToolDefinition(
-                name=self._make_tool_name("query"),
-                description=(
-                    "Query Prometheus metrics at a single point in time using PromQL. "
-                    "Use this to get current metric values for infrastructure monitoring, "
-                    "such as CPU usage, memory consumption, network I/O, or disk space. "
-                    "Returns the most recent value for the specified metric."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": (
-                                "PromQL query expression. Examples: "
-                                "'node_memory_MemAvailable_bytes' for available memory, "
-                                "'rate(node_network_transmit_bytes_total[5m])' for network throughput, "
-                                "'node_disk_io_time_seconds_total' for disk I/O"
-                            ),
-                        }
-                    },
-                    "required": ["query"],
-                },
-            ),
-            ToolDefinition(
-                name=self._make_tool_name("query_range"),
-                description=(
-                    "Query Prometheus metrics over a time range using PromQL. "
-                    "Use this to analyze trends, identify patterns, or investigate "
-                    "historical performance issues. Returns time-series data for the "
-                    "specified metric over the requested time period."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "PromQL query expression",
-                        },
-                        "start_time": {
-                            "type": "string",
-                            "description": (
-                                "Start time for the query. Can be relative (e.g., '1h', '2d', '7d') "
-                                "or absolute timestamp"
-                            ),
-                        },
-                        "end_time": {
-                            "type": "string",
-                            "description": "End time for the query (default: 'now')",
-                            "default": "now",
-                        },
-                    },
-                    "required": ["query", "start_time"],
-                },
-            ),
-            ToolDefinition(
-                name=self._make_tool_name("search_metrics"),
-                description=(
-                    "Search for metrics by name pattern or label filters. "
-                    "Use this to find specific metrics when you know part of the name "
-                    "or need to filter by labels. Use an empty string pattern to list all metrics. "
-                    "Examples: 'redis_memory' finds Redis memory metrics, 'network' finds network metrics, "
-                    "'' (empty string) lists all available metrics."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "pattern": {
-                            "type": "string",
-                            "description": (
-                                "Search pattern for metric names. Can include keywords or be empty to list all. "
-                                "Examples: 'redis_memory', 'node_network', 'http_requests', '' (for all metrics)"
-                            ),
-                            "default": "",
-                        },
-                        "label_filters": {
-                            "type": "object",
-                            "description": (
-                                "Optional label filters to narrow results. "
-                                "Example: {'job': 'redis', 'instance': 'localhost:6379'}"
-                            ),
-                        },
-                    },
-                    "required": [],
-                },
-            ),
-        ]
-
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Execute a Prometheus tool call.
-
-        Args:
-            tool_name: Name of the tool to execute
-            args: Tool arguments
-
-        Returns:
-            Tool execution result
-        """
-        # Parse operation from tool_name
-        # Format: prometheus_{hash}_query -> query
-        parts = tool_name.split("_")
-        if len(parts) >= 3:
-            operation = "_".join(parts[2:])  # Everything after provider_hash
-        else:
-            operation = tool_name
-
-        if operation == "query":
-            return await self.query(**args)
-        elif operation == "query_range":
-            return await self.query_range(**args)
-        elif operation == "search_metrics":
-            return await self.search_metrics(**args)
-        else:
-            raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
     @status_update("I'm querying Prometheus for metrics.")
     async def query(self, query: str) -> Dict[str, Any]:

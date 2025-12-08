@@ -27,8 +27,8 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redis_sre_agent.tools.decorators import status_update
-from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +80,6 @@ class LokiToolProvider(ToolProvider):
     # Enable per-instance extension config parsing
     instance_config_model = LokiInstanceConfig
     extension_namespace = "loki"
-
-    # Declare capabilities so orchestrators can request a logs provider via ToolManager
-    capabilities = {ToolCapability.LOGS}
 
     def __init__(self, redis_instance=None, config: Optional[LokiConfig] = None):
         super().__init__(redis_instance)
@@ -172,6 +169,7 @@ class LokiToolProvider(ToolProvider):
                     "Query Loki at a single point in time using LogQL. Use this for metric-style "
                     'queries (e.g., sum(rate({job="foo"}[5m]))) or to compute values.'
                 ),
+                capability=ToolCapability.LOGS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -199,6 +197,7 @@ class LokiToolProvider(ToolProvider):
                 description=(
                     "Query Loki over a time range using LogQL. Supports both log and metric queries."
                 ),
+                capability=ToolCapability.LOGS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -229,6 +228,7 @@ class LokiToolProvider(ToolProvider):
             ToolDefinition(
                 name=self._make_tool_name("labels"),
                 description="List known labels within a time span (optionally scoped by a selector)",
+                capability=ToolCapability.LOGS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -249,6 +249,7 @@ class LokiToolProvider(ToolProvider):
             ToolDefinition(
                 name=self._make_tool_name("label_values"),
                 description="List known values for a label within a time span",
+                capability=ToolCapability.LOGS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -270,6 +271,7 @@ class LokiToolProvider(ToolProvider):
             ToolDefinition(
                 name=self._make_tool_name("series"),
                 description="List streams (unique label sets) matching selectors over a time range",
+                capability=ToolCapability.LOGS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -289,6 +291,7 @@ class LokiToolProvider(ToolProvider):
                 description=(
                     "Query log volume (bytes/chunks) aggregated by label or series. Requires Loki volume_enabled."
                 ),
+                capability=ToolCapability.LOGS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -315,6 +318,7 @@ class LokiToolProvider(ToolProvider):
                 description=(
                     "Detect and count log patterns for a selector over time. Requires pattern_ingester enabled."
                 ),
+                capability=ToolCapability.LOGS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -327,26 +331,6 @@ class LokiToolProvider(ToolProvider):
                 },
             ),
         ]
-
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        # Extract operation (everything after provider/hash)
-        parts = tool_name.split("_")
-        operation = "_".join(parts[2:]) if len(parts) >= 3 else tool_name
-        if operation == "query":
-            return await self.query(**args)
-        if operation == "query_range":
-            return await self.query_range(**args)
-        if operation == "labels":
-            return await self.labels(**args)
-        if operation == "label_values":
-            return await self.label_values(**args)
-        if operation == "series":
-            return await self.series(**args)
-        if operation == "volume":
-            return await self.volume(**args)
-        if operation == "patterns":
-            return await self.patterns(**args)
-        raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
     async def _request(
         self, method: str, path: str, params: Dict[str, Any] | None = None, data: Any | None = None
@@ -395,15 +379,15 @@ class LokiToolProvider(ToolProvider):
                 selectors: List[str] = []
                 # Include per-instance preferred streams first, if provided
                 try:
-                    ic = getattr(self, "instance_config", None)
-                    if ic and getattr(ic, "prefer_streams", None):
+                    ic = self.instance_config
+                    if ic and ic.prefer_streams:
                         for lbls in ic.prefer_streams or []:
                             try:
                                 selectors.append(self._selector_from_labels(lbls or {}))
                             except Exception:
                                 continue
                     # Optional per-instance default selector
-                    if ic and getattr(ic, "default_selector", None):
+                    if ic and ic.default_selector:
                         ds_inst = (ic.default_selector or "").strip()
                         if ds_inst:
                             selectors.append(ds_inst)

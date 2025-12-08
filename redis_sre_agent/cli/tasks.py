@@ -121,7 +121,7 @@ def task_list(user_id: str | None, status: str | None, show_all: bool, limit: in
             updated = meta.get("updated_at") or meta.get("created_at") or "-"
             updated_disp = _fmt(updated)
             status_obj = t.get("status")
-            status_str = getattr(status_obj, "value", str(status_obj))
+            status_str = status_obj.value if isinstance(status_obj, TaskStatus) else str(status_obj)
             thread_id = t.get("thread_id") or "-"
             task_id_val = t.get("task_id") or "-"
 
@@ -159,7 +159,7 @@ def task_get(task_id: str, as_json: bool):
         from rich.console import Console
         from rich.table import Table
 
-        from redis_sre_agent.core.tasks import get_task_by_id
+        from redis_sre_agent.core.tasks import TaskStatus, get_task_by_id
 
         console = Console()
         try:
@@ -174,17 +174,19 @@ def task_get(task_id: str, as_json: bool):
         if as_json:
             out = dict(t)
             st = out.get("status")
-            if hasattr(st, "value"):
+            if isinstance(st, TaskStatus):
                 out["status"] = st.value
             print(_json.dumps(out, indent=2))
             return
 
         meta = t.get("metadata", {}) or {}
+        status_obj = t.get("status")
+        status_str = status_obj.value if isinstance(status_obj, TaskStatus) else str(status_obj)
 
         table = Table(title=f"Task {task_id}")
         table.add_column("Field", no_wrap=True)
         table.add_column("Value")
-        table.add_row("Status", getattr(t.get("status"), "value", str(t.get("status"))))
+        table.add_row("Status", status_str)
         table.add_row("Thread ID", t.get("thread_id") or "-")
         table.add_row("Created", meta.get("created_at") or "-")
         table.add_row("Updated", meta.get("updated_at") or "-")

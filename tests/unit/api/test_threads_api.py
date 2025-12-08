@@ -80,6 +80,9 @@ class TestThreadsAPI:
         class State:
             context = {"messages": [{"role": "user", "content": "hi"}]}
             action_items = []
+            updates = []
+            result = None
+            error_message = None
             metadata = MagicMock()
             metadata.model_dump = lambda: {"user_id": "u"}
 

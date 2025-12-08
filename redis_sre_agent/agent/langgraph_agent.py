@@ -76,7 +76,9 @@ def _get_secret_value(secret: Any) -> str:
 
     Handles both SecretStr (from Pydantic) and plain str (after decryption).
     """
-    if hasattr(secret, "get_secret_value"):
+    from pydantic import SecretStr
+
+    if isinstance(secret, SecretStr):
         return secret.get_secret_value()
     return str(secret)
 
@@ -349,7 +351,7 @@ class SRELangGraphAgent:
             serial = []
             for m in messages or []:
                 role = m.__class__.__name__
-                content = getattr(m, "content", "")
+                content = m.content or ""
                 if isinstance(content, list):
                     try:
                         c = json.dumps(content, sort_keys=True, default=str)
@@ -365,10 +367,10 @@ class SRELangGraphAgent:
             return str(id(messages))
 
     async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
-        if not getattr(self, "_run_cache_active", False):
+        if not self._run_cache_active:
             return await llm.ainvoke(messages)
-        model = getattr(llm, "model", None)
-        temperature = getattr(llm, "temperature", None)
+        model = llm.model
+        temperature = llm.temperature
         key = f"{tag}|{model}|{temperature}|{self._messages_cache_key(messages)}"
         if key in self._llm_cache:
             return self._llm_cache[key]
@@ -479,7 +481,7 @@ JSON payload of analyses artifacts:
             ),
         ]
         composed = await self._ainvoke_memo("composer", composer_llm, msgs)
-        content = getattr(composed, "content", "")
+        content = composed.content or ""
         # Normalize to string in case content is a list of parts
         if isinstance(content, list):
             try:
@@ -660,7 +662,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 for m in msgs:
                     if isinstance(m, AIMessage):
                         try:
-                            for tc in getattr(m, "tool_calls", []) or []:
+                            for tc in m.tool_calls or []:
                                 if isinstance(tc, dict):
                                     tid = tc.get("id") or tc.get("tool_call_id")
                                     if tid:
@@ -668,8 +670,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         except Exception:
                             pass
                         clean.append(m)
-                    elif isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
-                        tid = getattr(m, "tool_call_id", None)
+                    elif isinstance(m, ToolMessage) or m.type == "tool":
+                        tid = m.tool_call_id
                         if tid and tid in seen_tool_ids:
                             clean.append(m)
                         else:
@@ -678,21 +680,15 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     else:
                         clean.append(m)
                 # Ensure the first message is not a tool message
-                while clean and (
-                    isinstance(clean[0], ToolMessage) or getattr(clean[0], "type", "") == "tool"
-                ):
+                while clean and (isinstance(clean[0], ToolMessage) or clean[0].type == "tool"):
                     clean = clean[1:]
                 # If the last message is an assistant with unfulfilled tool_calls, drop it to avoid API 400
-                if (
-                    clean
-                    and isinstance(clean[-1], AIMessage)
-                    and (getattr(clean[-1], "tool_calls", None) or [])
-                ):
+                if clean and isinstance(clean[-1], AIMessage) and (clean[-1].tool_calls or []):
                     clean = clean[:-1]
                 # Fallback guard: never return an empty list; keep first non-tool from original msgs
                 if not clean:
                     for m in msgs:
-                        if not (isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool"):
+                        if not (isinstance(m, ToolMessage) or m.type == "tool"):
                             clean = [m]
                             break
                 return clean
@@ -721,8 +717,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
             # Normalize response to a LangChain Message to ensure checkpoint serialization
             if not isinstance(response, BaseMessage):
-                content = getattr(response, "content", None)
-                tool_calls = getattr(response, "tool_calls", None)
+                content = response.content
+                tool_calls = response.tool_calls
                 response = AIMessage(
                     content=str(content) if content is not None else "", tool_calls=tool_calls
                 )
@@ -733,7 +729,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             state["iteration_count"] = iteration_count + 1
 
             # Track tool calls if any
-            if hasattr(response, "tool_calls") and response.tool_calls:
+            if response.tool_calls:
                 import json
 
                 norm_calls = []
@@ -800,10 +796,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 from .helpers import build_adapters_for_tooldefs as _build_adapters
 
-                # Centralized adapter builder
-                _tool_schemas, adapters = await _build_adapters(
-                    tool_mgr, list(tooldefs_by_name.values())
-                )
+                # Centralized adapter builder (returns StructuredTool adapters)
+                adapters = await _build_adapters(tool_mgr, list(tooldefs_by_name.values()))
 
                 lg_tool_node = LGToolNode(adapters)
 
@@ -927,8 +921,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 extractor_llm = self.llm.with_structured_output(TopicsList)  # return TopicsList
                 instance_ctx = {
-                    "instance_type": getattr(target_instance, "instance_type", None),
-                    "name": getattr(target_instance, "name", None),
+                    "instance_type": target_instance.instance_type,
+                    "name": target_instance.name,
                 }
                 preface = (
                     "About this JSON: signals from upstream tool calls (each has a tool description, args, and raw JSON results).\n"
@@ -951,7 +945,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     "topics_extractor", extractor_llm, [human]
                 )  # TopicsList or similar
                 # Normalize to plain dicts list
-                items = getattr(resp, "items", resp)
+                items = resp.items if resp else resp
                 if isinstance(items, list):
                     topics = [t if isinstance(t, dict) else t.model_dump() for t in items]
                 else:
@@ -966,7 +960,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     return _sev_order.get(s, 1)
 
                 topics.sort(key=_sev_score, reverse=True)
-                max_topics = int(getattr(self.settings, "max_recommendation_topics", 3) or 3)
+                max_topics = int(self.settings.max_recommendation_topics or 3)
                 if len(topics) > max_topics:
                     topics = topics[:max_topics]
                 logger.info(
@@ -983,25 +977,24 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 rec_tasks = []
                 instance_ctx = {
-                    "instance_type": getattr(target_instance, "instance_type", None),
-                    "name": getattr(target_instance, "name", None),
+                    "instance_type": target_instance.instance_type,
+                    "name": target_instance.name,
                 }
                 # Build knowledge-only adapters locally (mini model)
-                from redis_sre_agent.tools.protocols import KnowledgeProviderProtocol as _KProto
+                from redis_sre_agent.tools.models import ToolCapability as _ToolCap
 
                 from .helpers import build_adapters_for_tooldefs as _build_adapters
 
-                knowledge_tools = tool_mgr.get_tools_for_protocol(_KProto, allowed_ops={"search"})
-                knowledge_tool_schemas, knowledge_adapters = await _build_adapters(
-                    tool_mgr, knowledge_tools
-                )
+                # Use all knowledge tools for the mini knowledge agent; no op-level filtering.
+                knowledge_tools = tool_mgr.get_tools_for_capability(_ToolCap.KNOWLEDGE)
+                knowledge_adapters = await _build_adapters(tool_mgr, knowledge_tools)
                 if knowledge_adapters:
                     knowledge_llm_base = ChatOpenAI(
                         model=self.settings.openai_model_mini,
                         openai_api_key=self.settings.openai_api_key,
                         timeout=self.settings.llm_timeout,
                     )
-                    knowledge_llm = knowledge_llm_base.bind_tools(knowledge_tool_schemas)
+                    knowledge_llm = knowledge_llm_base.bind_tools(knowledge_adapters)
 
                 if knowledge_adapters:
                     logger.info(
@@ -1057,8 +1050,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 try:
                     instance_ctx_local = {
-                        "instance_type": getattr(target_instance, "instance_type", None),
-                        "name": getattr(target_instance, "name", None),
+                        "instance_type": target_instance.instance_type,
+                        "name": target_instance.name,
                     }
                     composed_markdown = await self._compose_final_markdown(
                         initial_assessment_lines=[initial_writeup] if initial_writeup else [],
@@ -1109,9 +1102,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 return "reasoning"  # Go to reasoning for final analysis
 
             # Check if the last message has tool calls
-            if messages and hasattr(messages[-1], "tool_calls"):
-                if messages[-1].tool_calls:
-                    return "tools"
+            if messages and isinstance(messages[-1], AIMessage) and messages[-1].tool_calls:
+                return "tools"
 
             # Check if we have pending tool calls in state
             if state.get("current_tool_calls"):
@@ -1556,16 +1548,19 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
         # Create ToolManager for this query with the target instance
         async with ToolManager(redis_instance=target_instance) as tool_mgr:
-            # Get tools and bind to LLM
+            # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()
-            tool_schemas = [tool.to_openai_schema() for tool in tools]
 
             logger.info(f"Loaded {len(tools)} tools for this query")
             for tool in tools:
                 logger.debug(f"  - {tool.name}")
 
+            from .helpers import build_adapters_for_tooldefs as _build_adapters
+
+            adapters = await _build_adapters(tool_mgr, tools)
+
             # Rebind LLM with tools for this query
-            self.llm_with_tools = self.llm.bind_tools(tool_schemas)
+            self.llm_with_tools = self.llm.bind_tools(adapters)
 
             # Rebuild workflow with the tool manager and target instance
             self.workflow = self._build_workflow(tool_mgr, target_instance)
@@ -1652,7 +1647,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         try:
             thread_config = {"configurable": {"thread_id": session_id}}
             current_state = await self.app.aget_state(config=thread_config)
-            if current_state and hasattr(current_state, "values"):
+            if current_state and current_state.values:
                 return {"messages": current_state.values.get("messages", [])}
         except Exception as e:
             logger.error(f"Error getting thread state: {e}")
@@ -1722,36 +1717,26 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
             # Use always-on providers (knowledge, utilities)
             async with ToolManager(redis_instance=None) as corrector_tool_manager:
-                # Select only knowledge.search and utilities calculator/date_math/timezone_converter/http_head via protocol selectors
-                from redis_sre_agent.tools.protocols import (
-                    KnowledgeProviderProtocol as _KProto,
-                )
-                from redis_sre_agent.tools.protocols import (
-                    UtilitiesProviderProtocol as _UProto,
-                )
+                # Select knowledge and utility tools via capabilities.
+                from redis_sre_agent.tools.models import ToolCapability as _ToolCap
 
-                knowledge_defs = corrector_tool_manager.get_tools_for_protocol(
-                    _KProto, allowed_ops={"search"}
-                )
-                utilities_defs = corrector_tool_manager.get_tools_for_protocol(
-                    _UProto,
-                    allowed_ops={"calculator", "date_math", "timezone_converter", "http_head"},
-                )
+                # Use all knowledge and utility tools for the corrector; no op-level filtering.
+                knowledge_defs = corrector_tool_manager.get_tools_for_capability(_ToolCap.KNOWLEDGE)
+                utilities_defs = corrector_tool_manager.get_tools_for_capability(_ToolCap.UTILITIES)
                 tooldefs = list(knowledge_defs) + list(utilities_defs)
-                tool_schemas = [t.to_openai_schema() for t in tooldefs]
 
                 # Build StructuredTool adapters centrally
                 from .helpers import build_adapters_for_tooldefs as _build_adapters
 
-                _tool_schemas2, adapters = await _build_adapters(corrector_tool_manager, tooldefs)
+                adapters = await _build_adapters(corrector_tool_manager, tooldefs)
 
-                # LLM with tools bound
+                # LLM with tools bound via adapters
                 corrector_llm_base = ChatOpenAI(
                     model=self.settings.openai_model_mini,
                     openai_api_key=self.settings.openai_api_key,
                     timeout=self.settings.llm_timeout,
                 )
-                corrector_llm = corrector_llm_base.bind_tools(tool_schemas)
+                corrector_llm = corrector_llm_base.bind_tools(adapters)
 
                 # Build the compiled subgraph
                 corrector = build_safety_fact_corrector(
@@ -1789,21 +1774,21 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                             inst = await get_instance_by_id(inst_id)
                             if inst:
                                 # Normalize instance_type to a simple string value when possible
-                                _itype = getattr(inst, "instance_type", None)
+                                _itype = inst.instance_type
                                 try:
                                     _itype_val = _itype.value  # Enum-like
                                 except Exception:
                                     _itype_val = str(_itype) if _itype is not None else None
 
                                 instance_ctx = {
-                                    "id": getattr(inst, "id", None),
-                                    "name": getattr(inst, "name", None),
-                                    "environment": getattr(inst, "environment", None),
+                                    "id": inst.id,
+                                    "name": inst.name,
+                                    "environment": inst.environment,
                                     "instance_type": _itype_val,
-                                    "status": getattr(inst, "status", None),
-                                    "version": getattr(inst, "version", None),
-                                    "memory": getattr(inst, "memory", None),
-                                    "connections": getattr(inst, "connections", None),
+                                    "status": inst.status,
+                                    "version": inst.version,
+                                    "memory": inst.memory,
+                                    "connections": inst.connections,
                                 }
                 except Exception:
                     instance_ctx = {}
@@ -1872,21 +1857,40 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             except Exception as e:
                 # Enrich logging with OpenAI/HTTP error details when available
                 try:
-                    status = getattr(e, "status_code", None) or getattr(
-                        getattr(e, "response", None), "status_code", None
-                    )
+                    status = None
                     body = None
-                    if hasattr(e, "body") and isinstance(getattr(e, "body"), (str, bytes)):
-                        body = (
-                            e.body.decode("utf-8", errors="ignore")
-                            if isinstance(e.body, (bytes, bytearray))
-                            else e.body
-                        )
-                    elif hasattr(e, "response") and getattr(e, "response") is not None:
-                        resp = getattr(e, "response")
-                        body = getattr(resp, "text", None) or getattr(resp, "content", None)
-                        if isinstance(body, (bytes, bytearray)):
-                            body = body.decode("utf-8", errors="ignore")
+                    try:
+                        status = e.status_code  # type: ignore[attr-defined]
+                    except AttributeError:
+                        try:
+                            resp = e.response  # type: ignore[attr-defined]
+                            if resp:
+                                status = resp.status_code
+                        except AttributeError:
+                            pass
+                    try:
+                        raw_body = e.body  # type: ignore[attr-defined]
+                        if isinstance(raw_body, (str, bytes)):
+                            body = (
+                                raw_body.decode("utf-8", errors="ignore")
+                                if isinstance(raw_body, (bytes, bytearray))
+                                else raw_body
+                            )
+                    except AttributeError:
+                        try:
+                            resp = e.response  # type: ignore[attr-defined]
+                            if resp is not None:
+                                try:
+                                    body = resp.text
+                                except AttributeError:
+                                    try:
+                                        body = resp.content
+                                    except AttributeError:
+                                        pass
+                                if isinstance(body, (bytes, bytearray)):
+                                    body = body.decode("utf-8", errors="ignore")
+                        except AttributeError:
+                            pass
                     if status or body:
                         snippet = (body or "")[:2000]
                         logger.error(

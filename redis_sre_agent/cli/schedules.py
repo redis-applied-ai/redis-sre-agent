@@ -15,7 +15,7 @@ from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.schedules import get_schedule
-from redis_sre_agent.core.tasks import TaskManager
+from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.threads import ThreadManager
 
 
@@ -628,7 +628,11 @@ def schedules_runs(schedule_id: str, as_json: bool, tz: str | None, limit: int):
                         task = None
                     if task:
                         # Normalize enum or str to a string status value
-                        task_status = getattr(task.status, "value", str(task.status))
+                        task_status = (
+                            task.status.value
+                            if isinstance(task.status, TaskStatus)
+                            else str(task.status)
+                        )
                         started_at = task.metadata.created_at or started_at
                         if task_status == "done":
                             completed_at = task.metadata.updated_at

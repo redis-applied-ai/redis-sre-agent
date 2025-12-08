@@ -253,6 +253,7 @@ class TaskManager:
         )
 
 
+# TODO: Why do we need create_task() here and also in TaskManager?
 async def create_task(
     *,
     message: str,
@@ -296,62 +297,15 @@ async def create_task(
     }
 
 
-async def get_task_status(*, thread_id: str, redis_client=None) -> Dict[str, Any]:
-    """Return a dict representing the task status (compatible with TaskStatusResponse)."""
-    if redis_client is None:
-        from redis_sre_agent.core.redis import get_redis_client as _get
-
-        redis_client = _get()
-
-    from redis_sre_agent.core.threads import ThreadManager
-
-    thread_manager = ThreadManager(redis_client=redis_client)
-
-    thread_state = await thread_manager.get_thread(thread_id)
-    if not thread_state:
-        raise ValueError(f"Thread {thread_id} not found")
-
-    updates = [
-        {
-            "timestamp": update.timestamp,
-            "message": update.message,
-            "type": update.update_type,
-            "metadata": update.metadata or {},
-        }
-        for update in thread_state.updates
-    ]
-
-    metadata = {
-        "created_at": thread_state.metadata.created_at,
-        "updated_at": thread_state.metadata.updated_at,
-        "user_id": thread_state.metadata.user_id,
-        "session_id": thread_state.metadata.session_id,
-        "priority": thread_state.metadata.priority,
-        "tags": thread_state.metadata.tags,
-        "subject": thread_state.metadata.subject,
-    }
-
-    return {
-        "thread_id": thread_id,
-        "status": thread_state.status,
-        "updates": updates,
-        "result": thread_state.result,
-        "error_message": thread_state.error_message,
-        "metadata": metadata,
-        "context": thread_state.context,
-    }
-
-
 async def get_task_by_id(*, task_id: str, redis_client=None) -> Dict[str, Any]:
     """Return a dict representing a single task by task_id."""
     if redis_client is None:
-        from redis_sre_agent.core.redis import get_redis_client as _get
-
-        redis_client = _get()
+        redis_client = get_redis_client()
 
     task_manager = TaskManager(redis_client=redis_client)
-    task_state = await task_manager.get_task_state(task_id)
-    if not task_state:
+    task = await task_manager.get_task_state(task_id)
+
+    if not task:
         raise ValueError(f"Task {task_id} not found")
 
     updates = [
@@ -361,23 +315,23 @@ async def get_task_by_id(*, task_id: str, redis_client=None) -> Dict[str, Any]:
             "type": u.update_type,
             "metadata": u.metadata or {},
         }
-        for u in (task_state.updates or [])
+        for u in (task.updates or [])
     ]
 
     metadata = {
-        "created_at": task_state.metadata.created_at,
-        "updated_at": task_state.metadata.updated_at,
-        "user_id": task_state.metadata.user_id,
-        "subject": task_state.metadata.subject,
+        "created_at": task.metadata.created_at,
+        "updated_at": task.metadata.updated_at,
+        "user_id": task.metadata.user_id,
+        "subject": task.metadata.subject,
     }
 
     return {
-        "task_id": task_state.task_id,
-        "thread_id": task_state.thread_id,
-        "status": task_state.status,
+        "task_id": task.task_id,
+        "thread_id": task.thread_id,
+        "status": task.status,
         "updates": updates,
-        "result": task_state.result,
-        "error_message": task_state.error_message,
+        "result": task.result,
+        "error_message": task.error_message,
         "metadata": metadata,
         "context": {},
     }
@@ -448,22 +402,20 @@ async def list_tasks(
 
         tasks: List[Dict[str, Any]] = []
         for res in results:
-            row = (
-                res
-                if isinstance(res, dict)
-                else {
-                    k: getattr(res, k, None)
-                    for k in [
-                        "id",
-                        "status",
-                        "subject",
-                        "user_id",
-                        "thread_id",
-                        "created_at",
-                        "updated_at",
-                    ]
-                }
-            )
+            if isinstance(res, dict):
+                row = res
+            else:
+                row = {}
+                for k in [
+                    "id",
+                    "status",
+                    "subject",
+                    "user_id",
+                    "thread_id",
+                    "created_at",
+                    "updated_at",
+                ]:
+                    row[k] = res.__dict__.get(k)
             redis_key = row.get("id", "")
             task_id = (
                 redis_key[len("sre_tasks:") :]

@@ -20,14 +20,13 @@ def to_response(instance: "core_instances.RedisInstance") -> "RedisInstanceRespo
     """Convert a domain RedisInstance to an API-safe response with masked credentials."""
     conn_url = (
         instance.connection_url.get_secret_value()
-        if hasattr(instance.connection_url, "get_secret_value")
+        if isinstance(instance.connection_url, SecretStr)
         else instance.connection_url
     )
     admin_pwd = (
         instance.admin_password.get_secret_value()
-        if getattr(instance, "admin_password", None)
-        and hasattr(instance.admin_password, "get_secret_value")
-        else getattr(instance, "admin_password", None)
+        if instance.admin_password and isinstance(instance.admin_password, SecretStr)
+        else instance.admin_password
     )
     return RedisInstanceResponse(
         id=instance.id,
@@ -53,10 +52,10 @@ def to_response(instance: "core_instances.RedisInstance") -> "RedisInstanceRespo
         updated_at=instance.updated_at,
         created_by=instance.created_by,
         user_id=instance.user_id,
-        redis_cloud_subscription_id=getattr(instance, "redis_cloud_subscription_id", None),
-        redis_cloud_database_id=getattr(instance, "redis_cloud_database_id", None),
-        redis_cloud_subscription_type=getattr(instance, "redis_cloud_subscription_type", None),
-        redis_cloud_database_name=getattr(instance, "redis_cloud_database_name", None),
+        redis_cloud_subscription_id=instance.redis_cloud_subscription_id,
+        redis_cloud_database_id=instance.redis_cloud_database_id,
+        redis_cloud_subscription_type=instance.redis_cloud_subscription_type,
+        redis_cloud_database_name=instance.redis_cloud_database_name,
     )
 
 

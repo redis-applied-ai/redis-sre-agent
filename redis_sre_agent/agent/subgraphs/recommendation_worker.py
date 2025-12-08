@@ -102,7 +102,7 @@ def build_recommendation_worker(
             if isinstance(m, AIMessage):
                 last_ai = m
                 break
-        has_calls = bool(getattr(last_ai, "tool_calls", None))
+        has_calls = bool(last_ai.tool_calls) if last_ai else False
         budget_left = int(state.get("budget", max_tool_steps)) > 0
         return "tools" if (has_calls and budget_left) else "synth"
 

@@ -44,8 +44,9 @@ async def test_list_databases_parses_subscription_wrapper():
         "redis_sre_agent.tools.cloud.redis_cloud.provider.pro_get_subscription_databases.asyncio",
         new=AsyncMock(return_value=SimpleNamespace(to_dict=lambda: payload)),
     ):
-        tool_name = provider._make_tool_name("list_databases")
-        result = await provider.resolve_tool_call(tool_name, {})
+        # Call the concrete method directly; tools() now wires tools to these
+        # concrete async methods instead of using resolve_tool_call.
+        result = await provider.list_databases()
         assert isinstance(result, list)
         assert len(result) == 2
         assert result[0]["databaseId"] == 1

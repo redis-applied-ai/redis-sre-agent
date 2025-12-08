@@ -14,8 +14,8 @@ This is an early release with an initial set of built-in providers. More provide
   - Config: `TOOLS_PROMETHEUS_URL`, `TOOLS_PROMETHEUS_DISABLE_SSL`
 - **Loki logs**: `redis_sre_agent.tools.logs.loki.provider.LokiToolProvider`
   - Config: `TOOLS_LOKI_URL`, `TOOLS_LOKI_TENANT_ID`, `TOOLS_LOKI_TIMEOUT`
-- **Redis CLI diagnostics**: `redis_sre_agent.tools.diagnostics.redis_cli.provider.RedisCliToolProvider`
-  - Runs Redis CLI commands against target instances
+- **Redis command diagnostics**: `redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider`
+  - Runs Redis commands against target instances
 - **Host telemetry**: `redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider`
   - System-level metrics and diagnostics
 
@@ -41,18 +41,22 @@ Implement a ToolProvider subclass that defines tool schemas and resolves calls.
 ### Minimal skeleton
 
 ```python
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from redis_sre_agent.tools.protocols import ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolDefinition, ToolCapability
+
 
 class MyMetricsProvider(ToolProvider):
-    provider_name = "my_metrics"
+    @property
+    def provider_name(self) -> str:
+        return "my_metrics"
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         return [
             ToolDefinition(
                 name=self._make_tool_name("query"),
                 description="Query my metrics backend using a query string.",
+                capability=ToolCapability.METRICS,
                 parameters={
                     "type": "object",
                     "properties": {"query": {"type": "string"}},
@@ -61,16 +65,12 @@ class MyMetricsProvider(ToolProvider):
             )
         ]
 
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]):
-        op = self.resolve_operation(tool_name)
-        if op == "query":
-            return await self.query(**args)
-        raise ValueError(f"Unknown operation: {op}")
-
     async def query(self, query: str) -> Dict[str, Any]:
         # Implement your backend call
         return {"status": "success", "query": query, "data": []}
 ```
+
+The base class `tools()` method automatically wires tool names to provider methods. When an LLM invokes `my_metrics_{hash}_query`, the framework calls `self.query(**args)` directly. No manual `resolve_tool_call()` implementation is required.
 
 ### Register your provider
 

@@ -36,7 +36,7 @@ class LazyGroup(click.MultiCommand):
             return None
         module_path, attr = target.split(":", 1)
         mod = importlib.import_module(module_path)
-        return getattr(mod, attr)
+        return mod.__dict__[attr]
 
 
 @click.command(cls=LazyGroup)

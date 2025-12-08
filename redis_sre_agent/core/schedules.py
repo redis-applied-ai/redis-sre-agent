@@ -89,29 +89,8 @@ async def _get_schedules(query: Optional[BaseQuery] = None) -> List[Dict]:
             # Convert result to dictionary format
             if isinstance(result, dict):
                 schedule_data = result.copy()
-            elif hasattr(result, "__dict__"):
-                schedule_data = result.__dict__.copy()
             else:
-                # Try to access as attributes
-                schedule_data = {}
-                for field in [
-                    "id",
-                    "name",
-                    "description",
-                    "interval_type",
-                    "interval_value",
-                    "redis_instance_id",
-                    "instructions",
-                    "enabled",
-                    "created_at",
-                    "updated_at",
-                    "last_run_at",
-                    "next_run_at",
-                ]:
-                    try:
-                        schedule_data[field] = getattr(result, field, None)
-                    except AttributeError:
-                        schedule_data[field] = None
+                schedule_data = result.__dict__.copy()
 
             # Extract actual schedule ID from Redis key (remove "sre_schedules:" prefix)
             redis_key = schedule_data.get("id", "")

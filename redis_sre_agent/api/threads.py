@@ -49,7 +49,7 @@ async def list_threads(
                     state = await tm.get_thread(s_out.get("thread_id"))
                     msgs = []
                     if state is not None:
-                        ctx = getattr(state, "context", {}) or {}
+                        ctx = state.context or {}
                         msgs = ctx.get("messages", []) or []
                     # Only count user/assistant messages (exclude tools/system)
                     s_out["message_count"] = sum(
@@ -114,15 +114,10 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     # Extract messages from context if present
     messages = state.context.get("messages", [])
 
-    # Build metadata dict compatible with UI expectations, robust to mocks
-    metadata: Optional[Dict[str, Any]] = None
-    md_dump = getattr(state.metadata, "model_dump", None)
-    if callable(md_dump):
-        try:
-            metadata = md_dump()
-        except Exception:
-            metadata = None
-    if metadata is None:
+    # Build metadata dict compatible with UI expectations
+    try:
+        metadata = state.metadata.model_dump()
+    except Exception:
         try:
             metadata = dict(state.metadata)  # type: ignore[arg-type]
         except Exception:
@@ -135,12 +130,10 @@ async def get_thread(thread_id: str) -> ThreadResponse:
         tags=(metadata.get("tags", []) if metadata else []),
         subject=(metadata.get("subject") if metadata else None),
         messages=[Message(**m) for m in messages] if messages else [],
-        context=getattr(state, "context", {}),
-        updates=[u.model_dump() for u in getattr(state, "updates", [])]
-        if getattr(state, "updates", None)
-        else [],
-        result=getattr(state, "result", None),
-        error_message=getattr(state, "error_message", None),
+        context=state.context,
+        updates=[u.model_dump() for u in state.updates] if state.updates else [],
+        result=state.result,
+        error_message=state.error_message,
         metadata=metadata,
     )
 

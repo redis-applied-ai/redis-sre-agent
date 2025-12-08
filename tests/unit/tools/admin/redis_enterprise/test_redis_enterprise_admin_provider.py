@@ -354,25 +354,19 @@ async def test_list_actions_success(provider):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call(provider):
-    """Test tool call resolution."""
-    # Mock the get_cluster_info method
-    with patch.object(provider, "get_cluster_info") as mock_method:
+    """Test that tools() wires get_cluster_info to the provider method."""
+
+    # Patch before calling tools() so the invoke closure captures the mock
+    with patch.object(provider, "get_cluster_info", new_callable=AsyncMock) as mock_method:
         mock_method.return_value = {"status": "success", "data": {}}
 
-        tool_name = f"re_admin_{provider._instance_hash}_get_cluster_info"
-        result = await provider.resolve_tool_call(tool_name, {})
+        tools = provider.tools()
+        tool = next(t for t in tools if t.metadata.name.endswith("get_cluster_info"))
+
+        result = await tool.invoke({})
 
         assert result["status"] == "success"
-        mock_method.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_resolve_tool_call_unknown_operation(provider):
-    """Test tool call resolution with unknown operation."""
-    tool_name = f"re_admin_{provider._instance_hash}_unknown_operation"
-
-    with pytest.raises(ValueError, match="Unknown operation"):
-        await provider.resolve_tool_call(tool_name, {})
+        mock_method.assert_called_once_with()
 
 
 @pytest.mark.asyncio

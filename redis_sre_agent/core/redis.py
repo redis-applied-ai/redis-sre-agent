@@ -417,7 +417,7 @@ async def initialize_redis() -> dict:
 
     # Test vectorizer (skip when no OpenAI key configured)
     try:
-        if not getattr(settings, "openai_api_key", None):
+        if not settings.openai_api_key:
             status["vectorizer"] = "skipped"
         else:
             vectorizer = get_vectorizer()

@@ -68,7 +68,7 @@ async def detailed_health_check():
 
     # System is degraded if workers are missing but core components work
     # Treat vectorizer as optional when no OpenAI key is configured
-    requires_vectorizer = bool(getattr(settings, "openai_api_key", None))
+    requires_vectorizer = bool(settings.openai_api_key)
     core_components = {
         k: v
         for k, v in components.items()

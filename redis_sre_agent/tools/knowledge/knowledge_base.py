@@ -18,8 +18,8 @@ from redis_sre_agent.core.knowledge_helpers import (
     search_knowledge_base_helper,
 )
 from redis_sre_agent.tools.decorators import status_update
-from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -33,12 +33,15 @@ class KnowledgeBaseToolProvider(ToolProvider):
     SRE procedures.
     """
 
-    # Declare knowledge capability
-    capabilities = {ToolCapability.KNOWLEDGE}
-
     @property
     def provider_name(self) -> str:
         return "knowledge"
+
+    @property
+    def default_requires_instance(self) -> Optional[bool]:
+        """Knowledge base tools do not depend on a specific Redis instance."""
+
+        return False
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for knowledge base operations."""
@@ -52,6 +55,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "guidance on SRE best practices. Always cite the source document and title "
                     "when using information from search results."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -87,6 +91,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "troubleshooting guides, or other SRE documentation. The document will be "
                     "chunked, embedded, and indexed for future searches."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -136,6 +141,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "Use this when you need to see the complete content of a document that was "
                     "found via search. Requires the document_hash from a search result."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -154,6 +160,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "Use this to explore related content or find additional context "
                     "around a specific piece of information."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -186,25 +193,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
 
     def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         return self._operation_from_tool(tool_name)
-
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Execute a knowledge base tool call.
-
-        The tool_name includes the provider name and instance hash that we created,
-        so we just need to match the operation suffix.
-        """
-        operation = self._operation_from_tool(tool_name)
-
-        if operation == "search":
-            return await self.search(**args)
-        elif operation == "ingest":
-            return await self.ingest(**args)
-        elif operation == "get_all_fragments":
-            return await self.get_all_fragments(**args)
-        elif operation == "get_related_fragments":
-            return await self.get_related_fragments(**args)
-        else:
-            raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
     @status_update("I'm searching the knowledge base for {query}.")
     async def search(

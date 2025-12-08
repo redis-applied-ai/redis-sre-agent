@@ -3,7 +3,8 @@
 import pytest
 
 from redis_sre_agent.tools.knowledge.knowledge_base import KnowledgeBaseToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolDefinition
+from redis_sre_agent.tools.protocols import ToolCapability
 
 
 def test_knowledge_provider_initialization():
@@ -25,6 +26,7 @@ def test_knowledge_provider_tool_schemas():
     # All should be ToolDefinition objects
     for schema in schemas:
         assert isinstance(schema, ToolDefinition)
+        assert schema.capability == ToolCapability.KNOWLEDGE
 
     # Check tool names
     tool_names = [s.name for s in schemas]
@@ -87,15 +89,6 @@ def test_knowledge_provider_tool_name_uniqueness():
         hash_part = parts[1]
         assert len(hash_part) == 6  # hex(id(self))[2:8] gives 6 chars
         int(hash_part, 16)  # Should be valid hex
-
-
-@pytest.mark.asyncio
-async def test_knowledge_provider_resolve_unknown_tool():
-    """Test that resolve_tool_call raises error for unknown tools."""
-    provider = KnowledgeBaseToolProvider()
-
-    with pytest.raises(ValueError, match="Unknown operation"):
-        await provider.resolve_tool_call("unknown_tool", {})
 
 
 @pytest.mark.asyncio

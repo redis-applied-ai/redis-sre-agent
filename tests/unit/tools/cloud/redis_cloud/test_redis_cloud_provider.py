@@ -8,6 +8,7 @@ from redis_sre_agent.tools.cloud.redis_cloud import (
     RedisCloudConfig,
     RedisCloudToolProvider,
 )
+from redis_sre_agent.tools.protocols import ToolCapability
 
 
 @pytest.fixture
@@ -47,6 +48,7 @@ async def test_create_tool_schemas(provider):
         assert schema.name.startswith("redis_cloud_")
         assert schema.description
         assert schema.parameters
+        assert schema.capability == ToolCapability.DIAGNOSTICS
 
     # Check for expected tools
     tool_names = [s.name for s in schemas]
@@ -91,7 +93,7 @@ async def test_context_manager(mock_config):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_get_account(provider):
-    """Test resolving get_account tool call."""
+    """Test get_account using the concrete provider method."""
 
     # Patch the generated API function used by the provider
     class Dummy:
@@ -102,8 +104,7 @@ async def test_resolve_tool_call_get_account(provider):
         "redis_sre_agent.tools.cloud.redis_cloud.provider.get_current_account.asyncio",
         new=AsyncMock(return_value=Dummy()),
     ):
-        tool_name = provider._make_tool_name("get_account")
-        result = await provider.resolve_tool_call(tool_name, {})
+        result = await provider.get_account()
 
     assert result["id"] == 12345
     assert result["name"] == "Test Account"
@@ -111,7 +112,7 @@ async def test_resolve_tool_call_get_account(provider):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_list_subscriptions(provider):
-    """Test resolving list_subscriptions tool call."""
+    """Test list_subscriptions using the concrete provider method."""
 
     class Dummy:
         def to_dict(self):
@@ -121,8 +122,7 @@ async def test_resolve_tool_call_list_subscriptions(provider):
         "redis_sre_agent.tools.cloud.redis_cloud.provider.pro_list_subscriptions.asyncio",
         new=AsyncMock(return_value=Dummy()),
     ):
-        tool_name = provider._make_tool_name("list_subscriptions")
-        result = await provider.resolve_tool_call(tool_name, {})
+        result = await provider.list_subscriptions()
 
     assert len(result.get("subscriptions", [])) == 2
     assert result["subscriptions"][0]["name"] == "Sub 1"
@@ -130,7 +130,7 @@ async def test_resolve_tool_call_list_subscriptions(provider):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_get_database(mock_config):
-    """Test resolving get_database tool call using configured instance IDs."""
+    """Test get_database using configured instance IDs via the concrete method."""
     # Create provider with a redis_cloud instance that supplies IDs
     fake_instance = type(
         "Instance",
@@ -153,21 +153,10 @@ async def test_resolve_tool_call_get_database(mock_config):
         "redis_sre_agent.tools.cloud.redis_cloud.provider.ess_get_subscription_database_by_id.asyncio",
         new=AsyncMock(return_value=Dummy()),
     ):
-        tool_name = provider._make_tool_name("get_database")
-        result = await provider.resolve_tool_call(tool_name, {})
+        result = await provider.get_database()
 
     assert result["id"] == 67890
     assert result["name"] == "Test DB"
-
-
-@pytest.mark.asyncio
-async def test_resolve_tool_call_unknown_operation(provider):
-    """Test resolving unknown tool call raises error."""
-    # Use the actual tool name format from the provider
-    tool_name = provider._make_tool_name("unknown_operation")
-
-    with pytest.raises(ValueError, match="Unknown operation"):
-        await provider.resolve_tool_call(tool_name, {})
 
 
 @pytest.mark.asyncio
