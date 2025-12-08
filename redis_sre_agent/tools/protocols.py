@@ -224,7 +224,14 @@ class ToolProvider(ABC):
 
         Providers can override this for more complex mappings (for example,
         when multiple tool names share a single implementation).
+
+        Note: This method is used for OTel tracing and status updates, not for
+        routing. The ToolManager validates tool existence via the routing table
+        before this is called.
         """
+        import logging
+
+        _logger = logging.getLogger(__name__)
 
         try:
             # Preferred fast-path: exact prefix match based on provider name
@@ -241,8 +248,14 @@ class ToolProvider(ABC):
                 return "_".join(parts[2:])
 
             # Last resort: treat the whole name as the operation.
+            # Log a warning since this may indicate a misconfigured tool name.
+            _logger.warning(
+                f"resolve_operation falling back to full tool name '{tool_name}' as operation. "
+                f"Expected format: {self.provider_name}_<hash>_<operation>"
+            )
             return tool_name
-        except Exception:
+        except Exception as e:
+            _logger.warning(f"resolve_operation failed for '{tool_name}': {e}")
             return None
 
     @property
@@ -363,10 +376,8 @@ class ToolProvider(ABC):
                 requires_instance=requires_instance,
             )
 
-            # Prefer a direct provider method derived from the tool name.
+            # Derive operation name and look up the corresponding method.
             op_name = self.resolve_operation(schema.name, {}) or ""
-            # Check if method exists on the class
-            # Use getattr for legitimate metaprogramming - dynamically binding methods
             method = getattr(self, op_name, None) if op_name else None
 
             if not callable(method):
@@ -376,8 +387,8 @@ class ToolProvider(ABC):
                     "or override tools() to provide a custom implementation."
                 )
 
+            # Capture method via default arg to avoid late binding in the closure.
             async def _invoke(args: Dict[str, Any], _method=method) -> Any:
-                """Invoke the bound provider method with keyword args."""
                 return await _method(**(args or {}))
 
             tools.append(Tool(metadata=meta, schema=schema, invoke=_invoke))

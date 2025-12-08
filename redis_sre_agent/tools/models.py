@@ -1,7 +1,10 @@
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from redis_sre_agent.tools.models import ToolDefinition
 
 
 class ToolCapability(Enum):
@@ -21,8 +24,7 @@ class ToolMetadata(BaseModel):
     """Metadata about a concrete tool implementation.
 
     This is attached to the :class:`Tool` wrapper alongside the
-    :class:`~redis_sre_agent.tools.tool_definition.ToolDefinition` schema
-    and the callable used to execute the tool.
+    :class:`ToolDefinition` schema and the callable used to execute the tool.
     """
 
     name: str
@@ -37,15 +39,16 @@ class Tool(BaseModel):
 
     Attributes:
         metadata: :class:`ToolMetadata` describing the tool for routing.
-        schema: The :class:`ToolDefinition` shown to the LLM (stored as ``Any``
-            here to avoid import cycles).
+        schema: The :class:`ToolDefinition` shown to the LLM.
         invoke: Async callable taking a single ``Dict[str, Any]`` of arguments
             and returning the tool result.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     metadata: ToolMetadata
-    schema: Any
-    invoke: Any
+    schema: "ToolDefinition"
+    invoke: Callable[[Dict[str, Any]], Awaitable[Any]]
 
 
 class SystemHost(BaseModel):

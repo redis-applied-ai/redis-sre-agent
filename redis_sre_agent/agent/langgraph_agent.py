@@ -1855,19 +1855,22 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             try:
                 return await func()
             except Exception as e:
-                # Enrich logging with OpenAI/HTTP error details when available
+                # Enrich logging with OpenAI/HTTP error details when available.
+                # Different exception types expose status/body via different attributes,
+                # so we probe multiple patterns and ignore AttributeError when not found.
                 try:
                     status = None
                     body = None
                     try:
                         status = e.status_code  # type: ignore[attr-defined]
                     except AttributeError:
+                        # Try .response.status_code pattern (e.g., httpx exceptions)
                         try:
                             resp = e.response  # type: ignore[attr-defined]
                             if resp:
                                 status = resp.status_code
                         except AttributeError:
-                            pass
+                            pass  # No status code available
                     try:
                         raw_body = e.body  # type: ignore[attr-defined]
                         if isinstance(raw_body, (str, bytes)):
@@ -1877,6 +1880,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                                 else raw_body
                             )
                     except AttributeError:
+                        # Try .response.text or .response.content pattern
                         try:
                             resp = e.response  # type: ignore[attr-defined]
                             if resp is not None:
@@ -1886,11 +1890,11 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                                     try:
                                         body = resp.content
                                     except AttributeError:
-                                        pass
+                                        pass  # No body available
                                 if isinstance(body, (bytes, bytearray)):
                                     body = body.decode("utf-8", errors="ignore")
                         except AttributeError:
-                            pass
+                            pass  # No response object available
                     if status or body:
                         snippet = (body or "")[:2000]
                         logger.error(

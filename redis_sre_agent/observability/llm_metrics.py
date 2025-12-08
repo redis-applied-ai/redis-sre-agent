@@ -42,18 +42,19 @@ LLM_LATENCY = Histogram(
 
 
 def _get_model_name(llm: Any) -> str:
+    """Extract model name from LLM object, trying common attribute patterns."""
     try:
         model = llm.model  # type: ignore[attr-defined]
         if model:
             return model
     except AttributeError:
-        pass
+        pass  # LLM may not have .model attribute
     try:
         model = llm._model  # type: ignore[attr-defined]
         if model:
             return model
     except AttributeError:
-        pass
+        pass  # LLM may not have ._model attribute
     return "unknown"
 
 
@@ -72,7 +73,7 @@ def _extract_usage_from_response(resp: Any) -> Dict[str, Optional[int]]:
             completion = usage_md.get("output_tokens") or usage_md.get("completion_tokens")
             total = usage_md.get("total_tokens")
     except AttributeError:
-        pass
+        pass  # Response may not have .usage_metadata attribute
 
     # Some wrappers place the raw OpenAI usage in response_metadata
     if prompt is None or completion is None:
@@ -88,7 +89,7 @@ def _extract_usage_from_response(resp: Any) -> Dict[str, Optional[int]]:
                     )
                     total = total or usage.get("total_tokens")
         except AttributeError:
-            pass
+            pass  # Response may not have .response_metadata attribute
 
     # Many providers only give total
     if total is None and prompt is not None and completion is not None:

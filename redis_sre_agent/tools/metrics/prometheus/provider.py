@@ -226,8 +226,6 @@ class PrometheusToolProvider(ToolProvider):
         if last_err:
             logger.debug(f"_wait_for_targets encountered: {last_err}")
 
-        pass
-
     async def _http_get_json(
         self, path: str, params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
