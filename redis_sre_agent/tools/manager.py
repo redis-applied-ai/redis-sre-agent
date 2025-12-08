@@ -224,7 +224,10 @@ class ToolManager:
         if provider_path not in cls._provider_class_cache:
             module_path, class_name = provider_path.rsplit(".", 1)
             module = __import__(module_path, fromlist=[class_name])
-            cls._provider_class_cache[provider_path] = module.__dict__[class_name]
+            provider_class = getattr(module, class_name, None)
+            if not provider_class:
+                logger.warning(f"Failed to load tool provider class: {provider_path}")
+            cls._provider_class_cache[provider_path] = provider_class
         return cls._provider_class_cache[provider_path]
 
     async def __aexit__(self, *args) -> None:

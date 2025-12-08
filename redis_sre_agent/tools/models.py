@@ -3,9 +3,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-if TYPE_CHECKING:
-    from redis_sre_agent.tools.models import ToolDefinition
-
 
 class ToolCapability(Enum):
     """Capabilities that tools can provide."""

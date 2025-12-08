@@ -4,7 +4,7 @@ This module defines the base ToolProvider ABC, capability enums, lightweight
 data classes, and optional Protocols that describe the minimal contracts
 HostTelemetry and other orchestrators can program against.
 """
-
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 
@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from redis_sre_agent.core.instances import RedisInstance
 
     from .manager import ToolManager
+
+
+logger = logging.getLogger(__name__)
 
 
 # --------------------------- Optional provider Protocols ---------------------------
@@ -395,11 +398,12 @@ class ToolProvider(ABC):
         try:
             op = self.resolve_operation(tool_name, args)
             if not op:
+                logger.warning(f"get_status_update failed to resolve operation for {tool_name}")
                 return None
             method = self.__dict__.get(op) or type(self).__dict__.get(op)
             if not method:
                 return None
-            template = method._status_update_template if method else None
+            template = getattr(method, "_status_update_template", None)
             if not template:
                 return None
             try:

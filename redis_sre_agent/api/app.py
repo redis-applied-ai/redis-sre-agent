@@ -36,7 +36,7 @@ LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
 LOG_DATE_FORMAT = "%H:%M:%S"
 
 logging.basicConfig(
-    level=logging.__dict__[settings.log_level.upper()],
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format=LOG_FORMAT,
     datefmt=LOG_DATE_FORMAT,
 )
