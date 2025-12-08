@@ -101,9 +101,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         return "re_admin"  # Shortened to avoid OpenAI 64-char tool name limit
 
     @property
-    def default_requires_instance(self) -> Optional[bool]:
-        """Admin tools always require a Redis Enterprise instance with admin access."""
-
+    def requires_redis_instance(self) -> bool:
+        """Admin tools always require a Redis Enterprise instance."""
         return True
 
     def get_client(self) -> httpx.AsyncClient:

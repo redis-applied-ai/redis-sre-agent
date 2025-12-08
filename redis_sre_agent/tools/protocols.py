@@ -320,23 +320,21 @@ class ToolProvider(ABC):
         )
 
     @property
-    def default_requires_instance(self) -> Optional[bool]:
-        """Default ``requires_instance`` flag for this provider's tools.
+    def requires_redis_instance(self) -> bool:
+        """Whether this provider's tools require a Redis instance.
 
-        Returns:
-            * ``True`` if tools always require a Redis instance.
-            * ``False`` if tools never require a Redis instance.
-            * ``None`` (default) to derive from whether ``redis_instance`` was provided.
+        Returns ``True`` if the provider was initialized with a ``redis_instance``.
+        Subclasses can override to always return ``True`` or ``False`` regardless
+        of initialization.
         """
-
-        return None
+        return self.redis_instance is not None
 
     def tools(self) -> List["Tool"]:
         """Return the concrete tools exposed by this provider.
 
         The default implementation builds :class:`Tool` objects from
         :meth:`create_tool_schemas`, using the ``capability`` on each
-        :class:`ToolDefinition` and :attr:`default_requires_instance` to
+        :class:`ToolDefinition` and :attr:`requires_redis_instance` to
         populate :class:`ToolMetadata`.
 
         Each tool's :pyattr:`Tool.invoke` closure is wired directly to the
@@ -350,14 +348,6 @@ class ToolProvider(ABC):
         # Get schemas from provider. Providers that override ``tools`` may
         # ignore :meth:`create_tool_schemas` entirely.
         schemas: List[ToolDefinition] = self.create_tool_schemas()
-
-        # Determine default requires_instance. ``None`` means derive from the
-        # presence of ``redis_instance``.
-        requires_instance = (
-            bool(self.redis_instance)
-            if self.default_requires_instance is None
-            else bool(self.default_requires_instance)
-        )
 
         tools: List["Tool"] = []
         for schema in schemas:
@@ -373,7 +363,7 @@ class ToolProvider(ABC):
                 description=schema.description,
                 capability=capability,
                 provider_name=self.provider_name,
-                requires_instance=requires_instance,
+                requires_instance=self.requires_redis_instance,
             )
 
             # Derive operation name and look up the corresponding method.

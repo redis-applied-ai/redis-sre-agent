@@ -144,9 +144,8 @@ class RedisCloudToolProvider(ToolProvider):
         return "redis_cloud"
 
     @property
-    def default_requires_instance(self) -> Optional[bool]:
-        """Redis Cloud management tools do not require a specific Redis instance."""
-
+    def requires_redis_instance(self) -> bool:
+        """Redis Cloud management tools do not require a Redis instance."""
         return False
 
     def get_client(self) -> GeneratedClient:

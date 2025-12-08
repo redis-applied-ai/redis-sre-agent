@@ -126,9 +126,8 @@ class RedisCommandToolProvider(ToolProvider):
         return "redis_command"
 
     @property
-    def default_requires_instance(self) -> Optional[bool]:
-        """Diagnostics tools for redis_command always require a Redis instance."""
-
+    def requires_redis_instance(self) -> bool:
+        """Diagnostics tools always require a Redis instance."""
         return True
 
     def get_client(self) -> Redis:

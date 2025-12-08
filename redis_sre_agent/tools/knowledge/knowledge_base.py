@@ -38,9 +38,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         return "knowledge"
 
     @property
-    def default_requires_instance(self) -> Optional[bool]:
-        """Knowledge base tools do not depend on a specific Redis instance."""
-
+    def requires_redis_instance(self) -> bool:
+        """Knowledge base tools do not require a Redis instance."""
         return False
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
