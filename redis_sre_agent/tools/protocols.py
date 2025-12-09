@@ -385,7 +385,7 @@ class ToolProvider(ABC):
             async def _invoke(args: Dict[str, Any], _method=method) -> Any:
                 return await _method(**(args or {}))
 
-            tools.append(Tool(metadata=meta, schema=schema, invoke=_invoke))
+            tools.append(Tool(metadata=meta, definition=schema, invoke=_invoke))
         return tools
 
     def get_status_update(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:

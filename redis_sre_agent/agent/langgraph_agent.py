@@ -369,8 +369,9 @@ class SRELangGraphAgent:
     async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
         if not self._run_cache_active:
             return await llm.ainvoke(messages)
-        model = llm.model
-        temperature = llm.temperature
+        # LLM objects use different attribute names: model, model_name, or _model
+        model = getattr(llm, "model", None) or getattr(llm, "model_name", None) or "unknown"
+        temperature = getattr(llm, "temperature", 0.0)
         key = f"{tag}|{model}|{temperature}|{self._messages_cache_key(messages)}"
         if key in self._llm_cache:
             return self._llm_cache[key]

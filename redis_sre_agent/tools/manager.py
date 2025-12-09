@@ -268,7 +268,7 @@ class ToolManager:
         Returns:
             List of ToolDefinition objects for LLM binding
         """
-        return [t.schema for t in self._tools]
+        return [t.definition for t in self._tools]
 
     def get_tools_by_provider_names(self, provider_names: List[str]) -> List[ToolDefinition]:
         """Return tools belonging to providers with given provider_name values.
@@ -289,7 +289,7 @@ class ToolManager:
                 provider = self._routing_table.get(tool.metadata.name)
                 pname = provider.provider_name if provider else None
                 if isinstance(pname, str) and pname.lower() in wanted:
-                    results.append(tool.schema)
+                    results.append(tool.definition)
             return results
         except Exception:
             # Be conservative; if anything goes wrong, return no tools
@@ -362,7 +362,7 @@ class ToolManager:
                 p = self._routing_table.get(tool.metadata.name)
                 if not p or id(p) not in provider_ids:
                     continue
-                results.append(tool.schema)
+                results.append(tool.definition)
             return results
         except Exception:
             return []

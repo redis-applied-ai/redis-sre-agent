@@ -32,11 +32,11 @@ class ToolMetadata(BaseModel):
 
 
 class Tool(BaseModel):
-    """Concrete tool object combining schema, metadata, and executor.
+    """Concrete tool object combining definition, metadata, and executor.
 
     Attributes:
         metadata: :class:`ToolMetadata` describing the tool for routing.
-        schema: The :class:`ToolDefinition` shown to the LLM.
+        definition: The :class:`ToolDefinition` shown to the LLM.
         invoke: Async callable taking a single ``Dict[str, Any]`` of arguments
             and returning the tool result.
     """
@@ -44,7 +44,7 @@ class Tool(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     metadata: ToolMetadata
-    schema: "ToolDefinition"
+    definition: "ToolDefinition"
     invoke: Callable[[Dict[str, Any]], Awaitable[Any]]
 
 
