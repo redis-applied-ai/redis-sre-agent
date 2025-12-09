@@ -13,7 +13,7 @@ from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+@patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_called_once_for_multiple_rladmin(mock_build):
     mock_corrector = MagicMock()
     mock_corrector.ainvoke = AsyncMock(
@@ -34,7 +34,7 @@ async def test_corrector_called_once_for_multiple_rladmin(mock_build):
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+@patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_not_called_without_triggers(mock_build):
     agent = SRELangGraphAgent()
     with patch.object(agent, "process_query", new=AsyncMock(return_value="no cli here")):

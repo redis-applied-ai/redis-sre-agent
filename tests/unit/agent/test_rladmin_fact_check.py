@@ -17,7 +17,7 @@ from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
 class TestRladminCorrector:
     @pytest.mark.asyncio
-    @patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+    @patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
     async def test_corrector_triggers_on_rladmin(self, mock_build):
         mock_corrector = MagicMock()
         mock_corrector.ainvoke = AsyncMock(

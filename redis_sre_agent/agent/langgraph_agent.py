@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
@@ -29,8 +30,10 @@ from ..core.instances import (
     save_instances,
 )
 from ..tools.manager import ToolManager
+from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
 from .prompts import SRE_SYSTEM_PROMPT
+from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -284,12 +287,6 @@ def _extract_instance_details_from_message(message: str) -> Optional[Dict[str, s
     return None
 
 
-# SRE-focused system prompt
-# Prompts moved to redis_sre_agent/agent/prompts.py
-
-# Fact-checker prompt moved to redis_sre_agent/agent/prompts.py
-
-
 class AgentState(TypedDict):
     """State schema for the SRE LangGraph agent."""
 
@@ -337,9 +334,9 @@ class SRELangGraphAgent:
         # No tools bound at initialization - they're bound per conversation
         self.llm_with_tools = self.llm  # Will be rebound with tools per query
 
-        # Workflow will be built per-query with the appropriate ToolManager
-        # Note: We create a new MemorySaver for each query to ensure proper isolation
-        # This prevents cross-contamination between different tasks/threads
+        # Workflow will be built per-query with the appropriate ToolManager.
+        # Note: We create a new MemorySaver for each query to ensure proper isolation.
+        # This prevents cross-contamination between different tasks/threads.
 
         logger.info("SRE LangGraph agent initialized (tools loaded per-query)")
 
@@ -799,10 +796,6 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
             # 2) Build StructuredTool adapters once (resolve via ToolManager)
             try:
-                from langgraph.prebuilt import ToolNode as LGToolNode
-
-                from .helpers import build_adapters_for_tooldefs as _build_adapters
-
                 # Centralized adapter builder (returns StructuredTool adapters)
                 adapters = await _build_adapters(tool_mgr, list(tooldefs_by_name.values()))
 
@@ -991,8 +984,6 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 }
                 # Build knowledge-only adapters locally (mini model)
                 from redis_sre_agent.tools.models import ToolCapability as _ToolCap
-
-                from .helpers import build_adapters_for_tooldefs as _build_adapters
 
                 # Use all knowledge tools for the mini knowledge agent; no op-level filtering.
                 knowledge_tools = tool_mgr.get_tools_for_capability(_ToolCap.KNOWLEDGE)
@@ -1559,8 +1550,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             for tool in tools:
                 logger.debug(f"  - {tool.name}")
 
-            from .helpers import build_adapters_for_tooldefs as _build_adapters
-
             adapters = await _build_adapters(tool_mgr, tools)
 
             # Rebind LLM with tools for this query
@@ -1702,10 +1691,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 conversation_history,
             )
 
-            # Skip correction if out of Redis scope
+            # Skip correction if this message isn't about Redis
             try:
                 if not (self._is_redis_scoped(query) or self._is_redis_scoped(response)):
-                    logger.info("Skipping safety/fact-corrector (out of Redis scope)")
+                    logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
                     return response
             except Exception:
                 pass
@@ -1715,10 +1704,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 return response
 
             # Build a small, bounded corrector with knowledge + utilities tools only
-            from langchain_openai import ChatOpenAI
-
-            from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
-
             # Use always-on providers (knowledge, utilities)
             async with ToolManager(redis_instance=None) as corrector_tool_manager:
                 # Select knowledge and utility tools via capabilities.
@@ -1730,17 +1715,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 tooldefs = list(knowledge_defs) + list(utilities_defs)
 
                 # Build StructuredTool adapters centrally
-                from .helpers import build_adapters_for_tooldefs as _build_adapters
-
                 adapters = await _build_adapters(corrector_tool_manager, tooldefs)
 
                 # LLM with tools bound via adapters
-                corrector_llm_base = ChatOpenAI(
-                    model=self.settings.openai_model_mini,
-                    openai_api_key=self.settings.openai_api_key,
-                    timeout=self.settings.llm_timeout,
-                )
-                corrector_llm = corrector_llm_base.bind_tools(adapters)
+                corrector_llm = self.mini_llm.bind_tools(adapters)
 
                 # Build the compiled subgraph
                 corrector = build_safety_fact_corrector(
