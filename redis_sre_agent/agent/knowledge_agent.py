@@ -165,20 +165,12 @@ class KnowledgeOnlyAgent:
             try:
                 import time as _time
 
-                try:
-                    from opentelemetry import trace as _otel_trace  # type: ignore
-                except Exception:
-                    _otel_trace = None  # type: ignore
                 from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
 
                 _t0 = _time.perf_counter()
-                _tr = _otel_trace.get_tracer(__name__) if _otel_trace else None
-                if _tr:
-                    with _tr.start_as_current_span(
-                        "llm.call", attributes={"llm.component": "knowledge"}
-                    ):
-                        response = await llm_with_tools.ainvoke(messages)
-                else:
+                with tracer.start_as_current_span(
+                    "llm.call", attributes={"llm.component": "knowledge"}
+                ):
                     response = await llm_with_tools.ainvoke(messages)
                 record_llm_call_metrics(
                     component="knowledge", llm=llm_with_tools, response=response, start_time=_t0
