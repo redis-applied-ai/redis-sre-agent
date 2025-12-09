@@ -4,6 +4,7 @@ This module defines the base ToolProvider ABC, capability enums, lightweight
 data classes, and optional Protocols that describe the minimal contracts
 HostTelemetry and other orchestrators can program against.
 """
+
 import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
