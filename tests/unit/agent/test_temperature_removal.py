@@ -43,16 +43,15 @@ class TestTemperatureRemoval:
 
         SRELangGraphAgent()
 
-        # Verify ChatOpenAI was called without temperature
-        mock_chat_openai.assert_called_once()
-        call_args = mock_chat_openai.call_args
+        # Verify ChatOpenAI was called twice (self.llm and self.mini_llm)
+        assert mock_chat_openai.call_count == 2
 
-        # Check that temperature is not in the arguments
-        assert "temperature" not in call_args.kwargs
-
-        # Verify required arguments are present
-        assert "model" in call_args.kwargs
-        assert "openai_api_key" in call_args.kwargs
+        # Check all calls to ensure none use temperature
+        for call_args in mock_chat_openai.call_args_list:
+            assert "temperature" not in call_args.kwargs
+            # Verify required arguments are present
+            assert "model" in call_args.kwargs
+            assert "openai_api_key" in call_args.kwargs
 
     @patch("redis_sre_agent.evaluation.judge.ChatOpenAI")
     def test_judge_no_temperature(self, mock_chat_openai):

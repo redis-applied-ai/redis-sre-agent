@@ -320,9 +320,15 @@ class SRELangGraphAgent:
         """Initialize the SRE LangGraph agent."""
         self.settings = settings
         self.progress_callback = progress_callback
-        # Single LLM with both reasoning and function calling capabilities
+        # LLM with both reasoning and function calling capabilities
         self.llm = ChatOpenAI(
             model=self.settings.openai_model,
+            openai_api_key=self.settings.openai_api_key,
+            timeout=self.settings.llm_timeout,
+        )
+        # Faster LLM for utility tasks
+        self.mini_llm = ChatOpenAI(
+            model=self.settings.openai_model_mini,
             openai_api_key=self.settings.openai_api_key,
             timeout=self.settings.llm_timeout,
         )
@@ -920,7 +926,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             try:
                 from .models import TopicsList
 
-                extractor_llm = self.llm.with_structured_output(TopicsList)  # return TopicsList
+                extractor_llm = self.mini_llm.with_structured_output(
+                    TopicsList
+                )  # return TopicsList
                 instance_ctx = {
                     "instance_type": target_instance.instance_type,
                     "name": target_instance.name,
@@ -990,12 +998,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 knowledge_tools = tool_mgr.get_tools_for_capability(_ToolCap.KNOWLEDGE)
                 knowledge_adapters = await _build_adapters(tool_mgr, knowledge_tools)
                 if knowledge_adapters:
-                    knowledge_llm_base = ChatOpenAI(
-                        model=self.settings.openai_model_mini,
-                        openai_api_key=self.settings.openai_api_key,
-                        timeout=self.settings.llm_timeout,
-                    )
-                    knowledge_llm = knowledge_llm_base.bind_tools(knowledge_adapters)
+                    knowledge_llm = self.mini_llm.bind_tools(knowledge_adapters)
 
                 if knowledge_adapters:
                     logger.info(

@@ -272,24 +272,16 @@ class KnowledgeBaseToolProvider(ToolProvider):
             kwargs["product_labels"] = product_labels
 
         # OTel: instrument ingestion
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-
-            _tr = _otel_trace.get_tracer(__name__)
-        except Exception:
-            _tr = None  # type: ignore
-        if _tr:
-            with _tr.start_as_current_span(
-                "tool.knowledge.ingest",
-                attributes={
-                    "title.len": len(title or ""),
-                    "category": str(category or ""),
-                    "has.labels": bool(product_labels),
-                    "has.severity": bool(severity),
-                },
-            ):
-                return await _ingest_sre_document(**kwargs)
-        return await _ingest_sre_document(**kwargs)
+        with tracer.start_as_current_span(
+            "tool.knowledge.ingest",
+            attributes={
+                "title.len": len(title or ""),
+                "category": str(category or ""),
+                "has.labels": bool(product_labels),
+                "has.severity": bool(severity),
+            },
+        ):
+            return await _ingest_sre_document(**kwargs)
 
     async def get_all_fragments(self, document_hash: str) -> Dict[str, Any]:
         """Get all fragments of a document.
@@ -301,19 +293,11 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Dictionary with all document fragments
         """
         logger.info(f"Getting all fragments for document: {document_hash}")
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-
-            _tr = _otel_trace.get_tracer(__name__)
-        except Exception:
-            _tr = None  # type: ignore
-        if _tr:
-            with _tr.start_as_current_span(
-                "tool.knowledge.get_all_fragments",
-                attributes={"document_hash": str(document_hash)[:16]},
-            ):
-                return await get_all_document_fragments(document_hash)
-        return await get_all_document_fragments(document_hash)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_all_fragments",
+            attributes={"document_hash": str(document_hash)[:16]},
+        ):
+            return await get_all_document_fragments(document_hash)
 
     async def get_related_fragments(
         self, document_hash: str, chunk_index: int, limit: int = 10
@@ -329,20 +313,12 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Dictionary with related fragments
         """
         logger.info(f"Getting related fragments for document {document_hash}, chunk {chunk_index}")
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-
-            _tr = _otel_trace.get_tracer(__name__)
-        except Exception:
-            _tr = None  # type: ignore
-        if _tr:
-            with _tr.start_as_current_span(
-                "tool.knowledge.get_related_fragments",
-                attributes={
-                    "document_hash": str(document_hash)[:16],
-                    "chunk_index": int(chunk_index),
-                    "limit": int(limit),
-                },
-            ):
-                return await get_related_document_fragments(document_hash, chunk_index, limit)
-        return await get_related_document_fragments(document_hash, chunk_index, limit)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_related_fragments",
+            attributes={
+                "document_hash": str(document_hash)[:16],
+                "chunk_index": int(chunk_index),
+                "limit": int(limit),
+            },
+        ):
+            return await get_related_document_fragments(document_hash, chunk_index, limit)

@@ -147,19 +147,10 @@ class KnowledgeOnlyAgent:
                 return clean
 
             # OTel: capture sanitize phase
-            try:
-                from opentelemetry import trace as _otel_trace  # type: ignore
-
-                _tr = _otel_trace.get_tracer(__name__)
-            except Exception:
-                _tr = None  # type: ignore
             _pre_count = len(messages)
-            if _tr:
-                with _tr.start_as_current_span(
-                    "knowledge.agent.sanitize", attributes={"messages.pre": _pre_count}
-                ):
-                    messages = _sanitize_messages_for_llm(messages)
-            else:
+            with tracer.start_as_current_span(
+                "knowledge.agent.sanitize", attributes={"messages.pre": _pre_count}
+            ):
                 messages = _sanitize_messages_for_llm(messages)
 
             try:
