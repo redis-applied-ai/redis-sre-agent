@@ -4,12 +4,13 @@ This module provides tools for managing Redis Cloud resources through the
 Redis Cloud Management API.
 
 Example usage:
-    from redis_sre_agent.tools.cloud.redis_cloud import RedisCloudToolProvider
+    from redis_sre_agent.tools.cloud.redis_cloud import RedisCloudConfig, RedisCloudToolProvider
 
-    provider = RedisCloudToolProvider()
+    provider = RedisCloudToolProvider(config=RedisCloudConfig())
     async with provider:
-        tools = provider.create_tool_schemas()
-        result = await provider.resolve_tool_call("redis_cloud_abc123_list_subscriptions", {})
+        # Call the concrete async methods directly; ToolProvider.tools() wires
+        # tools for LLM use on top of these methods.
+        result = await provider.list_subscriptions()
 """
 
 from .provider import RedisCloudConfig, RedisCloudToolProvider

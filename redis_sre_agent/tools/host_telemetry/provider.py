@@ -15,14 +15,13 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 from redis_sre_agent.tools.protocols import (
     DiagnosticsProviderProtocol,
     LogsProviderProtocol,
     MetricsProviderProtocol,
-    ToolCapability,
     ToolProvider,
 )
-from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -59,32 +58,41 @@ class HostTelemetryConfig(BaseModel):
 class HostTelemetryToolProvider(ToolProvider):
     """Backend-agnostic host telemetry tools built on provider Protocols."""
 
-    provider_name = "host_telemetry"
     instance_config_model = HostTelemetryConfig
     extension_namespace = "host_telemetry"
 
     @property
+    def provider_name(self) -> str:
+        return "host_telemetry"
+
+    @property
     def _metrics_providers(self) -> List[MetricsProviderProtocol]:
-        mgr = getattr(self, "_manager", None)
+        mgr = self._manager
         if not mgr:
             return []
         return mgr.get_providers_for_capability(ToolCapability.METRICS)  # type: ignore[return-value]
 
     @property
     def _logs_providers(self) -> List[LogsProviderProtocol]:
-        mgr = getattr(self, "_manager", None)
+        mgr = self._manager
         if not mgr:
             return []
         return mgr.get_providers_for_capability(ToolCapability.LOGS)  # type: ignore[return-value]
 
     @property
     def _diag_providers(self) -> List[DiagnosticsProviderProtocol]:
-        mgr = getattr(self, "_manager", None)
+        mgr = self._manager
         if not mgr:
             return []
         return mgr.get_providers_for_capability(ToolCapability.DIAGNOSTICS)  # type: ignore[return-value]
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
+        """Create tool schemas for host telemetry operations.
+
+        These tools orchestrate calls to metrics/logs/diagnostics providers and
+        are treated as DIAGNOSTICS capability tools by the manager.
+        """
+
         return [
             ToolDefinition(
                 name=self._make_tool_name("list_hosts"),
@@ -92,6 +100,7 @@ class HostTelemetryToolProvider(ToolProvider):
                     "List hosts to use with metrics/logs providers. Uses instance config hosts when provided, "
                     "otherwise attempts discovery from diagnostics via the system_hosts protocol."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={"type": "object", "properties": {}, "required": []},
             ),
             ToolDefinition(
@@ -100,6 +109,7 @@ class HostTelemetryToolProvider(ToolProvider):
                     "Query host metrics for one or more hosts using configured metric aliases. "
                     "Each alias is a PromQL template that includes {host}. Queries all available metrics providers."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -136,6 +146,7 @@ class HostTelemetryToolProvider(ToolProvider):
                     "Query host logs for one or more hosts. Builds provider-specific selectors from config and "
                     "combines keywords into a single safe regex. Queries all available log providers."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -159,29 +170,16 @@ class HostTelemetryToolProvider(ToolProvider):
             ),
         ]
 
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        parts = tool_name.split("_")
-        # Format: {provider_name}_{hash}_{operation}; provider_name can contain underscores
-        op = "_".join(parts[3:]) if len(parts) >= 4 else tool_name
-        if op == "list_hosts":
-            return await self.list_hosts()
-        if op == "get_host_metrics":
-            return await self.get_host_metrics(**args)
-        if op == "get_host_logs":
-            return await self.get_host_logs(**args)
-        raise ValueError(f"Unknown operation: {op} (from tool: {tool_name})")
-
     # --------------------------------- Helpers ---------------------------------
 
     async def _discover_hosts_via_diagnostics(self) -> List[str]:
         hosts: set[str] = set()
         for diag in self._diag_providers:
-            # Only use an explicit system_hosts() API if the diagnostics provider implements it
-            system_hosts_fn = getattr(diag, "system_hosts", None)
-            if not callable(system_hosts_fn):
+            # Only use providers that implement the full DiagnosticsProviderProtocol
+            if not isinstance(diag, DiagnosticsProviderProtocol):
                 continue
             try:
-                items = await system_hosts_fn()
+                items = await diag.system_hosts()
             except Exception:
                 continue
             if not items:
@@ -191,7 +189,7 @@ class HostTelemetryToolProvider(ToolProvider):
                     if isinstance(item, dict):
                         h = item.get("host")
                     else:
-                        h = getattr(item, "host", None)
+                        h = item.host
                     if isinstance(h, str) and h:
                         hosts.add(h)
                 except Exception:
@@ -232,11 +230,11 @@ class HostTelemetryToolProvider(ToolProvider):
         # Diagnostics discovery via explicit system_hosts() API
         discovered_any = False
         for diag in self._diag_providers:
-            system_hosts_fn = getattr(diag, "system_hosts", None)
-            if not callable(system_hosts_fn):
+            # Only use providers that implement the full DiagnosticsProviderProtocol
+            if not isinstance(diag, DiagnosticsProviderProtocol):
                 continue
             try:
-                items = await system_hosts_fn()
+                items = await diag.system_hosts()
             except Exception:
                 continue
             if not items:
@@ -250,10 +248,10 @@ class HostTelemetryToolProvider(ToolProvider):
                         role = item.get("role")
                         labels = item.get("labels") or {}
                     else:
-                        host = getattr(item, "host", None)
-                        port = getattr(item, "port", None)
-                        role = getattr(item, "role", None)
-                        labels = getattr(item, "labels", {}) or {}
+                        host = item.host
+                        port = item.port
+                        role = item.role
+                        labels = item.labels or {}
                     if isinstance(host, str) and host:
                         if host not in hosts:
                             hosts.append(host)
@@ -310,7 +308,7 @@ class HostTelemetryToolProvider(ToolProvider):
                     query=q, start_time=start_time, end_time=end_time, step=step_val
                 )
                 return {
-                    "provider": getattr(provider, "provider_name", "metrics"),
+                    "provider": provider.provider_name,
                     "host": host,
                     "key": key,
                     "query": q,
@@ -318,7 +316,7 @@ class HostTelemetryToolProvider(ToolProvider):
                 }
             except Exception as e:
                 return {
-                    "provider": getattr(provider, "provider_name", "metrics"),
+                    "provider": provider.provider_name,
                     "host": host,
                     "key": key,
                     "query": q,
@@ -359,14 +357,14 @@ class HostTelemetryToolProvider(ToolProvider):
                     query=q, start=start, end=end, direction=direction, limit=limit
                 )
                 return {
-                    "provider": getattr(provider, "provider_name", "logs"),
+                    "provider": provider.provider_name,
                     "host": host,
                     "query": q,
                     "result": res,
                 }
             except Exception as e:
                 return {
-                    "provider": getattr(provider, "provider_name", "logs"),
+                    "provider": provider.provider_name,
                     "host": host,
                     "query": q,
                     "error": str(e),

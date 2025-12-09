@@ -235,18 +235,10 @@ Research Summary:
 
         import time as _time
 
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-        except Exception:
-            _otel_trace = None  # type: ignore
         from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
 
         _t0 = _time.perf_counter()
-        _tr = _otel_trace.get_tracer(__name__) if _otel_trace else None
-        if _tr:
-            with _tr.start_as_current_span("llm.call", attributes={"llm.component": "runbook"}):
-                response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-        else:
+        with tracer.start_as_current_span("llm.call", attributes={"llm.component": "runbook"}):
             response = await self.llm.ainvoke([HumanMessage(content=prompt)])
         record_llm_call_metrics(
             component="runbook", llm=self.llm, response=response, start_time=_t0
@@ -480,20 +472,10 @@ Provide your evaluation in this exact JSON format:
 
         import time as _time
 
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-        except Exception:
-            _otel_trace = None  # type: ignore
         from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
 
         _t0 = _time.perf_counter()
-        _tr = _otel_trace.get_tracer(__name__) if _otel_trace else None
-        if _tr:
-            with _tr.start_as_current_span("llm.call", attributes={"llm.component": "runbook"}):
-                response = await self.llm.ainvoke(
-                    [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-                )
-        else:
+        with tracer.start_as_current_span("llm.call", attributes={"llm.component": "runbook"}):
             response = await self.llm.ainvoke(
                 [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
             )

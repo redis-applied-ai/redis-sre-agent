@@ -10,6 +10,7 @@ from redis_sre_agent.tools.metrics.prometheus import (
     PrometheusConfig,
     PrometheusToolProvider,
 )
+from redis_sre_agent.tools.protocols import ToolCapability
 
 
 @pytest.fixture(scope="module")
@@ -100,6 +101,7 @@ async def test_create_tool_schemas(prometheus_config):
             assert schema.parameters
             assert "type" in schema.parameters
             assert schema.parameters["type"] == "object"
+            assert schema.capability == ToolCapability.METRICS
 
 
 @pytest.mark.asyncio
@@ -151,11 +153,14 @@ async def test_search_metrics_all(prometheus_config):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_query(prometheus_config):
-    """Test resolving tool calls through the routing mechanism."""
+    """Test that tools() wires the query tool to the provider method."""
     async with PrometheusToolProvider(config=prometheus_config) as provider:
         tool_name = provider._make_tool_name("query")
 
-        result = await provider.resolve_tool_call(tool_name=tool_name, args={"query": "up"})
+        tools = provider.tools()
+        tool = next(t for t in tools if t.metadata.name == tool_name)
+
+        result = await tool.invoke({"query": "up"})
 
         assert result["status"] == "success"
         assert result["query"] == "up"
@@ -163,13 +168,14 @@ async def test_resolve_tool_call_query(prometheus_config):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_search_metrics(prometheus_config):
-    """Test resolving search_metrics tool call."""
+    """Test that tools() wires the search_metrics tool to the provider method."""
     async with PrometheusToolProvider(config=prometheus_config) as provider:
         tool_name = provider._make_tool_name("search_metrics")
 
-        result = await provider.resolve_tool_call(
-            tool_name=tool_name, args={"pattern": "prometheus"}
-        )
+        tools = provider.tools()
+        tool = next(t for t in tools if t.metadata.name == tool_name)
+
+        result = await tool.invoke({"pattern": "prometheus"})
 
         assert result["status"] == "success"
         assert "metrics" in result
@@ -318,12 +324,3 @@ async def test_search_metrics_with_label_filters_no_match(prometheus_config):
         assert result["status"] == "success"
         assert result["metrics"] == []
         assert result["count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_resolve_tool_call_unknown_operation(prometheus_config):
-    """Unknown operation should raise ValueError from resolve_tool_call."""
-    async with PrometheusToolProvider(config=prometheus_config) as provider:
-        bad_tool = provider._make_tool_name("unknown_op")
-        with pytest.raises(ValueError):
-            await provider.resolve_tool_call(tool_name=bad_tool, args={})

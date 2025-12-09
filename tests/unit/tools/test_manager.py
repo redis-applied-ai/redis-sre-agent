@@ -3,7 +3,7 @@
 import pytest
 
 from redis_sre_agent.tools.manager import ToolManager
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolDefinition
 
 
 @pytest.mark.asyncio
@@ -36,7 +36,7 @@ async def test_tool_manager_knowledge_tools():
         # Without an instance, only knowledge tools should be loaded
         knowledge_tools = [n for n in tool_names if "knowledge_" in n]
         prometheus_tools = [n for n in tool_names if "prometheus_" in n]
-        redis_cli_tools = [n for n in tool_names if "redis_cli_" in n]
+        redis_command_tools = [n for n in tool_names if "redis_command_" in n]
 
         # Knowledge tools (always loaded)
         assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
@@ -47,7 +47,7 @@ async def test_tool_manager_knowledge_tools():
 
         # Instance-specific tools should NOT be loaded without an instance
         assert len(prometheus_tools) == 0
-        assert len(redis_cli_tools) == 0
+        assert len(redis_command_tools) == 0
 
 
 @pytest.mark.asyncio
@@ -70,17 +70,17 @@ async def test_tool_manager_with_instance():
         tools = mgr.get_tools()
         tool_names = [t.name for t in tools]
 
-        # Should have knowledge, prometheus, and redis_cli tools
+        # Should have knowledge, prometheus, and redis_command tools
         knowledge_tools = [n for n in tool_names if "knowledge_" in n]
         prometheus_tools = [n for n in tool_names if "prometheus_" in n]
-        redis_cli_tools = [n for n in tool_names if "redis_command_" in n]
+        redis_command_tools = [n for n in tool_names if "redis_command_" in n]
 
         # Knowledge tools (always loaded)
         assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
 
         # Instance-specific tools should be loaded
         assert len(prometheus_tools) == 3  # query, query_range, search_metrics
-        assert len(redis_cli_tools) == 11  # All diagnostic tools
+        assert len(redis_command_tools) == 11  # All diagnostic tools
 
 
 @pytest.mark.asyncio

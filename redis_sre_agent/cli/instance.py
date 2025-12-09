@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import click
+from pydantic import SecretStr
 from rich.console import Console
 from rich.table import Table
 
@@ -27,7 +28,7 @@ def _mask_response(inst: core_instances.RedisInstance) -> Dict[str, Any]:
     d = inst.model_dump(mode="json", exclude={"connection_url", "admin_password"})
     d["connection_url"] = core_instances.mask_redis_url(inst.connection_url)
     # Always mask admin_password if present
-    if getattr(inst, "admin_password", None):
+    if inst.admin_password:
         d["admin_password"] = "***"
     return d
 
@@ -47,7 +48,7 @@ def _print_instances_table(items: List[core_instances.RedisInstance], limit: int
 
     for inst in items[:limit]:
         masked_url = core_instances.mask_redis_url(inst.connection_url)
-        itype = getattr(inst.instance_type, "value", inst.instance_type) or "-"
+        itype = inst.instance_type.value if inst.instance_type else "-"
         table.add_row(inst.id, inst.name, inst.environment, itype, masked_url)
 
     console.print(table)
@@ -474,7 +475,7 @@ def instances_test(instance_id: str, as_json: bool):
                 raise RuntimeError("Instance not found")
             url = (
                 inst.connection_url.get_secret_value()
-                if hasattr(inst.connection_url, "get_secret_value")
+                if isinstance(inst.connection_url, SecretStr)
                 else str(inst.connection_url)
             )
             ok = await test_redis_connection(url=url)

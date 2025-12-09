@@ -332,22 +332,20 @@ Subject:"""
 
         threads: List[Dict[str, Any]] = []
         for res in results:
-            row = (
-                res
-                if isinstance(res, dict)
-                else {
-                    k: getattr(res, k, None)
-                    for k in [
-                        "id",
-                        "subject",
-                        "user_id",
-                        "instance_id",
-                        "priority",
-                        "created_at",
-                        "updated_at",
-                    ]
-                }
-            )
+            if isinstance(res, dict):
+                row = res
+            else:
+                row = {}
+                for k in [
+                    "id",
+                    "subject",
+                    "user_id",
+                    "instance_id",
+                    "priority",
+                    "created_at",
+                    "updated_at",
+                ]:
+                    row[k] = res.__dict__.get(k)
             redis_key = row.get("id", "")
             thread_id = (
                 redis_key[len("sre_threads:") :]

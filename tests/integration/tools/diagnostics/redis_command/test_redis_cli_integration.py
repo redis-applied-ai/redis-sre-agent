@@ -211,14 +211,14 @@ async def test_multiple_providers_coexist(redis_url, monkeypatch):
         async with ToolManager(redis_instance=redis_instance) as manager:
             tools = manager.get_tools()
 
-            # Should have both knowledge base, Prometheus, and Redis CLI tools
+            # Should have both knowledge base, Prometheus, and Redis Command tools
             knowledge_tools = [t for t in tools if "knowledge" in t.name]
             prometheus_tools = [t for t in tools if "prometheus" in t.name]
-            redis_cli_tools = [t for t in tools if "redis_cli" in t.name]
+            redis_command_tools = [t for t in tools if "redis_command" in t.name]
 
             assert len(knowledge_tools) > 0, "Knowledge base tools should be loaded"
             assert len(prometheus_tools) == 3, "Prometheus tools should be loaded"
-            assert len(redis_cli_tools) == 11, "Redis CLI tools should be loaded"
+            assert len(redis_command_tools) == 11, "Redis Command tools should be loaded"
 
     finally:
         config_module.settings = original_settings

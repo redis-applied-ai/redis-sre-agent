@@ -5,32 +5,21 @@ data classes, and optional Protocols that describe the minimal contracts
 HostTelemetry and other orchestrators can program against.
 """
 
-import weakref
+import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel
+
+from .models import SystemHost, Tool, ToolCapability, ToolDefinition, ToolMetadata
 
 if TYPE_CHECKING:
     from redis_sre_agent.core.instances import RedisInstance
 
     from .manager import ToolManager
-    from .tool_definition import ToolDefinition
 
 
-class ToolCapability(Enum):
-    """Capabilities that tools can provide."""
-
-    METRICS = "metrics"
-    LOGS = "logs"
-    TICKETS = "tickets"
-    REPOS = "repos"
-    TRACES = "traces"
-    DIAGNOSTICS = "diagnostics"  # For deep instance diagnostics (Redis INFO, key sampling, etc.)
-    KNOWLEDGE = "knowledge"  # Knowledge base search/ingest and fragment retrieval
-    UTILITIES = "utilities"  # Non-destructive utility functions (calc, date/time, http_head)
+logger = logging.getLogger(__name__)
 
 
 # --------------------------- Optional provider Protocols ---------------------------
@@ -63,6 +52,7 @@ class LogsProviderProtocol(Protocol):
     ) -> Dict[str, Any]: ...
 
 
+@runtime_checkable
 class DiagnosticsProviderProtocol(Protocol):
     async def info(self, section: Optional[str] = None) -> Dict[str, Any]: ...
     async def replication_info(self) -> Dict[str, Any]: ...
@@ -111,154 +101,30 @@ class UtilitiesProviderProtocol(Protocol):
     async def http_head(self, url: str, timeout: Optional[float] = 2.0) -> Dict[str, Any]: ...
 
 
-# --------------------------- Lightweight data classes ---------------------------
-
-
-class MetricValue:
-    """Represents a metric value with timestamp."""
-
-    def __init__(
-        self,
-        value: float | int,
-        timestamp: Optional[datetime] = None,
-        labels: Optional[Dict[str, str]] = None,
-    ):
-        self.value = value
-        self.timestamp = timestamp or datetime.now()
-        self.labels = labels or {}
-
-
-class MetricDefinition:
-    """Defines a metric with metadata."""
-
-    def __init__(self, name: str, description: str, unit: str, metric_type: str = "gauge"):
-        self.name = name
-        self.description = description
-        self.unit = unit
-        self.metric_type = metric_type  # gauge, counter, histogram, etc.
-
-
-class TimeRange:
-    """Represents a time range for queries."""
-
-    def __init__(self, start: datetime, end: datetime):
-        self.start = start
-        self.end = end
-
-
-class LogEntry:
-    """Represents a log entry."""
-
-    def __init__(
-        self,
-        timestamp: datetime,
-        level: str,
-        message: str,
-        source: str,
-        labels: Optional[Dict[str, str]] = None,
-    ):
-        self.timestamp = timestamp
-        self.level = level
-        self.message = message
-        self.source = source
-        self.labels = labels or {}
-
-
-class SystemHost(BaseModel):
-    """Represents a system host target for metrics/logs discovery.
-
-    This describes where the Redis system is running (nodes, primaries/replicas,
-    cluster nodes, or Enterprise machines), not necessarily database endpoints.
-    """
-
-    host: str
-    port: Optional[int] = None
-    role: Optional[str] = None  # e.g., single, master, replica, cluster-master, enterprise-node
-    labels: Dict[str, str] = {}
-
-
-class Ticket:
-    """Represents a ticket/issue."""
-
-    def __init__(
-        self,
-        id: str,
-        title: str,
-        description: str,
-        status: str,
-        assignee: Optional[str] = None,
-        labels: Optional[List[str]] = None,
-    ):
-        self.id = id
-        self.title = title
-        self.description = description
-        self.status = status
-        self.assignee = assignee
-        self.labels = labels or []
-
-
-class Repository:
-    """Represents a code repository."""
-
-    def __init__(
-        self,
-        name: str,
-        url: str,
-        default_branch: str = "main",
-        languages: Optional[List[str]] = None,
-    ):
-        self.name = name
-        self.url = url
-        self.default_branch = default_branch
-        self.languages = languages or []
-
-
-class TraceSpan:
-    """Represents a trace span."""
-
-    def __init__(
-        self,
-        trace_id: str,
-        span_id: str,
-        operation_name: str,
-        start_time: datetime,
-        duration_ms: float,
-        tags: Optional[Dict[str, str]] = None,
-    ):
-        self.trace_id = trace_id
-        self.span_id = span_id
-        self.operation_name = operation_name
-        self.start_time = start_time
-        self.duration_ms = duration_ms
-        self.tags = tags or {}
-
-
 class ToolProvider(ABC):
     """Base class for all tool providers.
 
     Tool providers are async context managers that create tools for LLM use.
-    Each provider instance generates unique tool names using instance hashing.
+        Each provider instance generates unique tool names using instance hashing.
 
-    Example:
-        class MyToolProvider(ToolProvider):
-            provider_name = "my_tool"
+        Example:
+            class MyToolProvider(ToolProvider):
+                @property
+                def provider_name(self) -> str:
+                    return "my_tool"
 
-            def create_tool_schemas(self) -> List[ToolDefinition]:
-                return [
-                    ToolDefinition(
-                        name=self._make_tool_name("do_something"),
-                        description="Does something useful",
-                        parameters={...},
-                    )
-                ]
+                async def do_something(self, param: str) -> Dict[str, Any]:
+                    return {"result": f"Did something with {param}"}
 
-            async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-                if "do_something" in tool_name:
-                    return await self.do_something(**args)
-                raise ValueError(f"Unknown tool: {tool_name}")
-
-            async def do_something(self, param: str) -> Dict[str, Any]:
-                return {"result": f"Did something with {param}"}
+                def create_tool_schemas(self) -> List[ToolDefinition]:
+                    return [
+                        ToolDefinition(
+                            name=self._make_tool_name("do_something"),
+                            description="Does something useful",
+                            capability=ToolCapability.UTILITIES,
+                            parameters={...},
+                        )
+                    ]
     """
 
     # Capabilities this provider offers. Subclasses should override.
@@ -271,29 +137,8 @@ class ToolProvider(ABC):
     instance_config_model: Optional[type[BaseModel]] = None
     extension_namespace: Optional[str] = None  # defaults to provider_name
 
-    # Weak back-reference to the manager (set by ToolManager on load)
-    _manager_ref: Optional[Any] = None
-
-    @property
-    def _manager(self) -> Optional["ToolManager"]:
-        """Dynamically resolve the ToolManager from a weak reference.
-
-        Back-compat: property name matches legacy attribute so providers that
-        do getattr(self, "_manager", None) keep working without changes.
-        """
-        try:
-            ref = getattr(self, "_manager_ref", None)
-            return ref() if ref else None
-        except Exception:
-            return None
-
-    @_manager.setter
-    def _manager(self, manager: Optional["ToolManager"]) -> None:
-        """Setter accepts a strong manager and stores a weakref to avoid cycles."""
-        try:
-            self._manager_ref = weakref.ref(manager) if manager is not None else None
-        except Exception:
-            self._manager_ref = None
+    # Back-reference to the manager (set by ToolManager on load)
+    _manager: Optional["ToolManager"] = None
 
     def __init__(
         self, redis_instance: Optional["RedisInstance"] = None, config: Optional[Any] = None
@@ -332,14 +177,14 @@ class ToolProvider(ABC):
         For secrets, the value should be SecretStr where possible; plain strings are accepted.
         """
         # No instance or no model -> nothing to do
-        if not getattr(self, "instance_config_model", None) or not self.redis_instance:
+        if not self.instance_config_model or not self.redis_instance:
             return None
         try:
             ns = self._get_extension_namespace()
             data: Dict[str, Any] = {}
             # Gather data
             try:
-                ext = getattr(self.redis_instance, "extension_data", None) or {}
+                ext = self.redis_instance.extension_data or {}
                 if isinstance(ext.get(ns), dict):
                     data.update(ext.get(ns) or {})
                 else:
@@ -352,7 +197,7 @@ class ToolProvider(ABC):
                 pass
             # Gather secrets
             try:
-                sec = getattr(self.redis_instance, "extension_secrets", None) or {}
+                sec = self.redis_instance.extension_secrets or {}
                 # If secrets are namespaced mapping
                 sec_ns = sec.get(ns)
                 if isinstance(sec_ns, dict):
@@ -376,13 +221,45 @@ class ToolProvider(ABC):
     def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         """Map a tool_name to a provider method name.
 
-        Default implementation returns the last underscore-delimited token
-        from the tool name. Providers can override to handle more complex
-        mappings (e.g., 'config_get', 'client_list').
+        The default implementation reverses :meth:`_make_tool_name` and
+        returns the *operation* portion of the tool name:
+
+        ``{provider_name}_{instance_hash}_{operation} -> operation``
+
+        Providers can override this for more complex mappings (for example,
+        when multiple tool names share a single implementation).
+
+        Note: This method is used for OTel tracing and status updates, not for
+        routing. The ToolManager validates tool existence via the routing table
+        before this is called.
         """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
         try:
-            return tool_name.split("_")[-1]
-        except Exception:
+            # Preferred fast-path: exact prefix match based on provider name
+            # and this instance's hash.
+            prefix = f"{self.provider_name}_{self._instance_hash}_"
+            if tool_name.startswith(prefix):
+                return tool_name[len(prefix) :]
+
+            # Fallback: join everything after provider/hash. This keeps
+            # backwards compatibility with historical naming schemes such as
+            # "redis_command_abcdef_cluster_info".
+            parts = tool_name.split("_")
+            if len(parts) >= 3:
+                return "_".join(parts[2:])
+
+            # Last resort: treat the whole name as the operation.
+            # Log a warning since this may indicate a misconfigured tool name.
+            _logger.warning(
+                f"resolve_operation falling back to full tool name '{tool_name}' as operation. "
+                f"Expected format: {self.provider_name}_<hash>_<operation>"
+            )
+            return tool_name
+        except Exception as e:
+            _logger.warning(f"resolve_operation failed for '{tool_name}': {e}")
             return None
 
     @property
@@ -430,38 +307,86 @@ class ToolProvider(ABC):
         """
         return f"{self.provider_name}_{self._instance_hash}_{operation}"
 
-    @abstractmethod
+    # ----- Core tool APIs -----
+
     def create_tool_schemas(self) -> List["ToolDefinition"]:
-        """Create tool schemas for this provider.
+        """Create ToolDefinition schemas for this provider.
 
-        Each tool should have a unique name (use _make_tool_name helper).
-        If redis_instance is set, tools should be scoped to that instance
-        (e.g., don't expose instance URL parameters in the schema).
-
-        Returns:
-            List of ToolDefinition objects with unique names
+        Providers that implement this method can rely on the default
+        :meth:`tools` implementation, which builds :class:`Tool` objects
+        using the capability declared on each :class:`ToolDefinition`.
+        Providers with special needs can still override :meth:`tools`.
         """
-        ...
 
-    @abstractmethod
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Execute a tool call and return the result.
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.create_tool_schemas() is not implemented; "
+            "either override create_tool_schemas() or override tools()."
+        )
 
-        This method receives the full tool name (including hash) and arguments
-        from the LLM. It should dispatch to the appropriate method and return
-        the result.
+    @property
+    def requires_redis_instance(self) -> bool:
+        """Whether this provider's tools require a Redis instance.
 
-        Args:
-            tool_name: Full tool name (e.g., 'prometheus_a3f2b1_query_metrics')
-            args: Tool arguments from LLM
-
-        Returns:
-            Tool execution result (will be serialized to JSON for LLM)
-
-        Raises:
-            ValueError: If tool_name is not recognized
+        Returns ``True`` if the provider was initialized with a ``redis_instance``.
+        Subclasses can override to always return ``True`` or ``False`` regardless
+        of initialization.
         """
-        ...
+        return self.redis_instance is not None
+
+    def tools(self) -> List["Tool"]:
+        """Return the concrete tools exposed by this provider.
+
+        The default implementation builds :class:`Tool` objects from
+        :meth:`create_tool_schemas`, using the ``capability`` on each
+        :class:`ToolDefinition` and :attr:`requires_redis_instance` to
+        populate :class:`ToolMetadata`.
+
+        Each tool's :pyattr:`Tool.invoke` closure is wired directly to the
+        corresponding provider method (for example, ``query_range`` on a
+        Prometheus provider), so no additional per-provider routing is required.
+
+        Providers with special requirements (for example, per-tool
+        ``requires_instance`` flags or non-standard execution) can still
+        override this method.
+        """
+        # Get schemas from provider. Providers that override ``tools`` may
+        # ignore :meth:`create_tool_schemas` entirely.
+        schemas: List[ToolDefinition] = self.create_tool_schemas()
+
+        tools: List["Tool"] = []
+        for schema in schemas:
+            capability = schema.capability
+            if capability is None:
+                raise ValueError(
+                    f"ToolDefinition {schema.name!r} is missing capability; "
+                    "capability is now a required field on ToolDefinition."
+                )
+
+            meta = ToolMetadata(
+                name=schema.name,
+                description=schema.description,
+                capability=capability,
+                provider_name=self.provider_name,
+                requires_instance=self.requires_redis_instance,
+            )
+
+            # Derive operation name and look up the corresponding method.
+            op_name = self.resolve_operation(schema.name, {}) or ""
+            method = getattr(self, op_name, None) if op_name else None
+
+            if not callable(method):
+                raise RuntimeError(
+                    f"Provider {self.__class__.__name__} has no method {op_name!r} "
+                    f"for tool {schema.name!r}. Define an async {op_name}() method "
+                    "or override tools() to provide a custom implementation."
+                )
+
+            # Capture method via default arg to avoid late binding in the closure.
+            async def _invoke(args: Dict[str, Any], _method=method) -> Any:
+                return await _method(**(args or {}))
+
+            tools.append(Tool(metadata=meta, definition=schema, invoke=_invoke))
+        return tools
 
     def get_status_update(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         """Optional natural-language status update for this tool call.
@@ -474,8 +399,9 @@ class ToolProvider(ABC):
         try:
             op = self.resolve_operation(tool_name, args)
             if not op:
+                logger.warning(f"get_status_update failed to resolve operation for {tool_name}")
                 return None
-            method = getattr(self, op, None)
+            method = self.__dict__.get(op) or type(self).__dict__.get(op)
             if not method:
                 return None
             template = getattr(method, "_status_update_template", None)

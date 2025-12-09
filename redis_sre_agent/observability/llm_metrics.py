@@ -42,7 +42,20 @@ LLM_LATENCY = Histogram(
 
 
 def _get_model_name(llm: Any) -> str:
-    return getattr(llm, "model", None) or getattr(llm, "_model", None) or "unknown"
+    """Extract model name from LLM object, trying common attribute patterns."""
+    try:
+        model = llm.model  # type: ignore[attr-defined]
+        if model:
+            return model
+    except AttributeError:
+        pass  # LLM may not have .model attribute
+    try:
+        model = llm._model  # type: ignore[attr-defined]
+        if model:
+            return model
+    except AttributeError:
+        pass  # LLM may not have ._model attribute
+    return "unknown"
 
 
 def _extract_usage_from_response(resp: Any) -> Dict[str, Optional[int]]:
@@ -53,24 +66,30 @@ def _extract_usage_from_response(resp: Any) -> Dict[str, Optional[int]]:
     prompt = completion = total = None
 
     # LangChain AIMessage often exposes usage via .usage_metadata
-    usage_md = getattr(resp, "usage_metadata", None)
-    if isinstance(usage_md, dict):
-        prompt = usage_md.get("input_tokens") or usage_md.get("prompt_tokens")
-        completion = usage_md.get("output_tokens") or usage_md.get("completion_tokens")
-        total = usage_md.get("total_tokens")
+    try:
+        usage_md = resp.usage_metadata  # type: ignore[attr-defined]
+        if isinstance(usage_md, dict):
+            prompt = usage_md.get("input_tokens") or usage_md.get("prompt_tokens")
+            completion = usage_md.get("output_tokens") or usage_md.get("completion_tokens")
+            total = usage_md.get("total_tokens")
+    except AttributeError:
+        pass  # Response may not have .usage_metadata attribute
 
     # Some wrappers place the raw OpenAI usage in response_metadata
     if prompt is None or completion is None:
-        resp_md = getattr(resp, "response_metadata", None)
-        if isinstance(resp_md, dict):
-            # OpenAI python client
-            usage = resp_md.get("usage") or resp_md.get("token_usage")
-            if isinstance(usage, dict):
-                prompt = prompt or usage.get("prompt_tokens") or usage.get("input_tokens")
-                completion = (
-                    completion or usage.get("completion_tokens") or usage.get("output_tokens")
-                )
-                total = total or usage.get("total_tokens")
+        try:
+            resp_md = resp.response_metadata  # type: ignore[attr-defined]
+            if isinstance(resp_md, dict):
+                # OpenAI python client
+                usage = resp_md.get("usage") or resp_md.get("token_usage")
+                if isinstance(usage, dict):
+                    prompt = prompt or usage.get("prompt_tokens") or usage.get("input_tokens")
+                    completion = (
+                        completion or usage.get("completion_tokens") or usage.get("output_tokens")
+                    )
+                    total = total or usage.get("total_tokens")
+        except AttributeError:
+            pass  # Response may not have .response_metadata attribute
 
     # Many providers only give total
     if total is None and prompt is not None and completion is not None:

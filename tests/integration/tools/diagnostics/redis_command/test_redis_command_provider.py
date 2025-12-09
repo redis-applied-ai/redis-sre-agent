@@ -8,6 +8,7 @@ from testcontainers.redis import RedisContainer
 from redis_sre_agent.tools.diagnostics.redis_command import (
     RedisCommandToolProvider,
 )
+from redis_sre_agent.tools.protocols import ToolCapability
 
 
 @pytest.fixture(scope="module")
@@ -63,6 +64,7 @@ async def test_create_tool_schemas(redis_url):
             assert schema.parameters
             assert "type" in schema.parameters
             assert schema.parameters["type"] == "object"
+            assert schema.capability == ToolCapability.DIAGNOSTICS
 
 
 @pytest.mark.asyncio
@@ -139,11 +141,14 @@ async def test_replication_info_command(redis_url):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_info(redis_url):
-    """Test resolving info tool call."""
+    """Test that tools() wires the INFO tool to the provider method."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         tool_name = provider._make_tool_name("info")
 
-        result = await provider.resolve_tool_call(tool_name=tool_name, args={"section": "memory"})
+        tools = provider.tools()
+        tool = next(t for t in tools if t.metadata.name == tool_name)
+
+        result = await tool.invoke({"section": "memory"})
 
         assert result["status"] == "success"
         assert result["section"] == "memory"
@@ -151,11 +156,14 @@ async def test_resolve_tool_call_info(redis_url):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_slowlog(redis_url):
-    """Test resolving slowlog tool call."""
+    """Test that tools() wires the SLOWLOG tool to the provider method."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         tool_name = provider._make_tool_name("slowlog")
 
-        result = await provider.resolve_tool_call(tool_name=tool_name, args={"count": 10})
+        tools = provider.tools()
+        tool = next(t for t in tools if t.metadata.name == tool_name)
+
+        result = await tool.invoke({"count": 10})
 
         assert result["status"] == "success"
         assert "entries" in result
@@ -325,15 +333,18 @@ async def test_sample_keys_type_distribution(redis_url, redis_container):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_sample_keys(redis_url, redis_container):
-    """Test routing for sample_keys tool."""
+    """Test that tools() wires sample_keys to the provider method."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
         await client.set("route:test", "value")
 
         schemas = provider.create_tool_schemas()
-        sample_keys_tool = [s for s in schemas if "sample_keys" in s.name][0]
+        sample_keys_name = [s.name for s in schemas if "sample_keys" in s.name][0]
 
-        result = await provider.resolve_tool_call(sample_keys_tool.name, {"count": 5})
+        tools = provider.tools()
+        sample_keys_tool = next(t for t in tools if t.metadata.name == sample_keys_name)
+
+        result = await sample_keys_tool.invoke({"count": 5})
 
         assert result["status"] == "success"
         assert result["sampled_count"] >= 1
@@ -343,12 +354,15 @@ async def test_resolve_tool_call_sample_keys(redis_url, redis_container):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_search_indexes(redis_url):
-    """Test routing for search_indexes tool."""
+    """Test that tools() wires search_indexes to the provider method."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
-        search_indexes_tool = [s for s in schemas if "search_indexes" in s.name][0]
+        search_indexes_name = [s.name for s in schemas if "search_indexes" in s.name][0]
 
-        result = await provider.resolve_tool_call(search_indexes_tool.name, {})
+        tools = provider.tools()
+        search_indexes_tool = next(t for t in tools if t.metadata.name == search_indexes_name)
+
+        result = await search_indexes_tool.invoke({})
 
         assert "status" in result
         # Will succeed or fail depending on RediSearch availability
@@ -361,12 +375,15 @@ async def test_resolve_tool_call_search_indexes(redis_url):
 
 @pytest.mark.asyncio
 async def test_resolve_tool_call_search_index_info(redis_url):
-    """Test routing for search_index_info tool."""
+    """Test that tools() wires search_index_info to the provider method."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         schemas = provider.create_tool_schemas()
-        search_info_tool = [s for s in schemas if "search_index_info" in s.name][0]
+        search_info_name = [s.name for s in schemas if "search_index_info" in s.name][0]
 
-        result = await provider.resolve_tool_call(search_info_tool.name, {"index_name": "test_idx"})
+        tools = provider.tools()
+        search_info_tool = next(t for t in tools if t.metadata.name == search_info_name)
+
+        result = await search_info_tool.invoke({"index_name": "test_idx"})
 
         assert "status" in result
         assert "index_name" in result

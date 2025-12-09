@@ -85,7 +85,7 @@ def sanitize_messages_for_llm(msgs: List[Any]) -> List[Any]:
     for m in msgs:
         if isinstance(m, _AI):
             try:
-                for tc in getattr(m, "tool_calls", []) or []:
+                for tc in m.tool_calls or []:
                     if isinstance(tc, dict):
                         tid = tc.get("id") or tc.get("tool_call_id")
                         if tid:
@@ -93,15 +93,15 @@ def sanitize_messages_for_llm(msgs: List[Any]) -> List[Any]:
             except Exception:
                 pass
             clean.append(m)
-        elif isinstance(m, _TM) or getattr(m, "type", "") == "tool":
-            tid = getattr(m, "tool_call_id", None)
+        elif isinstance(m, _TM) or m.type == "tool":
+            tid = m.tool_call_id
             if tid and tid in seen_tool_ids:
                 clean.append(m)
             else:
                 continue
         else:
             clean.append(m)
-    while clean and (isinstance(clean[0], _TM) or getattr(clean[0], "type", "") == "tool"):
+    while clean and (isinstance(clean[0], _TM) or clean[0].type == "tool"):
         clean = clean[1:]
     return clean
 
@@ -122,26 +122,26 @@ def _compact_messages_tail(msgs: List[Any], limit: int = 6) -> List[Dict[str, An
     tail = msgs[-limit:] if msgs else []
     compact: List[Dict[str, Any]] = []
     for m in tail:
-        role = getattr(m, "type", m.__class__.__name__.lower())
+        role = m.type if m.type else m.__class__.__name__.lower()
         row: Dict[str, Any] = {"role": role}
         try:
-            is_ai = (_AI is not None and isinstance(m, _AI)) or getattr(m, "type", "") in (
+            is_ai = (_AI is not None and isinstance(m, _AI)) or m.type in (
                 "ai",
                 "assistant",
             )
             if is_ai:
                 ids: List[str] = []
-                for tc in getattr(m, "tool_calls", []) or []:
+                for tc in m.tool_calls or []:
                     if isinstance(tc, dict):
                         tid = tc.get("id") or tc.get("tool_call_id")
                         if tid:
                             ids.append(tid)
                 if ids:
                     row["tool_calls"] = ids
-            is_tool = (_TM is not None and isinstance(m, _TM)) or getattr(m, "type", "") == "tool"
+            is_tool = (_TM is not None and isinstance(m, _TM)) or m.type == "tool"
             if is_tool:
-                row["tool_call_id"] = getattr(m, "tool_call_id", None)
-                name = getattr(m, "name", None)
+                row["tool_call_id"] = m.tool_call_id
+                name = m.name
                 if name:
                     row["name"] = name
         except Exception:
@@ -193,7 +193,7 @@ def build_result_envelope(
 
     from .models import ResultEnvelope
 
-    content = getattr(tool_message, "content", None)
+    content = tool_message.content
     data_obj = None
     if isinstance(content, str) and content:
         try:
@@ -210,9 +210,8 @@ def build_result_envelope(
         parts = full.split(".")
         return parts[-1] if parts else full
 
-    description = (
-        getattr(tooldefs_by_name.get(tool_name), "description", None) if tool_name else None
-    )
+    tdef = tooldefs_by_name.get(tool_name) if tool_name else None
+    description = tdef.description if tdef else None
     env = ResultEnvelope(
         tool_key=tool_name or "tool",
         name=_extract_operation_from_tool_name(tool_name or "tool"),
@@ -224,13 +223,15 @@ def build_result_envelope(
     return env.model_dump()
 
 
-async def build_adapters_for_tooldefs(
-    tool_manager: Any, tooldefs: List[Any]
-) -> tuple[list[dict], list[Any]]:
-    """Create OpenAI tool schemas and LangChain StructuredTool adapters for ToolDefinitions.
+async def build_adapters_for_tooldefs(tool_manager: Any, tooldefs: List[Any]) -> list[Any]:
+    """Create LangChain StructuredTool adapters for ToolDefinitions.
 
-    Returns (tool_schemas, adapters)
+    Each adapter wraps :meth:`ToolManager.resolve_tool_call` so that tools can
+    be executed either via LangGraph's :class:`ToolNode` or directly via the
+    manager. The same adapters can also be passed to ``ChatOpenAI.bind_tools``
+    so we do not need to maintain separate OpenAI-specific tool schemas.
     """
+
     try:
         from typing import Any as _Any
 
@@ -241,7 +242,7 @@ async def build_adapters_for_tooldefs(
         from pydantic import create_model as _create_model
     except Exception:
         # Best-effort fallback (should not happen in runtime)
-        return [], []
+        return []
 
     def _args_model_from_parameters(tool_name: str, params: dict) -> type[_BaseModel]:
         props = (params or {}).get("properties", {}) or {}
@@ -261,20 +262,19 @@ async def build_adapters_for_tooldefs(
             pass
         return args_model
 
-    tool_schemas: list[dict] = [t.to_openai_schema() for t in (tooldefs or [])]
     adapters: list[_StructuredTool] = []
     for tdef in tooldefs or []:
 
         async def _exec_fn(_name=tdef.name, **kwargs):
             return await tool_manager.resolve_tool_call(_name, kwargs or {})
 
-        ArgsModel = _args_model_from_parameters(tdef.name, getattr(tdef, "parameters", {}) or {})  # noqa: N806
+        args_model = _args_model_from_parameters(tdef.name, tdef.parameters or {})
         adapters.append(
             _StructuredTool.from_function(
                 coroutine=_exec_fn,
                 name=tdef.name,
-                description=getattr(tdef, "description", "") or "",
-                args_schema=ArgsModel,
+                description=tdef.description or "",
+                args_schema=args_model,
             )
         )
-    return tool_schemas, adapters
+    return adapters

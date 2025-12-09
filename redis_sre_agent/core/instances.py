@@ -41,7 +41,7 @@ def mask_redis_url(url: Any) -> str:
     """
     try:
         # Avoid exposing secrets to callers: unwrap here if needed
-        if hasattr(url, "get_secret_value"):
+        if isinstance(url, SecretStr):
             url = url.get_secret_value()
         elif not isinstance(url, str):
             url = str(url)
@@ -97,7 +97,7 @@ class RedisInstance(BaseModel):
     def dump_secret(self, v):
         if v is None:
             return None
-        return v.get_secret_value() if hasattr(v, "get_secret_value") else v
+        return v.get_secret_value() if isinstance(v, SecretStr) else v
 
     usage: str = Field(..., description="Usage type: cache, analytics, session, queue, or custom")
     description: str
@@ -169,10 +169,10 @@ class RedisInstance(BaseModel):
         try:
             from redis_sre_agent.core.config import settings
 
-            url_value = v.get_secret_value() if hasattr(v, "get_secret_value") else v
+            url_value = v.get_secret_value() if isinstance(v, SecretStr) else v
             settings_url = (
                 settings.redis_url.get_secret_value()
-                if hasattr(settings.redis_url, "get_secret_value")
+                if isinstance(settings.redis_url, SecretStr)
                 else settings.redis_url
             )
             if url_value == settings_url:
@@ -218,7 +218,7 @@ class RedisInstance(BaseModel):
             admin_username = self.admin_username or ""
             admin_password = (
                 self.admin_password.get_secret_value()
-                if hasattr(self.admin_password, "get_secret_value")
+                if isinstance(self.admin_password, SecretStr)
                 else (self.admin_password or "")
             )
 
@@ -239,7 +239,7 @@ class RedisInstance(BaseModel):
             try:
                 url_to_parse = redis_url or (
                     self.connection_url.get_secret_value()
-                    if hasattr(self.connection_url, "get_secret_value")
+                    if isinstance(self.connection_url, SecretStr)
                     else str(self.connection_url)
                 )
                 parsed = urlparse(url_to_parse) if url_to_parse else None
@@ -394,7 +394,7 @@ async def _upsert_instance_index_doc(instance: "RedisInstance") -> bool:
             updated_ts = datetime.now(timezone.utc).timestamp()
 
         # Normalize instance_type to value when Enum
-        itype = getattr(instance, "instance_type", "unknown")
+        itype = instance.instance_type
         try:
             itype_val = itype.value  # Enum
         except Exception:
@@ -407,8 +407,8 @@ async def _upsert_instance_index_doc(instance: "RedisInstance") -> bool:
                 "environment": (instance.environment or "").lower(),
                 "usage": (instance.usage or "").lower(),
                 "instance_type": itype_val,
-                "user_id": getattr(instance, "user_id", "") or "",
-                "status": (getattr(instance, "status", "unknown") or "unknown").lower(),
+                "user_id": instance.user_id or "",
+                "status": (instance.status or "unknown").lower(),
                 "created_at": created_ts,
                 "updated_at": updated_ts,
                 "data": json.dumps(inst_dict),

@@ -6,7 +6,7 @@ from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+@patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_runs_on_risky_patterns(mock_build):
     # Corrector returns edited content
     mock_corrector = MagicMock()
@@ -31,7 +31,7 @@ async def test_corrector_runs_on_risky_patterns(mock_build):
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+@patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_skips_out_of_scope(mock_build):
     agent = SRELangGraphAgent()
     with patch.object(agent, "_process_query", new=AsyncMock(return_value="hello world")):
@@ -42,7 +42,7 @@ async def test_corrector_skips_out_of_scope(mock_build):
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+@patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_no_change_returns_original(mock_build):
     # Corrector returns same text -> agent returns original (no edits footers)
     mock_corrector = MagicMock()
@@ -59,7 +59,7 @@ async def test_corrector_no_change_returns_original(mock_build):
 
 
 @pytest.mark.asyncio
-@patch("redis_sre_agent.agent.subgraphs.safety_fact_corrector.build_safety_fact_corrector")
+@patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_gates_by_url(mock_build):
     mock_corrector = MagicMock()
     mock_corrector.ainvoke = AsyncMock(

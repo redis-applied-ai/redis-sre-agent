@@ -15,8 +15,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.decorators import status_update
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 from redis_sre_agent.tools.protocols import ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,6 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
     The RedisInstance must have instance_type='redis_enterprise' and admin_url set.
     """
 
-    # Also provide DIAGNOSTICS capability so HostTelemetry can use system_hosts()
-    from redis_sre_agent.tools.protocols import ToolCapability
-
-    capabilities = {ToolCapability.DIAGNOSTICS}
-
     def __init__(
         self,
         redis_instance: RedisInstance,
@@ -104,6 +99,11 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
     @property
     def provider_name(self) -> str:
         return "re_admin"  # Shortened to avoid OpenAI 64-char tool name limit
+
+    @property
+    def requires_redis_instance(self) -> bool:
+        """Admin tools always require a Redis Enterprise instance."""
+        return True
 
     def get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client (lazy initialization).
@@ -151,8 +151,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
     def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         """Parse operation name from full tool name for status updates.
 
-        Overrides the base implementation to handle operations with underscores,
-        matching the provider's tool name scheme: {provider}_{hash}_{operation}.
+        This override matches the provider's tool name scheme:
+        ``{provider}_{hash}_{operation}`` and returns ``operation``.
         """
         try:
             import re
@@ -182,6 +182,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "alert configuration, email settings, and rack awareness. "
                     "Use this to understand cluster-level configuration and status."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -195,6 +196,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns database UIDs, names, and optionally other fields. "
                     "Use this to discover what databases exist in the cluster."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -217,6 +219,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns configuration, status, memory usage, replication settings, "
                     "persistence configuration, and more. Use this to inspect a specific database."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -242,6 +245,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns node information including status, addresses, resources, "
                     "and shard placement. Use this to understand cluster topology."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -263,6 +267,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns node status, resources, addresses, shards, and configuration. "
                     "Use this to inspect a specific cluster node."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -288,6 +293,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns module names, versions, capabilities, and semantic version. "
                     "Use this to see what Redis modules (RediSearch, RedisJSON, etc.) are available."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -301,6 +307,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "memory usage, connections, and other performance metrics. "
                     "Use this to monitor database performance."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -326,6 +333,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "CPU utilization, and network I/O across all nodes. "
                     "Use this to monitor overall cluster health and performance."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -346,6 +354,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Get recent cluster event logs from the Admin API (/v1/logs). "
                     "Use this for an authoritative history of cluster events (maintenance, DB changes, etc.)."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -370,6 +379,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Use this to identify stuck or long-running operations, monitor progress, "
                     "and troubleshoot issues with cluster operations."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -383,6 +393,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns action progress, status, error messages, and pending operations. "
                     "Use this to monitor specific long-running operations or troubleshoot failed actions."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -402,6 +413,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Automates fetching per-action details when needed to distinguish between generic SMUpdateBDB "
                     "and a true rebalance/reshard/migrate_shard operation."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -433,6 +445,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "(master/replica), and shard status. Use this to understand shard distribution "
                     "and identify shard placement issues."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -454,6 +467,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns shard configuration, status, assigned slots, role, and node placement. "
                     "Use this to inspect a specific shard's state."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -472,6 +486,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns information about which alerts are enabled and their thresholds. "
                     "Use this to understand cluster alerting configuration."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {},
@@ -485,6 +500,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Returns database-specific alert settings and thresholds. "
                     "Use this to check what alerts are configured for a database."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -502,6 +518,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "Get statistics for a specific node including CPU, memory, network, "
                     "and disk I/O metrics. Use this to monitor individual node performance."
                 ),
+                capability=ToolCapability.DIAGNOSTICS,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -521,68 +538,6 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 },
             ),
         ]
-
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Execute a Redis Enterprise admin API tool call.
-
-        Args:
-            tool_name: Name of the tool to execute
-            args: Tool arguments
-
-        Returns:
-            Tool execution result
-        """
-        # Parse operation from tool_name
-        # Format: {provider_name}_{instance_hash}_{operation}
-        # Example: re_admin_ffffa3_get_cluster_info
-        # The instance_hash is always 6 hex characters
-        import re
-
-        # Match the pattern: underscore + 6 hex chars + underscore + operation
-        match = re.search(r"_([0-9a-f]{6})_(.+)$", tool_name)
-        if match:
-            operation = match.group(2)  # Everything after the hash
-        else:
-            # Fallback: couldn't parse, use the whole name
-            operation = tool_name
-
-        if operation == "get_cluster_info":
-            return await self.get_cluster_info()
-        elif operation == "list_databases":
-            return await self.list_databases(**args)
-        elif operation == "get_database":
-            return await self.get_database(**args)
-        elif operation == "list_nodes":
-            return await self.list_nodes(**args)
-        elif operation == "get_node":
-            return await self.get_node(**args)
-        elif operation == "list_modules":
-            return await self.list_modules()
-        elif operation == "get_database_stats":
-            return await self.get_database_stats(**args)
-        elif operation == "get_cluster_stats":
-            return await self.get_cluster_stats(**args)
-        elif operation == "get_logs":
-            return await self.get_logs(**args)
-
-        elif operation == "list_actions":
-            return await self.list_actions()
-        elif operation == "get_action":
-            return await self.get_action(**args)
-        elif operation == "rebalance_status":
-            return await self.rebalance_status(**args)
-        elif operation == "list_shards":
-            return await self.list_shards(**args)
-        elif operation == "get_shard":
-            return await self.get_shard(**args)
-        elif operation == "get_cluster_alerts":
-            return await self.get_cluster_alerts()
-        elif operation == "get_database_alerts":
-            return await self.get_database_alerts(**args)
-        elif operation == "get_node_stats":
-            return await self.get_node_stats(**args)
-        else:
-            raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
     @status_update("I'm querying the Redis Enterprise Admin API for cluster info.")
     async def get_cluster_info(self) -> Dict[str, Any]:
@@ -1112,7 +1067,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
 
         Returns SystemHost entries using /v1/nodes 'addr' field.
         """
-        from redis_sre_agent.tools.protocols import SystemHost
+        from redis_sre_agent.tools.models import SystemHost
 
         try:
             client = self.get_client()

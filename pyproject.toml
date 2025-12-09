@@ -59,6 +59,26 @@ dependencies = [
     "opentelemetry-instrumentation-openai>=0.47.5",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+    "black>=23.0.0",
+    "mypy>=1.8.0",
+    "testcontainers>=3.7.0",
+    "pre-commit>=3.6.0",
+    "safety>=3.0.0",
+    "bandit>=1.7.0",
+    # OpenAPI client generator
+    "openapi-python-client>=0.21.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.22",
+    "mfcqi>=0.0.4",
+]
+
+
 [project.scripts]
 redis-sre-agent = "redis_sre_agent.cli:main"
 
@@ -77,22 +97,6 @@ include = [
 
 [tool.uv]
 default-groups = []
-dev-dependencies = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "ruff>=0.3.0",
-    "black>=23.0.0",
-    "mypy>=1.8.0",
-    "testcontainers>=3.7.0",
-    "pre-commit>=3.6.0",
-    "safety>=3.0.0",
-    "bandit>=1.7.0",
-    # OpenAPI client generator
-    "openapi-python-client>=0.21.0",
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.6.22",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -15,6 +15,7 @@ async def test_compose_final_markdown_builds_messages_and_payload(caplog):
         agent.settings = SimpleNamespace(
             openai_model_mini="test-mini", openai_api_key="test-key", llm_timeout=5
         )
+        agent._run_cache_active = False
 
         captured = {}
 
@@ -99,6 +100,7 @@ async def test_compose_final_markdown_normalizes_list_content():
         agent.settings = SimpleNamespace(
             openai_model_mini="test-mini", openai_api_key="test-key", llm_timeout=5
         )
+        agent._run_cache_active = False
 
         class FakeLLM:
             async def ainvoke(self, msgs):
@@ -127,6 +129,7 @@ async def test_compose_final_markdown_handles_empty_content(caplog):
         agent.settings = SimpleNamespace(
             openai_model_mini="test-mini", openai_api_key="test-key", llm_timeout=5
         )
+        agent._run_cache_active = False
 
         class FakeLLM:
             async def ainvoke(self, msgs):

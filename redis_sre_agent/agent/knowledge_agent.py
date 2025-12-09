@@ -97,17 +97,12 @@ class KnowledgeOnlyAgent:
 
         logger.info("Knowledge-only agent initialized (tools loaded per-query)")
 
-    def _build_workflow(self, tool_mgr: ToolManager) -> StateGraph:
+    def _build_workflow(self, tool_mgr: ToolManager, llm_with_tools: ChatOpenAI) -> StateGraph:
         """Build the LangGraph workflow for knowledge-only queries.
 
         Args:
             tool_mgr: ToolManager instance with knowledge tools loaded
         """
-
-        # Bind tools to LLM for this workflow
-        tools = tool_mgr.get_tools()
-        tool_schemas = [tool.to_openai_schema() for tool in tools]
-        llm_with_tools = self.llm.bind_tools(tool_schemas)
 
         async def agent_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
             """Main agent node for knowledge queries."""
@@ -131,7 +126,7 @@ class KnowledgeOnlyAgent:
                 for m in msgs:
                     if isinstance(m, AIMessage):
                         try:
-                            for tc in getattr(m, "tool_calls", []) or []:
+                            for tc in m.tool_calls or []:
                                 if isinstance(tc, dict):
                                     tid = tc.get("id") or tc.get("tool_call_id")
                                     if tid:
@@ -139,61 +134,42 @@ class KnowledgeOnlyAgent:
                         except Exception:
                             pass
                         clean.append(m)
-                    elif isinstance(m, _TM) or getattr(m, "type", "") == "tool":
-                        tid = getattr(m, "tool_call_id", None)
+                    elif isinstance(m, _TM) or m.type == "tool":
+                        tid = m.tool_call_id
                         if tid and tid in seen_tool_ids:
                             clean.append(m)
                         else:
                             continue
                     else:
                         clean.append(m)
-                while clean and (
-                    isinstance(clean[0], _TM) or getattr(clean[0], "type", "") == "tool"
-                ):
+                while clean and (isinstance(clean[0], _TM) or clean[0].type == "tool"):
                     clean = clean[1:]
                 return clean
 
             # OTel: capture sanitize phase
-            try:
-                from opentelemetry import trace as _otel_trace  # type: ignore
-
-                _tr = _otel_trace.get_tracer(__name__)
-            except Exception:
-                _tr = None  # type: ignore
             _pre_count = len(messages)
-            if _tr:
-                with _tr.start_as_current_span(
-                    "knowledge.agent.sanitize", attributes={"messages.pre": _pre_count}
-                ):
-                    messages = _sanitize_messages_for_llm(messages)
-            else:
+            with tracer.start_as_current_span(
+                "knowledge.agent.sanitize", attributes={"messages.pre": _pre_count}
+            ):
                 messages = _sanitize_messages_for_llm(messages)
 
             try:
                 import time as _time
 
-                try:
-                    from opentelemetry import trace as _otel_trace  # type: ignore
-                except Exception:
-                    _otel_trace = None  # type: ignore
                 from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
 
                 _t0 = _time.perf_counter()
-                _tr = _otel_trace.get_tracer(__name__) if _otel_trace else None
-                if _tr:
-                    with _tr.start_as_current_span(
-                        "llm.call", attributes={"llm.component": "knowledge"}
-                    ):
-                        response = await llm_with_tools.ainvoke(messages)
-                else:
+                with tracer.start_as_current_span(
+                    "llm.call", attributes={"llm.component": "knowledge"}
+                ):
                     response = await llm_with_tools.ainvoke(messages)
                 record_llm_call_metrics(
                     component="knowledge", llm=llm_with_tools, response=response, start_time=_t0
                 )
                 # Coerce non-Message responses (e.g., simple mocks) into AIMessage
                 if not isinstance(response, BaseMessage):
-                    content = getattr(response, "content", None)
-                    tool_calls = getattr(response, "tool_calls", None)
+                    content = response.content
+                    tool_calls = response.tool_calls
                     response = AIMessage(
                         content=str(content) if content is not None else "", tool_calls=tool_calls
                     )
@@ -205,7 +181,7 @@ class KnowledgeOnlyAgent:
                 state["messages"] = messages + [response]
 
                 # Store tool calls for potential execution
-                if hasattr(response, "tool_calls") and response.tool_calls:
+                if response.tool_calls:
                     state["current_tool_calls"] = [
                         {
                             "id": tc.get("id", ""),
@@ -235,14 +211,14 @@ class KnowledgeOnlyAgent:
             last_message = messages[-1] if messages else None
 
             # Verify we have tool calls to execute
-            if not (hasattr(last_message, "tool_calls") and last_message.tool_calls):
+            if not (last_message and last_message.tool_calls):
                 logger.warning("safe_tool_node called without tool_calls in last message")
                 return state
 
             try:
                 # Emit provider-supplied status updates before executing tools
                 try:
-                    pending = getattr(last_message, "tool_calls", []) or []
+                    pending = last_message.tool_calls or []
                     if self.progress_callback:
                         for tc in pending:
                             tool_name = tc.get("name")
@@ -255,9 +231,7 @@ class KnowledgeOnlyAgent:
                     pass
 
                 # Execute tools using ToolManager (wrapped in OTel span)
-                _tool_names = [
-                    tc.get("name", "") for tc in (getattr(last_message, "tool_calls", []) or [])
-                ]
+                _tool_names = [tc.get("name", "") for tc in (last_message.tool_calls or [])]
                 with tracer.start_as_current_span(
                     "knowledge.tools.execute",
                     attributes={
@@ -347,7 +321,7 @@ class KnowledgeOnlyAgent:
             try:
                 from redis_sre_agent.core.config import settings as _settings
 
-                _budget = int(getattr(_settings, "max_tool_calls_per_stage", 3))
+                _budget = int(_settings.max_tool_calls_per_stage)
             except Exception:
                 _budget = 3
             prev_exec = int(state.get("tool_calls_executed", 0) or 0)
@@ -359,11 +333,7 @@ class KnowledgeOnlyAgent:
                 return END
 
             # If the last message has tool calls, execute them
-            if (
-                hasattr(last_message, "tool_calls")
-                and last_message.tool_calls
-                and len(last_message.tool_calls) > 0
-            ):
+            if last_message.tool_calls and len(last_message.tool_calls) > 0:
                 return "tools"
 
             return END
@@ -434,10 +404,17 @@ class KnowledgeOnlyAgent:
 
         # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:
-            logger.info(f"Loaded {len(tool_mgr.get_tools())} usable without Redis instance details")
+            tools = tool_mgr.get_tools()
+            logger.info(f"Loaded {len(tools)} tools usable without Redis instance details")
 
-            # Build workflow with tools
-            workflow = self._build_workflow(tool_mgr)
+            # Build StructuredTool adapters and bind them to the LLM
+            from .helpers import build_adapters_for_tooldefs as _build_adapters
+
+            adapters = await _build_adapters(tool_mgr, tools)
+            llm_with_tools = self.llm.bind_tools(adapters)
+
+            # Build workflow with tools and bound LLM
+            workflow = self._build_workflow(tool_mgr, llm_with_tools)
 
             # Create initial state with conversation history
             initial_messages = []

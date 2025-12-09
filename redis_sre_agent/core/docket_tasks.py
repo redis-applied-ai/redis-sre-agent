@@ -549,9 +549,9 @@ async def process_agent_turn(
                     lc_history.append(AIMessage(content=msg["content"]))
 
             # Use a smaller iteration cap for the knowledge agent to avoid long loops
-            _k_max_iters = getattr(settings, "knowledge_max_iterations", None)
+            _k_max_iters = settings.knowledge_max_iterations
             if not isinstance(_k_max_iters, int) or _k_max_iters <= 0:
-                _k_max_iters = min(int(getattr(settings, "max_iterations", 10) or 10), 8)
+                _k_max_iters = min(int(settings.max_iterations or 10), 8)
 
             response_text = await agent.process_query(
                 query=message,
@@ -595,18 +595,18 @@ async def process_agent_turn(
         # Persist agent reflections/status updates for this turn as chat messages
         try:
             fresh_state = await thread_manager.get_thread(thread_id)
-            updates = list(getattr(fresh_state, "updates", []) or [])
+            updates = list(fresh_state.updates or [])
             # Keep only updates from this task/turn and relevant types
             relevant_types = {"agent_reflection", "agent_processing", "agent_start"}
             turn_updates = [
                 u
                 for u in updates
-                if (getattr(u, "metadata", None) or {}).get("task_id") == task_id
-                and getattr(u, "update_type", "") in relevant_types
-                and getattr(u, "message", None)
+                if (u.metadata or {}).get("task_id") == task_id
+                and u.update_type in relevant_types
+                and u.message
             ]
             # Order chronologically
-            turn_updates.sort(key=lambda u: getattr(u, "timestamp", ""))
+            turn_updates.sort(key=lambda u: u.timestamp)
             reflection_messages = [
                 {
                     "role": "assistant",

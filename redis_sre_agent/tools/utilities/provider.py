@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Optional
 
 import pytz
 
-from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +29,6 @@ class UtilitiesToolProvider(ToolProvider):
     - Date Math: Calculate differences between dates, add/subtract time periods
     - Timezone Converter: Convert dates between timezones
     """
-
-    # Declare utilities capability
-    capabilities = {ToolCapability.UTILITIES}
 
     # Safe operators for calculator
     SAFE_OPERATORS = {
@@ -50,6 +47,11 @@ class UtilitiesToolProvider(ToolProvider):
     def provider_name(self) -> str:
         return "utilities"
 
+    @property
+    def requires_redis_instance(self) -> bool:
+        """Utility tools do not require a Redis instance."""
+        return False
+
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for utility operations."""
         return [
@@ -62,6 +64,7 @@ class UtilitiesToolProvider(ToolProvider):
                     "capacity planning. Examples: '100 * 1024 * 1024' (convert MB to bytes), "
                     "'(500 - 200) / 500 * 100' (calculate percentage change)."
                 ),
+                capability=ToolCapability.UTILITIES,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -81,6 +84,7 @@ class UtilitiesToolProvider(ToolProvider):
                     "Useful for analyzing incident timelines, calculating uptime, or determining "
                     "when events occurred. Supports ISO 8601 format and common date formats."
                 ),
+                capability=ToolCapability.UTILITIES,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -125,6 +129,7 @@ class UtilitiesToolProvider(ToolProvider):
                     "with teams across regions. Supports all standard timezone names (e.g., "
                     "'America/New_York', 'Europe/London', 'Asia/Tokyo', 'UTC')."
                 ),
+                capability=ToolCapability.UTILITIES,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -158,6 +163,7 @@ class UtilitiesToolProvider(ToolProvider):
                     "Perform an HTTP HEAD request to validate a URL exists and is reachable. "
                     "Returns status code, ok flag (2xx/3xx), and final URL after redirects."
                 ),
+                capability=ToolCapability.UTILITIES,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -174,35 +180,6 @@ class UtilitiesToolProvider(ToolProvider):
                 },
             ),
         ]
-
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Route tool call to appropriate method."""
-        operation = tool_name.split("_")[-1]
-
-        if operation == "calculator":
-            return await self.calculator(args["expression"])
-        elif operation == "math":
-            # Extract the actual operation from the full tool name
-            # e.g., "utilities_abc123_date_math" -> need to handle "date_math"
-            return await self.date_math(
-                operation=args["operation"],
-                date1=args.get("date1"),
-                date2=args.get("date2"),
-                amount=args.get("amount"),
-                unit=args.get("unit"),
-            )
-        elif operation == "converter":
-            # Handle "timezone_converter"
-            return await self.timezone_converter(
-                datetime_str=args["datetime_str"],
-                from_timezone=args["from_timezone"],
-                to_timezone=args["to_timezone"],
-            )
-        elif operation == "head":
-            return await self.http_head(url=args["url"], timeout=args.get("timeout", 2.0))
-
-        else:
-            raise ValueError(f"Unknown operation: {operation}")
 
     async def calculator(self, expression: str) -> Dict[str, Any]:
         """Safely evaluate a mathematical expression.
@@ -496,8 +473,8 @@ class UtilitiesToolProvider(ToolProvider):
                 }
             req = urllib.request.Request(url, method="HEAD")
             with urllib.request.urlopen(req, timeout=timeout or 2.0) as resp:
-                status = getattr(resp, "status", None)
-                final_url = getattr(resp, "url", None)
+                status = resp.status
+                final_url = resp.url
                 ok = bool(status) and 200 <= int(status) < 400
                 return {
                     "success": True,
@@ -507,14 +484,14 @@ class UtilitiesToolProvider(ToolProvider):
                 }
         except urllib.error.HTTPError as e:
             try:
-                code = int(getattr(e, "code", 0) or 0)
+                code = int(e.code or 0)
             except Exception:
                 code = 0
             return {
                 "success": True,
                 "ok": 200 <= code < 400,
                 "status": code,
-                "final_url": getattr(e, "url", None),
+                "final_url": e.url,
             }
         except (urllib.error.URLError, socket.timeout, ValueError) as e:
             return {

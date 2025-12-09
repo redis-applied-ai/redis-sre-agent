@@ -18,8 +18,8 @@ from redis_sre_agent.core.knowledge_helpers import (
     search_knowledge_base_helper,
 )
 from redis_sre_agent.tools.decorators import status_update
-from redis_sre_agent.tools.protocols import ToolCapability, ToolProvider
-from redis_sre_agent.tools.tool_definition import ToolDefinition
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -33,12 +33,14 @@ class KnowledgeBaseToolProvider(ToolProvider):
     SRE procedures.
     """
 
-    # Declare knowledge capability
-    capabilities = {ToolCapability.KNOWLEDGE}
-
     @property
     def provider_name(self) -> str:
         return "knowledge"
+
+    @property
+    def requires_redis_instance(self) -> bool:
+        """Knowledge base tools do not require a Redis instance."""
+        return False
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for knowledge base operations."""
@@ -52,6 +54,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "guidance on SRE best practices. Always cite the source document and title "
                     "when using information from search results."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -87,6 +90,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "troubleshooting guides, or other SRE documentation. The document will be "
                     "chunked, embedded, and indexed for future searches."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -136,6 +140,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "Use this when you need to see the complete content of a document that was "
                     "found via search. Requires the document_hash from a search result."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -154,6 +159,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "Use this to explore related content or find additional context "
                     "around a specific piece of information."
                 ),
+                capability=ToolCapability.KNOWLEDGE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -186,25 +192,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
 
     def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         return self._operation_from_tool(tool_name)
-
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Execute a knowledge base tool call.
-
-        The tool_name includes the provider name and instance hash that we created,
-        so we just need to match the operation suffix.
-        """
-        operation = self._operation_from_tool(tool_name)
-
-        if operation == "search":
-            return await self.search(**args)
-        elif operation == "ingest":
-            return await self.ingest(**args)
-        elif operation == "get_all_fragments":
-            return await self.get_all_fragments(**args)
-        elif operation == "get_related_fragments":
-            return await self.get_related_fragments(**args)
-        else:
-            raise ValueError(f"Unknown operation: {operation} (from tool: {tool_name})")
 
     @status_update("I'm searching the knowledge base for {query}.")
     async def search(
@@ -285,24 +272,16 @@ class KnowledgeBaseToolProvider(ToolProvider):
             kwargs["product_labels"] = product_labels
 
         # OTel: instrument ingestion
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-
-            _tr = _otel_trace.get_tracer(__name__)
-        except Exception:
-            _tr = None  # type: ignore
-        if _tr:
-            with _tr.start_as_current_span(
-                "tool.knowledge.ingest",
-                attributes={
-                    "title.len": len(title or ""),
-                    "category": str(category or ""),
-                    "has.labels": bool(product_labels),
-                    "has.severity": bool(severity),
-                },
-            ):
-                return await _ingest_sre_document(**kwargs)
-        return await _ingest_sre_document(**kwargs)
+        with tracer.start_as_current_span(
+            "tool.knowledge.ingest",
+            attributes={
+                "title.len": len(title or ""),
+                "category": str(category or ""),
+                "has.labels": bool(product_labels),
+                "has.severity": bool(severity),
+            },
+        ):
+            return await _ingest_sre_document(**kwargs)
 
     async def get_all_fragments(self, document_hash: str) -> Dict[str, Any]:
         """Get all fragments of a document.
@@ -314,19 +293,11 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Dictionary with all document fragments
         """
         logger.info(f"Getting all fragments for document: {document_hash}")
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-
-            _tr = _otel_trace.get_tracer(__name__)
-        except Exception:
-            _tr = None  # type: ignore
-        if _tr:
-            with _tr.start_as_current_span(
-                "tool.knowledge.get_all_fragments",
-                attributes={"document_hash": str(document_hash)[:16]},
-            ):
-                return await get_all_document_fragments(document_hash)
-        return await get_all_document_fragments(document_hash)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_all_fragments",
+            attributes={"document_hash": str(document_hash)[:16]},
+        ):
+            return await get_all_document_fragments(document_hash)
 
     async def get_related_fragments(
         self, document_hash: str, chunk_index: int, limit: int = 10
@@ -342,20 +313,12 @@ class KnowledgeBaseToolProvider(ToolProvider):
             Dictionary with related fragments
         """
         logger.info(f"Getting related fragments for document {document_hash}, chunk {chunk_index}")
-        try:
-            from opentelemetry import trace as _otel_trace  # type: ignore
-
-            _tr = _otel_trace.get_tracer(__name__)
-        except Exception:
-            _tr = None  # type: ignore
-        if _tr:
-            with _tr.start_as_current_span(
-                "tool.knowledge.get_related_fragments",
-                attributes={
-                    "document_hash": str(document_hash)[:16],
-                    "chunk_index": int(chunk_index),
-                    "limit": int(limit),
-                },
-            ):
-                return await get_related_document_fragments(document_hash, chunk_index, limit)
-        return await get_related_document_fragments(document_hash, chunk_index, limit)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_related_fragments",
+            attributes={
+                "document_hash": str(document_hash)[:16],
+                "chunk_index": int(chunk_index),
+                "limit": int(limit),
+            },
+        ):
+            return await get_related_document_fragments(document_hash, chunk_index, limit)

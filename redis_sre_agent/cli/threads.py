@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from zoneinfo import ZoneInfo
 
 import click
+from rich.console import Console
+from rich.table import Table
+
+from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.redis import (
+    SRE_THREADS_INDEX,
+    get_redis_client,
+    get_threads_index,
+)
+from redis_sre_agent.core.threads import ThreadManager
 
 
 @click.group()
@@ -31,14 +43,6 @@ def thread_list(
     """List threads (shows all threads by default, ordered by Redis index)."""
 
     async def _list():
-        import json as _json
-
-        from rich.console import Console
-        from rich.table import Table
-
-        from redis_sre_agent.core.redis import get_redis_client
-        from redis_sre_agent.core.threads import ThreadManager
-
         console = Console()
         tm = ThreadManager(redis_client=get_redis_client())
 
@@ -47,13 +51,6 @@ def thread_list(
 
         # Helper to parse/sort and format timestamps
         from datetime import datetime
-
-        try:
-            from zoneinfo import ZoneInfo as _ZoneInfo  # Python 3.9+
-
-            zoneinfo_cls = _ZoneInfo
-        except Exception:
-            zoneinfo_cls = None  # type: ignore
 
         def _to_ts(s: str | None) -> float:
             if not s or s == "-":
@@ -71,7 +68,7 @@ def thread_list(
         )
 
         if as_json:
-            print(_json.dumps(threads, indent=2))
+            print(json.dumps(threads, indent=2))
             return
 
         def _fmt(ts: str | None) -> str:
@@ -80,9 +77,9 @@ def thread_list(
             try:
                 # ThreadManager emits UTC ISO with offset (e.g., +00:00)
                 dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                if tz and zoneinfo_cls is not None:
+                if tz:
                     try:
-                        dt = dt.astimezone(zoneinfo_cls(tz))
+                        dt = dt.astimezone(ZoneInfo(tz))
                     except Exception:
                         dt = dt.astimezone()
                 else:
@@ -129,34 +126,18 @@ def thread_get(thread_id: str, as_json: bool):
     """Get full thread details by ID."""
 
     async def _get():
-        import json as _json
-
-        from rich.console import Console
-        from rich.table import Table
-
-        from redis_sre_agent.core.redis import get_redis_client
-        from redis_sre_agent.core.tasks import get_task_status as _get_task_status
-        from redis_sre_agent.core.threads import ThreadManager
-
         console = Console()
         tm = ThreadManager(redis_client=get_redis_client())
         state = await tm.get_thread(thread_id)
         if not state:
             if as_json:
-                print(_json.dumps({"error": "Thread not found", "thread_id": thread_id}))
+                print(json.dumps({"error": "Thread not found", "thread_id": thread_id}))
             else:
                 console.print(f"[red]Thread not found:[/red] {thread_id}")
             return
 
         if as_json:
-            try:
-                payload = await _get_task_status(thread_id=thread_id)
-                st = payload.get("status")
-                if hasattr(st, "value"):
-                    payload["status"] = st.value
-                print(_json.dumps(payload, indent=2))
-            except Exception as e:
-                print(_json.dumps({"error": str(e), "thread_id": thread_id}))
+            print(json.dumps(state.model_dump(), indent=2))
             return
 
         meta = state.metadata
@@ -204,20 +185,12 @@ def thread_sources(thread_id: str, task_id: str | None, as_json: bool):
     """List knowledge fragments retrieved for a thread (optionally a specific turn)."""
 
     async def _run():
-        import json as _json
-
-        from rich.console import Console
-        from rich.table import Table
-
-        from redis_sre_agent.core.redis import get_redis_client
-        from redis_sre_agent.core.threads import ThreadManager
-
         tm = ThreadManager(redis_client=get_redis_client())
         state = await tm.get_thread(thread_id)
         if not state:
             payload = {"error": "Thread not found", "thread_id": thread_id}
             if as_json:
-                print(_json.dumps(payload))
+                print(json.dumps(payload))
             else:
                 click.echo(f"❌ Thread not found: {thread_id}")
             return
@@ -248,7 +221,7 @@ def thread_sources(thread_id: str, task_id: str | None, as_json: bool):
 
         if as_json:
             print(
-                _json.dumps(
+                json.dumps(
                     {"thread_id": thread_id, "task_id": task_id, "fragments": items}, indent=2
                 )
             )
@@ -290,16 +263,6 @@ def thread_reindex(drop: bool, limit: int, start: int):
     """Recreate the threads FT.SEARCH index and backfill from existing thread data."""
 
     async def _reindex():
-        from rich.console import Console
-
-        from redis_sre_agent.core.keys import RedisKeys
-        from redis_sre_agent.core.redis import (
-            SRE_THREADS_INDEX,
-            get_redis_client,
-            get_threads_index,
-        )
-        from redis_sre_agent.core.threads import ThreadManager
-
         console = Console()
         tm = ThreadManager(redis_client=get_redis_client())
 

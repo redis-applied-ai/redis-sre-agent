@@ -15,8 +15,8 @@ from opentelemetry import trace
 
 from redis_sre_agent.core.instances import RedisInstance
 
+from .models import Tool, ToolCapability, ToolDefinition
 from .protocols import ToolProvider
-from .tool_definition import ToolDefinition
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -63,8 +63,14 @@ class ToolManager:
         # Track loaded provider class paths to avoid duplicates
         self._loaded_provider_paths: set[str] = set()
 
+        # Mapping from tool name -> provider instance
         self._routing_table: Dict[str, ToolProvider] = {}
-        self._tools: List[ToolDefinition] = []
+        # Flattened list of Tool objects from all providers
+        self._tools: List[Tool] = []
+        # Direct lookup from tool name -> Tool
+        self._tool_by_name: Dict[str, Tool] = {}
+        # Loaded provider instances (in load order, de-duplicated by class path)
+        self._providers: List[ToolProvider] = []
         self._stack: Optional[AsyncExitStack] = None
         # Per-run cache of tool results: (tool_name, stable_args_json) -> result
         self._call_cache: Dict[str, Any] = {}
@@ -89,8 +95,10 @@ class ToolManager:
                 await self._load_provider(provider_path)
 
             # Load additional providers based on instance type
-            itype = getattr(
-                self.redis_instance.instance_type, "value", self.redis_instance.instance_type
+            itype = (
+                self.redis_instance.instance_type.value
+                if self.redis_instance.instance_type
+                else None
             )
             instance_type = itype or "unknown"
             logger.info(f"Instance type: {instance_type}")
@@ -180,16 +188,23 @@ class ToolManager:
             except Exception:
                 pass
 
-            # Register tools in routing table
-            tool_schemas = provider.create_tool_schemas()
-            for tool_def in tool_schemas:
-                self._routing_table[tool_def.name] = provider
-                self._tools.append(tool_def)
+            # Register tools in routing table from the provider's Tool objects
+            tools = provider.tools()
+            for tool in tools:
+                name = tool.metadata.name
+                if not name:
+                    continue
+                self._routing_table[name] = provider
+                self._tools.append(tool)
+                self._tool_by_name[name] = tool
+
+            # Track provider instance
+            self._providers.append(provider)
 
             # Mark this provider as loaded to avoid duplicates later
             self._loaded_provider_paths.add(provider_path)
 
-            logger.info(f"Loaded provider {provider.provider_name} with {len(tool_schemas)} tools")
+            logger.info(f"Loaded provider {provider.provider_name} with {len(tools)} tools")
 
         except Exception:
             logger.exception(f"Failed to load provider {provider_path}")
@@ -209,7 +224,10 @@ class ToolManager:
         if provider_path not in cls._provider_class_cache:
             module_path, class_name = provider_path.rsplit(".", 1)
             module = __import__(module_path, fromlist=[class_name])
-            cls._provider_class_cache[provider_path] = getattr(module, class_name)
+            provider_class = getattr(module, class_name, None)
+            if not provider_class:
+                logger.warning(f"Failed to load tool provider class: {provider_path}")
+            cls._provider_class_cache[provider_path] = provider_class
         return cls._provider_class_cache[provider_path]
 
     async def __aexit__(self, *args) -> None:
@@ -223,21 +241,26 @@ class ToolManager:
                 await self._stack.__aexit__(*args)
         finally:
             # Break back-references from providers to this manager
+            providers: List[ToolProvider] = []
             try:
-                providers = {p for p in self._routing_table.values()}
+                providers = list(self._providers)
             except Exception:
-                providers = set()
+                providers = []
             for p in providers:
                 try:
-                    # Property setter converts to weakref None
+                    # Break provider -> manager back-reference
                     p._manager = None
                 except Exception:
                     pass
             # Clear strong refs held by manager
             self._routing_table.clear()
             self._tools.clear()
+            self._tool_by_name.clear()
+            self._providers.clear()
             self._loaded_provider_paths.clear()
             self._call_cache.clear()
+
+    # ----- Tool lookup APIs used by LLM bindings -----
 
     def get_tools(self) -> List[ToolDefinition]:
         """Get all registered tool schemas.
@@ -245,7 +268,7 @@ class ToolManager:
         Returns:
             List of ToolDefinition objects for LLM binding
         """
-        return self._tools
+        return [t.definition for t in self._tools]
 
     def get_tools_by_provider_names(self, provider_names: List[str]) -> List[ToolDefinition]:
         """Return tools belonging to providers with given provider_name values.
@@ -262,11 +285,11 @@ class ToolManager:
                 return []
             results: List[ToolDefinition] = []
             # Filter tools by the provider that registered them
-            for td in self._tools:
-                provider = self._routing_table.get(td.name)
-                pname = getattr(provider, "provider_name", None)
+            for tool in self._tools:
+                provider = self._routing_table.get(tool.metadata.name)
+                pname = provider.provider_name if provider else None
                 if isinstance(pname, str) and pname.lower() in wanted:
-                    results.append(td)
+                    results.append(tool.definition)
             return results
         except Exception:
             # Be conservative; if anything goes wrong, return no tools
@@ -289,22 +312,24 @@ class ToolManager:
         Providers may implement multiple capabilities. The returned list is de-duplicated
         and preserves load order.
         """
-        from .protocols import ToolCapability as _Cap  # local import to avoid cycles
-
-        if not isinstance(capability, _Cap):
+        if not isinstance(capability, ToolCapability):
             raise ValueError(f"Invalid capability: {capability}")
 
-        # Unique providers in load order
-        seen = set()
+        # Unique providers in load order based on tools' capabilities
+        seen: set[int] = set()
         ordered_unique: List[ToolProvider] = []
-        for provider in self._routing_table.values():
-            if id(provider) in seen:
-                continue
-            seen.add(id(provider))
+        for tool in self._tools:
             try:
-                caps = getattr(provider, "capabilities", set()) or set()
-                if capability in caps:
-                    ordered_unique.append(provider)
+                if tool.metadata.capability is not capability:
+                    continue
+                provider = self._routing_table.get(tool.metadata.name)
+                if not provider:
+                    continue
+                pid = id(provider)
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                ordered_unique.append(provider)
             except Exception:
                 continue
         return ordered_unique
@@ -328,48 +353,29 @@ class ToolManager:
                 continue
         return ordered_unique
 
-    def _filter_tools_by_providers(
-        self, providers: List["ToolProvider"], allowed_ops: Optional[set[str]] = None
-    ) -> List[ToolDefinition]:
-        """Helper: return ToolDefinitions belonging to the given providers, optionally restricted by operation name.
-
-        Operation name is parsed as the substring after the provider prefix and instance hash,
-        i.e., name.split("_", 2)[2] when possible. This preserves multi-token ops like 'date_math'.
-        """
+    def _filter_tools_by_providers(self, providers: List["ToolProvider"]) -> List[ToolDefinition]:
+        """Helper: return ToolDefinitions belonging to the given providers."""
         try:
             provider_ids = {id(p) for p in providers or []}
             results: List[ToolDefinition] = []
-            for td in self._tools:
-                p = self._routing_table.get(td.name)
-                if id(p) not in provider_ids:
+            for tool in self._tools:
+                p = self._routing_table.get(tool.metadata.name)
+                if not p or id(p) not in provider_ids:
                     continue
-                if allowed_ops:
-                    try:
-                        nm = td.name or ""
-                        parts = nm.split("_", 2)
-                        op = parts[2] if len(parts) >= 3 else (parts[-1] if parts else nm)
-                        if op not in allowed_ops:
-                            continue
-                    except Exception:
-                        continue
-                results.append(td)
+                results.append(tool.definition)
             return results
         except Exception:
             return []
 
-    def get_tools_for_capability(
-        self, capability: Any, allowed_ops: Optional[set[str]] = None
-    ) -> List[ToolDefinition]:
-        """Return tool schemas for providers declaring a capability, optionally filtered by ops."""
+    def get_tools_for_capability(self, capability: Any) -> List[ToolDefinition]:
+        """Return tool schemas for providers declaring a capability."""
         providers = self.get_providers_for_capability(capability)
-        return self._filter_tools_by_providers(providers, allowed_ops=allowed_ops)
+        return self._filter_tools_by_providers(providers)
 
-    def get_tools_for_protocol(
-        self, protocol_cls: Any, allowed_ops: Optional[set[str]] = None
-    ) -> List[ToolDefinition]:
-        """Return tool schemas for providers satisfying a protocol, optionally filtered by ops."""
+    def get_tools_for_protocol(self, protocol_cls: Any) -> List[ToolDefinition]:
+        """Return tool schemas for providers satisfying a protocol."""
         providers = self.get_providers_for_protocol(protocol_cls)
-        return self._filter_tools_by_providers(providers, allowed_ops=allowed_ops)
+        return self._filter_tools_by_providers(providers)
 
     def get_provider_for_capability(self, capability: Any) -> Optional["ToolProvider"]:
         """Return the first provider that declares the capability, or None."""
@@ -390,7 +396,8 @@ class ToolManager:
             ValueError: If tool name not found in routing table
         """
         provider = self._routing_table.get(tool_name)
-        if not provider:
+        tool = self._tool_by_name.get(tool_name)
+        if not provider or not tool:
             available_tools = list(self._routing_table.keys())
             raise ValueError(
                 f"Unknown tool: {tool_name}. "
@@ -411,7 +418,7 @@ class ToolManager:
             return self._call_cache[cache_key]
 
         # OTel: per-tool resolve span
-        _provider_name = getattr(provider, "provider_name", None)
+        _provider_name = provider.provider_name if provider else None
         _op = None
         try:
             _op = provider.resolve_operation(tool_name, args)  # type: ignore[attr-defined]
@@ -425,7 +432,7 @@ class ToolManager:
                 "tool.operation": str(_op) if _op else "",
             },
         ):
-            result = await provider.resolve_tool_call(tool_name, args)
+            result = await tool.invoke(args)
         # Cache result for this run
         self._call_cache[cache_key] = result
         return result
