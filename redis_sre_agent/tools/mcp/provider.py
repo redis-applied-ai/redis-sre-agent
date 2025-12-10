@@ -6,7 +6,12 @@ overrides based on the MCPServerConfig.
 """
 
 import logging
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from mcp import ClientSession, StdioServerParameters, types as mcp_types
+from mcp.client.sse import sse_client
+from mcp.client.stdio import stdio_client
 
 from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
@@ -63,8 +68,9 @@ class MCPToolProvider(ToolProvider):
         super().__init__(redis_instance=redis_instance)
         self._server_name = server_name
         self._server_config = server_config
-        self._mcp_client: Optional[Any] = None
-        self._mcp_tools: List[Dict[str, Any]] = []
+        self._session: Optional[ClientSession] = None
+        self._exit_stack: Optional[AsyncExitStack] = None
+        self._mcp_tools: List[mcp_types.Tool] = []
         self._tool_cache: List[Tool] = []
 
     @property
@@ -88,35 +94,67 @@ class MCPToolProvider(ToolProvider):
         (stdio command or HTTP URL) and fetches the available tools.
         """
         try:
-            # For now, we'll use a placeholder implementation
-            # Real MCP client integration would go here
             logger.info(
                 f"Connecting to MCP server '{self._server_name}' "
                 f"(command={self._server_config.command}, url={self._server_config.url})"
             )
 
-            # TODO: Implement actual MCP client connection
-            # This would use the mcp library to connect to the server
-            # For stdio transport: spawn process with command + args
-            # For HTTP transport: connect to URL
+            self._exit_stack = AsyncExitStack()
+            await self._exit_stack.__aenter__()
 
-            # Placeholder: In real implementation, this would fetch tools from server
-            self._mcp_tools = []
+            # Determine transport type and connect
+            if self._server_config.command:
+                # Stdio transport - spawn a subprocess
+                server_params = StdioServerParameters(
+                    command=self._server_config.command,
+                    args=self._server_config.args or [],
+                    env=self._server_config.env,
+                )
+                read_stream, write_stream = await self._exit_stack.enter_async_context(
+                    stdio_client(server_params)
+                )
+            elif self._server_config.url:
+                # SSE transport
+                read_stream, write_stream = await self._exit_stack.enter_async_context(
+                    sse_client(self._server_config.url)
+                )
+            else:
+                raise ValueError(
+                    f"MCP server '{self._server_name}' must have either 'command' or 'url' configured"
+                )
+
+            # Create and initialize the session
+            self._session = await self._exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
+            await self._session.initialize()
+
+            # Discover tools from the server
+            tools_result = await self._session.list_tools()
+            self._mcp_tools = tools_result.tools
             self._tool_cache = []
 
-            logger.info(f"MCP server '{self._server_name}' connected with {len(self._mcp_tools)} tools")
+            logger.info(
+                f"MCP server '{self._server_name}' connected with {len(self._mcp_tools)} tools: "
+                f"{[t.name for t in self._mcp_tools]}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to connect to MCP server '{self._server_name}': {e}")
+            # Clean up on failure
+            if self._exit_stack:
+                await self._exit_stack.aclose()
+                self._exit_stack = None
             raise
 
     async def _disconnect(self) -> None:
         """Disconnect from the MCP server."""
         try:
-            if self._mcp_client:
-                # TODO: Implement actual MCP client disconnection
+            if self._exit_stack:
                 logger.info(f"Disconnecting from MCP server '{self._server_name}'")
-                self._mcp_client = None
+                await self._exit_stack.aclose()
+                self._exit_stack = None
+                self._session = None
         except Exception as e:
             logger.warning(f"Error disconnecting from MCP server '{self._server_name}': {e}")
 
@@ -160,7 +198,7 @@ class MCPToolProvider(ToolProvider):
         schemas: List[ToolDefinition] = []
 
         for mcp_tool in self._mcp_tools:
-            tool_name = mcp_tool.get("name", "")
+            tool_name = mcp_tool.name
             if not tool_name:
                 continue
 
@@ -169,14 +207,14 @@ class MCPToolProvider(ToolProvider):
                 continue
 
             # Get description (with potential override)
-            mcp_description = mcp_tool.get("description", f"MCP tool: {tool_name}")
+            mcp_description = mcp_tool.description or f"MCP tool: {tool_name}"
             description = self._get_description(tool_name, mcp_description)
 
             # Get capability (with potential override)
             capability = self._get_capability(tool_name)
 
             # Build parameters schema from MCP tool input schema
-            input_schema = mcp_tool.get("inputSchema", {})
+            input_schema = mcp_tool.inputSchema or {}
             parameters = {
                 "type": "object",
                 "properties": input_schema.get("properties", {}),
@@ -238,24 +276,56 @@ class MCPToolProvider(ToolProvider):
         Returns:
             The tool's result from the MCP server
         """
-        if not self._mcp_client:
+        if not self._session:
             return {
                 "status": "error",
                 "error": f"MCP server '{self._server_name}' is not connected",
             }
 
         try:
-            # TODO: Implement actual MCP tool call
-            # result = await self._mcp_client.call_tool(tool_name, args)
-            # return result
-
-            # Placeholder response
             logger.info(f"Calling MCP tool '{tool_name}' with args: {args}")
-            return {
-                "status": "success",
-                "message": f"MCP tool '{tool_name}' executed (placeholder)",
-                "args": args,
-            }
+            result = await self._session.call_tool(tool_name, arguments=args)
+
+            # Check for errors
+            if result.isError:
+                error_text = ""
+                for content in result.content:
+                    if isinstance(content, mcp_types.TextContent):
+                        error_text += content.text
+                return {
+                    "status": "error",
+                    "error": error_text or "Tool execution failed",
+                }
+
+            # Extract the result content
+            response: Dict[str, Any] = {"status": "success"}
+
+            # If there's structured content, use it
+            if result.structuredContent:
+                response["data"] = result.structuredContent
+
+            # Also extract text content for compatibility
+            text_parts = []
+            for content in result.content:
+                if isinstance(content, mcp_types.TextContent):
+                    text_parts.append(content.text)
+                elif isinstance(content, mcp_types.ImageContent):
+                    response.setdefault("images", []).append({
+                        "mimeType": content.mimeType,
+                        "data": content.data,
+                    })
+                elif isinstance(content, mcp_types.EmbeddedResource):
+                    resource = content.resource
+                    if isinstance(resource, mcp_types.TextResourceContents):
+                        response.setdefault("resources", []).append({
+                            "uri": str(resource.uri),
+                            "text": resource.text,
+                        })
+
+            if text_parts:
+                response["text"] = "\n".join(text_parts)
+
+            return response
 
         except Exception as e:
             logger.error(f"Error calling MCP tool '{tool_name}': {e}")

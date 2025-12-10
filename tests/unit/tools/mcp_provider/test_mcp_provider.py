@@ -123,31 +123,31 @@ class TestMCPToolProviderAsync:
     """Test async functionality of MCPToolProvider."""
 
     @pytest.mark.asyncio
-    async def test_context_manager(self):
-        """Test that provider works as async context manager."""
+    async def test_tools_returns_empty_list_without_connection(self):
+        """Test that tools() returns empty list when not connected."""
         config = MCPServerConfig(command="test")
         provider = MCPToolProvider(server_name="test", server_config=config)
 
-        async with provider as p:
-            assert p is provider
-            assert p.provider_name == "mcp_test"
+        # Without connecting, tools should be empty
+        tools = provider.tools()
+        assert tools == []
 
     @pytest.mark.asyncio
-    async def test_tools_returns_empty_list_initially(self):
-        """Test that tools() returns empty list when no MCP tools discovered."""
+    async def test_create_tool_schemas_empty_without_connection(self):
+        """Test that create_tool_schemas returns empty when not connected."""
         config = MCPServerConfig(command="test")
         provider = MCPToolProvider(server_name="test", server_config=config)
 
-        async with provider:
-            tools = provider.tools()
-            assert tools == []
+        # Without connecting, schemas should be empty
+        schemas = provider.create_tool_schemas()
+        assert schemas == []
 
     @pytest.mark.asyncio
-    async def test_create_tool_schemas_empty(self):
-        """Test that create_tool_schemas returns empty when no MCP tools."""
+    async def test_call_mcp_tool_not_connected(self):
+        """Test that _call_mcp_tool returns error when not connected."""
         config = MCPServerConfig(command="test")
         provider = MCPToolProvider(server_name="test", server_config=config)
 
-        async with provider:
-            schemas = provider.create_tool_schemas()
-            assert schemas == []
+        result = await provider._call_mcp_tool("some_tool", {"arg": "value"})
+        assert result["status"] == "error"
+        assert "not connected" in result["error"]
