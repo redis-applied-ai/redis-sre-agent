@@ -144,6 +144,114 @@ async def knowledge_search(
 
 
 @mcp.tool()
+async def get_thread(thread_id: str) -> Dict[str, Any]:
+    """Get the contents of a triage thread.
+
+    Retrieves the full conversation history, messages, tool calls, and results
+    from a triage thread. Use this to check on the progress or get the final
+    results of a triage session.
+
+    Args:
+        thread_id: The thread ID returned from the triage tool
+
+    Returns:
+        Dictionary with thread messages, status, and results
+    """
+    from redis_sre_agent.core.redis import get_redis_client
+    from redis_sre_agent.core.threads import ThreadManager
+
+    logger.info(f"MCP get_thread: {thread_id}")
+
+    try:
+        redis_client = get_redis_client()
+        tm = ThreadManager(redis_client=redis_client)
+        thread = await tm.get_thread(thread_id)
+
+        if not thread:
+            return {
+                "error": f"Thread {thread_id} not found",
+                "thread_id": thread_id,
+            }
+
+        # Extract messages from context
+        messages = thread.context.get("messages", [])
+
+        # Format messages for readability
+        formatted_messages = []
+        for msg in messages:
+            formatted_msg = {
+                "role": msg.get("role", "unknown"),
+                "content": msg.get("content", ""),
+            }
+            # Include tool calls if present
+            if "tool_calls" in msg:
+                formatted_msg["tool_calls"] = msg["tool_calls"]
+            formatted_messages.append(formatted_msg)
+
+        return {
+            "thread_id": thread_id,
+            "messages": formatted_messages,
+            "message_count": len(formatted_messages),
+            "result": thread.result,
+            "error_message": thread.error_message,
+            "updates": [u.model_dump() for u in thread.updates] if thread.updates else [],
+        }
+
+    except Exception as e:
+        logger.error(f"Get thread failed: {e}")
+        return {
+            "error": str(e),
+            "thread_id": thread_id,
+        }
+
+
+@mcp.tool()
+async def get_task_status(task_id: str) -> Dict[str, Any]:
+    """Get the status of a background task.
+
+    Check if a triage task is still running, completed, or failed.
+    Use this to poll for task completion before retrieving thread results.
+
+    Args:
+        task_id: The task ID returned from the triage tool
+
+    Returns:
+        Dictionary with task status, progress updates, and result if complete
+    """
+    from redis_sre_agent.core.tasks import get_task_by_id
+
+    logger.info(f"MCP get_task_status: {task_id}")
+
+    try:
+        task = await get_task_by_id(task_id=task_id)
+
+        return {
+            "task_id": task_id,
+            "thread_id": task.get("thread_id"),
+            "status": task.get("status"),
+            "subject": task.get("subject"),
+            "created_at": task.get("created_at"),
+            "updated_at": task.get("updated_at"),
+            "updates": task.get("updates", []),
+            "result": task.get("result"),
+            "error_message": task.get("error_message"),
+        }
+
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "task_id": task_id,
+            "status": "not_found",
+        }
+    except Exception as e:
+        logger.error(f"Get task status failed: {e}")
+        return {
+            "error": str(e),
+            "task_id": task_id,
+        }
+
+
+@mcp.tool()
 async def list_instances() -> Dict[str, Any]:
     """List all configured Redis instances.
 

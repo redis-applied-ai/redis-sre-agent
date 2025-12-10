@@ -6,6 +6,8 @@ import pytest
 
 from redis_sre_agent.mcp_server.server import (
     create_instance,
+    get_task_status,
+    get_thread,
     knowledge_search,
     list_instances,
     mcp,
@@ -30,6 +32,8 @@ class TestMCPServerSetup:
         tool_names = [t.name for t in mcp._tool_manager._tools.values()]
         assert "triage" in tool_names
         assert "knowledge_search" in tool_names
+        assert "get_thread" in tool_names
+        assert "get_task_status" in tool_names
         assert "list_instances" in tool_names
         assert "create_instance" in tool_names
 
@@ -285,3 +289,99 @@ class TestCreateInstanceTool:
 
             assert result["status"] == "failed"
             assert "already exists" in result["error"]
+
+
+
+class TestGetThreadTool:
+    """Test the get_thread MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_get_thread_success(self):
+        """Test successful thread retrieval."""
+        from unittest.mock import MagicMock
+
+        mock_thread = MagicMock()
+        mock_thread.context = {
+            "messages": [
+                {"role": "user", "content": "Check memory"},
+                {"role": "assistant", "content": "Analyzing..."},
+            ]
+        }
+        mock_thread.result = {"summary": "All good"}
+        mock_thread.error_message = None
+        mock_thread.updates = []
+
+        with patch(
+            "redis_sre_agent.core.redis.get_redis_client"
+        ), patch(
+            "redis_sre_agent.core.threads.ThreadManager.get_thread",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_thread
+
+            result = await get_thread(thread_id="thread-123")
+
+            assert result["thread_id"] == "thread-123"
+            assert result["message_count"] == 2
+            assert result["messages"][0]["role"] == "user"
+
+    @pytest.mark.asyncio
+    async def test_get_thread_not_found(self):
+        """Test thread not found."""
+        with patch(
+            "redis_sre_agent.core.redis.get_redis_client"
+        ), patch(
+            "redis_sre_agent.core.threads.ThreadManager.get_thread",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = None
+
+            result = await get_thread(thread_id="nonexistent")
+
+            assert "error" in result
+            assert "not found" in result["error"]
+
+
+class TestGetTaskStatusTool:
+    """Test the get_task_status MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_get_task_status_success(self):
+        """Test successful task status retrieval."""
+        mock_task = {
+            "task_id": "task-123",
+            "thread_id": "thread-456",
+            "status": "done",
+            "subject": "Health check",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-01T00:01:00Z",
+            "updates": [],
+            "result": {"summary": "Complete"},
+            "error_message": None,
+        }
+
+        with patch(
+            "redis_sre_agent.core.tasks.get_task_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_task
+
+            result = await get_task_status(task_id="task-123")
+
+            assert result["task_id"] == "task-123"
+            assert result["status"] == "done"
+            assert result["thread_id"] == "thread-456"
+
+    @pytest.mark.asyncio
+    async def test_get_task_status_not_found(self):
+        """Test task not found."""
+        with patch(
+            "redis_sre_agent.core.tasks.get_task_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.side_effect = ValueError("Task task-999 not found")
+
+            result = await get_task_status(task_id="task-999")
+
+            assert result["status"] == "not_found"
+            assert "error" in result
