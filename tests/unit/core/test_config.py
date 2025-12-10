@@ -293,6 +293,112 @@ class TestSettings:
             assert not hasattr(settings, "unknown_field")
 
 
+class TestMCPConfiguration:
+    """Test MCP server configuration models."""
+
+    def test_mcp_tool_config_defaults(self):
+        """Test MCPToolConfig default values."""
+        from redis_sre_agent.core.config import MCPToolConfig
+
+        config = MCPToolConfig()
+        assert config.capability is None
+        assert config.description is None
+
+    def test_mcp_tool_config_with_capability(self):
+        """Test MCPToolConfig with capability set."""
+        from redis_sre_agent.core.config import MCPToolConfig
+        from redis_sre_agent.tools.models import ToolCapability
+
+        config = MCPToolConfig(capability=ToolCapability.LOGS)
+        assert config.capability == ToolCapability.LOGS
+        assert config.description is None
+
+    def test_mcp_tool_config_with_description(self):
+        """Test MCPToolConfig with description override."""
+        from redis_sre_agent.core.config import MCPToolConfig
+
+        config = MCPToolConfig(description="Use this tool when searching for memories...")
+        assert config.capability is None
+        assert config.description == "Use this tool when searching for memories..."
+
+    def test_mcp_tool_config_with_both(self):
+        """Test MCPToolConfig with both capability and description."""
+        from redis_sre_agent.core.config import MCPToolConfig
+        from redis_sre_agent.tools.models import ToolCapability
+
+        config = MCPToolConfig(
+            capability=ToolCapability.METRICS,
+            description="Custom description for the tool",
+        )
+        assert config.capability == ToolCapability.METRICS
+        assert config.description == "Custom description for the tool"
+
+    def test_mcp_server_config_command_based(self):
+        """Test MCPServerConfig for command-based (stdio) transport."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-memory"],
+            env={"DEBUG": "true"},
+        )
+        assert config.command == "npx"
+        assert config.args == ["-y", "@modelcontextprotocol/server-memory"]
+        assert config.env == {"DEBUG": "true"}
+        assert config.url is None
+        assert config.tools is None
+
+    def test_mcp_server_config_url_based(self):
+        """Test MCPServerConfig for URL-based transport."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        config = MCPServerConfig(url="http://localhost:3000/mcp")
+        assert config.command is None
+        assert config.args is None
+        assert config.url == "http://localhost:3000/mcp"
+
+    def test_mcp_server_config_with_tool_constraints(self):
+        """Test MCPServerConfig with tool constraints."""
+        from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
+        from redis_sre_agent.tools.models import ToolCapability
+
+        config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-memory"],
+            tools={
+                "search_memories": MCPToolConfig(capability=ToolCapability.LOGS),
+                "create_memories": MCPToolConfig(description="Use this tool when..."),
+            },
+        )
+        assert config.tools is not None
+        assert len(config.tools) == 2
+        assert config.tools["search_memories"].capability == ToolCapability.LOGS
+        assert config.tools["create_memories"].description == "Use this tool when..."
+
+    def test_settings_mcp_servers_default_empty(self):
+        """Test that mcp_servers defaults to empty dict."""
+        from redis_sre_agent.core.config import settings
+
+        # Default should be an empty dict
+        assert isinstance(settings.mcp_servers, dict)
+
+    def test_mcp_server_config_from_dict(self):
+        """Test that MCPServerConfig can be created from a dict (for env var parsing)."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        config_dict = {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-memory"],
+            "tools": {
+                "search_memories": {"capability": "logs"},
+            },
+        }
+        config = MCPServerConfig.model_validate(config_dict)
+        assert config.command == "npx"
+        assert config.args == ["-y", "@modelcontextprotocol/server-memory"]
+        # Note: tools with string capability will need special handling in the provider
+
+
 class TestSettingsValidation:
     """Test settings validation logic."""
 

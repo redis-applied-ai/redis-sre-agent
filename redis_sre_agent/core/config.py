@@ -1,12 +1,85 @@
 """Configuration management using Pydantic Settings."""
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from pydantic import Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from redis_sre_agent.tools.models import ToolCapability
 
 if TYPE_CHECKING:
     pass
+
+
+class MCPToolConfig(BaseModel):
+    """Configuration for a specific tool exposed by an MCP server.
+
+    This allows overriding or constraining how the agent sees and uses
+    a specific MCP tool.
+
+    Example:
+        MCPToolConfig(
+            capability=ToolCapability.LOGS,
+            description="Use this tool when searching for memories..."
+        )
+    """
+
+    capability: Optional[ToolCapability] = Field(
+        default=None,
+        description="The capability category for this tool (e.g., LOGS, METRICS). "
+        "If not specified, defaults to UTILITIES.",
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Alternative description for this tool. "
+        "If provided, the agent sees this instead of the MCP server's description.",
+    )
+
+
+class MCPServerConfig(BaseModel):
+    """Configuration for an MCP server.
+
+    This follows the standard MCP configuration format used by Claude, VS Code,
+    and other tools, with additional fields for tool constraints.
+
+    Example:
+        MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-memory"],
+            tools={
+                "search_memories": MCPToolConfig(capability=ToolCapability.LOGS),
+                "create_memories": MCPToolConfig(description="Use this tool when..."),
+            }
+        )
+    """
+
+    # Standard MCP configuration fields
+    command: Optional[str] = Field(
+        default=None,
+        description="Command to launch the MCP server (for stdio transport).",
+    )
+    args: Optional[List[str]] = Field(
+        default=None,
+        description="Arguments to pass to the MCP server command.",
+    )
+    env: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Environment variables to set when launching the server.",
+    )
+
+    # URL-based transport (alternative to command-based)
+    url: Optional[str] = Field(
+        default=None,
+        description="URL for SSE or HTTP-based MCP transport.",
+    )
+
+    # Tool constraints - if provided, only these tools are exposed to the agent
+    tools: Optional[Dict[str, MCPToolConfig]] = Field(
+        default=None,
+        description="Optional mapping of tool names to their configurations. "
+        "If provided, only these tools are exposed to the agent from the MCP server. "
+        "Each tool can have a custom capability and/or description override.",
+    )
 
 # Load environment variables from .env file if it exists
 # In Docker/production, environment variables are set directly
@@ -134,6 +207,15 @@ class Settings(BaseSettings):
         ],
         description="Enabled tool providers (fully qualified class paths). "
         "Example: redis_sre_agent.tools.metrics.prometheus.PrometheusToolProvider",
+    )
+
+    # MCP Server Configuration
+    mcp_servers: Dict[str, Union[MCPServerConfig, Dict[str, Any]]] = Field(
+        default_factory=dict,
+        description="MCP (Model Context Protocol) servers to connect to. "
+        "Each key is the server name, and the value is the server configuration. "
+        "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
+        "'tools': {'search_memories': {'capability': 'logs'}}}}",
     )
 
 

@@ -158,6 +158,9 @@ class ToolManager:
         else:
             logger.info("No redis_instance provided - loading only instance-independent providers")
 
+        # Load MCP servers (these are always-on and don't require redis_instance)
+        await self._load_mcp_providers()
+
         logger.info(
             f"ToolManager initialized with {len(self._tools)} tools "
             f"from {len(set(self._routing_table.values()))} providers"
@@ -209,6 +212,69 @@ class ToolManager:
         except Exception:
             logger.exception(f"Failed to load provider {provider_path}")
             # Don't fail entire manager if one provider fails
+
+    async def _load_mcp_providers(self) -> None:
+        """Load MCP tool providers based on configured mcp_servers.
+
+        This method iterates through the mcp_servers configuration and creates
+        an MCPToolProvider for each configured server.
+        """
+        from redis_sre_agent.core.config import MCPServerConfig, settings
+
+        if not settings.mcp_servers:
+            return
+
+        for server_name, server_config in settings.mcp_servers.items():
+            try:
+                # Convert dict to MCPServerConfig if needed
+                if isinstance(server_config, dict):
+                    server_config = MCPServerConfig.model_validate(server_config)
+
+                # Skip if already loaded (use a synthetic path for tracking)
+                mcp_provider_path = f"mcp:{server_name}"
+                if mcp_provider_path in self._loaded_provider_paths:
+                    logger.debug(f"MCP provider already loaded, skipping: {server_name}")
+                    continue
+
+                # Import and create the MCP provider
+                from redis_sre_agent.tools.mcp.provider import MCPToolProvider
+
+                provider = MCPToolProvider(
+                    server_name=server_name,
+                    server_config=server_config,
+                    redis_instance=None,  # MCP providers don't use redis_instance
+                )
+
+                # Enter the provider's async context
+                provider = await self._stack.enter_async_context(provider)
+
+                # Set back-reference
+                try:
+                    setattr(provider, "_manager", self)
+                except Exception:
+                    pass
+
+                # Register tools
+                tools = provider.tools()
+                for tool in tools:
+                    name = tool.metadata.name
+                    if not name:
+                        continue
+                    self._routing_table[name] = provider
+                    self._tools.append(tool)
+                    self._tool_by_name[name] = tool
+
+                # Track provider
+                self._providers.append(provider)
+                self._loaded_provider_paths.add(mcp_provider_path)
+
+                logger.info(
+                    f"Loaded MCP provider '{server_name}' with {len(tools)} tools"
+                )
+
+            except Exception:
+                logger.exception(f"Failed to load MCP provider '{server_name}'")
+                # Don't fail entire manager if one MCP provider fails
 
     @classmethod
     def _get_provider_class(cls, provider_path: str) -> type:
