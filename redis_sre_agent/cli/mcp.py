@@ -49,7 +49,7 @@ def serve(transport: str, host: str, port: int):
     from redis_sre_agent.mcp_server.server import run_sse, run_stdio
 
     if transport == "stdio":
-        click.echo("Starting MCP server in stdio mode...")
+        # Don't print anything to stdout in stdio mode - it corrupts the JSON-RPC stream
         run_stdio()
     else:
         click.echo(f"Starting MCP server in SSE mode on {host}:{port}...")
