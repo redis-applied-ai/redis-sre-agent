@@ -17,14 +17,33 @@ mcp = FastMCP(
     name="redis-sre-agent",
     instructions="""Redis SRE Agent - An AI-powered Redis troubleshooting and operations assistant.
 
-This agent provides tools for:
-- Triaging Redis issues and getting expert analysis
-- Searching Redis documentation, runbooks, and best practices
-- Managing Redis instance configurations
+## Triage Workflow (Most Common)
 
-Use the triage tool when you need help troubleshooting Redis issues or want
-expert analysis of a Redis deployment. Use knowledge_search to find specific
-documentation or runbook information.""",
+To analyze a Redis issue:
+
+1. Call `triage(query="describe the issue", instance_id="optional-instance-id")`
+   - Returns: thread_id and task_id
+   - The analysis runs in the background (30-120 seconds typically)
+
+2. Poll `get_task_status(task_id)` every 5-10 seconds
+   - Wait until status is "done" or "failed"
+   - The "updates" field shows progress messages
+
+3. Call `get_thread(thread_id)` to get results
+   - Contains full conversation, tool calls, and findings
+   - The "result" field has the final analysis
+
+## Other Tools
+
+- `knowledge_search`: Search Redis docs and runbooks for quick answers
+- `list_instances`: See available Redis instances (use IDs with triage)
+- `create_instance`: Register a new Redis instance to monitor
+
+## Tips
+
+- Use list_instances first to find the correct instance_id for triage
+- For simple questions, try knowledge_search before full triage
+- Check get_task_status updates to see what the agent is analyzing""",
 )
 
 
@@ -39,16 +58,24 @@ async def triage(
     Submits a triage request to the Redis SRE Agent, which will analyze
     the issue using its knowledge base, metrics, logs, and diagnostic tools.
 
-    The triage runs as a background task. Use the returned thread_id to
-    check on progress or get results.
+    IMPORTANT: This runs as a background task and returns immediately.
+    Follow these steps to get results:
+
+    1. Call this tool - returns thread_id and task_id
+    2. Poll get_task_status(task_id) until status is "done" or "failed"
+    3. Call get_thread(thread_id) to retrieve the full analysis and results
+
+    The task typically takes 30-120 seconds depending on complexity.
 
     Args:
         query: The issue or question to triage (e.g., "High memory usage on production Redis")
-        instance_id: Optional Redis instance ID to focus the analysis on
+        instance_id: Optional Redis instance ID to focus the analysis on (use list_instances to find IDs)
         user_id: Optional user ID for tracking
 
     Returns:
-        Dictionary with thread_id, task_id, and status information
+        thread_id: Use with get_thread() to retrieve conversation and results
+        task_id: Use with get_task_status() to check if processing is complete
+        status: Initial status (usually "queued")
     """
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.tasks import create_task
@@ -145,17 +172,28 @@ async def knowledge_search(
 
 @mcp.tool()
 async def get_thread(thread_id: str) -> Dict[str, Any]:
-    """Get the contents of a triage thread.
+    """Get the full conversation and results from a triage thread.
 
-    Retrieves the full conversation history, messages, tool calls, and results
-    from a triage thread. Use this to check on the progress or get the final
-    results of a triage session.
+    Call this AFTER get_task_status() shows status="done" to retrieve the
+    complete triage analysis. The thread contains:
+
+    - All messages exchanged (user query, assistant responses)
+    - Tool calls made by the agent (metrics queries, log searches, etc.)
+    - The final result with findings and recommendations
+
+    Workflow:
+    1. triage() → get thread_id and task_id
+    2. get_task_status(task_id) → poll until status="done"
+    3. get_thread(thread_id) → get full results (this tool)
 
     Args:
-        thread_id: The thread ID returned from the triage tool
+        thread_id: The thread_id returned from the triage tool
 
     Returns:
-        Dictionary with thread messages, status, and results
+        messages: List of conversation messages with role and content
+        result: Final analysis result (findings, recommendations, etc.)
+        updates: Progress updates that occurred during execution
+        error_message: Error details if the triage failed
     """
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.threads import ThreadManager
@@ -207,16 +245,33 @@ async def get_thread(thread_id: str) -> Dict[str, Any]:
 
 @mcp.tool()
 async def get_task_status(task_id: str) -> Dict[str, Any]:
-    """Get the status of a background task.
+    """Check if a triage task is complete.
 
-    Check if a triage task is still running, completed, or failed.
-    Use this to poll for task completion before retrieving thread results.
+    Poll this after calling triage() to check when the analysis is done.
+    Once status="done", call get_thread(thread_id) to retrieve results.
+
+    Status values:
+    - "queued": Task is waiting to be processed
+    - "in_progress": Agent is actively analyzing
+    - "done": Complete - call get_thread() to get results
+    - "failed": Error occurred - check error_message
+    - "cancelled": Task was cancelled
+
+    Typical polling: Check every 5-10 seconds until status is "done" or "failed".
+
+    Workflow:
+    1. triage() → get thread_id and task_id
+    2. get_task_status(task_id) → poll until status="done" (this tool)
+    3. get_thread(thread_id) → get full results
 
     Args:
-        task_id: The task ID returned from the triage tool
+        task_id: The task_id returned from the triage tool
 
     Returns:
-        Dictionary with task status, progress updates, and result if complete
+        status: Current task status (queued/in_progress/done/failed/cancelled)
+        thread_id: Use with get_thread() once status is "done"
+        updates: Progress messages from the agent during execution
+        error_message: Error details if status is "failed"
     """
     from redis_sre_agent.core.tasks import get_task_by_id
 
