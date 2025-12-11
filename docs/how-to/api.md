@@ -6,6 +6,8 @@ This guide shows how to use the HTTP API end-to-end: check health, add an instan
 - Services running (Docker Compose or local uvicorn + worker)
 - If you enabled auth in your environment, include your API key header as needed
 
+**Port Note**: Docker Compose exposes the API on port **8080**, while local uvicorn uses port **8000**. Examples below use port 8080 (Docker Compose). Replace with 8000 if running locally.
+
 ### 1) Start services (choose one)
 - Docker Compose
 ```bash
@@ -26,20 +28,21 @@ uv run redis-sre-agent worker --concurrency 4
 ### 2) Health and readiness
 ```bash
 # Root health (fast)
-curl -fsS http://localhost:8000/
+# Use port 8080 for Docker Compose, port 8000 for local uvicorn
+curl -fsS http://localhost:8080/
 
 # Detailed health (Redis, vector index, workers)
-curl -fsS http://localhost:8000/api/v1/health | jq
+curl -fsS http://localhost:8080/api/v1/health | jq
 
 # Prometheus metrics (scrape this)
-curl -fsS http://localhost:8000/api/v1/metrics | head -n 20
+curl -fsS http://localhost:8080/api/v1/metrics | head -n 20
 ```
 
 ### 3) Manage Redis instances
 Create the instance the agent will triage, then verify a connection.
 ```bash
 # Create instance
-curl -fsS -X POST http://localhost:8000/api/v1/instances \
+curl -fsS -X POST http://localhost:8080/api/v1/instances \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "prod-cache",
@@ -50,14 +53,14 @@ curl -fsS -X POST http://localhost:8000/api/v1/instances \
   }' | jq
 
 # List & inspect
-curl -fsS http://localhost:8000/api/v1/instances | jq
-curl -fsS http://localhost:8000/api/v1/instances/<id> | jq
+curl -fsS http://localhost:8080/api/v1/instances | jq
+curl -fsS http://localhost:8080/api/v1/instances/<id> | jq
 
 # Test connection (by ID)
-curl -fsS -X POST http://localhost:8000/api/v1/instances/<id>/test-connection | jq
+curl -fsS -X POST http://localhost:8080/api/v1/instances/<id>/test-connection | jq
 
 # Test a raw URL (without saving)
-curl -fsS -X POST http://localhost:8000/api/v1/instances/test-connection-url \
+curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
   -H 'Content-Type: application/json' \
   -d '{"connection_url": "redis://host:6379/0"}' | jq
 ```
@@ -71,12 +74,12 @@ curl -fsS -X POST http://localhost:8000/api/v1/instances/test-connection-url \
 Simplest: create a task with your question. The API will create a thread if you omit `thread_id`.
 ```bash
 # Create a task (no instance)
-curl -fsS -X POST http://localhost:8000/api/v1/tasks \
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   -H 'Content-Type: application/json' \
   -d '{"message": "Explain high memory usage signals in Redis"}' | jq
 
 # Create a task (target a specific instance)
-curl -fsS -X POST http://localhost:8000/api/v1/tasks \
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   -H 'Content-Type: application/json' \
   -d '{
     "message": "Check memory pressure and slow ops",
@@ -86,15 +89,15 @@ curl -fsS -X POST http://localhost:8000/api/v1/tasks \
 Poll task or inspect the thread:
 ```bash
 # Poll task status
-curl -fsS http://localhost:8000/api/v1/tasks/<task_id> | jq
+curl -fsS http://localhost:8080/api/v1/tasks/<task_id> | jq
 
 # Get the thread state (messages, updates, result)
-curl -fsS http://localhost:8000/api/v1/threads/<thread_id> | jq
+curl -fsS http://localhost:8080/api/v1/threads/<thread_id> | jq
 ```
 Real-time updates via WebSocket:
 ```bash
 # Requires a thread_id; use any ws client (wscat, websocat)
-wscat -c ws://localhost:8000/api/v1/ws/tasks/<thread_id>
+wscat -c ws://localhost:8080/api/v1/ws/tasks/<thread_id>
 # You will receive an initial_state event and subsequent progress updates
 ```
 
@@ -103,12 +106,12 @@ wscat -c ws://localhost:8000/api/v1/ws/tasks/<thread_id>
 Alternative flow: create a thread first, then submit a task on that thread.
 ```bash
 # Create thread
-curl -fsS -X POST http://localhost:8000/api/v1/threads \
+curl -fsS -X POST http://localhost:8080/api/v1/threads \
   -H 'Content-Type: application/json' \
   -d '{"user_id": "u1", "subject": "Prod triage"}' | jq
 
 # Submit a task to that thread
-curl -fsS -X POST http://localhost:8000/api/v1/tasks \
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   -H 'Content-Type: application/json' \
   -d '{
     "thread_id": "<thread_id>",
@@ -121,20 +124,20 @@ curl -fsS -X POST http://localhost:8000/api/v1/tasks \
 Run an ingestion job, then search to confirm content is available.
 ```bash
 # Start pipeline job (ingest existing artifacts or run full if configured)
-curl -fsS -X POST http://localhost:8000/api/v1/knowledge/ingest/pipeline \
+curl -fsS -X POST http://localhost:8080/api/v1/knowledge/ingest/pipeline \
   -H 'Content-Type: application/json' \
   -d '{"operation": "ingest", "artifacts_path": "./artifacts"}' | jq
 
 # List jobs & check individual job status
-curl -fsS http://localhost:8000/api/v1/knowledge/jobs | jq
-curl -fsS http://localhost:8000/api/v1/knowledge/jobs/<job_id> | jq
+curl -fsS http://localhost:8080/api/v1/knowledge/jobs | jq
+curl -fsS http://localhost:8080/api/v1/knowledge/jobs/<job_id> | jq
 
 # Search knowledge
-curl -fsS 'http://localhost:8000/api/v1/knowledge/search?query=redis%20eviction%20policy' | jq
+curl -fsS 'http://localhost:8080/api/v1/knowledge/search?query=redis%20eviction%20policy' | jq
 ```
 Optional single-document ingestion:
 ```bash
-curl -fsS -X POST http://localhost:8000/api/v1/knowledge/ingest/document \
+curl -fsS -X POST http://localhost:8080/api/v1/knowledge/ingest/document \
   -H 'Content-Type: application/json' \
   -d '{
     "title": "Redis memory troubleshooting",
@@ -148,7 +151,7 @@ curl -fsS -X POST http://localhost:8000/api/v1/knowledge/ingest/document \
 Create a schedule to run instructions periodically, optionally bound to an instance.
 ```bash
 # Create schedule (daily)
-curl -fsS -X POST http://localhost:8000/api/v1/schedules/ \
+curl -fsS -X POST http://localhost:8080/api/v1/schedules/ \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "daily-triage",
@@ -161,20 +164,20 @@ curl -fsS -X POST http://localhost:8000/api/v1/schedules/ \
   }' | jq
 
 # List/get
-curl -fsS http://localhost:8000/api/v1/schedules/ | jq
-curl -fsS http://localhost:8000/api/v1/schedules/<schedule_id> | jq
+curl -fsS http://localhost:8080/api/v1/schedules/ | jq
+curl -fsS http://localhost:8080/api/v1/schedules/<schedule_id> | jq
 
 # Trigger now (manual run)
-curl -fsS -X POST http://localhost:8000/api/v1/schedules/<schedule_id>/trigger | jq
+curl -fsS -X POST http://localhost:8080/api/v1/schedules/<schedule_id>/trigger | jq
 
 # View runs for a schedule
-curl -fsS http://localhost:8000/api/v1/schedules/<schedule_id>/runs | jq
+curl -fsS http://localhost:8080/api/v1/schedules/<schedule_id>/runs | jq
 ```
 
 ### 7) Tasks, threads, and streaming
 - Tasks: `GET /api/v1/tasks/{task_id}`
 - Threads: `GET /api/v1/threads`, `GET /api/v1/threads/{thread_id}`
-- WebSocket: `ws://localhost:8000/api/v1/ws/tasks/{thread_id}`
+- WebSocket: `ws://localhost:8080/api/v1/ws/tasks/{thread_id}`
 
 ### 8) Observability
 - Prometheus scrape: `GET /api/v1/metrics`

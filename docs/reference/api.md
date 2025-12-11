@@ -1,6 +1,6 @@
 ## REST API Reference (generated)
 
-For interactive docs, see http://localhost:8000/docs
+For interactive docs, see http://localhost:8080/docs (Docker Compose) or http://localhost:8000/docs (local uvicorn)
 
 
 ### Endpoints
