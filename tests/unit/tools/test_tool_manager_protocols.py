@@ -33,9 +33,12 @@ async def test_protocol_selection_for_utilities_subset():
         tools = mgr.get_tools_for_capability(ToolCapability.UTILITIES)
         assert tools, "Expected utilities tools for the allowed set"
 
-        # Ensure all returned tools are utilities_* and that the allowed subset is present
+        # Collect ops from utilities_* tools only (MCP tools may also have UTILITIES capability)
         ops_seen = set()
         for t in tools:
+            # Skip MCP tools which have a different naming convention (mcp_servername_hash_toolname)
+            if t.name.startswith("mcp_"):
+                continue
             assert t.name.startswith("utilities_"), f"Unexpected provider prefix: {t.name}"
             parts = t.name.split("_", 2)
             op = parts[2] if len(parts) >= 3 else parts[-1]

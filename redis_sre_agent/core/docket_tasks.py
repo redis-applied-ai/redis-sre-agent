@@ -24,7 +24,7 @@ from redis_sre_agent.core.redis import (
     get_redis_client,
 )
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
-from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.core.threads import Message, ThreadManager
 
 logger = logging.getLogger(__name__)
 
@@ -480,9 +480,17 @@ async def process_agent_turn(
         else:
             agent = get_knowledge_agent()
 
-        # Prepare the conversation state with thread context
-        messages = thread.context.get("messages", [])
-        logger.debug(f"Loaded {len(messages)} messages from thread context")
+        # Prepare the conversation state with thread messages
+        # Convert Message objects to dicts for agent processing
+        messages = [
+            {
+                "role": m.role,
+                "content": m.content,
+                **({"metadata": m.metadata} if m.metadata else {}),
+            }
+            for m in thread.messages
+        ]
+        logger.debug(f"Loaded {len(messages)} messages from thread")
 
         conversation_state = {
             "messages": messages,
@@ -492,11 +500,12 @@ async def process_agent_turn(
         logger.debug(f"conversation_state messages type: {type(conversation_state['messages'])}")
 
         # Add the new user message
+        user_msg_timestamp = datetime.now(timezone.utc).isoformat()
         conversation_state["messages"].append(
             {
                 "role": "user",
                 "content": message,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": user_msg_timestamp,
             }
         )
 
@@ -508,7 +517,7 @@ async def process_agent_turn(
                     {
                         "role": "user",
                         "content": message,
-                        "timestamp": conversation_state["messages"][-1]["timestamp"],
+                        "metadata": {"timestamp": user_msg_timestamp},
                     }
                 ],
             )
@@ -593,48 +602,54 @@ async def process_agent_turn(
         ]
 
         # Persist agent reflections/status updates for this turn as chat messages
+        # Note: Updates are now stored on TaskState, not Thread
         try:
-            fresh_state = await thread_manager.get_thread(thread_id)
-            updates = list(fresh_state.updates or [])
-            # Keep only updates from this task/turn and relevant types
-            relevant_types = {"agent_reflection", "agent_processing", "agent_start"}
-            turn_updates = [
-                u
-                for u in updates
-                if (u.metadata or {}).get("task_id") == task_id
-                and u.update_type in relevant_types
-                and u.message
-            ]
-            # Order chronologically
-            turn_updates.sort(key=lambda u: u.timestamp)
-            reflection_messages = [
-                {
-                    "role": "assistant",
-                    "content": u.message,
-                    "timestamp": u.timestamp,
-                    "metadata": {"update_type": u.update_type, **(u.metadata or {})},
-                }
-                for u in turn_updates
-            ]
-            if reflection_messages:
-                # Insert reflections before the final assistant message for this turn
-                if clean_messages:
-                    final_msg = clean_messages[-1]
-                    base_msgs = clean_messages[:-1]
-                    # Deduplicate by content
-                    seen = set(m.get("content") for m in base_msgs)
-                    merged = (
-                        base_msgs
-                        + [m for m in reflection_messages if m["content"] not in seen]
-                        + [final_msg]
-                    )
-                    clean_messages = merged
-                else:
-                    clean_messages = reflection_messages
+            task_state = await task_manager.get_task_state(task_id)
+            if task_state and task_state.updates:
+                # Keep only relevant types of updates
+                relevant_types = {"agent_reflection", "agent_processing", "agent_start"}
+                turn_updates = [
+                    u for u in task_state.updates if u.update_type in relevant_types and u.message
+                ]
+                # Order chronologically
+                turn_updates.sort(key=lambda u: u.timestamp)
+                reflection_messages = [
+                    {
+                        "role": "assistant",
+                        "content": u.message,
+                        "timestamp": u.timestamp,
+                        "metadata": {"update_type": u.update_type, **(u.metadata or {})},
+                    }
+                    for u in turn_updates
+                ]
+                if reflection_messages:
+                    # Insert reflections before the final assistant message for this turn
+                    if clean_messages:
+                        final_msg = clean_messages[-1]
+                        base_msgs = clean_messages[:-1]
+                        # Deduplicate by content
+                        seen = set(m.get("content") for m in base_msgs)
+                        merged = (
+                            base_msgs
+                            + [m for m in reflection_messages if m["content"] not in seen]
+                            + [final_msg]
+                        )
+                        clean_messages = merged
+                    else:
+                        clean_messages = reflection_messages
         except Exception as e:
             logger.warning(f"Failed to merge reflection updates into transcript: {e}")
 
-        thread.context["messages"] = clean_messages
+        # Convert clean_messages dicts to Message objects for thread storage
+        thread.messages = [
+            Message(
+                role=m.get("role", "user"),
+                content=m.get("content", ""),
+                metadata={k: v for k, v in m.items() if k not in ("role", "content")} or None,
+            )
+            for m in clean_messages
+            if m.get("content")
+        ]
         thread.context["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         # If the subject is empty/placeholder, set an optimistic subject from original_query or first user message
@@ -651,13 +666,9 @@ async def process_agent_turn(
                     candidate = oq.strip()
                 else:
                     # Find the first user message content
-                    for m in clean_messages:
-                        if (
-                            isinstance(m, dict)
-                            and m.get("role") == "user"
-                            and (m.get("content") or "").strip()
-                        ):
-                            candidate = m.get("content").strip()
+                    for m in thread.messages:
+                        if m.role == "user" and m.content.strip():
+                            candidate = m.content.strip()
                             break
                 if candidate:
                     # Normalize to a single line and cap length
@@ -668,13 +679,13 @@ async def process_agent_turn(
         except Exception as e:
             logger.warning(f"Failed to set optimistic subject for thread {thread_id}: {e}")
 
-        # Save the updated context to Redis
+        # Save the updated thread state to Redis
         await thread_manager._save_thread_state(thread)
         logger.info(
-            f"Saved conversation history: {len(clean_messages)} user/assistant messages (filtered from {len(conversation_state['messages'])} total)"
+            f"Saved conversation history: {len(thread.messages)} user/assistant messages (filtered from {len(conversation_state['messages'])} total)"
         )
 
-        # Set the final result
+        # Set the final result on the task (not the thread - results belong on tasks)
         result = {
             "response": agent_response.get("response", ""),
             "metadata": agent_response.get("metadata", {}),
@@ -685,9 +696,12 @@ async def process_agent_turn(
 
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
-        await thread_manager.set_thread_result(thread_id, result)
-        await thread_manager.add_thread_update(
-            thread_id, f"Task {task_id} completed successfully", "turn_complete"
+
+        # Publish completion to stream for WebSocket updates (deprecated methods but still publish)
+        await thread_manager._publish_stream_update(
+            thread_id,
+            "turn_complete",
+            {"task_id": task_id, "message": "Task completed successfully"},
         )
 
         # End root span if present

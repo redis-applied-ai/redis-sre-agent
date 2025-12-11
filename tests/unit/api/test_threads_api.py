@@ -75,19 +75,18 @@ class TestThreadsAPI:
 
     def test_get_thread_success(self, client):
         """GET /api/v1/threads/{id} returns 200 with messages and metadata."""
+        from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
 
-        # Minimal ThreadState-like object
-        class State:
-            context = {"messages": [{"role": "user", "content": "hi"}]}
-            action_items = []
-            updates = []
-            result = None
-            error_message = None
-            metadata = MagicMock()
-            metadata.model_dump = lambda: {"user_id": "u"}
+        # Create a proper Thread object matching the model
+        mock_thread = Thread(
+            thread_id="th1",
+            messages=[Message(role="user", content="hi")],
+            context={},
+            metadata=ThreadMetadata(user_id="u"),
+        )
 
         mock_tm = MagicMock()
-        mock_tm.get_thread = AsyncMock(return_value=State())
+        mock_tm.get_thread = AsyncMock(return_value=mock_thread)
         with patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm):
             resp = client.get("/api/v1/threads/th1")
         assert resp.status_code == 200

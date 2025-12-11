@@ -6,9 +6,72 @@ This guide explains how the Redis SRE Agent is configured, what the required and
 
 Configuration values are loaded from these sources (highest precedence first):
 
-- Environment variables (recommended for prod)
-- `.env` file (loaded automatically in dev if present)
-- Code defaults in `redis_sre_agent/core/config.py`
+1. Environment variables (recommended for prod)
+2. `.env` file (loaded automatically in dev if present)
+3. **YAML config file** (for complex nested configurations like MCP servers)
+4. Code defaults in `redis_sre_agent/core/config.py`
+
+### YAML configuration
+
+For complex nested settings like MCP server configurations, you can use a YAML config file. This is particularly useful for configuring multiple MCP servers with tool descriptions.
+
+**Config file discovery order:**
+
+1. Path specified in `SRE_AGENT_CONFIG` environment variable
+2. `config.yaml` in the current working directory
+3. `config.yml` in the current working directory
+4. `sre_agent_config.yaml` in the current working directory
+5. `sre_agent_config.yml` in the current working directory
+
+**Example `config.yaml`:**
+
+```yaml
+# Application settings
+debug: false
+log_level: INFO
+
+# MCP (Model Context Protocol) servers configuration
+mcp_servers:
+  # Memory server for long-term agent memory
+  redis-memory-server:
+    command: uv
+    args:
+      - tool
+      - run
+      - --from
+      - agent-memory-server
+      - agent-memory
+      - mcp
+    env:
+      REDIS_URL: redis://localhost:6399
+    tools:
+      search_long_term_memory:
+        description: |
+          Search saved memories about Redis instances. ALWAYS use this
+          before troubleshooting to recall past issues and solutions.
+          {original}
+
+  # GitHub MCP server for repository operations
+  github:
+    command: docker
+    args:
+      - run
+      - -i
+      - --rm
+      - -e
+      - GITHUB_PERSONAL_ACCESS_TOKEN
+      - ghcr.io/github/github-mcp-server
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+```
+
+See `config.yaml.example` for a complete example with all available options.
+
+**Using a custom config path:**
+
+```bash
+export SRE_AGENT_CONFIG=/path/to/my-config.yaml
+```
 
 ### Required
 

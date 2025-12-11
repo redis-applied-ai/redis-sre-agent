@@ -20,11 +20,23 @@ logger = logging.getLogger(__name__)
 
 
 class ThreadUpdate(BaseModel):
-    """Individual progress update within a thread."""
+    """Individual progress update within a thread.
+
+    DEPRECATED: Progress updates should be stored on TaskState, not Thread.
+    This class is kept for backward compatibility when reading old data.
+    """
 
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     message: str
     update_type: str = "progress"  # progress, tool_call, error, etc.
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class Message(BaseModel):
+    """A single message in a thread conversation."""
+
+    role: str = Field(default="user", description="Message role: user|assistant|system")
+    content: str
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -41,14 +53,21 @@ class ThreadMetadata(BaseModel):
 
 
 class Thread(BaseModel):
-    """Complete thread state representation."""
+    """Complete thread state representation.
+
+    A Thread represents a conversation. It contains:
+    - messages: The conversation history (user, assistant, system messages)
+    - context: Additional context data (instance_id, original_query, etc.)
+    - metadata: Thread metadata (created_at, user_id, tags, etc.)
+
+    Note: result, error_message, and progress updates belong on TaskState,
+    not Thread. Tasks represent individual agent turns within a thread.
+    """
 
     thread_id: str = Field(default_factory=lambda: str(ULID()))
-    updates: List[ThreadUpdate] = Field(default_factory=list)
+    messages: List[Message] = Field(default_factory=list)
     context: Dict[str, Any] = Field(default_factory=dict)
     metadata: ThreadMetadata = Field(default_factory=ThreadMetadata)
-    result: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
 
 
 class ThreadManager:
@@ -386,21 +405,19 @@ Subject:"""
             if not await client.exists(keys["metadata"]):
                 return None
 
-            # Load all thread data
-            updates_data = await client.lrange(keys["updates"], 0, -1)
+            # Load thread data
+            messages_data = await client.lrange(keys["messages"], 0, -1)
             context_data = await client.hgetall(keys["context"])
             metadata_data = await client.hgetall(keys["metadata"])
-            result_data = await client.get(keys["result"])
-            error_data = await client.get(keys["error"])
 
-            # Parse updates
-            updates = []
-            for update_json in updates_data:
+            # Parse messages from dedicated list (FIFO order via RPUSH)
+            messages: List[Message] = []
+            for msg_json in messages_data:
                 try:
-                    update_dict = json.loads(update_json)
-                    updates.append(ThreadUpdate(**update_dict))
+                    msg_dict = json.loads(msg_json)
+                    messages.append(Message(**msg_dict))
                 except (json.JSONDecodeError, Exception) as e:
-                    logger.warning(f"Failed to parse update: {e}")
+                    logger.warning(f"Failed to parse message: {e}")
 
             # Parse metadata
             metadata = ThreadMetadata()
@@ -434,23 +451,25 @@ Subject:"""
                     # Fallback: just decode bytes to strings
                     context = {k.decode(): v.decode() for k, v in context_data.items()}
 
-            # Parse result and error
-            result = None
-            if result_data:
-                try:
-                    result = json.loads(result_data)
-                except json.JSONDecodeError:
-                    result = {"raw": result_data.decode()}
-
-            error_message = error_data.decode() if error_data else None
+            # BACKWARD COMPATIBILITY: If no messages in dedicated list, check context["messages"]
+            if not messages and isinstance(context.get("messages"), list):
+                for m in context["messages"]:
+                    if isinstance(m, dict) and m.get("content"):
+                        messages.append(
+                            Message(
+                                role=m.get("role", "user"),
+                                content=m.get("content", ""),
+                                metadata=m.get("metadata"),
+                            )
+                        )
+                # Remove messages from context since they're now in the messages field
+                context.pop("messages", None)
 
             return Thread(
                 thread_id=thread_id,
-                updates=updates,
+                messages=messages,
                 context=context,
                 metadata=metadata,
-                result=result,
-                error_message=error_message,
             )
 
         except Exception as e:
@@ -464,26 +483,23 @@ Subject:"""
         update_type: str = "progress",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Add a progress update to the thread."""
+        """Add a progress update to the thread.
+
+        DEPRECATED: Progress updates should be stored on TaskState via TaskManager.
+        This method now only publishes to the stream for WebSocket updates.
+        """
+        import warnings
+
+        warnings.warn(
+            "add_thread_update is deprecated. Use TaskManager.add_task_update instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         try:
-            client = await self._get_client()
-            keys = self._get_thread_keys(thread_id)
-
+            # Only publish to stream for real-time WebSocket updates
+            # Don't store on thread - updates belong on tasks
             update = ThreadUpdate(message=message, update_type=update_type, metadata=metadata)
-
-            # Add to updates list
-            update_json = update.model_dump_json()
-            await client.lpush(keys["updates"], update_json)
-
-            # Keep only last 100 updates
-            await client.ltrim(keys["updates"], 0, 99)
-
-            # Update metadata timestamp
-            await client.hset(
-                keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
-            )
-
-            # Publish update to stream
             await self._publish_stream_update(
                 thread_id,
                 "thread_update",
@@ -495,43 +511,38 @@ Subject:"""
                 },
             )
 
-            # Update search index
-            await self._upsert_thread_search_doc(thread_id)
-
-            logger.debug(f"Added update to thread {thread_id}: {message}")
+            logger.debug(f"Published update for thread {thread_id}: {message}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to add update to thread {thread_id}: {e}")
+            logger.error(f"Failed to publish update for thread {thread_id}: {e}")
             return False
 
     async def set_thread_result(self, thread_id: str, result: Dict[str, Any]) -> bool:
-        """Set the final result for a thread."""
+        """Set the final result for a thread.
+
+        DEPRECATED: Results should be stored on TaskState via TaskManager.
+        This method now only publishes to the stream for WebSocket updates.
+        """
+        import warnings
+
+        warnings.warn(
+            "set_thread_result is deprecated. Use TaskManager.set_task_result instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         try:
-            client = await self._get_client()
-            keys = self._get_thread_keys(thread_id)
-
-            result_json = json.dumps(result)
-            await client.set(keys["result"], result_json)
-
-            # Update metadata timestamp
-            await client.hset(
-                keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
-            )
-
-            # Publish result to stream
+            # Only publish to stream for real-time WebSocket updates
             await self._publish_stream_update(
                 thread_id, "result_set", {"result": result, "message": "Task result available"}
             )
 
-            # Update search index
-            await self._upsert_thread_search_doc(thread_id)
-
-            logger.info(f"Set result for thread {thread_id}")
+            logger.info(f"Published result for thread {thread_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to set result for thread {thread_id}: {e}")
+            logger.error(f"Failed to publish result for thread {thread_id}: {e}")
             return False
 
     async def _publish_stream_update(
@@ -550,19 +561,21 @@ Subject:"""
             return False
 
     async def set_thread_error(self, thread_id: str, error_message: str) -> bool:
-        """Set error message and mark thread as failed."""
-        try:
-            client = await self._get_client()
-            keys = self._get_thread_keys(thread_id)
+        """Set error message for a thread.
 
-            await client.set(keys["error"], error_message)
+        DEPRECATED: Errors should be stored on TaskState via TaskManager.
+        This method is now a no-op but kept for backward compatibility.
+        """
+        import warnings
 
-            logger.error(f"Set error for thread {thread_id}: {error_message}")
-            return True
+        warnings.warn(
+            "set_thread_error is deprecated. Use TaskManager.set_task_error instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
-        except Exception as e:
-            logger.error(f"Failed to set error for thread {thread_id}: {e}")
-            return False
+        logger.warning(f"set_thread_error called (deprecated) for thread {thread_id}")
+        return True
 
     async def update_thread_context(
         self, thread_id: str, context_updates: Dict[str, Any], merge: bool = True
@@ -633,33 +646,45 @@ Subject:"""
             return False
 
     async def append_messages(self, thread_id: str, messages: List[Dict[str, Any]]) -> bool:
-        """Append messages to a thread's message list in context.
+        """Append messages to thread's message list.
 
-        This treats context["messages"] as a JSON-serializable list of {role, content, ...} dicts.
+        Messages are stored in a dedicated Redis list (RPUSH for FIFO order).
+        Each message should have {role, content, metadata?}.
         """
         try:
-            # Load existing messages from thread state
-            state = await self.get_thread(thread_id)
-            existing = []
-            if state and isinstance(state.context.get("messages"), list):
-                existing = state.context.get("messages")
+            client = await self._get_client()
+            keys = self._get_thread_keys(thread_id)
 
-            # Append new messages, minimal validation
+            # Append each message to the list (RPUSH for chronological order)
             for m in messages or []:
                 if not isinstance(m, dict):
                     continue
-                role = m.get("role")
                 content = m.get("content")
                 if not content:
                     continue
-                if role not in ("user", "assistant", "system", None):
-                    role = "user"
-                existing.append(
-                    {k: v for k, v in m.items() if k in ("role", "content", "metadata") or True}
-                )
 
-            # Save back to context
-            return await self.update_thread_context(thread_id, {"messages": existing}, merge=True)
+                role = m.get("role", "user")
+                if role not in ("user", "assistant", "system"):
+                    role = "user"
+
+                msg = Message(
+                    role=role,
+                    content=content,
+                    metadata=m.get("metadata"),
+                )
+                await client.rpush(keys["messages"], msg.model_dump_json())
+
+            # Update metadata timestamp
+            await client.hset(
+                keys["metadata"], "updated_at", datetime.now(timezone.utc).isoformat()
+            )
+
+            # Update search index
+            await self._upsert_thread_search_doc(thread_id)
+
+            logger.debug(f"Appended {len(messages)} messages to thread {thread_id}")
+            return True
+
         except Exception as e:
             logger.error(f"Failed to append messages for thread {thread_id}: {e}")
             return False
@@ -671,11 +696,20 @@ Subject:"""
             keys = self._get_thread_keys(thread_state.thread_id)
 
             async with client.pipeline(transaction=True) as pipe:
-                # Set context as hash
+                # Save messages to dedicated list (clear and rebuild for atomicity)
+                if thread_state.messages:
+                    pipe.delete(keys["messages"])
+                    for msg in thread_state.messages:
+                        pipe.rpush(keys["messages"], msg.model_dump_json())
+
+                # Set context as hash (excluding messages which are now separate)
                 if thread_state.context:
                     # Filter out None values and serialize complex objects as JSON
                     clean_context = {}
                     for k, v in thread_state.context.items():
+                        # Skip 'messages' key - messages are stored separately
+                        if k == "messages":
+                            continue
                         if v is None:
                             clean_context[k] = ""
                         elif isinstance(v, (dict, list)):
@@ -696,18 +730,6 @@ Subject:"""
                     k: str(v) if v is not None else "" for k, v in metadata_dict.items()
                 }
                 pipe.hset(keys["metadata"], mapping=clean_metadata)
-
-                # Set result if exists
-                if thread_state.result:
-                    pipe.set(keys["result"], json.dumps(thread_state.result))
-
-                # Set error if exists
-                if thread_state.error_message:
-                    pipe.set(keys["error"], thread_state.error_message)
-
-                # Add updates
-                for update in thread_state.updates:
-                    pipe.lpush(keys["updates"], update.model_dump_json())
 
                 # Set TTL (24 hours for thread data)
                 for key in keys.values():

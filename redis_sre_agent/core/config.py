@@ -1,9 +1,17 @@
 """Configuration management using Pydantic Settings."""
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
 
 from redis_sre_agent.tools.models import ToolCapability
 
@@ -81,12 +89,9 @@ class MCPServerConfig(BaseModel):
         "Each tool can have a custom capability and/or description override.",
     )
 
+
 # Load environment variables from .env file if it exists
 # In Docker/production, environment variables are set directly
-from pathlib import Path
-
-from dotenv import load_dotenv
-
 ENV_FILE_OPT: str | None = None
 TWENTY_MINUTES_IN_SECONDS = 1200
 
@@ -97,11 +102,51 @@ if _env_path.exists():
     ENV_FILE_OPT = str(_env_path)
 
 
+# Default config file paths (checked in order)
+# SRE_AGENT_CONFIG environment variable takes precedence if set
+DEFAULT_CONFIG_PATHS = [
+    "config.yaml",
+    "config.yml",
+    "sre_agent_config.yaml",
+    "sre_agent_config.yml",
+]
+
+
+def _get_yaml_config_path() -> str | list[str] | None:
+    """Get the YAML config file path to use.
+
+    Returns:
+        - The path from SRE_AGENT_CONFIG env var if set
+        - Or the list of default paths to check
+        - Or None if SRE_AGENT_CONFIG is set to a nonexistent file
+    """
+    config_path = os.environ.get("SRE_AGENT_CONFIG")
+
+    if config_path:
+        # If explicitly specified, use it (pydantic will handle missing files)
+        return config_path
+
+    # Return list of default paths - pydantic-settings will check each in order
+    return DEFAULT_CONFIG_PATHS
+
+
 class Settings(BaseSettings):
     """Application configuration.
 
     Loads settings from environment variables. In local development, these can be
     provided via a .env file. In Docker/production, they should be set directly.
+
+    Configuration can also be loaded from YAML files. The following paths are checked
+    (first match wins):
+    - Path specified in SRE_AGENT_CONFIG environment variable
+    - config.yaml, config.yml, sre_agent_config.yaml, sre_agent_config.yml
+
+    Priority (highest to lowest):
+    1. Values passed to Settings() constructor
+    2. Environment variables
+    3. .env file
+    4. YAML config file
+    5. Default values
     """
 
     model_config = SettingsConfigDict(
@@ -111,6 +156,8 @@ class Settings(BaseSettings):
         extra="ignore",
         # Don't error if .env file is missing (Docker/production use env vars directly)
         env_ignore_empty=True,
+        # Note: yaml_file is set dynamically in settings_customise_sources
+        # to support SRE_AGENT_CONFIG env var being set after module import
     )
 
     # Application
@@ -279,6 +326,36 @@ class Settings(BaseSettings):
         "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
         "'tools': {'search_memories': {'capability': 'logs'}}}}",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """Customize settings sources to include YAML config file.
+
+        Priority (highest to lowest):
+        1. init_settings (passed to Settings())
+        2. env_settings (environment variables)
+        3. dotenv_settings (.env file)
+        4. yaml_settings (config.yaml file)
+        5. file_secret_settings (Docker secrets)
+        """
+        # Use the built-in YamlConfigSettingsSource from pydantic-settings
+        # Get the yaml_file path dynamically to respect SRE_AGENT_CONFIG env var
+        # set after module import
+        yaml_file = _get_yaml_config_path()
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            YamlConfigSettingsSource(settings_cls, yaml_file=yaml_file),
+            file_secret_settings,
+        )
 
 
 # Global settings instance

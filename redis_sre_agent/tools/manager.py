@@ -268,9 +268,7 @@ class ToolManager:
                 self._providers.append(provider)
                 self._loaded_provider_paths.add(mcp_provider_path)
 
-                logger.info(
-                    f"Loaded MCP provider '{server_name}' with {len(tools)} tools"
-                )
+                logger.info(f"Loaded MCP provider '{server_name}' with {len(tools)} tools")
 
             except Exception:
                 logger.exception(f"Failed to load MCP provider '{server_name}'")

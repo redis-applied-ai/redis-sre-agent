@@ -84,16 +84,11 @@ class TestThreadManager:
         """Test successful thread state retrieval."""
         # Mock Redis data
         thread_manager._redis_client.exists.return_value = True
-        thread_manager._redis_client.get.side_effect = [
-            None,  # result
-            None,  # error
-        ]
         thread_manager._redis_client.lrange.return_value = [
             json.dumps(
                 {
-                    "timestamp": "2023-01-01T00:00:00Z",
-                    "message": "Test update",
-                    "update_type": "progress",
+                    "role": "user",
+                    "content": "Test message",
                     "metadata": None,
                 }
             )
@@ -113,30 +108,43 @@ class TestThreadManager:
         state = await thread_manager.get_thread("test_thread")
 
         assert state is not None
-        assert len(state.updates) == 1
-        assert state.updates[0].message == "Test update"
+        assert len(state.messages) == 1
+        assert state.messages[0].content == "Test message"
+        assert state.messages[0].role == "user"
         assert state.metadata.user_id == "test_user"
 
     @pytest.mark.asyncio
-    async def test_add_thread_update(self, thread_manager):
-        """Test adding thread updates."""
-        result = await thread_manager.add_thread_update(
-            "test_thread", "Test progress message", "progress", {"tool": "test_tool"}
-        )
+    async def test_add_thread_update_deprecated(self, thread_manager):
+        """Test that add_thread_update is deprecated but still works (publishes to stream)."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = await thread_manager.add_thread_update(
+                "test_thread", "Test progress message", "progress", {"tool": "test_tool"}
+            )
+            # Should have a deprecation warning
+            assert len(w) >= 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "deprecated" in str(w[0].message).lower()
 
         assert result is True
-        thread_manager._redis_client.lpush.assert_called()
-        thread_manager._redis_client.ltrim.assert_called()
 
     @pytest.mark.asyncio
-    async def test_set_thread_result(self, thread_manager):
-        """Test setting thread result."""
+    async def test_set_thread_result_deprecated(self, thread_manager):
+        """Test that set_thread_result is deprecated but still works (publishes to stream)."""
+        import warnings
+
         result_data = {"response": "Test response", "metadata": {}}
 
-        result = await thread_manager.set_thread_result("test_thread", result_data)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = await thread_manager.set_thread_result("test_thread", result_data)
+            # Should have a deprecation warning
+            assert len(w) >= 1
+            assert issubclass(w[0].category, DeprecationWarning)
 
         assert result is True
-        thread_manager._redis_client.set.assert_called()
 
     @pytest.mark.asyncio
     @pytest.mark.asyncio
@@ -169,15 +177,18 @@ class TestProcessAgentTurn:
             mock_get_redis.return_value = mock_redis
 
             # Mock thread manager
+
             mock_manager = AsyncMock()
             mock_manager_class.return_value = mock_manager
             mock_manager.get_thread.return_value = Thread(
                 thread_id="test_thread",
-                context={"messages": []},
+                messages=[],
+                context={},
                 metadata=ThreadMetadata(),
             )
             mock_manager.add_thread_update.return_value = True
-            mock_manager.set_thread_result.return_value = True
+            mock_manager._publish_stream_update.return_value = True
+            mock_manager._save_thread_state.return_value = True
 
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
@@ -213,9 +224,8 @@ class TestProcessAgentTurn:
             assert result["response"] == "Test response from agent"
             assert result["metadata"]["iterations"] == 2
 
-            # Verify manager calls
-            mock_manager.add_thread_update.assert_called()
-            mock_manager.set_thread_result.assert_called()
+            # Verify thread manager saved state
+            mock_manager._save_thread_state.assert_called()
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_thread_not_found(self):
@@ -312,18 +322,20 @@ class TestThreadStateModels:
         assert update.timestamp is not None
 
     def test_thread_state_creation(self):
-        """Test ThreadState model creation."""
+        """Test Thread model creation."""
+        from redis_sre_agent.core.threads import Message
+
         state = Thread(
             thread_id="test_thread",
             context={"query": "test"},
-            updates=[ThreadUpdate(message="Test update")],
+            messages=[Message(role="user", content="Test message")],
         )
 
         assert state.thread_id == "test_thread"
         assert state.context["query"] == "test"
-        assert len(state.updates) == 1
-        assert state.result is None
-        assert state.error_message is None
+        assert len(state.messages) == 1
+        assert state.messages[0].content == "Test message"
+        assert state.messages[0].role == "user"
 
     def test_thread_metadata_defaults(self):
         """Test ThreadMetadata default values."""

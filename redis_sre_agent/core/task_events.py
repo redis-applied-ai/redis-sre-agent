@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .threads import ThreadUpdate
+from .tasks import TaskUpdate
 
 
 class TaskStreamEvent(BaseModel):
@@ -28,8 +28,11 @@ class TaskStreamEvent(BaseModel):
 
 
 class InitialStateEvent(TaskStreamEvent):
-    """Initial snapshot event sent upon WebSocket connection."""
+    """Initial snapshot event sent upon WebSocket connection.
 
-    updates: List[ThreadUpdate] = Field(default_factory=list)
+    Updates, result, and error_message come from the latest Task, not the Thread.
+    """
+
+    updates: List[TaskUpdate] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None

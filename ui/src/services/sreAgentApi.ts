@@ -21,6 +21,13 @@ export interface TaskStatusResponse {
     | "done"
     | "failed"
     | "cancelled";
+  // Messages are now at top level (conversation history)
+  messages: Array<{
+    role: string;
+    content: string;
+    metadata?: Record<string, any>;
+  }>;
+  // Updates come from the latest task (progress updates, not conversation)
   updates: TaskUpdate[];
   result?: Record<string, any>;
   error_message?: string;
@@ -306,16 +313,28 @@ class SREAgentAPI {
     }
 
     const thread = await response.json();
-    // Derive a task-like status from thread data
-    const status = thread?.error_message
-      ? "failed"
-      : thread?.result
-        ? "completed"
-        : "in_progress";
+
+    // Messages are now at top level; fall back to context.messages for old data
+    const messages = Array.isArray(thread.messages)
+      ? thread.messages
+      : Array.isArray(thread?.context?.messages)
+        ? thread.context.messages
+        : [];
+
+    // Derive status: if we have messages, likely completed; otherwise in_progress
+    // Note: updates/result/error_message come from latest task, not thread
+    const hasResponse = messages.some((m: any) => m.role === "assistant");
+    const status = hasResponse ? "completed" : "in_progress";
 
     return {
       thread_id: thread.thread_id,
       status,
+      messages: messages.map((m: any) => ({
+        role: m.role,
+        content: m.content,
+        metadata: m.metadata,
+      })),
+      // Updates may come from the API if backend provides them from latest task
       updates: Array.isArray(thread.updates)
         ? thread.updates.map((u: any) => ({
             timestamp: u.timestamp,
@@ -497,11 +516,20 @@ class SREAgentAPI {
     };
   }
 
-  // Unified transcript helper: prefer context.messages; fallback to updates
+  // Unified transcript helper: prefer top-level messages; fallback to context.messages and updates
   async getTranscript(threadId: string): Promise<ChatMessage[]> {
     const status = await this.getTaskStatus(threadId);
 
-    // Preferred: context.messages contains the entire transcript
+    // Preferred: top-level messages contains the entire transcript
+    if (status.messages && status.messages.length > 0) {
+      return status.messages.map((msg: any) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.metadata?.timestamp || status.metadata.updated_at,
+      })) as ChatMessage[];
+    }
+
+    // Fallback for old data: context.messages
     const ctxMsgs = Array.isArray(status?.context?.messages)
       ? status.context.messages
       : [];
@@ -509,11 +537,11 @@ class SREAgentAPI {
       return ctxMsgs.map((msg: any) => ({
         role: msg.role,
         content: msg.content,
-        timestamp: msg.timestamp,
+        timestamp: msg.timestamp || status.metadata.updated_at,
       })) as ChatMessage[];
     }
 
-    // Fallback: reconstruct from updates and metadata
+    // Last resort: reconstruct from updates and metadata
     const messages: ChatMessage[] = [];
     const initial =
       (status.context as any)?.original_query || status.metadata.subject;

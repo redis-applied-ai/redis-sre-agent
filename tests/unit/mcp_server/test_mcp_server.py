@@ -51,11 +51,10 @@ class TestTriageTool:
             "message": "Task created",
         }
 
-        with patch(
-            "redis_sre_agent.core.redis.get_redis_client"
-        ) as mock_redis, patch(
-            "redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock
-        ) as mock_create:
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
+        ):
             mock_create.return_value = mock_result
 
             result = await triage(
@@ -72,11 +71,10 @@ class TestTriageTool:
     @pytest.mark.asyncio
     async def test_triage_error_handling(self):
         """Test triage error handling."""
-        with patch(
-            "redis_sre_agent.core.redis.get_redis_client"
-        ) as mock_redis, patch(
-            "redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock
-        ) as mock_create:
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
+        ):
             mock_create.side_effect = Exception("Redis connection failed")
 
             result = await triage(query="Test query")
@@ -213,13 +211,16 @@ class TestCreateInstanceTool:
     @pytest.mark.asyncio
     async def test_create_instance_success(self):
         """Test successful instance creation."""
-        with patch(
-            "redis_sre_agent.core.instances.get_instances",
-            new_callable=AsyncMock,
-        ) as mock_get, patch(
-            "redis_sre_agent.core.instances.save_instances",
-            new_callable=AsyncMock,
-        ) as mock_save:
+        with (
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+            ) as mock_get,
+            patch(
+                "redis_sre_agent.core.instances.save_instances",
+                new_callable=AsyncMock,
+            ) as mock_save,
+        ):
             mock_get.return_value = []
             mock_save.return_value = True
 
@@ -291,32 +292,35 @@ class TestCreateInstanceTool:
             assert "already exists" in result["error"]
 
 
-
 class TestGetThreadTool:
     """Test the get_thread MCP tool."""
 
     @pytest.mark.asyncio
     async def test_get_thread_success(self):
         """Test successful thread retrieval."""
-        from unittest.mock import MagicMock
+        from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
 
-        mock_thread = MagicMock()
-        mock_thread.context = {
-            "messages": [
-                {"role": "user", "content": "Check memory"},
-                {"role": "assistant", "content": "Analyzing..."},
-            ]
-        }
-        mock_thread.result = {"summary": "All good"}
-        mock_thread.error_message = None
-        mock_thread.updates = []
+        # Create a proper Thread object with messages
+        mock_thread = Thread(
+            thread_id="thread-123",
+            messages=[
+                Message(role="user", content="Check memory"),
+                Message(role="assistant", content="Analyzing..."),
+            ],
+            context={},
+            metadata=ThreadMetadata(),
+        )
 
-        with patch(
-            "redis_sre_agent.core.redis.get_redis_client"
-        ), patch(
-            "redis_sre_agent.core.threads.ThreadManager.get_thread",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        mock_redis = AsyncMock()
+        mock_redis.zrevrange = AsyncMock(return_value=[])  # No tasks
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.return_value = mock_thread
 
             result = await get_thread(thread_id="thread-123")
@@ -328,12 +332,13 @@ class TestGetThreadTool:
     @pytest.mark.asyncio
     async def test_get_thread_not_found(self):
         """Test thread not found."""
-        with patch(
-            "redis_sre_agent.core.redis.get_redis_client"
-        ), patch(
-            "redis_sre_agent.core.threads.ThreadManager.get_thread",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.return_value = None
 
             result = await get_thread(thread_id="nonexistent")

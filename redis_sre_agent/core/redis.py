@@ -411,6 +411,58 @@ async def create_indices() -> bool:
         return False
 
 
+async def recreate_indices(index_name: str | None = None) -> dict:
+    """Drop and recreate RediSearch indices.
+
+    This is useful when the schema has changed (e.g., new fields added).
+
+    Args:
+        index_name: Specific index to recreate ('knowledge', 'schedules', 'threads',
+                   'tasks', 'instances'), or None to recreate all.
+
+    Returns:
+        Dictionary with success status and details for each index.
+    """
+    result = {"success": True, "indices": {}}
+
+    index_configs = [
+        ("knowledge", SRE_KNOWLEDGE_INDEX, get_knowledge_index),
+        ("schedules", SRE_SCHEDULES_INDEX, get_schedules_index),
+        ("threads", SRE_THREADS_INDEX, get_threads_index),
+        ("tasks", SRE_TASKS_INDEX, get_tasks_index),
+        ("instances", SRE_INSTANCES_INDEX, get_instances_index),
+    ]
+
+    for name, idx_name, get_fn in index_configs:
+        # Skip if a specific index was requested and this isn't it
+        if index_name and name != index_name:
+            continue
+
+        try:
+            idx = await get_fn()
+
+            # Drop index if it exists
+            if await idx.exists():
+                try:
+                    # Use FT.DROPINDEX to drop without deleting documents
+                    await idx._redis_client.execute_command("FT.DROPINDEX", idx_name)
+                    logger.info(f"Dropped index: {idx_name}")
+                except Exception as drop_err:
+                    logger.warning(f"Could not drop index {idx_name}: {drop_err}")
+
+            # Recreate with current schema
+            await idx.create()
+            logger.info(f"Created index: {idx_name}")
+            result["indices"][name] = "recreated"
+
+        except Exception as e:
+            logger.error(f"Failed to recreate index {name}: {e}")
+            result["indices"][name] = f"error: {e}"
+            result["success"] = False
+
+    return result
+
+
 async def initialize_redis() -> dict:
     """Initialize Redis infrastructure and return status."""
     status = {}

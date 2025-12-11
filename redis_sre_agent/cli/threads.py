@@ -153,26 +153,22 @@ def thread_get(thread_id: str, as_json: bool):
         table.add_row("Tags", ", ".join(meta.tags or []) or "-")
         table.add_row("Instance", ctx.get("instance_name") or ctx.get("instance_id") or "-")
         table.add_row("Priority", str(meta.priority))
+        table.add_row("Messages", str(len(state.messages)))
         console.print(table)
 
-        # Updates
-        if state.updates:
-            ut = Table(title="Updates")
-            ut.add_column("Time", no_wrap=True)
-            ut.add_column("Type", no_wrap=True)
-            ut.add_column("Message")
-            for u in state.updates[:20]:
-                ut.add_row(u.timestamp or "-", u.update_type or "-", u.message or "-")
-            console.print(ut)
-
-        # Result
-        if state.result:
-            rt = Table(title="Result")
-            rt.add_column("Key", no_wrap=True)
-            rt.add_column("Value")
-            for k, v in (state.result or {}).items():
-                rt.add_row(str(k), str(v))
-            console.print(rt)
+        # Messages (conversation history)
+        if state.messages:
+            mt = Table(title="Messages (Conversation)")
+            mt.add_column("#", no_wrap=True)
+            mt.add_column("Role", no_wrap=True)
+            mt.add_column("Content")
+            for i, m in enumerate(state.messages, 1):
+                # Truncate long messages for display
+                content = m.content
+                if len(content) > 200:
+                    content = content[:197] + "..."
+                mt.add_row(str(i), m.role, content)
+            console.print(mt)
 
     asyncio.run(_get())
 
@@ -185,7 +181,12 @@ def thread_sources(thread_id: str, task_id: str | None, as_json: bool):
     """List knowledge fragments retrieved for a thread (optionally a specific turn)."""
 
     async def _run():
-        tm = ThreadManager(redis_client=get_redis_client())
+        from redis_sre_agent.core.tasks import TaskManager
+
+        client = get_redis_client()
+        tm = ThreadManager(redis_client=client)
+        task_manager = TaskManager(redis_client=client)
+
         state = await tm.get_thread(thread_id)
         if not state:
             payload = {"error": "Thread not found", "thread_id": thread_id}
@@ -195,29 +196,43 @@ def thread_sources(thread_id: str, task_id: str | None, as_json: bool):
                 click.echo(f"❌ Thread not found: {thread_id}")
             return
 
-        # Collect knowledge_sources updates
+        # Get tasks for this thread and collect knowledge_sources updates from them
         items = []
-        for u in state.updates or []:
-            try:
-                if (u.update_type or "") != "knowledge_sources":
-                    continue
-                md = u.metadata or {}
-                if task_id and (md.get("task_id") != task_id):
-                    continue
-                for frag in md.get("fragments") or []:
-                    items.append(
-                        {
-                            "timestamp": u.timestamp,
-                            "task_id": md.get("task_id"),
-                            "id": frag.get("id"),
-                            "document_hash": frag.get("document_hash"),
-                            "chunk_index": frag.get("chunk_index"),
-                            "title": frag.get("title"),
-                            "source": frag.get("source"),
-                        }
-                    )
-            except Exception:
+
+        # Get all tasks for this thread
+        from redis_sre_agent.core.keys import RedisKeys
+
+        task_ids = await client.zrange(RedisKeys.thread_tasks_index(thread_id), 0, -1)
+
+        for tid in task_ids:
+            if isinstance(tid, bytes):
+                tid = tid.decode()
+            if task_id and tid != task_id:
                 continue
+
+            task_state = await task_manager.get_task_state(tid)
+            if not task_state:
+                continue
+
+            for u in task_state.updates or []:
+                try:
+                    if (u.update_type or "") != "knowledge_sources":
+                        continue
+                    md = u.metadata or {}
+                    for frag in md.get("fragments") or []:
+                        items.append(
+                            {
+                                "timestamp": u.timestamp,
+                                "task_id": tid,
+                                "id": frag.get("id"),
+                                "document_hash": frag.get("document_hash"),
+                                "chunk_index": frag.get("chunk_index"),
+                                "title": frag.get("title"),
+                                "source": frag.get("source"),
+                            }
+                        )
+                except Exception:
+                    continue
 
         if as_json:
             print(

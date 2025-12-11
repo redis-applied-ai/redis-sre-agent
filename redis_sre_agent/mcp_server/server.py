@@ -13,7 +13,6 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-import httpx
 from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
@@ -121,7 +120,9 @@ async def triage(
         return {
             "thread_id": result["thread_id"],
             "task_id": result["task_id"],
-            "status": result["status"].value if hasattr(result["status"], "value") else str(result["status"]),
+            "status": result["status"].value
+            if hasattr(result["status"], "value")
+            else str(result["status"]),
             "message": result.get("message", "Triage queued for processing"),
         }
 
@@ -184,14 +185,16 @@ async def knowledge_search(
 
         results = []
         for item in result.get("results", []):
-            results.append({
-                "title": item.get("title", "Untitled"),
-                "content": item.get("content", ""),
-                "source": item.get("source"),
-                "category": item.get("category"),
-                "version": item.get("version", "latest"),
-                "score": item.get("score"),
-            })
+            results.append(
+                {
+                    "title": item.get("title", "Untitled"),
+                    "content": item.get("content", ""),
+                    "source": item.get("source"),
+                    "category": item.get("category"),
+                    "version": item.get("version", "latest"),
+                    "score": item.get("score"),
+                }
+            )
 
         return {
             "query": query,
@@ -254,28 +257,48 @@ async def get_thread(thread_id: str) -> Dict[str, Any]:
                 "thread_id": thread_id,
             }
 
-        # Extract messages from context
-        messages = thread.context.get("messages", [])
-
-        # Format messages for readability
+        # Format messages from thread.messages
         formatted_messages = []
-        for msg in messages:
+        for msg in thread.messages:
             formatted_msg = {
-                "role": msg.get("role", "unknown"),
-                "content": msg.get("content", ""),
+                "role": msg.role,
+                "content": msg.content,
             }
-            # Include tool calls if present
-            if "tool_calls" in msg:
-                formatted_msg["tool_calls"] = msg["tool_calls"]
+            # Include metadata if present
+            if msg.metadata:
+                formatted_msg["metadata"] = msg.metadata
             formatted_messages.append(formatted_msg)
+
+        # Get the latest task for updates/result/error
+        from redis_sre_agent.core.keys import RedisKeys
+        from redis_sre_agent.core.tasks import TaskManager
+
+        task_manager = TaskManager(redis_client=redis_client)
+        latest_task_ids = await redis_client.zrevrange(
+            RedisKeys.thread_tasks_index(thread_id), 0, 0
+        )
+
+        result = None
+        error_message = None
+        updates = []
+
+        if latest_task_ids:
+            latest_task_id = latest_task_ids[0]
+            if isinstance(latest_task_id, bytes):
+                latest_task_id = latest_task_id.decode()
+            task_state = await task_manager.get_task_state(latest_task_id)
+            if task_state:
+                result = task_state.result
+                error_message = task_state.error_message
+                updates = [u.model_dump() for u in task_state.updates] if task_state.updates else []
 
         return {
             "thread_id": thread_id,
             "messages": formatted_messages,
             "message_count": len(formatted_messages),
-            "result": thread.result,
-            "error_message": thread.error_message,
-            "updates": [u.model_dump() for u in thread.updates] if thread.updates else [],
+            "result": result,
+            "error_message": error_message,
+            "updates": updates,
         }
 
     except Exception as e:
@@ -369,15 +392,17 @@ async def list_instances() -> Dict[str, Any]:
 
         instance_list = []
         for inst in instances:
-            instance_list.append({
-                "id": inst.id,
-                "name": inst.name,
-                "environment": inst.environment,
-                "usage": inst.usage,
-                "description": inst.description,
-                "instance_type": inst.instance_type,
-                "status": getattr(inst, "status", None),
-            })
+            instance_list.append(
+                {
+                    "id": inst.id,
+                    "name": inst.name,
+                    "environment": inst.environment,
+                    "usage": inst.usage,
+                    "description": inst.description,
+                    "instance_type": inst.instance_type,
+                    "status": getattr(inst, "status", None),
+                }
+            )
 
         return {
             "instances": instance_list,

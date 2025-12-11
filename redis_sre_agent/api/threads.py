@@ -76,7 +76,7 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
         thread_id = await tm.create_thread(
             user_id=req.user_id,
             session_id=req.session_id,
-            initial_context=req.context or {"messages": []},
+            initial_context=req.context or {},
             tags=req.tags or [],
         )
         if req.subject:
@@ -91,12 +91,18 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
             await tm.append_messages(thread_id, [m.model_dump() for m in req.messages])
 
         state = await tm.get_thread(thread_id)
-        messages = state.context.get("messages", []) if state else []
-        # Return created thread state (messages + context)
+        if not state:
+            raise HTTPException(status_code=500, detail="Failed to retrieve created thread")
+
+        # Convert Message objects to API schema
+        messages = [
+            Message(role=m.role, content=m.content, metadata=m.metadata) for m in state.messages
+        ]
+
         return ThreadResponse(
             thread_id=thread_id,
-            messages=[Message(**m) for m in messages] if messages else [],
-            context=state.context if state else {},
+            messages=messages,
+            context=state.context,
         )
     except Exception as e:
         logger.error(f"Failed to create thread: {e}")
@@ -111,9 +117,6 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    # Extract messages from context if present
-    messages = state.context.get("messages", [])
-
     # Build metadata dict compatible with UI expectations
     try:
         metadata = state.metadata.model_dump()
@@ -123,17 +126,19 @@ async def get_thread(thread_id: str) -> ThreadResponse:
         except Exception:
             metadata = None
 
+    # Convert Message objects to API schema
+    messages = [
+        Message(role=m.role, content=m.content, metadata=m.metadata) for m in state.messages
+    ]
+
     return ThreadResponse(
         thread_id=thread_id,
         user_id=(metadata.get("user_id") if metadata else None),
         priority=(metadata.get("priority", 0) if metadata else 0),
         tags=(metadata.get("tags", []) if metadata else []),
         subject=(metadata.get("subject") if metadata else None),
-        messages=[Message(**m) for m in messages] if messages else [],
+        messages=messages,
         context=state.context,
-        updates=[u.model_dump() for u in state.updates] if state.updates else [],
-        result=state.result,
-        error_message=state.error_message,
         metadata=metadata,
     )
 

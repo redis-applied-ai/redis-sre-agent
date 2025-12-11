@@ -10,7 +10,8 @@ import os
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from mcp import ClientSession, StdioServerParameters, types as mcp_types
+from mcp import ClientSession, StdioServerParameters
+from mcp import types as mcp_types
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
@@ -334,17 +335,21 @@ class MCPToolProvider(ToolProvider):
                 if isinstance(content, mcp_types.TextContent):
                     text_parts.append(content.text)
                 elif isinstance(content, mcp_types.ImageContent):
-                    response.setdefault("images", []).append({
-                        "mimeType": content.mimeType,
-                        "data": content.data,
-                    })
+                    response.setdefault("images", []).append(
+                        {
+                            "mimeType": content.mimeType,
+                            "data": content.data,
+                        }
+                    )
                 elif isinstance(content, mcp_types.EmbeddedResource):
                     resource = content.resource
                     if isinstance(resource, mcp_types.TextResourceContents):
-                        response.setdefault("resources", []).append({
-                            "uri": str(resource.uri),
-                            "text": resource.text,
-                        })
+                        response.setdefault("resources", []).append(
+                            {
+                                "uri": str(resource.uri),
+                                "text": resource.text,
+                            }
+                        )
 
             if text_parts:
                 response["text"] = "\n".join(text_parts)

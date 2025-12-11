@@ -126,6 +126,13 @@ class ThreadAppendMessagesRequest(BaseModel):
 
 
 class ThreadResponse(BaseModel):
+    """Response model for thread data.
+
+    Note: updates, result, and error_message are deprecated on Thread.
+    These fields belong on TaskState. They're kept here temporarily for backward
+    compatibility but will always be empty for new threads.
+    """
+
     thread_id: str
     user_id: Optional[str] = None
     priority: int = 0
@@ -133,10 +140,6 @@ class ThreadResponse(BaseModel):
     subject: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     messages: List[Message] = Field(default_factory=list)
-    # New fields to expose full thread state for UI streaming
-    updates: List[Dict[str, Any]] = Field(default_factory=list)
-    result: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
