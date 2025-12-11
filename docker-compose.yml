@@ -357,7 +357,7 @@ services:
   sre-mcp-ssl:
     image: nginx:alpine
     ports:
-      - "8443:443"
+      - "8450:443"
     volumes:
       - ./monitoring/nginx/mcp-ssl.conf:/etc/nginx/conf.d/default.conf:ro
       - ./monitoring/nginx/certs:/etc/nginx/certs:ro
