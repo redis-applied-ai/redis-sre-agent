@@ -9,10 +9,12 @@ services:
       - ./monitoring/redis.conf:/usr/local/etc/redis/redis.conf
     command: redis-server /usr/local/etc/redis/redis.conf
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      # Wait for Redis to finish loading before marking healthy
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG && redis-cli INFO persistence | grep -q 'loading:0'"]
+      interval: 5s
       timeout: 5s
-      retries: 3
+      retries: 10
+      start_period: 10s
     networks:
       - sre-network
 
@@ -330,7 +332,7 @@ services:
   # SRE Agent MCP Server - Exposes agent capabilities via Model Context Protocol
   # Connect Claude to this via: Settings > Connectors > Add Custom Connector
   # HTTP: http://localhost:8081/mcp
-  # HTTPS: https://localhost:8443/mcp (requires running scripts/generate-mcp-certs.sh first)
+  # HTTPS: https://localhost:8450/mcp (requires running scripts/generate-mcp-certs.sh first)
   sre-mcp:
     build:
       context: .
@@ -351,6 +353,9 @@ services:
     command: uv run redis-sre-agent mcp serve --transport http --host 0.0.0.0 --port 8081
     networks:
       - sre-network
+    profiles:
+      - mcp  # Start with: docker compose --profile mcp up
+      - ssl  # Or with SSL: docker compose --profile ssl up
 
   # MCP SSL Proxy - HTTPS termination for MCP server
   # Run scripts/generate-mcp-certs.sh first to generate self-signed certs

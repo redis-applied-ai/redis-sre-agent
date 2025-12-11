@@ -109,7 +109,7 @@ def worker(concurrency: int):
     try:
         asyncio.run(_worker())
     except KeyboardInterrupt:
-        click.echo("\n\ud83d\udc4b SRE worker stopped by user")
+        click.echo("\nSRE worker stopped by user")
     except Exception as e:
-        click.echo(f"\ud83d\udca5 Unexpected worker error: {e}")
+        click.echo(f"Unexpected worker error: {e}")
         raise
