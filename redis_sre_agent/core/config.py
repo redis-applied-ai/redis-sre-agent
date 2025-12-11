@@ -225,6 +225,53 @@ class Settings(BaseSettings):
                     "mcp",
                 ],
                 "env": {"REDIS_URL": "redis://localhost:6399"},
+                # Only include specific tools, with context-aware descriptions.
+                # Use {original} to include the tool's original description.
+                "tools": {
+                    "get_current_datetime": {
+                        "description": (
+                            "Get the current date and time. Use this when you need to "
+                            "record timestamps for Redis instance events or incidents.\n\n"
+                            "{original}"
+                        ),
+                    },
+                    "create_long_term_memories": {
+                        "description": (
+                            "Save long-term memories about Redis instances. Use this to "
+                            "record: past incidents and their resolutions, configuration "
+                            "changes, performance baselines, known issues, maintenance "
+                            "history, and lessons learned. Always include the instance_id "
+                            "in the memory text for future retrieval.\n\n{original}"
+                        ),
+                    },
+                    "search_long_term_memory": {
+                        "description": (
+                            "Search saved memories about Redis instances. ALWAYS use this "
+                            "before troubleshooting a Redis instance to recall past issues, "
+                            "solutions, and context. Search by instance_id, error patterns, "
+                            "or symptoms.\n\n{original}"
+                        ),
+                    },
+                    "get_long_term_memory": {
+                        "description": (
+                            "Retrieve a specific memory by ID. Use this to get full details "
+                            "of a memory found via search.\n\n{original}"
+                        ),
+                    },
+                    "edit_long_term_memory": {
+                        "description": (
+                            "Update an existing memory. Use this to add new information to "
+                            "a past incident record, update resolution status, or correct "
+                            "outdated information.\n\n{original}"
+                        ),
+                    },
+                    "delete_long_term_memories": {
+                        "description": (
+                            "Delete memories that are no longer relevant. Use sparingly - "
+                            "prefer editing to add context rather than deleting.\n\n{original}"
+                        ),
+                    },
+                },
             }
         },
         description="MCP (Model Context Protocol) servers to connect to. "

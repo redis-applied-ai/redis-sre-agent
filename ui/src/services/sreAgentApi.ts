@@ -861,6 +861,236 @@ class SREAgentAPI {
 
     return response.json();
   }
+
+  // Knowledge Base Methods
+  async getKnowledgeStats(): Promise<{
+    total_documents: number;
+    total_chunks: number;
+    last_ingestion: string | null;
+  }> {
+    const response = await fetch(`${this.tasksBaseUrl}/knowledge/stats`);
+    if (!response.ok) {
+      throw new Error(`Failed to get knowledge stats: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async getKnowledgeJobs(): Promise<any[]> {
+    const response = await fetch(`${this.tasksBaseUrl}/knowledge/jobs`);
+    if (!response.ok) {
+      throw new Error(`Failed to get knowledge jobs: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async searchKnowledge(
+    query: string,
+    limit: number = 10,
+    category?: string,
+  ): Promise<{
+    query: string;
+    results: Array<{
+      id: string;
+      title: string;
+      content: string;
+      source: string;
+      category: string;
+      score: number;
+    }>;
+    total_results: number;
+  }> {
+    const params = new URLSearchParams();
+    params.append("query", query);
+    params.append("limit", String(limit));
+    if (category) {
+      params.append("category", category);
+    }
+
+    const response = await fetch(
+      `${this.tasksBaseUrl}/knowledge/search?${params}`,
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to search knowledge base: ${response.statusText}`,
+      );
+    }
+    return response.json();
+  }
+
+  async ingestDocument(
+    title: string,
+    content: string,
+    category: string = "general",
+    docType: string = "runbook",
+    severity: string = "info",
+  ): Promise<{ message: string; document_id?: string }> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/knowledge/ingest/document`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          content,
+          category,
+          doc_type: docType,
+          severity,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to ingest document: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  // System Health Methods
+  async getSystemHealth(): Promise<{
+    status: string;
+    components: Record<string, string>;
+    version?: string;
+  }> {
+    const response = await fetch(`${this.tasksBaseUrl}/health`);
+    if (!response.ok) {
+      throw new Error(`Failed to get system health: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  // Schedule Methods
+  async listSchedules(): Promise<any[]> {
+    const response = await fetch(`${this.tasksBaseUrl}/schedules/`);
+    if (!response.ok) {
+      throw new Error(`Failed to list schedules: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async createSchedule(scheduleData: {
+    name: string;
+    cron_expression: string;
+    redis_instance_id?: string;
+    instructions: string;
+    enabled: boolean;
+  }): Promise<any> {
+    const response = await fetch(`${this.tasksBaseUrl}/schedules/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(scheduleData),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to create schedule: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async updateSchedule(
+    scheduleId: string,
+    updateData: {
+      name?: string;
+      cron_expression?: string;
+      redis_instance_id?: string;
+      instructions?: string;
+      enabled?: boolean;
+    },
+  ): Promise<any> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/schedules/${scheduleId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updateData),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to update schedule: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async deleteSchedule(scheduleId: string): Promise<void> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/schedules/${scheduleId}`,
+      {
+        method: "DELETE",
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to delete schedule: ${response.statusText}`);
+    }
+  }
+
+  async triggerSchedule(scheduleId: string): Promise<any> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/schedules/${scheduleId}/trigger`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to trigger schedule: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async getScheduleRuns(scheduleId: string): Promise<any[]> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/schedules/${scheduleId}/runs`,
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to get schedule runs: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  // Knowledge Settings Methods
+  async getKnowledgeSettings(): Promise<{
+    chunk_size: number;
+    chunk_overlap: number;
+    splitting_strategy: string;
+    embedding_model: string;
+  }> {
+    const response = await fetch(`${this.tasksBaseUrl}/knowledge/settings`);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get knowledge settings: ${response.statusText}`,
+      );
+    }
+    return response.json();
+  }
+
+  async updateKnowledgeSettings(settings: {
+    chunk_size?: number;
+    chunk_overlap?: number;
+    splitting_strategy?: string;
+    embedding_model?: string;
+  }): Promise<any> {
+    const response = await fetch(`${this.tasksBaseUrl}/knowledge/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update knowledge settings: ${response.statusText}`,
+      );
+    }
+    return response.json();
+  }
+
+  async resetKnowledgeSettings(): Promise<any> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/knowledge/settings/reset`,
+      {
+        method: "POST",
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to reset knowledge settings: ${response.statusText}`,
+      );
+    }
+    return response.json();
+  }
 }
 
 // Export singleton instance

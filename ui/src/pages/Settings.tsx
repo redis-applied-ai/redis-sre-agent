@@ -9,6 +9,7 @@ import {
   ErrorMessage,
 } from "@radar/ui-kit";
 import Instances from "./Instances";
+import { sreAgentApi } from "../services/sreAgentApi";
 
 interface KnowledgeSettings {
   chunk_size: number;
@@ -39,12 +40,8 @@ const KnowledgeSettingsSection = () => {
   const loadSettings = async () => {
     try {
       setError(null);
-      const response = await fetch("/api/v1/knowledge/settings");
-      if (!response.ok) {
-        throw new Error("Failed to load knowledge settings");
-      }
-      const data = await response.json();
-      setSettings(data);
+      const data = await sreAgentApi.getKnowledgeSettings();
+      setSettings(data as KnowledgeSettings);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -64,19 +61,8 @@ const KnowledgeSettingsSection = () => {
       setIsSaving(true);
       setError(null);
 
-      const response = await fetch("/api/v1/knowledge/settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(pendingSettings),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to update settings");
-      }
-
-      const updatedSettings = await response.json();
+      const updatedSettings =
+        await sreAgentApi.updateKnowledgeSettings(pendingSettings);
       setSettings(updatedSettings);
       setShowConfirmDialog(false);
       setPendingSettings(null);
@@ -99,15 +85,7 @@ const KnowledgeSettingsSection = () => {
       setIsSaving(true);
       setError(null);
 
-      const response = await fetch("/api/v1/knowledge/settings/reset", {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to reset settings");
-      }
-
-      const defaultSettings = await response.json();
+      const defaultSettings = await sreAgentApi.resetKnowledgeSettings();
       setSettings(defaultSettings);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset settings");
