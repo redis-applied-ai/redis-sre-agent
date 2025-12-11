@@ -327,6 +327,30 @@ services:
     networks:
       - sre-network
 
+  # SRE Agent MCP Server - Exposes agent capabilities via Model Context Protocol
+  # Connect Claude to this via: Settings > Connectors > Add Custom Connector
+  # URL: http://localhost:8081/mcp
+  sre-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
+      - TOOLS_PROMETHEUS_URL=http://prometheus:9090
+      - TOOLS_LOKI_URL=http://loki:3100
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .env:/app/.env
+      - ./redis_sre_agent:/app/redis_sre_agent
+    command: uv run redis-sre-agent mcp serve --transport http --host 0.0.0.0 --port 8081
+    networks:
+      - sre-network
+
   # SRE Agent UI
   sre-ui:
     build:
