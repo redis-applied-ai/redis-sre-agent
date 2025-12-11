@@ -186,9 +186,29 @@ class MCPToolProvider(ToolProvider):
         return self.DEFAULT_CAPABILITY
 
     def _get_description(self, tool_name: str, mcp_description: str) -> str:
-        """Get the description for a tool, with config override support."""
+        """Get the description for a tool, with config override/template support.
+
+        If the config provides a description, it can use {original} as a placeholder
+        for the MCP tool's original description. This allows adding context while
+        preserving the original tool documentation.
+
+        Examples:
+            - No override: uses original MCP description
+            - Override without placeholder: "Custom description" -> replaces entirely
+            - Override with placeholder: "Context. {original}" -> prepends context
+
+        Args:
+            tool_name: Name of the MCP tool
+            mcp_description: Original description from the MCP server
+
+        Returns:
+            Final description (original, override, or templated)
+        """
         config = self._get_tool_config(tool_name)
         if config and config.description:
+            # Support templating: {original} gets replaced with the MCP description
+            if "{original}" in config.description:
+                return config.description.replace("{original}", mcp_description)
             return config.description
         return mcp_description
 
