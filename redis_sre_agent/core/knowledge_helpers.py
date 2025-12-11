@@ -26,8 +26,10 @@ async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
     limit: int = 10,
+    offset: int = 0,
     distance_threshold: Optional[float] = 0.5,
     hybrid_search: bool = False,
+    version: Optional[str] = "latest",
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base.
 
@@ -37,18 +39,24 @@ async def search_knowledge_base_helper(
     Behavior:
         - Default: distance_threshold=0.5 (filters by cosine distance)
         - Explicit None: disables threshold (pure KNN, return top-k regardless of distance)
+        - Default version: "latest" (filters to unversioned/latest docs)
+        - Explicit version: Filter to specific version (e.g., "7.8", "7.4")
+        - version=None: Return all versions (no version filtering)
 
     Args:
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
         limit: Maximum number of results
+        offset: Number of results to skip (for pagination)
         distance_threshold: Cosine distance cutoff; None disables threshold
         hybrid_search: Whether to use hybrid search (vector + full-text)
+        version: Version filter - "latest" (default), specific version like "7.8",
+                 or None to return all versions
 
     Returns:
         Dictionary with search results including task_id, query, results, etc.
     """
-    logger.info(f"Searching SRE knowledge: '{query}'")
+    logger.info(f"Searching SRE knowledge: '{query}' (version={version}, offset={offset})")
     index = await get_knowledge_index()
     return_fields = [
         "id",
@@ -59,7 +67,17 @@ async def search_knowledge_base_helper(
         "source",
         "category",
         "severity",
+        "version",
     ]
+
+    # Build version filter expression if version is specified
+    from redisvl.query.filter import Tag
+
+    filter_expr = None
+    if version is not None:
+        # Filter by specific version (e.g., "latest", "7.8", "7.4")
+        filter_expr = Tag("version") == version
+        logger.debug(f"Applying version filter: {version}")
 
     # Always use vector search (tests rely on embedding being used)
     vectorizer = get_vectorizer()
@@ -73,6 +91,10 @@ async def search_knowledge_base_helper(
 
     query_vector = vectors[0] if vectors else []
 
+    # We need to fetch more results if there's an offset, then slice
+    # This is because RedisVL vector queries don't support offset directly
+    fetch_limit = limit + offset
+
     if hybrid_search:
         logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
         query_obj = HybridQuery(
@@ -80,9 +102,11 @@ async def search_knowledge_base_helper(
             vector_field_name="vector",
             text_field_name="content",
             text=query,
-            num_results=limit,
+            num_results=fetch_limit,
             return_fields=return_fields,
         )
+        if filter_expr is not None:
+            query_obj.set_filter(filter_expr)
     else:
         # Build pure vector query
         # distance_threshold default is 0.5; None disables threshold (pure KNN)
@@ -92,7 +116,7 @@ async def search_knowledge_base_helper(
                 vector=query_vector,
                 vector_field_name="vector",
                 return_fields=return_fields,
-                num_results=limit,
+                num_results=fetch_limit,
                 distance_threshold=effective_threshold,
             )
         else:
@@ -100,26 +124,37 @@ async def search_knowledge_base_helper(
                 vector=query_vector,
                 vector_field_name="vector",
                 return_fields=return_fields,
-                num_results=limit,
+                num_results=fetch_limit,
             )
+        if filter_expr is not None:
+            query_obj.set_filter(filter_expr)
 
-    # Perform vector search (no category filter)
+    # Perform vector search
     _t2 = time.monotonic()
     with tracer.start_as_current_span("knowledge.index.query") as _span:
         _span.set_attribute("limit", int(limit))
+        _span.set_attribute("offset", int(offset))
         _span.set_attribute("hybrid_search", bool(hybrid_search))
+        _span.set_attribute("version", version or "all")
         _span.set_attribute(
             "distance_threshold",
             float(distance_threshold) if distance_threshold is not None else -1.0,
         )
-        results = await index.query(query_obj)
+        all_results = await index.query(query_obj)
     _t3 = time.monotonic()
+
+    # Apply offset by slicing results
+    results = all_results[offset:] if offset > 0 else all_results
 
     search_result = {
         "query": query,
         "category": category,
+        "version": version,
+        "offset": offset,
+        "limit": limit,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "results_count": len(results),
+        "total_fetched": len(all_results),
         "results": [
             {
                 "id": doc.get("id", ""),
@@ -130,6 +165,7 @@ async def search_knowledge_base_helper(
                 "content": doc.get("content", ""),
                 "source": doc.get("source", ""),
                 "category": doc.get("category", ""),
+                "version": doc.get("version", "latest"),
                 # RedisVL returns distance when return_score=True (default). Some versions
                 # expose it as 'score' and others as 'vector_distance' or 'distance'.
                 # Normalize to float.

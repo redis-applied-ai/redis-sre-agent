@@ -316,6 +316,7 @@ class DocumentDeduplicator:
                     "category": chunk["category"],
                     "doc_type": chunk["doc_type"],
                     "severity": chunk["severity"],
+                    "version": chunk.get("version", "latest"),
                     "chunk_index": chunk["chunk_index"],
                     "vector": all_embeddings[i],
                     "created_at": datetime.now(timezone.utc).timestamp(),

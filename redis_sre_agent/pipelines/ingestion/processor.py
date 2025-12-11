@@ -175,6 +175,9 @@ class DocumentProcessor:
         # Generate deterministic ID based on document hash and chunk index
         chunk_id = f"{document.content_hash}_{chunk_index}"
 
+        # Extract version from metadata, default to "latest"
+        version = document.metadata.get("version", "latest")
+
         return {
             "id": chunk_id,
             "document_hash": document.content_hash,
@@ -184,6 +187,7 @@ class DocumentProcessor:
             "category": document.category.value,
             "doc_type": document.doc_type.value,
             "severity": document.severity.value,
+            "version": version,
             "chunk_index": chunk_index,
             "metadata": {
                 **document.metadata,

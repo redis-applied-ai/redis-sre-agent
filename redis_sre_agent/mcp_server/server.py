@@ -137,8 +137,10 @@ async def triage(
 @mcp.tool()
 async def knowledge_search(
     query: str,
-    limit: int = 5,
+    limit: int = 10,
+    offset: int = 0,
     category: Optional[str] = None,
+    version: Optional[str] = "latest",
 ) -> Dict[str, Any]:
     """Search the Redis SRE knowledge base.
 
@@ -148,19 +150,33 @@ async def knowledge_search(
 
     Args:
         query: Search query (e.g., "redis memory eviction policies")
-        limit: Maximum number of results (1-20, default 5)
+        limit: Maximum number of results (1-50, default 10)
+        offset: Number of results to skip for pagination (default 0)
         category: Optional filter by category ('incident', 'maintenance', 'monitoring', etc.)
+        version: Redis documentation version filter. Defaults to "latest" which returns
+                 only the most current documentation. Available versions:
+                 - "latest": Current/unversioned docs (default, recommended)
+                 - "7.8": Redis Enterprise 7.8 docs
+                 - "7.4": Redis Enterprise 7.4 docs
+                 - "7.2": Redis Enterprise 7.2 docs
+                 - null/None: Return all versions (may include duplicates)
 
     Returns:
-        Dictionary with search results including title, content, source, and relevance
+        Dictionary with search results including title, content, source, version, and relevance
     """
     from redis_sre_agent.core.knowledge_helpers import search_knowledge_base_helper
 
-    logger.info(f"MCP knowledge search: {query[:100]}...")
+    logger.info(f"MCP knowledge search: {query[:100]}... (version={version}, offset={offset})")
 
     try:
-        limit = max(1, min(20, limit))
-        kwargs: Dict[str, Any] = {"query": query, "limit": limit}
+        limit = max(1, min(50, limit))
+        offset = max(0, offset)
+        kwargs: Dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+            "offset": offset,
+            "version": version,
+        }
         if category:
             kwargs["category"] = category
 
@@ -173,13 +189,18 @@ async def knowledge_search(
                 "content": item.get("content", ""),
                 "source": item.get("source"),
                 "category": item.get("category"),
+                "version": item.get("version", "latest"),
                 "score": item.get("score"),
             })
 
         return {
             "query": query,
+            "version": version,
+            "offset": offset,
+            "limit": limit,
             "results": results,
             "total_results": len(results),
+            "has_more": len(results) == limit,  # Hint for pagination
         }
 
     except Exception as e:

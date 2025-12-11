@@ -6,6 +6,7 @@ overrides based on the MCPServerConfig.
 """
 
 import logging
+import os
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -105,10 +106,13 @@ class MCPToolProvider(ToolProvider):
             # Determine transport type and connect
             if self._server_config.command:
                 # Stdio transport - spawn a subprocess
+                # Merge parent environment with config-specified env so that
+                # env vars like OPENAI_API_KEY are inherited by the subprocess
+                merged_env = {**os.environ, **(self._server_config.env or {})}
                 server_params = StdioServerParameters(
                     command=self._server_config.command,
                     args=self._server_config.args or [],
-                    env=self._server_config.env,
+                    env=merged_env,
                 )
                 read_stream, write_stream = await self._exit_stack.enter_async_context(
                     stdio_client(server_params)

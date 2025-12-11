@@ -70,6 +70,10 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "tag",
         },
         {
+            "name": "version",
+            "type": "tag",
+        },
+        {
             "name": "created_at",
             "type": "numeric",
         },

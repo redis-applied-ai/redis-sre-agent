@@ -124,10 +124,10 @@ class TestKnowledgeSearchTool:
         ) as mock_search:
             mock_search.return_value = {"results": []}
 
-            # Test with too high limit
+            # Test with too high limit (max is 50)
             await knowledge_search(query="test", limit=100)
             call_args = mock_search.call_args
-            assert call_args.kwargs["limit"] == 20
+            assert call_args.kwargs["limit"] == 50
 
             # Test with too low limit
             await knowledge_search(query="test", limit=0)

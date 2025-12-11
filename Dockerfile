@@ -47,6 +47,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # This is the final image. It will be much smaller.
 FROM python:3.12-slim
 
+# Copy uv from the official image for runtime use (needed by entrypoint)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
 WORKDIR /app
 
 # Install ONLY runtime system dependencies

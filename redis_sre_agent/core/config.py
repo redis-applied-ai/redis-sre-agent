@@ -210,8 +210,23 @@ class Settings(BaseSettings):
     )
 
     # MCP Server Configuration
+    # Uses "uv tool run" (equivalent to uvx) to auto-install the package from PyPI.
+    # Override via MCP_SERVERS environment variable (JSON) if needed.
     mcp_servers: Dict[str, Union[MCPServerConfig, Dict[str, Any]]] = Field(
-        default_factory=dict,
+        default_factory=lambda: {
+            "redis-memory-server": {
+                "command": "uv",
+                "args": [
+                    "tool",
+                    "run",
+                    "--from",
+                    "agent-memory-server",
+                    "agent-memory",
+                    "mcp",
+                ],
+                "env": {"REDIS_URL": "redis://localhost:6399"},
+            }
+        },
         description="MCP (Model Context Protocol) servers to connect to. "
         "Each key is the server name, and the value is the server configuration. "
         "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
