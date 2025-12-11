@@ -86,6 +86,9 @@ async def triage(
         task_id: Use with get_task_status() to check if processing is complete
         status: Initial status (usually "queued")
     """
+    from docket import Docket
+
+    from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.tasks import create_task
 
@@ -104,6 +107,16 @@ async def triage(
             context=context,
             redis_client=redis_client,
         )
+
+        # Submit to Docket for processing (this is what the API does)
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            task_func = docket.add(process_agent_turn)
+            await task_func(
+                thread_id=result["thread_id"],
+                message=query,
+                context=context,
+                task_id=result["task_id"],
+            )
 
         return {
             "thread_id": result["thread_id"],
