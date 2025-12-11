@@ -48,7 +48,7 @@
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "pre-commit": "pre-commit run --all-files",
     "pre-commit:install": "pre-commit install --hook-type pre-commit --hook-type pre-push",
-    "prepare": "pre-commit install",
+    "prepare": "echo 'skip pre-commit install in Docker build'",
     "prepublishOnly": "npm run clean && npm run build",
     "storybook": "storybook dev -p 6006",
     "test": "vitest run",

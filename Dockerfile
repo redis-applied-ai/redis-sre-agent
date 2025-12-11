@@ -37,15 +37,29 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     mkdir -p /app/artifacts && \
     # Attempt to build artifacts, but don't fail build if it requires runtime services
     (uv run --no-sync redis-sre-agent pipeline prepare-sources \
-        --source-dir /app/source_documents \
-        --prepare-only \
-        --artifacts-path /app/artifacts || \
+    --source-dir /app/source_documents \
+    --prepare-only \
+    --artifacts-path /app/artifacts || \
     echo "Warning: Could not prepare source documents at build time")
 
 
 # STAGE 2: Runtime
 # This is the final image. It will be much smaller.
 FROM python:3.12-slim
+
+# Copy uv binary into the runtime image so entrypoint scripts and docker-compose
+# commands that use `uv run` work correctly.
+COPY --from=builder /bin/uv /bin/uv
+
+# Copy the uv-managed Python installation used by the virtualenv in /app/.venv.
+# Without this, /app/.venv/bin/python points at a non-existent interpreter under
+# /root/.local/share/uv, which causes `uv run` and even direct venv usage to
+# fail with "permission denied" when running as the non-root `app` user.
+COPY --from=builder /root/.local/share/uv /root/.local/share/uv
+
+# Make the uv Python tree readable and traversable by the unprivileged `app`
+# user so that symlinks in /app/.venv/bin/python* can be resolved.
+RUN chmod 755 /root && chmod -R 755 /root/.local/share/uv || true
 
 WORKDIR /app
 

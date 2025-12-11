@@ -7,13 +7,21 @@ WORKDIR /app
 # Install dependencies for development
 FROM base AS development
 
-# Copy package files
+# Copy package files for both main app and ui-kit
 COPY package*.json ./
+COPY ui-kit/package*.json ./ui-kit/
+
+# Copy ui-kit source (needed for build)
+COPY ui-kit ./ui-kit/
 
 # Install all dependencies (including dev dependencies)
-RUN npm ci
+# Use --ignore-scripts to skip pre-commit hooks that require Python
+RUN npm ci --ignore-scripts
 
-# Copy source code
+# Manually build ui-kit since we skipped scripts
+RUN cd ui-kit && npm run build && cd ..
+
+# Copy remaining source code
 COPY . .
 
 # Expose port
@@ -25,13 +33,21 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]
 # Production build stage
 FROM base AS build
 
-# Copy package files
+# Copy package files for both main app and ui-kit
 COPY package*.json ./
+COPY ui-kit/package*.json ./ui-kit/
+
+# Copy ui-kit source (needed for build)
+COPY ui-kit ./ui-kit/
 
 # Install dependencies
-RUN npm ci
+# Use --ignore-scripts to skip pre-commit hooks that require Python
+RUN npm ci --ignore-scripts
 
-# Copy source code
+# Manually build ui-kit since we skipped scripts
+RUN cd ui-kit && npm run build && cd ..
+
+# Copy remaining source code
 COPY . .
 
 # Build the application
