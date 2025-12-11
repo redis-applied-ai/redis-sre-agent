@@ -273,7 +273,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8080:8000"
     environment:
       - REDIS_URL=redis://redis:6379/0  # Internal container port stays 6379
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090

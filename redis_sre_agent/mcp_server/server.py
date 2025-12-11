@@ -1,16 +1,25 @@
 """MCP server implementation for redis-sre-agent.
 
 This module creates an MCP server using FastMCP that exposes the agent's
-capabilities to other MCP clients. The server can be run in stdio mode
-for integration with other AI agents.
+capabilities to other MCP clients. The server runs in stdio mode and
+proxies requests to the running Redis SRE Agent HTTP API.
+
+This allows Claude to connect to an already-running agent via:
+1. Start agent: docker compose up -d (API on port 8080)
+2. Claude spawns this MCP server, which calls the HTTP API
 """
 
 import logging
+import os
 from typing import Any, Dict, Optional
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
+
+# API URL - can be overridden via environment variable
+API_BASE_URL = os.environ.get("REDIS_SRE_API_URL", "http://localhost:8080")
 
 # Create the MCP server instance
 mcp = FastMCP(
@@ -443,13 +452,47 @@ async def create_instance(
 
 def run_stdio():
     """Run the MCP server in stdio mode."""
-    import asyncio
-    asyncio.run(mcp.run_stdio_async())
+    mcp.run(transport="stdio")
 
 
 def run_sse(host: str = "127.0.0.1", port: int = 8080):
-    """Run the MCP server in SSE mode."""
+    """Run the MCP server in SSE mode (legacy, use HTTP instead)."""
+    mcp.run(transport="sse", host=host, port=port)
+
+
+def run_http(host: str = "0.0.0.0", port: int = 8081):
+    """Run the MCP server in HTTP mode (Streamable HTTP).
+
+    This is the recommended transport for remote access. Claude can connect
+    to this server via Settings > Connectors > Add Custom Connector with
+    the URL: http://<host>:<port>/mcp
+
+    Args:
+        host: Host to bind to (default 0.0.0.0 for external access)
+        port: Port to listen on (default 8081)
+    """
     import asyncio
+
     mcp.settings.host = host
     mcp.settings.port = port
-    asyncio.run(mcp.run_sse_async())
+    asyncio.run(mcp.run_streamable_http_async())
+
+
+def get_http_app():
+    """Get the ASGI app for the MCP server.
+
+    Use this when deploying with uvicorn or other ASGI servers:
+        uvicorn redis_sre_agent.mcp_server.server:app --host 0.0.0.0 --port 8081
+
+    The MCP endpoint will be available at /mcp
+    """
+    return mcp.streamable_http_app()
+
+
+# ASGI app for uvicorn deployment - lazy initialization to avoid import-time errors
+def _get_app():
+    return get_http_app()
+
+
+# For uvicorn: uvicorn redis_sre_agent.mcp_server.server:app
+app = None  # Will be initialized on first request

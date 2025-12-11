@@ -12,20 +12,20 @@ def mcp():
 @mcp.command("serve")
 @click.option(
     "--transport",
-    type=click.Choice(["stdio", "sse"]),
+    type=click.Choice(["stdio", "http", "sse"]),
     default="stdio",
-    help="Transport mode: stdio (for agent integration) or sse (HTTP server)",
+    help="Transport mode: stdio (local), http (remote/recommended), or sse (legacy)",
 )
 @click.option(
     "--host",
-    default="127.0.0.1",
-    help="Host to bind to (SSE mode only)",
+    default="0.0.0.0",
+    help="Host to bind to (http/sse mode only)",
 )
 @click.option(
     "--port",
-    default=8080,
+    default=8081,
     type=int,
-    help="Port to bind to (SSE mode only)",
+    help="Port to bind to (http/sse mode only)",
 )
 def serve(transport: str, host: str, port: int):
     """Start the MCP server.
@@ -34,23 +34,35 @@ def serve(transport: str, host: str, port: int):
     MCP-compatible AI agents. Available tools:
 
     - triage: Start a Redis troubleshooting session
+    - get_task_status: Check if a triage task is complete
+    - get_thread: Get the full results from a triage
     - knowledge_search: Search Redis documentation and runbooks
     - list_instances: List configured Redis instances
     - create_instance: Register a new Redis instance
 
     Examples:
 
-        # Run in stdio mode (for Claude Desktop, Cursor, etc.)
+        # Run in stdio mode (for Claude Desktop local config)
         redis-sre-agent mcp serve
 
-        # Run in SSE mode (HTTP server)
-        redis-sre-agent mcp serve --transport sse --port 8080
+        # Run in HTTP mode (for Claude remote connector - RECOMMENDED)
+        redis-sre-agent mcp serve --transport http --port 8081
+        # Then add in Claude: Settings > Connectors > Add Custom Connector
+        # URL: http://your-host:8081/mcp
+
+        # Run in SSE mode (legacy, for older clients)
+        redis-sre-agent mcp serve --transport sse --port 8081
     """
-    from redis_sre_agent.mcp_server.server import run_sse, run_stdio
+    from redis_sre_agent.mcp_server.server import run_http, run_sse, run_stdio
 
     if transport == "stdio":
         # Don't print anything to stdout in stdio mode - it corrupts the JSON-RPC stream
         run_stdio()
+    elif transport == "http":
+        click.echo(f"Starting MCP server in HTTP mode on {host}:{port}...")
+        click.echo(f"MCP endpoint: http://{host}:{port}/mcp")
+        click.echo("Add this URL as a Custom Connector in Claude settings.")
+        run_http(host=host, port=port)
     else:
         click.echo(f"Starting MCP server in SSE mode on {host}:{port}...")
         run_sse(host=host, port=port)
