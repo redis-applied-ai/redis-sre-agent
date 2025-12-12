@@ -7,13 +7,19 @@ from click.testing import CliRunner
 from redis_sre_agent.cli.query import query
 
 
-def test_query_cli_help_shows_instance_option():
+def test_query_cli_help_shows_options():
     runner = CliRunner()
     result = runner.invoke(query, ["--help"])
 
     assert result.exit_code == 0
     assert "--redis-instance-id" in result.output
     assert "-r" in result.output
+    assert "--agent" in result.output
+    assert "-a" in result.output
+    assert "auto" in result.output
+    assert "triage" in result.output
+    assert "chat" in result.output
+    assert "knowledge" in result.output
 
 
 def test_query_without_instance_uses_knowledge_agent():
@@ -144,3 +150,161 @@ def test_query_with_unknown_instance_exits_with_error_and_skips_agents():
     mock_get_knowledge.assert_not_called()
     mock_get_sre.assert_not_called()
     mock_agent.process_query.assert_not_awaited()
+
+
+def test_query_with_agent_triage_forces_triage_agent():
+    """Test that --agent triage forces use of the triage agent."""
+    runner = CliRunner()
+
+    mock_agent = MagicMock()
+    mock_agent.process_query = AsyncMock(return_value="triage result")
+
+    with (
+        patch("redis_sre_agent.cli.query.get_sre_agent", return_value=mock_agent) as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
+        patch("redis_sre_agent.cli.query.get_chat_agent") as mock_get_chat,
+        patch("redis_sre_agent.cli.query.route_to_appropriate_agent") as mock_router,
+    ):
+        result = runner.invoke(query, ["--agent", "triage", "Check my Redis health"])
+
+    assert result.exit_code == 0, result.output
+    assert "Triage (selected)" in result.output
+
+    # Triage agent should be used
+    mock_get_sre.assert_called_once()
+    mock_get_knowledge.assert_not_called()
+    mock_get_chat.assert_not_called()
+
+    # Router should NOT be called when agent is explicitly specified
+    mock_router.assert_not_called()
+
+    mock_agent.process_query.assert_awaited_once()
+
+
+def test_query_with_agent_knowledge_forces_knowledge_agent():
+    """Test that --agent knowledge forces use of the knowledge agent."""
+    runner = CliRunner()
+
+    mock_agent = MagicMock()
+    mock_agent.process_query = AsyncMock(return_value="knowledge result")
+
+    with (
+        patch(
+            "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent
+        ) as mock_get_knowledge,
+        patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_chat_agent") as mock_get_chat,
+        patch("redis_sre_agent.cli.query.route_to_appropriate_agent") as mock_router,
+    ):
+        result = runner.invoke(query, ["-a", "knowledge", "What is Redis replication?"])
+
+    assert result.exit_code == 0, result.output
+    assert "Knowledge (selected)" in result.output
+
+    # Knowledge agent should be used
+    mock_get_knowledge.assert_called_once()
+    mock_get_sre.assert_not_called()
+    mock_get_chat.assert_not_called()
+
+    # Router should NOT be called
+    mock_router.assert_not_called()
+
+    mock_agent.process_query.assert_awaited_once()
+
+
+def test_query_with_agent_chat_forces_chat_agent():
+    """Test that --agent chat forces use of the chat agent."""
+    runner = CliRunner()
+
+    class DummyInstance:
+        def __init__(self):
+            self.id = "test-instance"
+            self.name = "Test Instance"
+            self.instance_type = "oss_single"
+            self.connection_url = "redis://localhost:6379"
+            self.environment = "development"
+            self.usage = "cache"
+
+    instance = DummyInstance()
+
+    mock_agent = MagicMock()
+    mock_agent.process_query = AsyncMock(return_value="chat result")
+
+    with (
+        patch("redis_sre_agent.cli.query.get_chat_agent", return_value=mock_agent) as mock_get_chat,
+        patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
+        patch(
+            "redis_sre_agent.cli.query.get_instance_by_id",
+            new=AsyncMock(return_value=instance),
+        ),
+        patch("redis_sre_agent.cli.query.route_to_appropriate_agent") as mock_router,
+    ):
+        result = runner.invoke(query, ["--agent", "chat", "-r", "test-instance", "Quick question"])
+
+    assert result.exit_code == 0, result.output
+    assert "Chat (selected)" in result.output
+
+    # Chat agent should be used
+    mock_get_chat.assert_called_once()
+    mock_get_sre.assert_not_called()
+    mock_get_knowledge.assert_not_called()
+
+    # Router should NOT be called
+    mock_router.assert_not_called()
+
+    mock_agent.process_query.assert_awaited_once()
+
+
+def test_query_with_agent_auto_uses_router():
+    """Test that --agent auto (default) uses the router to select agent."""
+    runner = CliRunner()
+
+    from redis_sre_agent.agent.router import AgentType
+
+    mock_agent = MagicMock()
+    mock_agent.process_query = AsyncMock(return_value="routed result")
+
+    with (
+        patch(
+            "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent
+        ) as mock_get_knowledge,
+        patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
+        ) as mock_router,
+    ):
+        # Default is auto, so router should be called
+        result = runner.invoke(query, ["What is Redis?"])
+
+    assert result.exit_code == 0, result.output
+    # Should show "Knowledge" without "(selected)" since it was auto-routed
+    assert "Agent: Knowledge" in result.output
+    assert "(selected)" not in result.output
+
+    # Router should be called
+    mock_router.assert_awaited_once()
+
+    mock_get_knowledge.assert_called_once()
+    mock_get_sre.assert_not_called()
+
+
+def test_query_agent_option_is_case_insensitive():
+    """Test that --agent option accepts different cases."""
+    runner = CliRunner()
+
+    mock_agent = MagicMock()
+    mock_agent.process_query = AsyncMock(return_value="result")
+
+    with (
+        patch("redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent),
+        patch("redis_sre_agent.cli.query.route_to_appropriate_agent"),
+    ):
+        # Test uppercase
+        result = runner.invoke(query, ["--agent", "KNOWLEDGE", "test query"])
+        assert result.exit_code == 0, result.output
+
+        # Test mixed case
+        result = runner.invoke(query, ["--agent", "Knowledge", "test query"])
+        assert result.exit_code == 0, result.output

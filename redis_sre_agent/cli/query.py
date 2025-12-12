@@ -24,18 +24,25 @@ from redis_sre_agent.core.threads import ThreadManager
 @click.argument("query")
 @click.option("--redis-instance-id", "-r", help="Redis instance ID to investigate")
 @click.option("--thread-id", "-t", help="Thread ID to continue an existing conversation")
-@click.option("--triage", is_flag=True, help="Force full triage agent (bypasses routing)")
-def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str], triage: bool):
+@click.option(
+    "--agent",
+    "-a",
+    type=click.Choice(["auto", "triage", "chat", "knowledge"], case_sensitive=False),
+    default="auto",
+    help="Agent to use (default: auto-select based on query)",
+)
+def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str], agent: str):
     """Execute an agent query.
 
     Supports conversation threads for multi-turn interactions. Use --thread-id
     to continue an existing conversation, or omit it to start a new one.
 
     \b
-    The agent is automatically selected based on the query:
-      - Knowledge agent: General Redis questions (no instance)
-      - Chat agent: Quick questions with a Redis instance
-      - Triage agent: Full health checks or --triage flag
+    The agent is automatically selected based on the query, or use --agent:
+      - knowledge: General Redis questions (no instance needed)
+      - chat: Quick questions with a Redis instance
+      - triage: Full health checks and diagnostics
+      - auto: Let the router decide (default)
     """
 
     async def _query():
@@ -100,10 +107,18 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
         # Build context for routing
         routing_context = {"instance_id": instance.id} if instance else None
 
+        # Map CLI agent choice to AgentType
+        agent_choice_map = {
+            "triage": AgentType.REDIS_TRIAGE,
+            "chat": AgentType.REDIS_CHAT,
+            "knowledge": AgentType.KNOWLEDGE_ONLY,
+        }
+
         # Determine which agent to use
-        if triage:
-            agent_type = AgentType.REDIS_TRIAGE
-            console.print("[dim]🔧 Agent: Triage (forced)[/dim]")
+        if agent != "auto":
+            agent_type = agent_choice_map[agent.lower()]
+            agent_label = agent.capitalize()
+            console.print(f"[dim]🔧 Agent: {agent_label} (selected)[/dim]")
         else:
             agent_type = await route_to_appropriate_agent(
                 query=query,
@@ -116,19 +131,19 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
             }.get(agent_type, agent_type.value)
             console.print(f"[dim]🔧 Agent: {agent_label}[/dim]")
 
-        # Get the appropriate agent
+        # Get the appropriate agent instance
         if agent_type == AgentType.REDIS_TRIAGE:
-            agent = get_sre_agent()
+            selected_agent = get_sre_agent()
         elif agent_type == AgentType.REDIS_CHAT:
-            agent = get_chat_agent(redis_instance=instance)
+            selected_agent = get_chat_agent(redis_instance=instance)
         else:
-            agent = get_knowledge_agent()
+            selected_agent = get_knowledge_agent()
 
         try:
             context = {"instance_id": instance.id} if instance else None
 
             # Run the agent
-            response = await agent.process_query(
+            response = await selected_agent.process_query(
                 query,
                 session_id="cli",
                 user_id="cli_user",

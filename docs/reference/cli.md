@@ -73,10 +73,11 @@ Generated from the Click command tree.
     to continue an existing conversation, or omit it to start a new one.
 
     
-    The agent is automatically selected based on the query:
-      - Knowledge agent: General Redis questions (no instance)
-      - Chat agent: Quick questions with a Redis instance
-      - Triage agent: Full health checks or --triage flag
+    The agent is automatically selected based on the query, or use --agent:
+      - knowledge: General Redis questions (no instance needed)
+      - chat: Quick questions with a Redis instance
+      - triage: Full health checks and diagnostics
+      - auto: Let the router decide (default)
 - worker — Start the background worker.
 - mcp — MCP server commands - expose agent capabilities via Model Context Protocol.
 - mcp list-tools — List available MCP tools.
