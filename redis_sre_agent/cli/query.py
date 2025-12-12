@@ -31,10 +31,11 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
     Supports conversation threads for multi-turn interactions. Use --thread-id
     to continue an existing conversation, or omit it to start a new one.
 
+    \b
     The agent is automatically selected based on the query:
-    - Knowledge agent: General Redis questions (no instance)
-    - Chat agent: Quick questions with a Redis instance
-    - Triage agent: Full health checks or --triage flag
+      - Knowledge agent: General Redis questions (no instance)
+      - Chat agent: Quick questions with a Redis instance
+      - Triage agent: Full health checks or --triage flag
     """
 
     async def _query():

@@ -31,27 +31,31 @@ def serve(transport: str, host: str, port: int):
     """Start the MCP server.
 
     The MCP server exposes the Redis SRE Agent's capabilities to other
-    MCP-compatible AI agents. Available tools:
+    MCP-compatible AI agents.
 
-    - triage: Start a Redis troubleshooting session
-    - get_task_status: Check if a triage task is complete
-    - get_thread: Get the full results from a triage
-    - knowledge_search: Search Redis documentation and runbooks
-    - list_instances: List configured Redis instances
-    - create_instance: Register a new Redis instance
+    \b
+    Available tools:
+      - triage: Start a Redis troubleshooting session
+      - get_task_status: Check if a triage task is complete
+      - get_thread: Get the full results from a triage
+      - knowledge_search: Search Redis documentation and runbooks
+      - list_instances: List configured Redis instances
+      - create_instance: Register a new Redis instance
 
+    \b
     Examples:
+      # Run in stdio mode (for Claude Desktop local config)
+      redis-sre-agent mcp serve
 
-        # Run in stdio mode (for Claude Desktop local config)
-        redis-sre-agent mcp serve
+    \b
+      # Run in HTTP mode (for Claude remote connector - RECOMMENDED)
+      redis-sre-agent mcp serve --transport http --port 8081
+      # Then add in Claude: Settings > Connectors > Add Custom Connector
+      # URL: http://your-host:8081/mcp
 
-        # Run in HTTP mode (for Claude remote connector - RECOMMENDED)
-        redis-sre-agent mcp serve --transport http --port 8081
-        # Then add in Claude: Settings > Connectors > Add Custom Connector
-        # URL: http://your-host:8081/mcp
-
-        # Run in SSE mode (legacy, for older clients)
-        redis-sre-agent mcp serve --transport sse --port 8081
+    \b
+      # Run in SSE mode (legacy, for older clients)
+      redis-sre-agent mcp serve --transport sse --port 8081
     """
     from redis_sre_agent.mcp_server.server import run_http, run_sse, run_stdio
 
