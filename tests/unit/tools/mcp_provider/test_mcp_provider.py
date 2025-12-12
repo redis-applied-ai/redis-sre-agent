@@ -96,6 +96,29 @@ class TestMCPToolProvider:
         assert provider._get_description("no_override", "MCP desc") == "MCP desc"
         assert provider._get_description("unknown", "MCP desc") == "MCP desc"
 
+    def test_get_description_with_original_template(self):
+        """Test that {original} placeholder is replaced with MCP description."""
+        config = MCPServerConfig(
+            command="test",
+            tools={
+                "templated_tool": MCPToolConfig(description="Custom context. {original}"),
+                "prepended": MCPToolConfig(
+                    description="WARNING: Use carefully. {original} See docs for details."
+                ),
+            },
+        )
+        provider = MCPToolProvider(server_name="test", server_config=config)
+
+        # Template should replace {original} with the MCP description
+        assert (
+            provider._get_description("templated_tool", "Original MCP description")
+            == "Custom context. Original MCP description"
+        )
+        assert (
+            provider._get_description("prepended", "Search for files.")
+            == "WARNING: Use carefully. Search for files. See docs for details."
+        )
+
     def test_get_tool_config(self):
         """Test getting tool config."""
         tool_config = MCPToolConfig(

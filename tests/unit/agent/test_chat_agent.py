@@ -212,3 +212,55 @@ class TestChatAgentState:
         assert "iteration_count" in state
         assert "max_iterations" in state
         assert "signals_envelopes" in state
+
+
+class TestChatAgentWorkflowBuild:
+    """Test the _build_workflow method and emitter parameter."""
+
+    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
+    def test_build_workflow_accepts_emitter(self, mock_chat_openai):
+        """Test that _build_workflow accepts an emitter parameter."""
+        mock_llm = MagicMock()
+        mock_chat_openai.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        # Create a mock tool manager
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_status_update.return_value = None
+
+        # Create a mock emitter
+        emitter = NullEmitter()
+
+        # Should not raise - emitter is now accepted
+        workflow = agent._build_workflow(
+            tool_mgr=mock_tool_mgr,
+            llm_with_tools=mock_llm,
+            adapters=[],
+            emitter=emitter,
+        )
+
+        assert workflow is not None
+
+    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
+    def test_build_workflow_works_without_emitter(self, mock_chat_openai):
+        """Test that _build_workflow works when emitter is None."""
+        mock_llm = MagicMock()
+        mock_chat_openai.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        # Create a mock tool manager
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+
+        # Should not raise when emitter is None
+        workflow = agent._build_workflow(
+            tool_mgr=mock_tool_mgr,
+            llm_with_tools=mock_llm,
+            adapters=[],
+            emitter=None,
+        )
+
+        assert workflow is not None

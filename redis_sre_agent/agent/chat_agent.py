@@ -12,6 +12,7 @@ import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -27,6 +28,8 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
+
+from .helpers import build_result_envelope
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -220,10 +223,6 @@ class ChatAgent:
             adapters: List of tool adapters for the ToolNode
             emitter: Optional progress emitter for status updates
         """
-        from langchain_core.tools import StructuredTool
-
-        from .helpers import build_result_envelope
-
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
 
         # We'll dynamically add expand_evidence tool when envelopes are available
