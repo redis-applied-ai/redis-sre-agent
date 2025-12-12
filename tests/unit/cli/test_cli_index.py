@@ -29,30 +29,34 @@ class TestIndexListCLI:
         mock_index = MagicMock()
         mock_index.exists = AsyncMock(return_value=True)
         mock_index._redis_client = MagicMock()
-        mock_index._redis_client.execute_command = AsyncMock(
-            return_value=[b"num_docs", b"100"]
-        )
+        mock_index._redis_client.execute_command = AsyncMock(return_value=[b"num_docs", b"100"])
 
-        with patch(
-            "redis_sre_agent.core.redis.get_knowledge_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_schedules_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_threads_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_tasks_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_instances_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
+        with (
+            patch(
+                "redis_sre_agent.core.redis.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_schedules_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_threads_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_tasks_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
         ):
             result = cli_runner.invoke(index, ["list"])
 
@@ -65,30 +69,34 @@ class TestIndexListCLI:
         mock_index = MagicMock()
         mock_index.exists = AsyncMock(return_value=True)
         mock_index._redis_client = MagicMock()
-        mock_index._redis_client.execute_command = AsyncMock(
-            return_value=[b"num_docs", b"50"]
-        )
+        mock_index._redis_client.execute_command = AsyncMock(return_value=[b"num_docs", b"50"])
 
-        with patch(
-            "redis_sre_agent.core.redis.get_knowledge_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_schedules_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_threads_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_tasks_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
-        ), patch(
-            "redis_sre_agent.core.redis.get_instances_index",
-            new_callable=AsyncMock,
-            return_value=mock_index,
+        with (
+            patch(
+                "redis_sre_agent.core.redis.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_schedules_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_threads_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_tasks_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
         ):
             result = cli_runner.invoke(index, ["list", "--json"])
 
@@ -147,9 +155,7 @@ class TestIndexRecreateCLI:
             new_callable=AsyncMock,
             return_value=mock_result,
         ) as mock_recreate:
-            result = cli_runner.invoke(
-                index, ["recreate", "--index-name", "knowledge", "-y"]
-            )
+            result = cli_runner.invoke(index, ["recreate", "--index-name", "knowledge", "-y"])
 
             assert result.exit_code == 0
             mock_recreate.assert_called_once_with("knowledge")

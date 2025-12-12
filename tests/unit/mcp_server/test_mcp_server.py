@@ -530,7 +530,9 @@ class TestGetTaskStatusTool:
             "task_id": "task-123",
             "thread_id": "thread-456",
             "status": "done",
-            "updates": [{"timestamp": "2024-01-01T00:00:30Z", "message": "Processing", "type": "progress"}],
+            "updates": [
+                {"timestamp": "2024-01-01T00:00:30Z", "message": "Processing", "type": "progress"}
+            ],
             "result": {"summary": "Complete"},
             "error_message": None,
             "metadata": {

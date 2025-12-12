@@ -222,9 +222,7 @@ class TaskEmitter:
     ) -> None:
         """Emit notification to task storage."""
         try:
-            await self._task_manager.add_task_update(
-                self._task_id, message, update_type, metadata
-            )
+            await self._task_manager.add_task_update(self._task_id, message, update_type, metadata)
         except Exception as e:
             # Best-effort: don't fail the agent if notification logging fails
             logger.warning(f"Failed to emit task notification: {e}")

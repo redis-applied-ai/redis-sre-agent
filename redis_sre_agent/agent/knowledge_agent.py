@@ -510,9 +510,7 @@ class KnowledgeOnlyAgent:
                 logger.error(f"Knowledge agent processing failed: {e}")
                 error_response = f"I encountered an error while processing your knowledge query: {str(e)}. Please try asking a more specific question about SRE practices, troubleshooting methodologies, or system reliability concepts."
 
-                await emitter.emit(
-                    f"Knowledge agent encountered an error: {str(e)}", "agent_error"
-                )
+                await emitter.emit(f"Knowledge agent encountered an error: {str(e)}", "agent_error")
 
                 return error_response
 

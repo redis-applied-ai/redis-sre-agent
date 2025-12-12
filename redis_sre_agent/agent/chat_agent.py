@@ -260,7 +260,9 @@ class ChatAgent:
             return {
                 "messages": new_messages,
                 "iteration_count": iteration_count + 1,
-                "current_tool_calls": response.tool_calls if hasattr(response, "tool_calls") else [],
+                "current_tool_calls": response.tool_calls
+                if hasattr(response, "tool_calls")
+                else [],
             }
 
         async def tool_node(state: ChatAgentState) -> Dict[str, Any]:
@@ -277,7 +279,9 @@ class ChatAgent:
             # Emit progress updates for each tool call
             if emitter and tool_calls:
                 for tc in tool_calls:
-                    tool_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                    tool_name = (
+                        tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                    )
                     tool_args = (
                         tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
                     ) or {}
@@ -299,7 +303,9 @@ class ChatAgent:
 
                 # Build envelopes for each tool call result
                 for idx, tc in enumerate(tool_calls):
-                    tool_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                    tool_name = (
+                        tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                    )
                     tool_args = (
                         tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
                     ) or {}
@@ -445,9 +451,7 @@ User Query: {query}"""
             thread_config = {"configurable": {"thread_id": session_id}}
 
             try:
-                await emitter.emit(
-                    "Chat agent processing your question...", "agent_start"
-                )
+                await emitter.emit("Chat agent processing your question...", "agent_start")
 
                 final_state = await app.ainvoke(initial_state, config=thread_config)
 

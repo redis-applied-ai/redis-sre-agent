@@ -12,7 +12,6 @@ from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.progress import (
     CallbackEmitter,
     NullEmitter,
-    ProgressEmitter,
 )
 
 
@@ -121,6 +120,7 @@ class TestChatAgentSingleton:
 
             # Clear cache
             from redis_sre_agent.agent import chat_agent
+
             chat_agent._chat_agents.clear()
 
             agent = get_chat_agent()
@@ -137,6 +137,7 @@ class TestChatAgentSingleton:
 
             # Clear cache
             from redis_sre_agent.agent import chat_agent
+
             chat_agent._chat_agents.clear()
 
             instance1 = RedisInstance(

@@ -1,7 +1,8 @@
 """Tests for envelope summarization and expand_evidence tool in the reasoning phase."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
@@ -95,9 +96,7 @@ class TestEnvelopeSummarization:
         mock_response.content = '[{"summary": "Large content summarized"}]'
         agent.mini_llm.ainvoke = AsyncMock(return_value=mock_response)
 
-        result = await agent._summarize_envelopes_for_reasoning(
-            [small_envelope, large_envelope]
-        )
+        result = await agent._summarize_envelopes_for_reasoning([small_envelope, large_envelope])
 
         assert len(result) == 2
         # Small envelope unchanged
@@ -109,8 +108,13 @@ class TestEnvelopeSummarization:
     async def test_order_preserved(self, agent):
         """Test that envelope order is preserved after summarization."""
         envelopes = [
-            {"tool_key": f"tool_{i}", "name": f"t{i}", "args": {}, "status": "success",
-             "data": {"id": i, "content": "x" * (100 if i % 2 == 0 else 1000)}}
+            {
+                "tool_key": f"tool_{i}",
+                "name": f"t{i}",
+                "args": {},
+                "status": "success",
+                "data": {"id": i, "content": "x" * (100 if i % 2 == 0 else 1000)},
+            }
             for i in range(5)
         ]
 

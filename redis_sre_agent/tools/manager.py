@@ -239,7 +239,9 @@ class ToolManager:
         # Build set of excluded capabilities for fast lookup
         excluded_caps = set(self.exclude_mcp_categories or [])
         if excluded_caps:
-            logger.info(f"MCP tools with these categories will be excluded: {[c.value for c in excluded_caps]}")
+            logger.info(
+                f"MCP tools with these categories will be excluded: {[c.value for c in excluded_caps]}"
+            )
 
         for server_name, server_config in settings.mcp_servers.items():
             try:

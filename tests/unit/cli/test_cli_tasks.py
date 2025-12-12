@@ -1,8 +1,9 @@
 """Unit tests for tasks CLI commands."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch, AsyncMock, MagicMock
 
 from redis_sre_agent.cli.tasks import task
 
@@ -47,13 +48,16 @@ class TestTaskListCLI:
         mock_redis = MagicMock()
         mock_redis.get = AsyncMock(return_value=None)
 
-        with patch(
-            "redis_sre_agent.core.tasks.list_tasks",
-            new_callable=AsyncMock,
-            return_value=mock_tasks,
-        ), patch(
-            "redis_sre_agent.core.redis.get_redis_client",
-            return_value=mock_redis,
+        with (
+            patch(
+                "redis_sre_agent.core.tasks.list_tasks",
+                new_callable=AsyncMock,
+                return_value=mock_tasks,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_redis_client",
+                return_value=mock_redis,
+            ),
         ):
             result = cli_runner.invoke(task, ["list"])
 
@@ -84,13 +88,16 @@ class TestTaskListCLI:
         mock_redis = MagicMock()
         mock_redis.get = AsyncMock(return_value=None)
 
-        with patch(
-            "redis_sre_agent.core.tasks.list_tasks",
-            new_callable=AsyncMock,
-            return_value=mock_tasks,
-        ) as mock_list, patch(
-            "redis_sre_agent.core.redis.get_redis_client",
-            return_value=mock_redis,
+        with (
+            patch(
+                "redis_sre_agent.core.tasks.list_tasks",
+                new_callable=AsyncMock,
+                return_value=mock_tasks,
+            ) as mock_list,
+            patch(
+                "redis_sre_agent.core.redis.get_redis_client",
+                return_value=mock_redis,
+            ),
         ):
             result = cli_runner.invoke(task, ["list", "--status", "done"])
 

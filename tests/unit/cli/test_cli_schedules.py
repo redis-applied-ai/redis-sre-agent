@@ -1,8 +1,9 @@
 """Unit tests for schedules CLI commands."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch, AsyncMock, MagicMock
 
 from redis_sre_agent.cli.schedules import schedule
 

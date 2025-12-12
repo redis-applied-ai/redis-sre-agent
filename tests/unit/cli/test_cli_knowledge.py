@@ -55,9 +55,7 @@ class TestKnowledgeSearchCLI:
         ) as mock_search:
             mock_search.return_value = mock_result
 
-            result = cli_runner.invoke(
-                knowledge, ["search", "redis", "memory", "--offset", "5"]
-            )
+            result = cli_runner.invoke(knowledge, ["search", "redis", "memory", "--offset", "5"])
 
             assert result.exit_code == 0, result.output
             mock_search.assert_called_once()
@@ -165,10 +163,14 @@ class TestKnowledgeSearchCLI:
                     "search",
                     "redis",
                     "performance",
-                    "--offset", "10",
-                    "--version", "7.4",
-                    "--limit", "5",
-                    "--category", "performance",
+                    "--offset",
+                    "10",
+                    "--version",
+                    "7.4",
+                    "--limit",
+                    "5",
+                    "--category",
+                    "performance",
                 ],
             )
 
@@ -255,6 +257,7 @@ class TestKnowledgeFragmentsCLI:
             assert result.exit_code == 0, result.output
             # JSON output should be parseable
             import json
+
             output_data = json.loads(result.output)
             assert output_data["title"] == "Test Doc"
 
@@ -314,14 +317,10 @@ class TestKnowledgeRelatedCLI:
         ) as mock_get:
             mock_get.return_value = mock_result
 
-            result = cli_runner.invoke(
-                knowledge, ["related", "abc123", "--chunk-index", "5"]
-            )
+            result = cli_runner.invoke(knowledge, ["related", "abc123", "--chunk-index", "5"])
 
             assert result.exit_code == 0, result.output
-            mock_get.assert_called_once_with(
-                "abc123", current_chunk_index=5, context_window=2
-            )
+            mock_get.assert_called_once_with("abc123", current_chunk_index=5, context_window=2)
 
     def test_related_with_custom_window(self, cli_runner):
         """Test that --window parameter is passed correctly."""
@@ -343,9 +342,7 @@ class TestKnowledgeRelatedCLI:
             )
 
             assert result.exit_code == 0, result.output
-            mock_get.assert_called_once_with(
-                "abc123", current_chunk_index=5, context_window=4
-            )
+            mock_get.assert_called_once_with("abc123", current_chunk_index=5, context_window=4)
 
     def test_related_json_output(self, cli_runner):
         """Test that --json flag outputs JSON."""
@@ -368,6 +365,7 @@ class TestKnowledgeRelatedCLI:
 
             assert result.exit_code == 0, result.output
             import json
+
             output_data = json.loads(result.output)
             assert output_data["target_chunk_index"] == 5
 
@@ -379,9 +377,7 @@ class TestKnowledgeRelatedCLI:
         ) as mock_get:
             mock_get.side_effect = Exception("Document not found")
 
-            result = cli_runner.invoke(
-                knowledge, ["related", "nonexistent", "--chunk-index", "0"]
-            )
+            result = cli_runner.invoke(knowledge, ["related", "nonexistent", "--chunk-index", "0"])
 
             assert result.exit_code == 0  # CLI doesn't exit with error code
             assert "Error" in result.output or "error" in result.output

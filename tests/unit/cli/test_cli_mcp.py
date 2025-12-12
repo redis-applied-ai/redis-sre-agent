@@ -1,8 +1,9 @@
 """Unit tests for MCP CLI commands."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch, MagicMock
 
 from redis_sre_agent.cli.mcp import mcp
 
@@ -30,19 +31,15 @@ class TestMCPServeCLI:
 
     def test_serve_default_transport_is_stdio(self, cli_runner):
         """Test that default transport is stdio."""
-        with patch(
-            "redis_sre_agent.mcp_server.server.run_stdio"
-        ) as mock_run:
-            result = cli_runner.invoke(mcp, ["serve"])
+        with patch("redis_sre_agent.mcp_server.server.run_stdio") as mock_run:
+            cli_runner.invoke(mcp, ["serve"])
 
             # stdio mode doesn't print anything
             mock_run.assert_called_once()
 
     def test_serve_http_mode(self, cli_runner):
         """Test serve in HTTP mode."""
-        with patch(
-            "redis_sre_agent.mcp_server.server.run_http"
-        ) as mock_run:
+        with patch("redis_sre_agent.mcp_server.server.run_http") as mock_run:
             result = cli_runner.invoke(mcp, ["serve", "--transport", "http"])
 
             assert result.exit_code == 0
@@ -51,9 +48,7 @@ class TestMCPServeCLI:
 
     def test_serve_sse_mode(self, cli_runner):
         """Test serve in SSE mode."""
-        with patch(
-            "redis_sre_agent.mcp_server.server.run_sse"
-        ) as mock_run:
+        with patch("redis_sre_agent.mcp_server.server.run_sse") as mock_run:
             result = cli_runner.invoke(mcp, ["serve", "--transport", "sse"])
 
             assert result.exit_code == 0
@@ -62,9 +57,7 @@ class TestMCPServeCLI:
 
     def test_serve_custom_host_and_port(self, cli_runner):
         """Test serve with custom host and port."""
-        with patch(
-            "redis_sre_agent.mcp_server.server.run_http"
-        ) as mock_run:
+        with patch("redis_sre_agent.mcp_server.server.run_http") as mock_run:
             result = cli_runner.invoke(
                 mcp, ["serve", "--transport", "http", "--host", "127.0.0.1", "--port", "9000"]
             )

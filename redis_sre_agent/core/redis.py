@@ -235,9 +235,7 @@ def get_vectorizer() -> OpenAITextVectorizer:
         redis_url=redis_url,
         ttl=settings.embeddings_cache_ttl,
     )
-    logger.debug(
-        f"Vectorizer created with embeddings cache (ttl={settings.embeddings_cache_ttl}s)"
-    )
+    logger.debug(f"Vectorizer created with embeddings cache (ttl={settings.embeddings_cache_ttl}s)")
 
     return OpenAITextVectorizer(
         model=settings.embedding_model,

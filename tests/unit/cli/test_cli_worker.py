@@ -1,8 +1,9 @@
 """Unit tests for worker CLI command."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch, AsyncMock, MagicMock
 
 from redis_sre_agent.cli.worker import worker
 

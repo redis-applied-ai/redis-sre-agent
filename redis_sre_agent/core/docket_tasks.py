@@ -220,7 +220,13 @@ async def process_chat_turn(
         # Add response to thread as assistant message
         await thread_manager.append_messages(
             thread_id,
-            [{"role": "assistant", "content": response, "metadata": {"task_id": task_id, "agent": "chat"}}],
+            [
+                {
+                    "role": "assistant",
+                    "content": response,
+                    "metadata": {"task_id": task_id, "agent": "chat"},
+                }
+            ],
         )
 
         return result
@@ -290,7 +296,13 @@ async def process_knowledge_query(
         # Add response to thread as assistant message
         await thread_manager.append_messages(
             thread_id,
-            [{"role": "assistant", "content": response, "metadata": {"task_id": task_id, "agent": "knowledge"}}],
+            [
+                {
+                    "role": "assistant",
+                    "content": response,
+                    "metadata": {"task_id": task_id, "agent": "knowledge"},
+                }
+            ],
         )
 
         return result
@@ -653,7 +665,9 @@ async def process_agent_turn(
             agent = get_sre_agent()
         elif agent_type == AgentType.REDIS_CHAT:
             # Get the target instance for the chat agent
-            target_instance = await get_instance_by_id(active_instance_id) if active_instance_id else None
+            target_instance = (
+                await get_instance_by_id(active_instance_id) if active_instance_id else None
+            )
             agent = get_chat_agent(redis_instance=target_instance)
         else:
             agent = get_knowledge_agent()

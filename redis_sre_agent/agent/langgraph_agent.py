@@ -598,8 +598,7 @@ JSON payload of analyses artifacts:
                 batch_prompt += "\n\n"
 
             batch_prompt += (
-                "Return JSON array format: "
-                '[{"summary": "key findings..."}, {"summary": "..."}]'
+                'Return JSON array format: [{"summary": "key findings..."}, {"summary": "..."}]'
             )
 
             try:
@@ -623,9 +622,7 @@ JSON payload of analyses artifacts:
                     pass
 
                 # Apply summaries to envelopes
-                for j, (orig_idx, env) in enumerate(
-                    zip(to_summarize_indices, to_summarize)
-                ):
+                for j, (orig_idx, env) in enumerate(zip(to_summarize_indices, to_summarize)):
                     summary_text = (
                         summaries[j].get("summary", "")
                         if j < len(summaries) and isinstance(summaries[j], dict)
@@ -1236,9 +1233,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     )
                     # Use summarized envelopes for recommendation workers
                     # LLM can call expand_evidence to get full details if needed
-                    env_by_key = {
-                        e.get("tool_key"): e for e in summarized_envelopes
-                    }
+                    env_by_key = {e.get("tool_key"): e for e in summarized_envelopes}
                     for t in topics:
                         ev_keys = [k for k in (t.get("evidence_keys") or []) if isinstance(k, str)]
                         ev = [env_by_key[k] for k in ev_keys if k in env_by_key]

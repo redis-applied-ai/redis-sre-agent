@@ -3,13 +3,13 @@
 import asyncio
 import logging
 from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from redis_sre_agent.core.progress import (
-    CLIEmitter,
     CallbackEmitter,
+    CLIEmitter,
     CompositeEmitter,
     LocalProgressCounter,
     LoggingEmitter,
@@ -227,6 +227,7 @@ class TestCallbackEmitter:
     @pytest.mark.asyncio
     async def test_emit_handles_callback_without_metadata(self):
         """CallbackEmitter should handle callbacks that don't accept metadata."""
+
         async def simple_callback(msg, update_type):
             pass
 

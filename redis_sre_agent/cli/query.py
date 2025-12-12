@@ -150,7 +150,9 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
 
             # Show thread ID for follow-up queries
             console.print("\n[dim]💡 To continue this conversation:[/dim]")
-            console.print(f"[dim]   redis-sre-agent query --thread-id {active_thread_id} \"your follow-up\"[/dim]")
+            console.print(
+                f'[dim]   redis-sre-agent query --thread-id {active_thread_id} "your follow-up"[/dim]'
+            )
 
         except Exception as e:
             console.print(f"[red]❌ Error: {e}[/red]")
