@@ -21,6 +21,8 @@ mcp_servers:
     args: [string]         # Command arguments
     env: {key: value}      # Environment variables
     url: string            # Optional: URL for HTTP-based servers
+    headers: {key: value}  # Optional: Headers for HTTP transport (e.g., Authorization)
+    transport: string      # Optional: 'streamable_http' (default) or 'sse'
     tools:                 # Optional: Tool-specific configurations
       tool-name:
         description: string    # Override tool description ({original} for default)

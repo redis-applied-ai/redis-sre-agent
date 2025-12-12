@@ -51,18 +51,14 @@ mcp_servers:
           before troubleshooting to recall past issues and solutions.
           {original}
 
-  # GitHub MCP server for repository operations
+  # GitHub MCP server (remote) - uses GitHub's hosted MCP endpoint
+  # Requires a GitHub Personal Access Token with appropriate permissions
+  # Uses Streamable HTTP transport (default for URL-based connections)
   github:
-    command: docker
-    args:
-      - run
-      - -i
-      - --rm
-      - -e
-      - GITHUB_PERSONAL_ACCESS_TOKEN
-      - ghcr.io/github/github-mcp-server
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    url: "https://api.githubcopilot.com/mcp/"
+    headers:
+      Authorization: "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    # transport: streamable_http  # default, can also be 'sse' for legacy servers
 ```
 
 See `config.yaml.example` for a complete example with all available options.

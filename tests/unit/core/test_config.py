@@ -358,6 +358,29 @@ class TestMCPConfiguration:
         assert config.command is None
         assert config.args is None
         assert config.url == "http://localhost:3000/mcp"
+        # Default transport should be None (provider defaults to streamable_http)
+        assert config.transport is None
+
+    def test_mcp_server_config_url_with_transport(self):
+        """Test MCPServerConfig with explicit transport type."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        # Test with streamable_http transport (for GitHub remote MCP)
+        config = MCPServerConfig(
+            url="https://api.githubcopilot.com/mcp/",
+            headers={"Authorization": "Bearer test-token"},
+            transport="streamable_http",
+        )
+        assert config.url == "https://api.githubcopilot.com/mcp/"
+        assert config.headers == {"Authorization": "Bearer test-token"}
+        assert config.transport == "streamable_http"
+
+        # Test with legacy SSE transport
+        config_sse = MCPServerConfig(
+            url="http://localhost:3000/mcp",
+            transport="sse",
+        )
+        assert config_sse.transport == "sse"
 
     def test_mcp_server_config_with_tool_constraints(self):
         """Test MCPServerConfig with tool constraints."""

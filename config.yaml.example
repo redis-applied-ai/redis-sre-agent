@@ -77,6 +77,7 @@ mcp_servers:
           {original}
 
   # GitHub MCP server for repository operations
+  # Option 1: Local Docker (requires Docker to be running)
   github:
     command: docker
     args:
@@ -89,6 +90,14 @@ mcp_servers:
     env:
       # Set your GitHub Personal Access Token here or via environment variable
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+
+  # Option 2: Remote GitHub MCP server (recommended, no Docker needed)
+  # Uncomment the following and comment out the local Docker option above:
+  # github:
+  #   url: "https://api.githubcopilot.com/mcp/"
+  #   headers:
+  #     Authorization: "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+  #   # transport: streamable_http  # default, uses Streamable HTTP protocol
 
 # Tool providers configuration (fully qualified class paths)
 # tool_providers:

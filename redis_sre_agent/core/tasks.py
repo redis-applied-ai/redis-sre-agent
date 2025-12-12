@@ -228,11 +228,23 @@ class TaskManager:
             except Exception:
                 result = None
 
-        md = await self._redis.hgetall(RedisKeys.task_metadata(task_id))
+        md_raw = await self._redis.hgetall(RedisKeys.task_metadata(task_id))
+        # Decode byte keys/values from hgetall when decode_responses=False
+        md: Dict[str, Any] = {}
+        if isinstance(md_raw, dict):
+            for k, v in md_raw.items():
+                key = k.decode("utf-8") if isinstance(k, bytes) else k
+                val = v.decode("utf-8") if isinstance(v, bytes) else v
+                md[key] = val
+
         # thread_id stored in metadata for convenience
-        thread_id = md.get("thread_id") if isinstance(md, dict) else None
-        if isinstance(thread_id, bytes):
-            thread_id = thread_id.decode("utf-8")
+        thread_id = md.get("thread_id")
+
+        # Handle error_message - decode if bytes
+        error_raw = await self._redis.get(RedisKeys.task_error(task_id))
+        error_message = None
+        if error_raw:
+            error_message = error_raw.decode("utf-8") if isinstance(error_raw, bytes) else error_raw
 
         return TaskState(
             task_id=task_id,
@@ -242,13 +254,12 @@ class TaskManager:
             ),
             updates=updates,
             result=result,
-            error_message=(await self._redis.get(RedisKeys.task_error(task_id))) or None,
+            error_message=error_message,
             metadata=TaskMetadata(
-                created_at=(md.get("created_at") if isinstance(md, dict) else None)
-                or datetime.now(timezone.utc).isoformat(),
-                updated_at=(md.get("updated_at") if isinstance(md, dict) else None),
-                user_id=(md.get("user_id") if isinstance(md, dict) else None),
-                subject=(md.get("subject") if isinstance(md, dict) else None),
+                created_at=md.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                updated_at=md.get("updated_at"),
+                user_id=md.get("user_id"),
+                subject=md.get("subject"),
             ),
         )
 

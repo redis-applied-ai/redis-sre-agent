@@ -215,6 +215,12 @@ def get_vectorizer() -> OpenAITextVectorizer:
     """Get OpenAI vectorizer with Redis-backed embeddings cache.
 
     Returns the native vectorizer; callers should use aembed/aembed_many.
+
+    The embeddings cache uses a stable key namespace ("sre_embeddings_cache")
+    so that embeddings are shared across vectorizer instances. Cache keys
+    include the model name, so different models won't conflict.
+
+    TTL is configurable via settings.embeddings_cache_ttl (default: 7 days).
     """
     # Build Redis URL with password if needed (ensure cache can auth)
     redis_url = settings.redis_url.get_secret_value()
@@ -223,7 +229,15 @@ def get_vectorizer() -> OpenAITextVectorizer:
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     # Name the cache to keep a stable key namespace
-    cache = EmbeddingsCache(name="sre_embeddings_cache", redis_url=redis_url)
+    # TTL prevents stale embeddings if model changes
+    cache = EmbeddingsCache(
+        name="sre_embeddings_cache",
+        redis_url=redis_url,
+        ttl=settings.embeddings_cache_ttl,
+    )
+    logger.debug(
+        f"Vectorizer created with embeddings cache (ttl={settings.embeddings_cache_ttl}s)"
+    )
 
     return OpenAITextVectorizer(
         model=settings.embedding_model,

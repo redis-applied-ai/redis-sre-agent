@@ -329,6 +329,27 @@ services:
     networks:
       - sre-network
 
+  # GitHub MCP Server - Exposes GitHub tools via MCP
+  # This runs the GitHub MCP server behind an SSE/HTTP proxy so the sre-worker
+  # can connect to it without needing Docker-in-Docker permissions.
+  github-mcp:
+    image: ghcr.io/sparfenyuk/mcp-proxy:latest
+    ports:
+      - "8082:8082"
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN}
+    command: >
+      --pass-environment
+      --port=8082
+      --host=0.0.0.0
+      docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - sre-network
+    profiles:
+      - mcp  # Start with: docker compose --profile mcp up
+
   # SRE Agent MCP Server - Exposes agent capabilities via Model Context Protocol
   # Connect Claude to this via: Settings > Connectors > Add Custom Connector
   # HTTP: http://localhost:8081/mcp

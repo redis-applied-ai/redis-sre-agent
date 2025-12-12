@@ -18,6 +18,11 @@ from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.progress import (
+    CallbackEmitter,
+    NullEmitter,
+    ProgressEmitter,
+)
 from redis_sre_agent.tools.manager import ToolManager
 
 logger = logging.getLogger(__name__)
@@ -80,10 +85,26 @@ class KnowledgeOnlyAgent:
     It's designed for general Q&A when no Redis instance is specified.
     """
 
-    def __init__(self, progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None):
-        """Initialize the Knowledge-only SRE agent."""
+    def __init__(
+        self,
+        progress_emitter: Optional[ProgressEmitter] = None,
+        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+    ):
+        """Initialize the Knowledge-only SRE agent.
+
+        Args:
+            progress_emitter: Emitter for progress/notification updates
+            progress_callback: DEPRECATED - use progress_emitter instead
+        """
         self.settings = settings
-        self.progress_callback = progress_callback
+
+        # Handle emitter (prefer progress_emitter, fall back to callback wrapper)
+        if progress_emitter is not None:
+            self._emitter = progress_emitter
+        elif progress_callback is not None:
+            self._emitter = CallbackEmitter(progress_callback)
+        else:
+            self._emitter = NullEmitter()
 
         # LLM optimized for knowledge tasks
         self.llm = ChatOpenAI(
@@ -97,11 +118,15 @@ class KnowledgeOnlyAgent:
 
         logger.info("Knowledge-only agent initialized (tools loaded per-query)")
 
-    def _build_workflow(self, tool_mgr: ToolManager, llm_with_tools: ChatOpenAI) -> StateGraph:
+    def _build_workflow(
+        self, tool_mgr: ToolManager, llm_with_tools: ChatOpenAI, emitter: ProgressEmitter
+    ) -> StateGraph:
         """Build the LangGraph workflow for knowledge-only queries.
 
         Args:
             tool_mgr: ToolManager instance with knowledge tools loaded
+            llm_with_tools: LLM with tools bound
+            emitter: Emitter for progress notifications
         """
 
         async def agent_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
@@ -268,11 +293,11 @@ class KnowledgeOnlyAgent:
                                                 "source": doc.get("source"),
                                             }
                                         )
-                                if fragments and self.progress_callback:
-                                    await self.progress_callback(
-                                        f"Found {len(fragments)} knowledge fragments",  # message
-                                        "knowledge_sources",  # update_type
-                                        {"fragments": fragments},  # metadata
+                                if fragments:
+                                    await emitter.emit(
+                                        f"Found {len(fragments)} knowledge fragments",
+                                        "knowledge_sources",
+                                        {"fragments": fragments},
                                     )
                     except Exception:
                         # Don't let telemetry failures break tool handling
@@ -378,7 +403,8 @@ class KnowledgeOnlyAgent:
         user_id: str,
         max_iterations: int = 5,
         context: Optional[Dict[str, Any]] = None,
-        progress_callback=None,
+        progress_emitter: Optional[ProgressEmitter] = None,
+        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """
@@ -390,7 +416,8 @@ class KnowledgeOnlyAgent:
             user_id: User identifier
             max_iterations: Maximum number of agent iterations
             context: Additional context (currently ignored for knowledge-only agent)
-            progress_callback: Optional callback for progress updates
+            progress_emitter: Emitter for progress/notification updates
+            progress_callback: DEPRECATED - use progress_emitter instead
             conversation_history: Optional list of previous messages for context
 
         Returns:
@@ -398,9 +425,13 @@ class KnowledgeOnlyAgent:
         """
         logger.info(f"Processing knowledge query for user {user_id}")
 
-        # Set progress callback for this query
-        if progress_callback:
-            self.progress_callback = progress_callback
+        # Use provided emitter, or fall back to instance emitter
+        if progress_emitter is not None:
+            emitter = progress_emitter
+        elif progress_callback is not None:
+            emitter = CallbackEmitter(progress_callback)
+        else:
+            emitter = self._emitter
 
         # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:
@@ -414,7 +445,7 @@ class KnowledgeOnlyAgent:
             llm_with_tools = self.llm.bind_tools(adapters)
 
             # Build workflow with tools and bound LLM
-            workflow = self._build_workflow(tool_mgr, llm_with_tools)
+            workflow = self._build_workflow(tool_mgr, llm_with_tools, emitter)
 
             # Create initial state with conversation history
             initial_messages = []
@@ -447,11 +478,10 @@ class KnowledgeOnlyAgent:
             }
 
             try:
-                # Progress callback for start
-                if self.progress_callback:
-                    await self.progress_callback(
-                        "Knowledge agent starting to process your query...", "agent_start"
-                    )
+                # Emit start notification
+                await emitter.emit(
+                    "Knowledge agent starting to process your query...", "agent_start"
+                )
 
                 # Run the workflow (with recursion limit to match settings)
                 final_state = await app.ainvoke(initial_state, config=thread_config)
@@ -468,11 +498,10 @@ class KnowledgeOnlyAgent:
                 else:
                     response = "I apologize, but I wasn't able to process your query. Please try asking a more specific question about SRE practices or troubleshooting."
 
-                # Progress callback for completion
-                if self.progress_callback:
-                    await self.progress_callback(
-                        "Knowledge agent has completed processing your query.", "agent_complete"
-                    )
+                # Emit completion notification
+                await emitter.emit(
+                    "Knowledge agent has completed processing your query.", "agent_complete"
+                )
 
                 logger.info(f"Knowledge query completed for user {user_id}")
                 return response
@@ -481,10 +510,9 @@ class KnowledgeOnlyAgent:
                 logger.error(f"Knowledge agent processing failed: {e}")
                 error_response = f"I encountered an error while processing your knowledge query: {str(e)}. Please try asking a more specific question about SRE practices, troubleshooting methodologies, or system reliability concepts."
 
-                if self.progress_callback:
-                    await self.progress_callback(
-                        f"Knowledge agent encountered an error: {str(e)}", "agent_error"
-                    )
+                await emitter.emit(
+                    f"Knowledge agent encountered an error: {str(e)}", "agent_error"
+                )
 
                 return error_response
 

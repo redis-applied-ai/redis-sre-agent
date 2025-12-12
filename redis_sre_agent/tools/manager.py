@@ -53,13 +53,23 @@ class ToolManager:
         "redis_sre_agent.tools.utilities.provider.UtilitiesToolProvider",
     ]
 
-    def __init__(self, redis_instance: Optional[RedisInstance] = None):
+    def __init__(
+        self,
+        redis_instance: Optional[RedisInstance] = None,
+        exclude_mcp_categories: Optional[List[ToolCapability]] = None,
+    ):
         """Initialize tool manager.
 
         Args:
             redis_instance: Optional Redis instance to scope tools to
+            exclude_mcp_categories: Optional list of MCP tool categories to exclude.
+                Use [ToolCapability.UTILITIES] to exclude utility-only MCP tools,
+                or pass all capabilities to exclude all MCP tools.
+                Common categories: METRICS, LOGS, TICKETS, REPOS, TRACES,
+                DIAGNOSTICS, KNOWLEDGE, UTILITIES.
         """
         self.redis_instance = redis_instance
+        self.exclude_mcp_categories = exclude_mcp_categories
         # Track loaded provider class paths to avoid duplicates
         self._loaded_provider_paths: set[str] = set()
 
@@ -159,6 +169,7 @@ class ToolManager:
             logger.info("No redis_instance provided - loading only instance-independent providers")
 
         # Load MCP servers (these are always-on and don't require redis_instance)
+        # Pass excluded categories to filter which MCP tools are loaded
         await self._load_mcp_providers()
 
         logger.info(
@@ -217,12 +228,18 @@ class ToolManager:
         """Load MCP tool providers based on configured mcp_servers.
 
         This method iterates through the mcp_servers configuration and creates
-        an MCPToolProvider for each configured server.
+        an MCPToolProvider for each configured server. Tools are filtered based
+        on exclude_mcp_categories if specified.
         """
         from redis_sre_agent.core.config import MCPServerConfig, settings
 
         if not settings.mcp_servers:
             return
+
+        # Build set of excluded capabilities for fast lookup
+        excluded_caps = set(self.exclude_mcp_categories or [])
+        if excluded_caps:
+            logger.info(f"MCP tools with these categories will be excluded: {[c.value for c in excluded_caps]}")
 
         for server_name, server_config in settings.mcp_servers.items():
             try:
@@ -254,21 +271,37 @@ class ToolManager:
                 except Exception:
                     pass
 
-                # Register tools
+                # Register tools, filtering by excluded categories
                 tools = provider.tools()
+                included_count = 0
+                excluded_count = 0
                 for tool in tools:
                     name = tool.metadata.name
                     if not name:
                         continue
+                    # Skip tools whose capability is in the excluded list
+                    if tool.metadata.capability in excluded_caps:
+                        excluded_count += 1
+                        logger.debug(
+                            f"Excluding MCP tool '{name}' (capability: {tool.metadata.capability.value})"
+                        )
+                        continue
                     self._routing_table[name] = provider
                     self._tools.append(tool)
                     self._tool_by_name[name] = tool
+                    included_count += 1
 
                 # Track provider
                 self._providers.append(provider)
                 self._loaded_provider_paths.add(mcp_provider_path)
 
-                logger.info(f"Loaded MCP provider '{server_name}' with {len(tools)} tools")
+                if excluded_count > 0:
+                    logger.info(
+                        f"Loaded MCP provider '{server_name}': {included_count} tools included, "
+                        f"{excluded_count} excluded by category filter"
+                    )
+                else:
+                    logger.info(f"Loaded MCP provider '{server_name}' with {included_count} tools")
 
             except Exception:
                 logger.exception(f"Failed to load MCP provider '{server_name}'")

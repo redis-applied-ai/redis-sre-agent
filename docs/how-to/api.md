@@ -72,6 +72,8 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
 
 ### 4) Triage with tasks and threads
 Simplest: create a task with your question. The API will create a thread if you omit `thread_id`.
+
+> **Note**: Triage performs comprehensive analysis (metrics, logs, knowledge base, multi-topic recommendations) and typically takes **2-10 minutes** to complete. Poll the task status or use WebSocket for real-time updates.
 ```bash
 # Create a task (no instance)
 curl -fsS -X POST http://localhost:8080/api/v1/tasks \

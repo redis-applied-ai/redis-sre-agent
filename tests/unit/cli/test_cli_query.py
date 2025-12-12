@@ -48,11 +48,17 @@ def test_query_with_instance_uses_sre_agent_and_passes_instance_context():
         def __init__(self, id: str, name: str):  # noqa: A003 - keep click-style arg name
             self.id = id
             self.name = name
+            self.instance_type = "oss_single"  # Required by ChatAgent system prompt
+            self.connection_url = "redis://localhost:6379"
+            self.environment = "development"
+            self.usage = "cache"
 
     instance = DummyInstance("redis-prod-123", "Haink Production")
 
     mock_sre_agent = MagicMock()
     mock_sre_agent.process_query = AsyncMock(return_value="ok")
+
+    from redis_sre_agent.agent.router import AgentType
 
     with (
         patch(
@@ -63,6 +69,10 @@ def test_query_with_instance_uses_sre_agent_and_passes_instance_context():
             "redis_sre_agent.cli.query.get_sre_agent", return_value=mock_sre_agent
         ) as mock_get_sre,
         patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+        ),
     ):
         # Use -r / --redis-instance-id option to select instance
         result = runner.invoke(

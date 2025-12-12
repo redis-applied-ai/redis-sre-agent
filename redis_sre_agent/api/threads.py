@@ -131,6 +131,32 @@ async def get_thread(thread_id: str) -> ThreadResponse:
         Message(role=m.role, content=m.content, metadata=m.metadata) for m in state.messages
     ]
 
+    # Fetch the latest task's updates, result, and status for real-time UI display
+    updates = []
+    result = None
+    error_message = None
+    task_status = None
+
+    try:
+        from redis_sre_agent.core.keys import RedisKeys
+        from redis_sre_agent.core.tasks import TaskManager
+
+        task_manager = TaskManager(redis_client=rc)
+        # Get the latest task for this thread
+        latest_task_ids = await rc.zrevrange(RedisKeys.thread_tasks_index(thread_id), 0, 0)
+        if latest_task_ids:
+            latest_task_id = latest_task_ids[0]
+            if isinstance(latest_task_id, bytes):
+                latest_task_id = latest_task_id.decode()
+            task_state = await task_manager.get_task_state(latest_task_id)
+            if task_state:
+                updates = [u.model_dump() for u in (task_state.updates or [])]
+                result = task_state.result
+                error_message = task_state.error_message
+                task_status = task_state.status
+    except Exception as e:
+        logger.warning(f"Failed to fetch task updates for thread {thread_id}: {e}")
+
     return ThreadResponse(
         thread_id=thread_id,
         user_id=(metadata.get("user_id") if metadata else None),
@@ -140,6 +166,10 @@ async def get_thread(thread_id: str) -> ThreadResponse:
         messages=messages,
         context=state.context,
         metadata=metadata,
+        updates=updates,
+        result=result,
+        error_message=error_message,
+        status=task_status,
     )
 
 

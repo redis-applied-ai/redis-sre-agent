@@ -81,6 +81,21 @@ class MCPServerConfig(BaseModel):
         description="URL for SSE or HTTP-based MCP transport.",
     )
 
+    # Headers for HTTP/SSE transport (e.g., Authorization)
+    headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Headers to send with HTTP/SSE requests (e.g., Authorization).",
+    )
+
+    # Transport type for URL-based connections
+    transport: Optional[str] = Field(
+        default=None,
+        description="Transport type for URL-based connections: 'sse' for Server-Sent Events "
+        "(legacy), 'streamable_http' for Streamable HTTP (recommended for modern servers like "
+        "GitHub's remote MCP). If not specified, defaults to 'streamable_http' for better "
+        "compatibility with modern MCP servers.",
+    )
+
     # Tool constraints - if provided, only these tools are exposed to the agent
     tools: Optional[Dict[str, MCPToolConfig]] = Field(
         default=None,
@@ -96,10 +111,15 @@ ENV_FILE_OPT: str | None = None
 TWENTY_MINUTES_IN_SECONDS = 1200
 
 # Only load .env if it exists (for local development)
+# In Docker/production, environment variables are set directly.
+# We check existence before calling load_dotenv to avoid FileNotFoundError.
 _env_path = Path(".env")
-if _env_path.exists():
+if _env_path.is_file():
     load_dotenv(dotenv_path=_env_path)
     ENV_FILE_OPT = str(_env_path)
+else:
+    # Try loading from default locations without erroring if not found
+    load_dotenv()
 
 
 # Default config file paths (checked in order)
@@ -190,6 +210,10 @@ class Settings(BaseSettings):
         default="text-embedding-3-small", description="OpenAI embedding model"
     )
     vector_dim: int = Field(default=1536, description="Vector dimensions")
+    embeddings_cache_ttl: Optional[int] = Field(
+        default=86400 * 7,  # 7 days
+        description="TTL in seconds for cached embeddings. None means no expiration.",
+    )
 
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")

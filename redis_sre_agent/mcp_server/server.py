@@ -11,7 +11,7 @@ This allows Claude to connect to an already-running agent via:
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -25,64 +25,126 @@ mcp = FastMCP(
     name="redis-sre-agent",
     instructions="""Redis SRE Agent - An AI-powered Redis troubleshooting and operations assistant.
 
-## Triage Workflow (Most Common)
+## Task-Based Architecture
 
-To analyze a Redis issue:
+This agent uses a **task-based workflow**. Most tools create a **Task** that runs in
+the background. You MUST watch each task for:
 
-1. Call `triage(query="describe the issue", instance_id="optional-instance-id")`
-   - Returns: thread_id and task_id
-   - The analysis runs in the background (30-120 seconds typically)
+1. **Status changes**: queued → in_progress → done/failed
+2. **Notifications**: Real-time updates showing what the agent is doing
+3. **Final result**: The response when status="done"
 
-2. Poll `get_task_status(task_id)` every 5-10 seconds
-   - Wait until status is "done" or "failed"
-   - The "updates" field shows progress messages
+## Tools That Create Tasks (require polling)
 
-3. Call `get_thread(thread_id)` to get results
-   - Contains full conversation, tool calls, and findings
-   - The "result" field has the final analysis
+| Tool | Purpose | Typical Duration |
+|------|---------|------------------|
+| `redis_sre_deep_triage()` | Deep analysis of Redis issues | 2-10 minutes |
+| `redis_sre_general_chat()` | Quick Q&A with full toolset (including external MCP tools) | 10-30 seconds |
+| `redis_sre_database_chat()` | Redis-focused chat (no external MCP tools) | 10-30 seconds |
+| `redis_sre_knowledge_query()` | Answer questions using knowledge base | 10-30 seconds |
 
-## Other Tools
+**Note**: Deep triage performs comprehensive analysis including metrics collection, log analysis,
+knowledge base searches, and multi-topic recommendation synthesis. Complex queries or
+instances with many data sources may take longer.
 
-- `knowledge_search`: Search Redis docs and runbooks for quick answers
-- `list_instances`: See available Redis instances (use IDs with triage)
-- `create_instance`: Register a new Redis instance to monitor
+After calling any of these, you MUST:
+1. Get the `task_id` from the response
+2. Poll `redis_sre_get_task_status(task_id)` until status is "done" or "failed"
+3. Read the `result` field when done
+
+## Utility Tools (return immediately)
+
+| Tool | Purpose |
+|------|---------|
+| `redis_sre_knowledge_search()` | Direct search of docs (raw results) |
+| `redis_sre_list_instances()` | List available Redis instances |
+| `redis_sre_get_task_status()` | Check task progress |
+| `redis_sre_get_thread()` | Get conversation history |
+
+## Standard Workflow
+
+```
+1. Call redis_sre_deep_triage(), redis_sre_general_chat(), or redis_sre_knowledge_query()
+   → Returns: task_id, thread_id, status="queued"
+
+2. Poll redis_sre_get_task_status(task_id) every 5 seconds
+   → status: "queued" → "in_progress" → "done"
+   → updates: Array of notifications (grows over time)
+   → result: Final answer (when status="done")
+
+3. When status="done", read result.response
+```
+
+## Example
+
+```
+# Step 1: Create task
+response = redis_sre_deep_triage(query="High memory usage on prod-redis")
+task_id = response.task_id
+
+# Step 2: Poll for completion
+while True:
+    status = redis_sre_get_task_status(task_id)
+    if status.status == "done":
+        print(status.result.response)  # The answer!
+        break
+    elif status.status == "failed":
+        print(status.error_message)
+        break
+    # Show progress to user
+    for update in status.updates:
+        print(update.message)
+    sleep(5)
+```
 
 ## Tips
 
-- Use list_instances first to find the correct instance_id for triage
-- For simple questions, try knowledge_search before full triage
-- Check get_task_status updates to see what the agent is analyzing""",
+- **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
+- Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
+- Use `redis_sre_list_instances()` to find instance IDs before calling other tools
+- Check the `updates` array to show users what the agent is doing""",
 )
 
 
 @mcp.tool()
-async def triage(
+async def redis_sre_deep_triage(
     query: str,
     instance_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Start a Redis triage session.
+    """Create a deep triage task to analyze a Redis issue comprehensively.
 
-    Submits a triage request to the Redis SRE Agent, which will analyze
-    the issue using its knowledge base, metrics, logs, and diagnostic tools.
+    This creates a **Task** that runs in the background. You MUST watch the task
+    for status changes, notifications, and the final result.
 
-    IMPORTANT: This runs as a background task and returns immediately.
-    Follow these steps to get results:
+    ## What This Tool Does
 
-    1. Call this tool - returns thread_id and task_id
-    2. Poll get_task_status(task_id) until status is "done" or "failed"
-    3. Call get_thread(thread_id) to retrieve the full analysis and results
+    Creates a deep analysis task that:
+    - Performs comprehensive multi-topic analysis (memory, connections, performance, etc.)
+    - Uses knowledge base, metrics, logs, traces, and diagnostics tools
+    - Synthesizes findings into actionable recommendations
+    - Emits notifications as it works (visible via redis_sre_get_task_status)
+    - Stores the final result on the task when complete
 
-    The task typically takes 30-120 seconds depending on complexity.
+    ## How to Use the Task
+
+    1. **Call this tool** → Returns `task_id` (and `thread_id`)
+    2. **Watch the task** → Poll `redis_sre_get_task_status(task_id)` every 5-10 seconds
+       - `status`: "queued" → "in_progress" → "done" or "failed"
+       - `updates`: Array of notifications showing what the agent is doing
+       - `result`: Final analysis (present when status="done")
+    3. **Read the result** → When status="done", the `result` field has the response
+
+    The task typically takes 2-10 minutes depending on complexity.
 
     Args:
-        query: The issue or question to triage (e.g., "High memory usage on production Redis")
-        instance_id: Optional Redis instance ID to focus the analysis on (use list_instances to find IDs)
+        query: The issue to analyze (e.g., "High memory usage on production Redis")
+        instance_id: Optional Redis instance ID (use redis_sre_list_instances to find IDs)
         user_id: Optional user ID for tracking
 
     Returns:
-        thread_id: Use with get_thread() to retrieve conversation and results
-        task_id: Use with get_task_status() to check if processing is complete
+        task_id: Watch this task for status, notifications, and result
+        thread_id: Conversation thread (for multi-turn follow-ups)
         status: Initial status (usually "queued")
     """
     from docket import Docket
@@ -91,7 +153,7 @@ async def triage(
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.tasks import create_task
 
-    logger.info(f"MCP triage request: {query[:100]}...")
+    logger.info(f"MCP deep_triage request: {query[:100]}...")
 
     try:
         redis_client = get_redis_client()
@@ -136,38 +198,249 @@ async def triage(
 
 
 @mcp.tool()
-async def knowledge_search(
+async def redis_sre_general_chat(
+    query: str,
+    instance_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a chat task for Redis Q&A with full tool access.
+
+    This creates a **Task** that runs the chat agent with access to ALL tools including:
+    - Redis instance tools (INFO, SLOWLOG, CONFIG, CLIENT, etc.)
+    - Knowledge base tools (search documentation, runbooks)
+    - Utility tools (time conversion, formatting)
+    - External MCP tools (GitHub, Slack, Prometheus, Loki, etc. if configured)
+
+    Use this for:
+    - Questions that may require external data (metrics, logs, tickets)
+    - Operations that span multiple systems
+    - Quick status checks with full observability context
+
+    For Redis-only questions without external integrations, use redis_sre_database_chat().
+    For complex issues requiring deep analysis, use redis_sre_deep_triage().
+
+    ## How to Use the Task
+
+    1. **Call this tool** → Returns `task_id` (and `thread_id`)
+    2. **Watch the task** → Poll `redis_sre_get_task_status(task_id)` every 2-5 seconds
+       - Chat is faster than triage (typically 10-30 seconds)
+       - `status`: "queued" → "in_progress" → "done" or "failed"
+       - `updates`: Notifications showing what the agent is doing
+       - `result`: The answer (present when status="done")
+
+    Args:
+        query: Your question (e.g., "What's the current memory usage?")
+        instance_id: Optional Redis instance ID (use redis_sre_list_instances to find IDs)
+        user_id: Optional user ID for tracking
+
+    Returns:
+        task_id: Watch this task for status, notifications, and result
+        thread_id: Conversation thread (for follow-up questions)
+        status: Initial status (usually "queued")
+    """
+    from docket import Docket
+
+    from redis_sre_agent.core.docket_tasks import get_redis_url, process_chat_turn
+    from redis_sre_agent.core.redis import get_redis_client
+    from redis_sre_agent.core.tasks import create_task
+
+    logger.info(f"MCP general_chat request: {query[:100]}...")
+
+    try:
+        redis_client = get_redis_client()
+        context: Dict[str, Any] = {"agent_type": "chat"}
+        if instance_id:
+            context["instance_id"] = instance_id
+        if user_id:
+            context["user_id"] = user_id
+
+        result = await create_task(
+            message=query,
+            context=context,
+            redis_client=redis_client,
+        )
+
+        # Submit to Docket for processing
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            task_func = docket.add(process_chat_turn)
+            await task_func(
+                query=query,
+                task_id=result["task_id"],
+                thread_id=result["thread_id"],
+                instance_id=instance_id,
+                user_id=user_id,
+            )
+
+        return {
+            "thread_id": result["thread_id"],
+            "task_id": result["task_id"],
+            "status": result["status"].value
+            if hasattr(result["status"], "value")
+            else str(result["status"]),
+            "message": "Chat task queued for processing",
+        }
+
+    except Exception as e:
+        logger.error(f"Chat failed: {e}")
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start chat: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_database_chat(
+    query: str,
+    instance_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    exclude_mcp_categories: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Create a Redis-focused chat task with selective MCP tool access.
+
+    Similar to redis_sre_general_chat(), but allows excluding specific categories of
+    MCP tools. By default, excludes all external MCP tools for focused Redis diagnostics.
+
+    The agent has access to:
+    - Redis instance tools (INFO, SLOWLOG, CONFIG, CLIENT, etc.)
+    - Knowledge base tools (search documentation, runbooks)
+    - Utility tools (time conversion, formatting)
+    - MCP tools NOT in the excluded categories
+
+    Use this when:
+    - You want focused Redis instance diagnostics without external integrations
+    - You need a lighter-weight agent that won't call out to certain MCP servers
+    - You want selective access to MCP tools (e.g., allow metrics but not tickets)
+
+    ## Exclude Categories
+
+    You can exclude specific MCP tool categories:
+    - "metrics": Prometheus, Grafana, etc.
+    - "logs": Loki, log aggregators, etc.
+    - "tickets": Jira, GitHub Issues, etc.
+    - "repos": GitHub, GitLab, etc.
+    - "traces": Jaeger, distributed tracing, etc.
+    - "diagnostics": External diagnostic tools
+    - "knowledge": External knowledge bases
+    - "utilities": External utility tools
+
+    Pass None or empty list to include all MCP tools (same as redis_sre_general_chat).
+    Pass ["all"] to exclude all MCP tools.
+
+    ## How to Use the Task
+
+    1. **Call this tool** → Returns `task_id` (and `thread_id`)
+    2. **Watch the task** → Poll `redis_sre_get_task_status(task_id)` every 2-5 seconds
+       - `status`: "queued" → "in_progress" → "done" or "failed"
+       - `updates`: Notifications showing what the agent is doing
+       - `result`: The answer (present when status="done")
+
+    Args:
+        query: Your question (e.g., "What's the current memory usage?")
+        instance_id: Optional Redis instance ID (use redis_sre_list_instances to find IDs)
+        user_id: Optional user ID for tracking
+        exclude_mcp_categories: Categories to exclude. Pass ["all"] to exclude all MCP tools.
+            Default: ["all"] (excludes all MCP tools for focused Redis chat)
+
+    Returns:
+        task_id: Watch this task for status, notifications, and result
+        thread_id: Conversation thread (for follow-up questions)
+        status: Initial status (usually "queued")
+    """
+    from docket import Docket
+
+    from redis_sre_agent.core.docket_tasks import get_redis_url, process_chat_turn
+    from redis_sre_agent.core.redis import get_redis_client
+    from redis_sre_agent.core.tasks import create_task
+    from redis_sre_agent.tools.models import ToolCapability
+
+    logger.info(f"MCP database_chat request: {query[:100]}...")
+
+    # Default to excluding all MCP categories for focused Redis chat
+    if exclude_mcp_categories is None:
+        exclude_mcp_categories = ["all"]
+
+    # Convert "all" to list of all categories
+    if "all" in exclude_mcp_categories:
+        exclude_mcp_categories = [cap.value for cap in ToolCapability]
+
+    try:
+        redis_client = get_redis_client()
+        context: Dict[str, Any] = {
+            "agent_type": "chat",
+            "exclude_mcp_categories": exclude_mcp_categories,
+        }
+        if instance_id:
+            context["instance_id"] = instance_id
+        if user_id:
+            context["user_id"] = user_id
+
+        result = await create_task(
+            message=query,
+            context=context,
+            redis_client=redis_client,
+        )
+
+        # Submit to Docket for processing with category exclusions
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            task_func = docket.add(process_chat_turn)
+            await task_func(
+                query=query,
+                task_id=result["task_id"],
+                thread_id=result["thread_id"],
+                instance_id=instance_id,
+                user_id=user_id,
+                exclude_mcp_categories=exclude_mcp_categories,
+            )
+
+        return {
+            "thread_id": result["thread_id"],
+            "task_id": result["task_id"],
+            "status": result["status"].value
+            if hasattr(result["status"], "value")
+            else str(result["status"]),
+            "message": f"Database chat task queued (excluded categories: {exclude_mcp_categories})",
+        }
+
+    except Exception as e:
+        logger.error(f"Database chat failed: {e}")
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start database chat: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_knowledge_search(
     query: str,
     limit: int = 10,
     offset: int = 0,
     category: Optional[str] = None,
     version: Optional[str] = "latest",
 ) -> Dict[str, Any]:
-    """Search the Redis SRE knowledge base.
+    """Search the Redis SRE knowledge base (returns raw results).
 
-    Searches through Redis documentation, runbooks, troubleshooting guides,
-    and SRE best practices. Use this to find information about Redis
-    configuration, operations, and problem resolution.
+    This is a **direct search** that returns raw knowledge base results immediately.
+    Use this when you want to browse documentation or get specific content.
+
+    For questions that need interpretation/reasoning, use `redis_sre_knowledge_query()`
+    instead, which creates a task that uses the Knowledge Agent to analyze and answer.
 
     Args:
         query: Search query (e.g., "redis memory eviction policies")
         limit: Maximum number of results (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
         category: Optional filter by category ('incident', 'maintenance', 'monitoring', etc.)
-        version: Redis documentation version filter. Defaults to "latest" which returns
-                 only the most current documentation. Available versions:
-                 - "latest": Current/unversioned docs (default, recommended)
-                 - "7.8": Redis Enterprise 7.8 docs
-                 - "7.4": Redis Enterprise 7.4 docs
-                 - "7.2": Redis Enterprise 7.2 docs
-                 - null/None: Return all versions (may include duplicates)
+        version: Redis documentation version filter. Defaults to "latest".
 
     Returns:
-        Dictionary with search results including title, content, source, version, and relevance
+        results: Array of matching documents with title, content, source, etc.
+        (Returns immediately - no task polling needed)
     """
     from redis_sre_agent.core.knowledge_helpers import search_knowledge_base_helper
 
-    logger.info(f"MCP knowledge search: {query[:100]}... (version={version}, offset={offset})")
+    logger.info(f"MCP knowledge_search: {query[:100]}... (version={version}, offset={offset})")
 
     try:
         limit = max(1, min(50, limit))
@@ -217,23 +490,102 @@ async def knowledge_search(
 
 
 @mcp.tool()
-async def get_thread(thread_id: str) -> Dict[str, Any]:
-    """Get the full conversation and results from a triage thread.
+async def redis_sre_knowledge_query(
+    query: str,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to answer a question using the Knowledge Agent.
 
-    Call this AFTER get_task_status() shows status="done" to retrieve the
-    complete triage analysis. The thread contains:
+    This creates a **Task** that uses the Knowledge Agent to answer questions
+    about SRE practices, Redis best practices, and troubleshooting guidance.
+    The agent searches the knowledge base and synthesizes an answer.
+
+    Use this for questions that need reasoning/interpretation.
+    Use `redis_sre_knowledge_search()` for direct document search.
+
+    ## How to Use the Task
+
+    1. **Call this tool** → Returns `task_id` (and `thread_id`)
+    2. **Watch the task** → Poll `redis_sre_get_task_status(task_id)` every 2-5 seconds
+       - `status`: "queued" → "in_progress" → "done" or "failed"
+       - `updates`: Notifications showing knowledge sources being searched
+       - `result`: The synthesized answer (present when status="done")
+
+    Args:
+        query: Your question (e.g., "What are Redis memory eviction policies?")
+        user_id: Optional user ID for tracking
+
+    Returns:
+        task_id: Watch this task for status, notifications, and result
+        thread_id: Conversation thread (for follow-up questions)
+        status: Initial status (usually "queued")
+    """
+    from docket import Docket
+
+    from redis_sre_agent.core.docket_tasks import get_redis_url, process_knowledge_query
+    from redis_sre_agent.core.redis import get_redis_client
+    from redis_sre_agent.core.tasks import create_task
+
+    logger.info(f"MCP knowledge_query: {query[:100]}...")
+
+    try:
+        redis_client = get_redis_client()
+        context: Dict[str, Any] = {"agent_type": "knowledge"}
+        if user_id:
+            context["user_id"] = user_id
+
+        result = await create_task(
+            message=query,
+            context=context,
+            redis_client=redis_client,
+        )
+
+        # Submit to Docket for processing
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            task_func = docket.add(process_knowledge_query)
+            await task_func(
+                query=query,
+                task_id=result["task_id"],
+                thread_id=result["thread_id"],
+                user_id=user_id,
+            )
+
+        return {
+            "thread_id": result["thread_id"],
+            "task_id": result["task_id"],
+            "status": result["status"].value
+            if hasattr(result["status"], "value")
+            else str(result["status"]),
+            "message": "Knowledge query task queued for processing",
+        }
+
+    except Exception as e:
+        logger.error(f"Knowledge query failed: {e}")
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start knowledge query: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_thread(thread_id: str) -> Dict[str, Any]:
+    """Get the full conversation and results from a triage or chat thread.
+
+    Call this AFTER redis_sre_get_task_status() shows status="done" to retrieve the
+    complete analysis. The thread contains:
 
     - All messages exchanged (user query, assistant responses)
     - Tool calls made by the agent (metrics queries, log searches, etc.)
     - The final result with findings and recommendations
 
     Workflow:
-    1. triage() → get thread_id and task_id
-    2. get_task_status(task_id) → poll until status="done"
-    3. get_thread(thread_id) → get full results (this tool)
+    1. redis_sre_deep_triage() or redis_sre_*_chat() → get thread_id and task_id
+    2. redis_sre_get_task_status(task_id) → poll until status="done"
+    3. redis_sre_get_thread(thread_id) → get full results (this tool)
 
     Args:
-        thread_id: The thread_id returned from the triage tool
+        thread_id: The thread_id returned from the triage or chat tool
 
     Returns:
         messages: List of conversation messages with role and content
@@ -310,34 +662,58 @@ async def get_thread(thread_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def get_task_status(task_id: str) -> Dict[str, Any]:
-    """Check if a triage task is complete.
+async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
+    """Watch a task for status, notifications, and result.
 
-    Poll this after calling triage() to check when the analysis is done.
-    Once status="done", call get_thread(thread_id) to retrieve results.
+    After calling any task-based tool (redis_sre_deep_triage, redis_sre_*_chat, etc.),
+    poll this tool to watch your task. Check THREE things:
 
-    Status values:
-    - "queued": Task is waiting to be processed
-    - "in_progress": Agent is actively analyzing
-    - "done": Complete - call get_thread() to get results
-    - "failed": Error occurred - check error_message
-    - "cancelled": Task was cancelled
+    ## 1. Status (is it done?)
 
-    Typical polling: Check every 5-10 seconds until status is "done" or "failed".
+    - "queued": Waiting to start
+    - "in_progress": Agent is working
+    - "done": Complete! Check the `result` field
+    - "failed": Error occurred - check `error_message`
 
-    Workflow:
-    1. triage() → get thread_id and task_id
-    2. get_task_status(task_id) → poll until status="done" (this tool)
-    3. get_thread(thread_id) → get full results
+    ## 2. Updates/Notifications (what is the agent doing?)
+
+    The `updates` array shows real-time notifications:
+    ```
+    updates: [
+      {"timestamp": "...", "message": "Querying Redis INFO...", "type": "tool_call"},
+      {"timestamp": "...", "message": "Memory usage is 85%...", "type": "agent_reflection"},
+      {"timestamp": "...", "message": "Checking slow log...", "type": "tool_call"},
+    ]
+    ```
+
+    This array grows as the agent works. Each entry shows what the agent
+    is doing or thinking. Use this to provide feedback to users.
+
+    ## 3. Result (the final answer)
+
+    When status="done", the `result` field contains:
+    ```
+    result: {
+      "response": "Based on my analysis, the high memory...",
+      "metadata": {...}
+    }
+    ```
+
+    ## Polling Pattern
+
+    Poll every 5-10 seconds until status is "done" or "failed":
+    - Show updates to user as they arrive
+    - When done, extract the result
 
     Args:
-        task_id: The task_id returned from the triage tool
+        task_id: The task_id returned from triage or chat tools
 
     Returns:
-        status: Current task status (queued/in_progress/done/failed/cancelled)
-        thread_id: Use with get_thread() once status is "done"
-        updates: Progress messages from the agent during execution
-        error_message: Error details if status is "failed"
+        status: Current status (queued/in_progress/done/failed)
+        updates: Array of notifications from the agent (grows over time)
+        result: Final response (only present when status="done")
+        error_message: Error details (only present when status="failed")
+        thread_id: For multi-turn follow-ups via redis_sre_get_thread()
     """
     from redis_sre_agent.core.tasks import get_task_by_id
 
@@ -345,14 +721,15 @@ async def get_task_status(task_id: str) -> Dict[str, Any]:
 
     try:
         task = await get_task_by_id(task_id=task_id)
+        metadata = task.get("metadata", {}) or {}
 
         return {
             "task_id": task_id,
             "thread_id": task.get("thread_id"),
             "status": task.get("status"),
-            "subject": task.get("subject"),
-            "created_at": task.get("created_at"),
-            "updated_at": task.get("updated_at"),
+            "subject": metadata.get("subject"),
+            "created_at": metadata.get("created_at"),
+            "updated_at": metadata.get("updated_at"),
             "updates": task.get("updates", []),
             "result": task.get("result"),
             "error_message": task.get("error_message"),
@@ -373,19 +750,22 @@ async def get_task_status(task_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def list_instances() -> Dict[str, Any]:
+async def redis_sre_list_instances() -> Dict[str, Any]:
     """List all configured Redis instances.
 
     Returns a list of all Redis instances that have been configured
     in the SRE agent. Sensitive information like connection URLs and
     passwords are masked.
 
+    Use this to find instance IDs before calling other tools like
+    redis_sre_deep_triage() or redis_sre_general_chat().
+
     Returns:
         Dictionary with list of instance information
     """
     from redis_sre_agent.core.instances import get_instances
 
-    logger.info("MCP list instances request")
+    logger.info("MCP list_instances request")
 
     try:
         instances = await get_instances()
@@ -400,6 +780,7 @@ async def list_instances() -> Dict[str, Any]:
                     "usage": inst.usage,
                     "description": inst.description,
                     "instance_type": inst.instance_type,
+                    "repo_url": inst.repo_url,
                     "status": getattr(inst, "status", None),
                 }
             )
@@ -419,18 +800,20 @@ async def list_instances() -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def create_instance(
+async def redis_sre_create_instance(
     name: str,
     connection_url: str,
     environment: str,
     usage: str,
     description: str,
+    repo_url: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a new Redis instance configuration.
 
     Registers a new Redis instance with the SRE agent. The instance can
-    then be used for triage, monitoring, and diagnostics.
+    then be used for triage, monitoring, and diagnostics via tools like
+    redis_sre_deep_triage() and redis_sre_general_chat().
 
     Args:
         name: Unique name for the instance
@@ -438,6 +821,7 @@ async def create_instance(
         environment: Environment type (development, staging, production, test)
         usage: Usage type (cache, analytics, session, queue, custom)
         description: Description of what this Redis instance is used for
+        repo_url: Optional GitHub repository URL associated with this instance
         user_id: Optional user ID of who is creating this instance
 
     Returns:
@@ -451,7 +835,7 @@ async def create_instance(
         save_instances,
     )
 
-    logger.info(f"MCP create instance: {name}")
+    logger.info(f"MCP create_instance: {name}")
 
     valid_envs = ["development", "staging", "production", "test"]
     if environment.lower() not in valid_envs:
@@ -484,6 +868,7 @@ async def create_instance(
             environment=environment.lower(),
             usage=usage.lower(),
             description=description,
+            repo_url=repo_url,
             instance_type="unknown",  # Will be auto-detected on first connection
         )
 
@@ -495,6 +880,7 @@ async def create_instance(
         return {
             "id": instance_id,
             "name": name,
+            "repo_url": repo_url,
             "status": "created",
             "message": f"Successfully created instance '{name}'",
         }

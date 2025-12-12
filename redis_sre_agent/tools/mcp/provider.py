@@ -14,6 +14,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp import types as mcp_types
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
@@ -119,10 +120,35 @@ class MCPToolProvider(ToolProvider):
                     stdio_client(server_params)
                 )
             elif self._server_config.url:
-                # SSE transport
-                read_stream, write_stream = await self._exit_stack.enter_async_context(
-                    sse_client(self._server_config.url)
-                )
+                # URL-based transport (SSE or Streamable HTTP)
+                # Expand environment variables in headers (e.g., ${GITHUB_TOKEN})
+                headers = None
+                if self._server_config.headers:
+                    headers = {}
+                    for key, value in self._server_config.headers.items():
+                        # Expand ${VAR} patterns from environment
+                        expanded_value = os.path.expandvars(value)
+                        headers[key] = expanded_value
+
+                # Determine transport type - default to streamable_http for modern servers
+                transport_type = (self._server_config.transport or "streamable_http").lower()
+
+                if transport_type == "sse":
+                    # Legacy SSE transport
+                    logger.info(f"Using SSE transport for '{self._server_name}'")
+                    read_stream, write_stream = await self._exit_stack.enter_async_context(
+                        sse_client(self._server_config.url, headers=headers)
+                    )
+                else:
+                    # Streamable HTTP transport (default, works with GitHub remote MCP, etc.)
+                    logger.info(f"Using Streamable HTTP transport for '{self._server_name}'")
+                    (
+                        read_stream,
+                        write_stream,
+                        _get_session_id,
+                    ) = await self._exit_stack.enter_async_context(
+                        streamablehttp_client(self._server_config.url, headers=headers)
+                    )
             else:
                 raise ValueError(
                     f"MCP server '{self._server_name}' must have either 'command' or 'url' configured"

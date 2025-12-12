@@ -1,4 +1,4 @@
-// Cleanup script for E2E-created threads in the Redis SRE Agent backend
+// Cleanup script for E2E-created threads and schedules in the Redis SRE Agent backend
 // Usage:
 //   API_BASE_URL=http://localhost:8000/api/v1 node scripts/cleanup-e2e.mjs
 // Defaults to localhost if API_BASE_URL not set
@@ -10,6 +10,8 @@ const E2E_PATTERNS = [
   /^e2e\s+hello/i,
   /^e2e\s+streaming/i,
   /^e2e\s+persistence/i,
+  /^e2e\s+schedule/i,
+  /^e2e\s+update\s+test/i,
 ];
 
 const withinHours = (iso, hours = 24) => {
@@ -40,7 +42,19 @@ async function deleteThread(id) {
   if (!res.ok) throw new Error(`Failed to delete ${id}: ${res.status} ${res.statusText}`);
 }
 
+async function listSchedules() {
+  const res = await fetch(`${base}/schedules/`);
+  if (!res.ok) throw new Error(`Failed to list schedules: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+async function deleteSchedule(id) {
+  const res = await fetch(`${base}/schedules/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Failed to delete schedule ${id}: ${res.status} ${res.statusText}`);
+}
+
 (async () => {
+  // Clean up threads
   try {
     const threads = await listThreads(1000);
     let deleted = 0;
@@ -57,9 +71,30 @@ async function deleteThread(id) {
         }
       }
     }
-    console.log(`Cleanup complete. Deleted ${deleted} threads.`);
+    console.log(`Thread cleanup complete. Deleted ${deleted} threads.`);
   } catch (e) {
-    console.error(`Cleanup failed: ${e.message}`);
-    process.exitCode = 1;
+    console.error(`Thread cleanup failed: ${e.message}`);
+  }
+
+  // Clean up schedules
+  try {
+    const schedules = await listSchedules();
+    let deleted = 0;
+    for (const s of schedules) {
+      const name = s.name || '';
+      const recent = withinHours(s.updated_at || s.created_at || '', 72);
+      if (matchesE2E(name) || (name.toLowerCase().startsWith('e2e ') && recent)) {
+        try {
+          await deleteSchedule(s.id);
+          deleted++;
+          console.log(`Deleted E2E schedule: ${s.id} (${name})`);
+        } catch (e) {
+          console.warn(`Could not delete schedule ${s.id}: ${e.message}`);
+        }
+      }
+    }
+    console.log(`Schedule cleanup complete. Deleted ${deleted} schedules.`);
+  } catch (e) {
+    console.error(`Schedule cleanup failed: ${e.message}`);
   }
 })();

@@ -9,17 +9,19 @@ from langchain_core.messages import AIMessage, HumanMessage
 from ulid import ULID
 
 from redis_sre_agent.agent import get_sre_agent
+from redis_sre_agent.agent.chat_agent import get_chat_agent
 from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 from redis_sre_agent.agent.langgraph_agent import (
     _extract_instance_details_from_message,
 )
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.core.instances import create_instance
+from redis_sre_agent.core.instances import create_instance, get_instance_by_id
 from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
     search_knowledge_base_helper,
 )
+from redis_sre_agent.core.progress import TaskEmitter
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
@@ -127,6 +129,175 @@ async def ingest_sre_document(
         )
     except Exception as e:
         logger.error(f"Document ingestion failed (attempt {retry.attempt}): {e}")
+        raise
+
+
+@sre_task
+async def process_chat_turn(
+    query: str,
+    task_id: str,
+    thread_id: str,
+    instance_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    exclude_mcp_categories: Optional[List[str]] = None,
+    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """
+    Process a chat query using the ChatAgent (background task).
+
+    This runs the lightweight ChatAgent for quick Q&A about Redis instances.
+    Notifications are emitted to the task, and the result is stored on both
+    the task and the thread.
+
+    Args:
+        query: User's question
+        task_id: Task ID for notifications and result storage
+        thread_id: Thread ID for conversation context and result storage
+        instance_id: Optional Redis instance ID
+        user_id: Optional user ID for tracking
+        exclude_mcp_categories: Optional list of MCP tool category names to exclude.
+            Valid values: "metrics", "logs", "tickets", "repos", "traces",
+            "diagnostics", "knowledge", "utilities".
+        retry: Retry configuration
+
+    Returns:
+        Dictionary with the chat response
+    """
+    from redis_sre_agent.agent.chat_agent import ChatAgent
+    from redis_sre_agent.tools.models import ToolCapability
+
+    logger.info(f"Processing chat turn for task {task_id}")
+
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+    thread_manager = ThreadManager(redis_client=redis_client)
+
+    # Mark task as in progress
+    await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
+
+    # Convert string category names to ToolCapability enums
+    mcp_categories: Optional[List[ToolCapability]] = None
+    if exclude_mcp_categories:
+        mcp_categories = []
+        for cat_name in exclude_mcp_categories:
+            try:
+                mcp_categories.append(ToolCapability(cat_name.lower()))
+            except ValueError:
+                logger.warning(f"Unknown MCP category to exclude: {cat_name}")
+
+    try:
+        # Create task emitter for notifications
+        emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
+
+        # Get Redis instance if specified
+        redis_instance = None
+        if instance_id:
+            redis_instance = await get_instance_by_id(instance_id)
+            if not redis_instance:
+                raise ValueError(f"Instance not found: {instance_id}")
+
+        # Run chat agent
+        agent = ChatAgent(
+            redis_instance=redis_instance,
+            progress_emitter=emitter,
+            exclude_mcp_categories=mcp_categories,
+        )
+        response = await agent.process_query(
+            query=query,
+            session_id=thread_id,
+            user_id=user_id or "mcp-user",
+            progress_emitter=emitter,
+        )
+
+        # Store result on task
+        result = {
+            "response": response,
+            "instance_id": instance_id,
+        }
+        await task_manager.set_task_result(task_id, result)
+        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+
+        # Add response to thread as assistant message
+        await thread_manager.append_messages(
+            thread_id,
+            [{"role": "assistant", "content": response, "metadata": {"task_id": task_id, "agent": "chat"}}],
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Chat turn failed: {e}")
+        await task_manager.set_task_error(task_id, str(e))
+        raise
+
+
+@sre_task
+async def process_knowledge_query(
+    query: str,
+    task_id: str,
+    thread_id: str,
+    user_id: Optional[str] = None,
+    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """
+    Process a knowledge query using the KnowledgeOnlyAgent (background task).
+
+    This runs the KnowledgeOnlyAgent for general SRE knowledge questions.
+    Notifications are emitted to the task, and the result is stored on both
+    the task and the thread.
+
+    Args:
+        query: User's question about SRE practices or Redis
+        task_id: Task ID for notifications and result storage
+        thread_id: Thread ID for conversation context and result storage
+        user_id: Optional user ID for tracking
+        retry: Retry configuration
+
+    Returns:
+        Dictionary with the knowledge agent response
+    """
+    from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
+
+    logger.info(f"Processing knowledge query for task {task_id}")
+
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+    thread_manager = ThreadManager(redis_client=redis_client)
+
+    # Mark task as in progress
+    await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
+
+    try:
+        # Create task emitter for notifications
+        emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
+
+        # Run knowledge agent
+        agent = KnowledgeOnlyAgent(progress_emitter=emitter)
+        response = await agent.process_query(
+            query=query,
+            session_id=thread_id,
+            user_id=user_id or "mcp-user",
+            progress_emitter=emitter,
+        )
+
+        # Store result on task
+        result = {
+            "response": response,
+        }
+        await task_manager.set_task_result(task_id, result)
+        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+
+        # Add response to thread as assistant message
+        await thread_manager.append_messages(
+            thread_id,
+            [{"role": "assistant", "content": response, "metadata": {"task_id": task_id, "agent": "knowledge"}}],
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Knowledge query failed: {e}")
+        await task_manager.set_task_error(task_id, str(e))
         raise
 
 
@@ -474,9 +645,16 @@ async def process_agent_turn(
 
         logger.info(f"Routing query to {agent_type.value} agent")
 
-        # Import and initialize the appropriate agent
-        if agent_type == AgentType.REDIS_FOCUSED:
+        # Import and initialize the appropriate agent based on routing decision
+        # REDIS_TRIAGE = full triage agent (heavy, comprehensive)
+        # REDIS_CHAT = lightweight chat agent (fast, targeted)
+        # KNOWLEDGE_ONLY = knowledge agent (no instance needed)
+        if agent_type == AgentType.REDIS_TRIAGE:
             agent = get_sre_agent()
+        elif agent_type == AgentType.REDIS_CHAT:
+            # Get the target instance for the chat agent
+            target_instance = await get_instance_by_id(active_instance_id) if active_instance_id else None
+            agent = get_chat_agent(redis_instance=target_instance)
         else:
             agent = get_knowledge_agent()
 
@@ -526,21 +704,12 @@ async def process_agent_turn(
 
         # Agent will post its own reflections as it works
 
-        # Create a progress callback for the agent
-        async def progress_callback(
-            update_message: str,
-            update_type: str = "progress",
-            metadata: Optional[Dict[str, Any]] = None,
-        ):
-            # Include task_id in thread-level metadata for easier grouping
-            md = dict(metadata or {})
-            md.setdefault("task_id", task_id)
-            await thread_manager.add_thread_update(thread_id, update_message, update_type, md)
-            try:
-                await task_manager.add_task_update(task_id, update_message, update_type, metadata)
-            except Exception:
-                # Best-effort: do not fail the turn if per-task update logging fails
-                pass
+        # Create a task emitter for agent notifications
+        # Notifications go to the task only; the final result goes to both task and thread
+        progress_emitter = TaskEmitter(
+            task_manager=task_manager,
+            task_id=task_id,
+        )
 
         # Run the appropriate agent
         if agent_type == AgentType.KNOWLEDGE_ONLY:
@@ -568,7 +737,7 @@ async def process_agent_turn(
                 session_id=thread.metadata.session_id or thread_id,
                 max_iterations=_k_max_iters,
                 context=None,
-                progress_callback=progress_callback,
+                progress_emitter=progress_emitter,
                 conversation_history=lc_history if lc_history else None,
             )
 
@@ -576,10 +745,41 @@ async def process_agent_turn(
                 "response": response_text,
                 "metadata": {"agent_type": "knowledge_only"},
             }
+        elif agent_type == AgentType.REDIS_CHAT:
+            # Use lightweight chat agent with process_query interface
+            await thread_manager.add_thread_update(
+                thread_id, "Processing query with chat agent", "agent_processing"
+            )
+
+            # Convert conversation history to LangChain messages
+            lc_history = []
+            for msg in conversation_state["messages"][:-1]:  # Exclude the latest message
+                if msg["role"] == "user":
+                    lc_history.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    lc_history.append(AIMessage(content=msg["content"]))
+
+            # Chat agent uses a reasonable iteration cap for quick responses
+            _chat_max_iters = min(int(settings.max_iterations or 15), 10)
+
+            response_text = await agent.process_query(
+                query=message,
+                user_id=thread.metadata.user_id or "unknown",
+                session_id=thread.metadata.session_id or thread_id,
+                max_iterations=_chat_max_iters,
+                context=routing_context,
+                progress_emitter=progress_emitter,
+                conversation_history=lc_history if lc_history else None,
+            )
+
+            agent_response = {
+                "response": response_text,
+                "metadata": {"agent_type": "redis_chat"},
+            }
         else:
-            # Use Redis-focused agent with full conversation state
+            # Use full Redis triage agent with full conversation state
             agent_response = await run_agent_with_progress(
-                agent, conversation_state, progress_callback, thread
+                agent, conversation_state, progress_emitter, thread
             )
 
         # Add agent response to conversation
@@ -742,17 +942,17 @@ async def process_agent_turn(
 
 
 async def run_agent_with_progress(
-    agent, conversation_state: Dict[str, Any], progress_callback, thread_state=None
+    agent, conversation_state: Dict[str, Any], progress_emitter, thread_state=None
 ):
     """
     Run the LangGraph agent with progress updates.
 
-    This creates a new agent instance with progress callback support and runs it.
+    This creates a new agent instance with progress emitter support and runs it.
 
     Args:
         agent: The agent instance (currently unused, kept for compatibility)
         conversation_state: Dictionary containing messages and thread_id
-        progress_callback: Async callback function for progress updates
+        progress_emitter: ProgressEmitter instance for progress updates
         thread_state: Optional thread state object containing metadata and context
     """
     try:
@@ -763,10 +963,10 @@ async def run_agent_with_progress(
         if not messages:
             raise ValueError("No messages in conversation")
 
-        # Create a new agent instance with progress callback
+        # Create a new agent instance with progress emitter
         from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 
-        progress_agent = SRELangGraphAgent(progress_callback=progress_callback)
+        progress_agent = SRELangGraphAgent(progress_emitter=progress_emitter)
 
         # Convert conversation messages to LangChain format
         # We only store user/assistant messages, tool messages are internal to LangGraph
@@ -816,7 +1016,7 @@ async def run_agent_with_progress(
             user_id=thread_state.metadata.user_id if thread_state else "system",
             max_iterations=settings.max_iterations,
             context=agent_context,
-            progress_callback=progress_callback,
+            progress_emitter=progress_emitter,
             conversation_history=lc_messages[:-1]
             if lc_messages
             else None,  # Exclude the latest message (it's added in process_query)
@@ -824,7 +1024,7 @@ async def run_agent_with_progress(
 
         # Create a mock final state for compatibility
 
-        await progress_callback("Agent workflow completed", "agent_complete")
+        await progress_emitter.emit("Agent workflow completed", "agent_complete")
 
         # The response is already the final agent response
         agent_response = response
@@ -839,7 +1039,7 @@ async def run_agent_with_progress(
         }
 
     except Exception as e:
-        await progress_callback(f"Agent error: {str(e)}", "error")
+        await progress_emitter.emit(f"Agent error: {str(e)}", "error")
         raise
 
 
