@@ -1,22 +1,6 @@
 """Integration tests for Redis Command Diagnostics provider with ToolManager."""
 
 import pytest
-from testcontainers.redis import RedisContainer
-
-
-@pytest.fixture(scope="module")
-def redis_container():
-    """Start a Redis container for testing."""
-    with RedisContainer("redis:8.2.1") as redis:
-        yield redis
-
-
-@pytest.fixture
-def redis_url(redis_container):
-    """Get Redis connection URL from container."""
-    host = redis_container.get_container_host_ip()
-    port = redis_container.get_exposed_port(6379)
-    return f"redis://{host}:{port}"
 
 
 @pytest.mark.asyncio

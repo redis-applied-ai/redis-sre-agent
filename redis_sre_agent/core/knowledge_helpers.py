@@ -104,9 +104,8 @@ async def search_knowledge_base_helper(
             text=query,
             num_results=fetch_limit,
             return_fields=return_fields,
+            filter_expression=filter_expr,
         )
-        if filter_expr is not None:
-            query_obj.set_filter(filter_expr)
     else:
         # Build pure vector query
         # distance_threshold default is 0.5; None disables threshold (pure KNN)

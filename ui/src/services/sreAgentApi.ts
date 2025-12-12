@@ -997,7 +997,8 @@ class SREAgentAPI {
 
   async createSchedule(scheduleData: {
     name: string;
-    cron_expression: string;
+    interval_type: string;
+    interval_value: number;
     redis_instance_id?: string;
     instructions: string;
     enabled: boolean;
@@ -1017,7 +1018,8 @@ class SREAgentAPI {
     scheduleId: string,
     updateData: {
       name?: string;
-      cron_expression?: string;
+      interval_type?: string;
+      interval_value?: number;
       redis_instance_id?: string;
       instructions?: string;
       enabled?: boolean;

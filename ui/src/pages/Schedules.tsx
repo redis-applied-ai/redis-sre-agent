@@ -101,9 +101,8 @@ const Schedules = () => {
       setError(null);
       const scheduleData = {
         name: formData.get("name") as string,
-        cron_expression:
-          (formData.get("cron_expression") as string) ||
-          `*/${formData.get("interval_value")} * * * *`, // fallback
+        interval_type: formData.get("interval_type") as string,
+        interval_value: parseInt(formData.get("interval_value") as string, 10),
         redis_instance_id:
           (formData.get("redis_instance_id") as string) || undefined,
         instructions: formData.get("instructions") as string,
@@ -129,9 +128,8 @@ const Schedules = () => {
       setError(null);
       const updateData = {
         name: formData.get("name") as string,
-        cron_expression:
-          (formData.get("cron_expression") as string) ||
-          `*/${formData.get("interval_value")} * * * *`, // fallback
+        interval_type: formData.get("interval_type") as string,
+        interval_value: parseInt(formData.get("interval_value") as string, 10),
         redis_instance_id:
           (formData.get("redis_instance_id") as string) || undefined,
         instructions: formData.get("instructions") as string,
