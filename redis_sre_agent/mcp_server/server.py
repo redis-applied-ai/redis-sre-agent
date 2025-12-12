@@ -10,15 +10,11 @@ This allows Claude to connect to an already-running agent via:
 """
 
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
-
-# API URL - can be overridden via environment variable
-API_BASE_URL = os.environ.get("REDIS_SRE_API_URL", "http://localhost:8080")
 
 # Create the MCP server instance
 mcp = FastMCP(
@@ -934,10 +930,6 @@ def get_http_app():
     return mcp.streamable_http_app()
 
 
-# ASGI app for uvicorn deployment - lazy initialization to avoid import-time errors
-def _get_app():
-    return get_http_app()
-
-
-# For uvicorn: uvicorn redis_sre_agent.mcp_server.server:app
-app = None  # Will be initialized on first request
+# ASGI app for uvicorn deployment
+# Usage: uvicorn redis_sre_agent.mcp_server.server:app --host 0.0.0.0 --port 8081
+app = mcp.streamable_http_app()

@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_c
 
 if TYPE_CHECKING:
     from redis_sre_agent.core.tasks import TaskManager
-    from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
 
