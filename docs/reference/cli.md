@@ -68,6 +68,14 @@ Generated from the Click command tree.
 - runbook evaluate — Evaluate existing runbooks in the source documents directory.
 - runbook generate — Generate a new Redis SRE runbook for the specified topic.
 - query — Execute an agent query.
+
+    Supports conversation threads for multi-turn interactions. Use --thread-id
+    to continue an existing conversation, or omit it to start a new one.
+
+    The agent is automatically selected based on the query:
+    - Knowledge agent: General Redis questions (no instance)
+    - Chat agent: Quick questions with a Redis instance
+    - Triage agent: Full health checks or --triage flag
 - worker — Start the background worker.
 - mcp — MCP server commands - expose agent capabilities via Model Context Protocol.
 - mcp list-tools — List available MCP tools.
