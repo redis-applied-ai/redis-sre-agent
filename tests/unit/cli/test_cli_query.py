@@ -2,9 +2,27 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from redis_sre_agent.cli.query import query
+
+
+@pytest.fixture
+def mock_thread_manager():
+    """Create a mock ThreadManager that doesn't require Redis."""
+    mock_tm = MagicMock()
+    mock_tm.create_thread = AsyncMock(return_value="test-thread-id")
+    mock_tm.get_thread = AsyncMock(return_value=None)
+    mock_tm.update_thread_subject = AsyncMock()
+    mock_tm.append_messages = AsyncMock()
+    return mock_tm
+
+
+@pytest.fixture
+def mock_redis_client():
+    """Create a mock Redis client."""
+    return MagicMock()
 
 
 def test_query_cli_help_shows_options():
@@ -22,7 +40,7 @@ def test_query_cli_help_shows_options():
     assert "knowledge" in result.output
 
 
-def test_query_without_instance_uses_knowledge_agent():
+def test_query_without_instance_uses_knowledge_agent(mock_thread_manager, mock_redis_client):
     runner = CliRunner()
 
     mock_agent = MagicMock()
@@ -37,6 +55,8 @@ def test_query_without_instance_uses_knowledge_agent():
             "redis_sre_agent.cli.query.get_instance_by_id",
             new=AsyncMock(),
         ) as mock_get_instance,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         result = runner.invoke(query, ["What is Redis SRE?"])
 
@@ -47,7 +67,9 @@ def test_query_without_instance_uses_knowledge_agent():
     mock_agent.process_query.assert_awaited_once()
 
 
-def test_query_with_instance_uses_sre_agent_and_passes_instance_context():
+def test_query_with_instance_uses_sre_agent_and_passes_instance_context(
+    mock_thread_manager, mock_redis_client
+):
     runner = CliRunner()
 
     class DummyInstance:
@@ -79,6 +101,8 @@ def test_query_with_instance_uses_sre_agent_and_passes_instance_context():
             "redis_sre_agent.cli.query.route_to_appropriate_agent",
             new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
         ),
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         # Use -r / --redis-instance-id option to select instance
         result = runner.invoke(
@@ -107,7 +131,9 @@ def test_query_with_instance_uses_sre_agent_and_passes_instance_context():
     assert kwargs.get("context") == {"instance_id": instance.id}
 
 
-def test_query_with_unknown_instance_exits_with_error_and_skips_agents():
+def test_query_with_unknown_instance_exits_with_error_and_skips_agents(
+    mock_thread_manager, mock_redis_client
+):
     """If -r is provided but the instance does not exist, CLI should error and exit.
 
     This directly tests the new existence-check logic in redis_sre_agent.cli.query.
@@ -129,6 +155,8 @@ def test_query_with_unknown_instance_exits_with_error_and_skips_agents():
             "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent
         ) as mock_get_knowledge,
         patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         result = runner.invoke(
             query,
@@ -152,7 +180,7 @@ def test_query_with_unknown_instance_exits_with_error_and_skips_agents():
     mock_agent.process_query.assert_not_awaited()
 
 
-def test_query_with_agent_triage_forces_triage_agent():
+def test_query_with_agent_triage_forces_triage_agent(mock_thread_manager, mock_redis_client):
     """Test that --agent triage forces use of the triage agent."""
     runner = CliRunner()
 
@@ -164,6 +192,8 @@ def test_query_with_agent_triage_forces_triage_agent():
         patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
         patch("redis_sre_agent.cli.query.get_chat_agent") as mock_get_chat,
         patch("redis_sre_agent.cli.query.route_to_appropriate_agent") as mock_router,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         result = runner.invoke(query, ["--agent", "triage", "Check my Redis health"])
 
@@ -181,7 +211,7 @@ def test_query_with_agent_triage_forces_triage_agent():
     mock_agent.process_query.assert_awaited_once()
 
 
-def test_query_with_agent_knowledge_forces_knowledge_agent():
+def test_query_with_agent_knowledge_forces_knowledge_agent(mock_thread_manager, mock_redis_client):
     """Test that --agent knowledge forces use of the knowledge agent."""
     runner = CliRunner()
 
@@ -195,6 +225,8 @@ def test_query_with_agent_knowledge_forces_knowledge_agent():
         patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
         patch("redis_sre_agent.cli.query.get_chat_agent") as mock_get_chat,
         patch("redis_sre_agent.cli.query.route_to_appropriate_agent") as mock_router,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         result = runner.invoke(query, ["-a", "knowledge", "What is Redis replication?"])
 
@@ -212,7 +244,7 @@ def test_query_with_agent_knowledge_forces_knowledge_agent():
     mock_agent.process_query.assert_awaited_once()
 
 
-def test_query_with_agent_chat_forces_chat_agent():
+def test_query_with_agent_chat_forces_chat_agent(mock_thread_manager, mock_redis_client):
     """Test that --agent chat forces use of the chat agent."""
     runner = CliRunner()
 
@@ -239,6 +271,8 @@ def test_query_with_agent_chat_forces_chat_agent():
             new=AsyncMock(return_value=instance),
         ),
         patch("redis_sre_agent.cli.query.route_to_appropriate_agent") as mock_router,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         result = runner.invoke(query, ["--agent", "chat", "-r", "test-instance", "Quick question"])
 
@@ -256,7 +290,7 @@ def test_query_with_agent_chat_forces_chat_agent():
     mock_agent.process_query.assert_awaited_once()
 
 
-def test_query_with_agent_auto_uses_router():
+def test_query_with_agent_auto_uses_router(mock_thread_manager, mock_redis_client):
     """Test that --agent auto (default) uses the router to select agent."""
     runner = CliRunner()
 
@@ -274,6 +308,8 @@ def test_query_with_agent_auto_uses_router():
             "redis_sre_agent.cli.query.route_to_appropriate_agent",
             new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
         ) as mock_router,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         # Default is auto, so router should be called
         result = runner.invoke(query, ["What is Redis?"])
@@ -290,7 +326,7 @@ def test_query_with_agent_auto_uses_router():
     mock_get_sre.assert_not_called()
 
 
-def test_query_agent_option_is_case_insensitive():
+def test_query_agent_option_is_case_insensitive(mock_thread_manager, mock_redis_client):
     """Test that --agent option accepts different cases."""
     runner = CliRunner()
 
@@ -300,6 +336,8 @@ def test_query_agent_option_is_case_insensitive():
     with (
         patch("redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent),
         patch("redis_sre_agent.cli.query.route_to_appropriate_agent"),
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
     ):
         # Test uppercase
         result = runner.invoke(query, ["--agent", "KNOWLEDGE", "test query"])
