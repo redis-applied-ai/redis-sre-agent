@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from redis_sre_agent.api.app import app
-from redis_sre_agent.core.instances import get_instances, InstanceQueryResult
+from redis_sre_agent.core.instances import InstanceQueryResult, get_instances
 
 
 @pytest.fixture

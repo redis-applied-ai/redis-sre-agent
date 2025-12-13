@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
 from redisvl.query import CountQuery, FilterQuery
