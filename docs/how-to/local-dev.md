@@ -52,6 +52,7 @@ docker compose up -d \
 # Logs
 docker compose logs -f sre-agent
 ```
+**Note**: Docker Compose exposes the API on port **8080** (http://localhost:8080), while local uvicorn uses port 8000.
 
 ### 5) Create a demo instance (optional)
 ```bash

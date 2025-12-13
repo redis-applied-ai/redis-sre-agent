@@ -68,6 +68,53 @@ Generated from the Click command tree.
 - runbook evaluate — Evaluate existing runbooks in the source documents directory.
 - runbook generate — Generate a new Redis SRE runbook for the specified topic.
 - query — Execute an agent query.
+
+    Supports conversation threads for multi-turn interactions. Use --thread-id
+    to continue an existing conversation, or omit it to start a new one.
+
+    
+    The agent is automatically selected based on the query, or use --agent:
+      - knowledge: General Redis questions (no instance needed)
+      - chat: Quick questions with a Redis instance
+      - triage: Full health checks and diagnostics
+      - auto: Let the router decide (default)
 - worker — Start the background worker.
+- mcp — MCP server commands - expose agent capabilities via Model Context Protocol.
+- mcp list-tools — List available MCP tools.
+- mcp serve — Start the MCP server.
+
+    The MCP server exposes the Redis SRE Agent's capabilities to other
+    MCP-compatible AI agents.
+
+    
+    Available tools:
+      - triage: Start a Redis troubleshooting session
+      - get_task_status: Check if a triage task is complete
+      - get_thread: Get the full results from a triage
+      - knowledge_search: Search Redis documentation and runbooks
+      - list_instances: List configured Redis instances
+      - create_instance: Register a new Redis instance
+
+    
+    Examples:
+      # Run in stdio mode (for Claude Desktop local config)
+      redis-sre-agent mcp serve
+
+    
+      # Run in HTTP mode (for Claude remote connector - RECOMMENDED)
+      redis-sre-agent mcp serve --transport http --port 8081
+      # Then add in Claude: Settings > Connectors > Add Custom Connector
+      # URL: http://your-host:8081/mcp
+
+    
+      # Run in SSE mode (legacy, for older clients)
+      redis-sre-agent mcp serve --transport sse --port 8081
+- index — RediSearch index management commands.
+- index list — List all SRE agent indices and their status.
+- index recreate — Drop and recreate RediSearch indices.
+
+    This is useful when the schema has changed (e.g., new fields added).
+    WARNING: This will delete all indexed data. The underlying Redis keys
+    remain, but you'll need to re-index documents.
 
 See How-to guides for examples.

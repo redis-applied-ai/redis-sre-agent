@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
+import { sreAgentApi } from "../services/sreAgentApi";
 
 interface KnowledgeStats {
   total_documents: number;
@@ -102,40 +103,16 @@ const Knowledge = () => {
 
       console.log("Loading knowledge data...");
 
-      // Load real knowledge base data
-      const [statsResponse, jobsResponse] = await Promise.all([
-        fetch("/api/v1/knowledge/stats"),
-        fetch("/api/v1/knowledge/jobs"),
-      ]);
-
-      console.log("Response status:", {
-        stats: statsResponse.status,
-        jobs: jobsResponse.status,
-      });
-
-      if (!statsResponse.ok || !jobsResponse.ok) {
-        const errorDetails = {
-          stats: statsResponse.ok
-            ? "OK"
-            : `${statsResponse.status} ${statsResponse.statusText}`,
-          jobs: jobsResponse.ok
-            ? "OK"
-            : `${jobsResponse.status} ${jobsResponse.statusText}`,
-        };
-        throw new Error(
-          `Failed to load knowledge data: ${JSON.stringify(errorDetails)}`,
-        );
-      }
-
+      // Load real knowledge base data using the API service
       const [statsData, jobsData] = await Promise.all([
-        statsResponse.json(),
-        jobsResponse.json(),
+        sreAgentApi.getKnowledgeStats(),
+        sreAgentApi.getKnowledgeJobs(),
       ]);
 
       console.log("Data loaded successfully:", { statsData, jobsData });
 
-      setStats(statsData);
-      setIngestionJobs(jobsData.jobs || []);
+      setStats(statsData as KnowledgeStats);
+      setIngestionJobs((jobsData as any).jobs || []);
     } catch (err) {
       console.error("Error loading knowledge data:", err);
       setError(err instanceof Error ? err.message : "Unknown error occurred");
@@ -151,23 +128,14 @@ const Knowledge = () => {
     }
 
     try {
-      const response = await fetch("/api/v1/knowledge/ingest/document", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: "User Added Content",
-          content: ingestionText,
-          source: "web_ui",
-          category: "general",
-          severity: "info",
-        }),
-      });
+      const result = await sreAgentApi.ingestDocument(
+        "User Added Content",
+        ingestionText,
+        "general",
+        "runbook",
+        "info",
+      );
 
-      if (!response.ok) {
-        throw new Error("Failed to ingest document");
-      }
-
-      const result = await response.json();
       console.log("Ingestion result:", result);
 
       setShowIngestionForm(false);
@@ -182,7 +150,7 @@ const Knowledge = () => {
 
   const searchKnowledgeBase = async (
     query?: string,
-    thresholdOverride?: number,
+    _thresholdOverride?: number,
   ) => {
     const queryToUse = query || searchQuery;
     if (!queryToUse.trim()) {
@@ -194,30 +162,20 @@ const Knowledge = () => {
       setIsSearching(true);
       setError(null);
 
-      const thresholdToUse =
-        typeof thresholdOverride === "number"
-          ? thresholdOverride
-          : distanceThreshold;
-      const params = new URLSearchParams({
-        query: queryToUse,
-        limit: "10",
-        distance_threshold: String(thresholdToUse),
-      });
+      const result = await sreAgentApi.searchKnowledge(
+        queryToUse,
+        10,
+        searchCategory || undefined,
+      );
 
-      if (searchCategory) {
-        params.append("category", searchCategory);
-      }
-
-      const response = await fetch(`/api/v1/knowledge/search?${params}`);
-
-      if (!response.ok) {
-        throw new Error("Failed to search knowledge base");
-      }
-
-      const result: SearchResponse = await response.json();
       console.log("Search result:", result);
 
-      setSearchResults(result.results || []);
+      setSearchResults(
+        (result.results || []).map((r) => ({
+          ...r,
+          severity: "info", // Default severity since API doesn't return it
+        })),
+      );
       setExpandedResults(new Set()); // Clear expanded state on new search
     } catch (err) {
       console.error("Search error:", err);

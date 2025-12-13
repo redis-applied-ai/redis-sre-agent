@@ -27,7 +27,7 @@ This section explains the core ideas behind Redis SRE Agent and how pieces fit t
   When you create a task, the API creates or reuses a thread to store the execution history. You can:
   - Poll the task for status: `GET /api/v1/tasks/{task_id}`
   - Read the thread for results: `GET /api/v1/threads/{thread_id}`
-  - Stream updates via WebSocket: `ws://localhost:8000/api/v1/ws/tasks/{thread_id}`
+  - Stream updates via WebSocket: `ws://localhost:8080/api/v1/ws/tasks/{thread_id}` (Docker Compose) or port 8000 (local)
 
 - **Jobs**
   - Ad-hoc jobs: On-demand via CLI or API. Each run creates a task and streams results to a thread.

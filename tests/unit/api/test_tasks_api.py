@@ -55,7 +55,12 @@ class TestTasksAPI:
     def test_get_task_success(self, client):
         """GET /api/v1/tasks/{task_id} returns 200 with state."""
 
-        # Minimal TaskState-like object
+        # Minimal TaskState-like object with metadata
+        class Metadata:
+            subject = "Test subject"
+            created_at = "2024-01-01T00:00:00Z"
+            updated_at = "2024-01-01T00:01:00Z"
+
         class S:
             task_id = "t1"
             thread_id = "th1"
@@ -63,6 +68,7 @@ class TestTasksAPI:
             updates = []
             result = None
             error_message = None
+            metadata = Metadata()
 
         mock_tm = MagicMock()
         mock_tm.get_task_state = AsyncMock(return_value=S())
@@ -72,3 +78,6 @@ class TestTasksAPI:
         data = resp.json()
         assert data["task_id"] == "t1"
         assert data["thread_id"] == "th1"
+        assert data["subject"] == "Test subject"
+        assert data["created_at"] == "2024-01-01T00:00:00Z"
+        assert data["updated_at"] == "2024-01-01T00:01:00Z"

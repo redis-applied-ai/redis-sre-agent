@@ -58,6 +58,8 @@ dependencies = [
     "opentelemetry-instrumentation-aiohttp-client>=0.57b0",
     "opentelemetry-instrumentation-openai>=0.47.5",
     "cryptography>=45.0.0,<46",
+    "mcp>=1.23.3",
+    "nltk>=3.9.1",
 ]
 
 [dependency-groups]

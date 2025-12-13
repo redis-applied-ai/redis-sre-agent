@@ -86,6 +86,19 @@ def worker(concurrency: int):
         except Exception as _e:
             logger.warning(f"Failed to start Prometheus metrics server in worker: {_e}")
 
+        # Initialize Redis infrastructure (creates indices if they don't exist)
+        try:
+            from redis_sre_agent.core.redis import create_indices
+
+            indices_created = await create_indices()
+            if indices_created:
+                logger.info("✅ Redis indices initialized")
+            else:
+                logger.warning("⚠️ Failed to create some Redis indices")
+        except Exception as e:
+            logger.error(f"Failed to initialize Redis indices: {e}")
+            # Continue anyway - some functionality may still work
+
         try:
             # Register tasks first (support both sync and async implementations)
             reg = register_sre_tasks()
@@ -109,7 +122,7 @@ def worker(concurrency: int):
     try:
         asyncio.run(_worker())
     except KeyboardInterrupt:
-        click.echo("\n\ud83d\udc4b SRE worker stopped by user")
+        click.echo("\nSRE worker stopped by user")
     except Exception as e:
-        click.echo(f"\ud83d\udca5 Unexpected worker error: {e}")
+        click.echo(f"Unexpected worker error: {e}")
         raise

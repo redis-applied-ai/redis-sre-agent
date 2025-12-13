@@ -12,7 +12,7 @@
     "e2e:ui": "playwright test --ui",
     "format": "npx prettier --write \"src/**/*.{ts,tsx,js,jsx,css,md}\"",
     "format:check": "npx prettier --check \"src/**/*.{ts,tsx,js,jsx,css,md}\"",
-    "postinstall": "npm --prefix ./ui-kit ci && npm --prefix ./ui-kit run build",
+    "postinstall": "npm --prefix ./ui-kit ci --ignore-scripts && npm --prefix ./ui-kit run build",
     "preview": "vite preview"
   },
   "dependencies": {

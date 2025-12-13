@@ -67,10 +67,8 @@ const Dashboard = () => {
 
     const threadsPromise = sreAgentApi.listThreads(undefined, 10, 0);
     const instancesPromise = sreAgentApi.listInstances();
-    const knowledgePromise = fetch("/api/v1/knowledge/stats").then((res) =>
-      res.json(),
-    );
-    const healthPromise = fetch("/api/v1/health").then((res) => res.json());
+    const knowledgePromise = sreAgentApi.getKnowledgeStats();
+    const healthPromise = sreAgentApi.getSystemHealth();
 
     const [threadsRes, instancesRes, knowledgeRes, healthRes] =
       await Promise.allSettled([

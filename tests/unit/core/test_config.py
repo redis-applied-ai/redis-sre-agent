@@ -1,10 +1,12 @@
 """Unit tests for configuration management."""
 
 import os
+import tempfile
 from typing import Optional
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 
 # Import Settings in tests with mocked environment
@@ -293,6 +295,135 @@ class TestSettings:
             assert not hasattr(settings, "unknown_field")
 
 
+class TestMCPConfiguration:
+    """Test MCP server configuration models."""
+
+    def test_mcp_tool_config_defaults(self):
+        """Test MCPToolConfig default values."""
+        from redis_sre_agent.core.config import MCPToolConfig
+
+        config = MCPToolConfig()
+        assert config.capability is None
+        assert config.description is None
+
+    def test_mcp_tool_config_with_capability(self):
+        """Test MCPToolConfig with capability set."""
+        from redis_sre_agent.core.config import MCPToolConfig
+        from redis_sre_agent.tools.models import ToolCapability
+
+        config = MCPToolConfig(capability=ToolCapability.LOGS)
+        assert config.capability == ToolCapability.LOGS
+        assert config.description is None
+
+    def test_mcp_tool_config_with_description(self):
+        """Test MCPToolConfig with description override."""
+        from redis_sre_agent.core.config import MCPToolConfig
+
+        config = MCPToolConfig(description="Use this tool when searching for memories...")
+        assert config.capability is None
+        assert config.description == "Use this tool when searching for memories..."
+
+    def test_mcp_tool_config_with_both(self):
+        """Test MCPToolConfig with both capability and description."""
+        from redis_sre_agent.core.config import MCPToolConfig
+        from redis_sre_agent.tools.models import ToolCapability
+
+        config = MCPToolConfig(
+            capability=ToolCapability.METRICS,
+            description="Custom description for the tool",
+        )
+        assert config.capability == ToolCapability.METRICS
+        assert config.description == "Custom description for the tool"
+
+    def test_mcp_server_config_command_based(self):
+        """Test MCPServerConfig for command-based (stdio) transport."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-memory"],
+            env={"DEBUG": "true"},
+        )
+        assert config.command == "npx"
+        assert config.args == ["-y", "@modelcontextprotocol/server-memory"]
+        assert config.env == {"DEBUG": "true"}
+        assert config.url is None
+        assert config.tools is None
+
+    def test_mcp_server_config_url_based(self):
+        """Test MCPServerConfig for URL-based transport."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        config = MCPServerConfig(url="http://localhost:3000/mcp")
+        assert config.command is None
+        assert config.args is None
+        assert config.url == "http://localhost:3000/mcp"
+        # Default transport should be None (provider defaults to streamable_http)
+        assert config.transport is None
+
+    def test_mcp_server_config_url_with_transport(self):
+        """Test MCPServerConfig with explicit transport type."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        # Test with streamable_http transport (for GitHub remote MCP)
+        config = MCPServerConfig(
+            url="https://api.githubcopilot.com/mcp/",
+            headers={"Authorization": "Bearer test-token"},
+            transport="streamable_http",
+        )
+        assert config.url == "https://api.githubcopilot.com/mcp/"
+        assert config.headers == {"Authorization": "Bearer test-token"}
+        assert config.transport == "streamable_http"
+
+        # Test with legacy SSE transport
+        config_sse = MCPServerConfig(
+            url="http://localhost:3000/mcp",
+            transport="sse",
+        )
+        assert config_sse.transport == "sse"
+
+    def test_mcp_server_config_with_tool_constraints(self):
+        """Test MCPServerConfig with tool constraints."""
+        from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
+        from redis_sre_agent.tools.models import ToolCapability
+
+        config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-memory"],
+            tools={
+                "search_memories": MCPToolConfig(capability=ToolCapability.LOGS),
+                "create_memories": MCPToolConfig(description="Use this tool when..."),
+            },
+        )
+        assert config.tools is not None
+        assert len(config.tools) == 2
+        assert config.tools["search_memories"].capability == ToolCapability.LOGS
+        assert config.tools["create_memories"].description == "Use this tool when..."
+
+    def test_settings_mcp_servers_default_empty(self):
+        """Test that mcp_servers defaults to empty dict."""
+        from redis_sre_agent.core.config import settings
+
+        # Default should be an empty dict
+        assert isinstance(settings.mcp_servers, dict)
+
+    def test_mcp_server_config_from_dict(self):
+        """Test that MCPServerConfig can be created from a dict (for env var parsing)."""
+        from redis_sre_agent.core.config import MCPServerConfig
+
+        config_dict = {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-memory"],
+            "tools": {
+                "search_memories": {"capability": "logs"},
+            },
+        }
+        config = MCPServerConfig.model_validate(config_dict)
+        assert config.command == "npx"
+        assert config.args == ["-y", "@modelcontextprotocol/server-memory"]
+        # Note: tools with string capability will need special handling in the provider
+
+
 class TestSettingsValidation:
     """Test settings validation logic."""
 
@@ -344,3 +475,260 @@ class TestSettingsValidation:
             assert settings.task_timeout == 1
             assert settings.max_iterations == 1
             assert settings.tool_timeout == 1
+
+
+class TestYamlConfigLoading:
+    """Test YAML configuration file loading."""
+
+    def test_yaml_config_loads_mcp_servers(self):
+        """Test that MCP servers can be loaded from YAML config."""
+        yaml_content = {
+            "mcp_servers": {
+                "test-server": {
+                    "command": "echo",
+                    "args": ["hello"],
+                },
+                "github": {
+                    "command": "docker",
+                    "args": ["run", "-i", "ghcr.io/github/github-mcp-server"],
+                    "env": {"GITHUB_TOKEN": "test-token"},
+                },
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(yaml_content, f)
+            config_path = f.name
+
+        try:
+            with patch.dict(
+                os.environ,
+                {"SRE_AGENT_CONFIG": config_path, "OPENAI_API_KEY": "test-key"},
+                clear=True,
+            ):
+                from redis_sre_agent.core.config import MCPServerConfig, Settings
+
+                settings = Settings()
+
+                assert "test-server" in settings.mcp_servers
+                assert "github" in settings.mcp_servers
+                # Values may be MCPServerConfig objects or dicts depending on validation
+                test_server = settings.mcp_servers["test-server"]
+                if isinstance(test_server, MCPServerConfig):
+                    assert test_server.command == "echo"
+                else:
+                    assert test_server["command"] == "echo"
+
+                github_server = settings.mcp_servers["github"]
+                if isinstance(github_server, MCPServerConfig):
+                    assert github_server.env["GITHUB_TOKEN"] == "test-token"
+                else:
+                    assert github_server["env"]["GITHUB_TOKEN"] == "test-token"
+        finally:
+            os.unlink(config_path)
+
+    def test_yaml_config_with_tool_descriptions(self):
+        """Test that tool descriptions in YAML are properly loaded."""
+        yaml_content = {
+            "mcp_servers": {
+                "memory-server": {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-memory"],
+                    "tools": {
+                        "search_memories": {
+                            "description": "Search for memories about Redis instances.",
+                        },
+                    },
+                }
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(yaml_content, f)
+            config_path = f.name
+
+        try:
+            with patch.dict(
+                os.environ,
+                {"SRE_AGENT_CONFIG": config_path, "OPENAI_API_KEY": "test-key"},
+                clear=True,
+            ):
+                from redis_sre_agent.core.config import MCPServerConfig, Settings
+
+                settings = Settings()
+
+                assert "memory-server" in settings.mcp_servers
+                server = settings.mcp_servers["memory-server"]
+                if isinstance(server, MCPServerConfig):
+                    assert server.tools is not None
+                    assert "search_memories" in server.tools
+                else:
+                    tools = server["tools"]
+                    assert "search_memories" in tools
+        finally:
+            os.unlink(config_path)
+
+    def test_env_vars_override_yaml_config(self):
+        """Test that environment variables take precedence over YAML config."""
+        yaml_content = {
+            "debug": False,
+            "log_level": "WARNING",
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(yaml_content, f)
+            config_path = f.name
+
+        try:
+            with patch.dict(
+                os.environ,
+                {
+                    "SRE_AGENT_CONFIG": config_path,
+                    "OPENAI_API_KEY": "test-key",
+                    "DEBUG": "true",  # Override YAML value
+                    "LOG_LEVEL": "DEBUG",  # Override YAML value
+                },
+                clear=True,
+            ):
+                from redis_sre_agent.core.config import Settings
+
+                settings = Settings()
+
+                # Env vars should win
+                assert settings.debug is True
+                assert settings.log_level == "DEBUG"
+        finally:
+            os.unlink(config_path)
+
+    def test_yaml_config_source_class(self):
+        """Test YamlConfigSettingsSource directly with pydantic-settings built-in source."""
+        from pydantic_settings import YamlConfigSettingsSource
+
+        from redis_sre_agent.core.config import Settings
+
+        yaml_content = {
+            "debug": True,
+            "log_level": "DEBUG",
+            "mcp_servers": {"test": {"command": "echo"}},
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(yaml_content, f)
+            config_path = f.name
+
+        try:
+            # Use the built-in YamlConfigSettingsSource with explicit yaml_file
+            source = YamlConfigSettingsSource(Settings, yaml_file=config_path)
+            data = source()
+
+            assert data["debug"] is True
+            assert data["log_level"] == "DEBUG"
+            assert "mcp_servers" in data
+        finally:
+            os.unlink(config_path)
+
+    def test_default_config_paths_are_checked(self):
+        """Test that default config paths are checked when SRE_AGENT_CONFIG is not set."""
+        from redis_sre_agent.core.config import DEFAULT_CONFIG_PATHS
+
+        # Verify the default paths exist in the module
+        assert "config.yaml" in DEFAULT_CONFIG_PATHS
+        assert "config.yml" in DEFAULT_CONFIG_PATHS
+        assert "sre_agent_config.yaml" in DEFAULT_CONFIG_PATHS
+
+    def test_yaml_with_simple_settings(self):
+        """Test loading simple settings from YAML.
+
+        Note: We test app_name and debug which don't have values in the
+        workspace's config.yaml or .env files.
+        """
+        yaml_content = {
+            "app_name": "test-app-from-yaml",
+            "debug": True,
+            "recursion_limit": 200,  # Use a field not in .env
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(yaml_content, f)
+            config_path = f.name
+
+        try:
+            with patch.dict(
+                os.environ,
+                {"SRE_AGENT_CONFIG": config_path, "OPENAI_API_KEY": "test-key"},
+                clear=True,
+            ):
+                from redis_sre_agent.core.config import Settings
+
+                settings = Settings()
+
+                # These values should come from our test YAML
+                assert settings.app_name == "test-app-from-yaml"
+                assert settings.debug is True
+                assert settings.recursion_limit == 200  # Should override default of 100
+        finally:
+            os.unlink(config_path)
+
+    def test_yaml_with_list_settings(self):
+        """Test loading list settings from YAML.
+
+        Note: We use tool_providers which can be overridden from YAML,
+        but allowed_hosts may be set in workspace's .env file.
+        """
+        yaml_content = {
+            "tool_providers": [
+                "custom.provider.MyProvider",
+                "another.provider.AnotherProvider",
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(yaml_content, f)
+            config_path = f.name
+
+        try:
+            with patch.dict(
+                os.environ,
+                {"SRE_AGENT_CONFIG": config_path, "OPENAI_API_KEY": "test-key"},
+                clear=True,
+            ):
+                from redis_sre_agent.core.config import Settings
+
+                settings = Settings()
+
+                # Tool providers should be exactly what we specified in YAML
+                assert len(settings.tool_providers) == 2
+                assert "custom.provider.MyProvider" in settings.tool_providers
+                assert "another.provider.AnotherProvider" in settings.tool_providers
+        finally:
+            os.unlink(config_path)
+
+    def test_yaml_source_returns_empty_for_missing_config(self):
+        """Test that YamlConfigSettingsSource returns empty dict for missing config."""
+        from redis_sre_agent.core.config import Settings, YamlConfigSettingsSource
+
+        with patch.dict(os.environ, {"SRE_AGENT_CONFIG": "/nonexistent/config.yaml"}, clear=True):
+            source = YamlConfigSettingsSource(Settings)
+            data = source()
+
+            # Should return empty dict, not error
+            assert data == {}
+
+    def test_yaml_source_returns_empty_for_invalid_yaml(self):
+        """Test that YamlConfigSettingsSource returns empty dict for invalid YAML."""
+        from redis_sre_agent.core.config import Settings, YamlConfigSettingsSource
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            # Write invalid YAML
+            f.write("invalid: yaml: content: [[[")
+            config_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"SRE_AGENT_CONFIG": config_path}, clear=True):
+                source = YamlConfigSettingsSource(Settings)
+                data = source()
+
+                # Should return empty dict, not error
+                assert data == {}
+        finally:
+            os.unlink(config_path)

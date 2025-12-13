@@ -23,16 +23,16 @@ docker compose up -d \
   sre-agent sre-worker sre-ui
 ```
 Notes:
-- API: http://localhost:8000
+- API: http://localhost:8080
 - Grafana: http://localhost:3001 (admin/admin)
 - Experimental UI: http://localhost:3002 (proxied to API)
 
 ### 3) Check status
 ```bash
 # API root health
-curl http://localhost:8000/
+curl http://localhost:8080/
 # Detailed health (Redis, Docket/worker availability, etc.)
-curl http://localhost:8000/api/v1/health
+curl http://localhost:8080/api/v1/health
 # Prometheus
 curl http://localhost:9090/-/ready
 ```

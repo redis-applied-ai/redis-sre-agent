@@ -70,6 +70,10 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "tag",
         },
         {
+            "name": "version",
+            "type": "tag",
+        },
+        {
             "name": "created_at",
             "type": "numeric",
         },
@@ -211,6 +215,12 @@ def get_vectorizer() -> OpenAITextVectorizer:
     """Get OpenAI vectorizer with Redis-backed embeddings cache.
 
     Returns the native vectorizer; callers should use aembed/aembed_many.
+
+    The embeddings cache uses a stable key namespace ("sre_embeddings_cache")
+    so that embeddings are shared across vectorizer instances. Cache keys
+    include the model name, so different models won't conflict.
+
+    TTL is configurable via settings.embeddings_cache_ttl (default: 7 days).
     """
     # Build Redis URL with password if needed (ensure cache can auth)
     redis_url = settings.redis_url.get_secret_value()
@@ -219,7 +229,13 @@ def get_vectorizer() -> OpenAITextVectorizer:
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     # Name the cache to keep a stable key namespace
-    cache = EmbeddingsCache(name="sre_embeddings_cache", redis_url=redis_url)
+    # TTL prevents stale embeddings if model changes
+    cache = EmbeddingsCache(
+        name="sre_embeddings_cache",
+        redis_url=redis_url,
+        ttl=settings.embeddings_cache_ttl,
+    )
+    logger.debug(f"Vectorizer created with embeddings cache (ttl={settings.embeddings_cache_ttl}s)")
 
     return OpenAITextVectorizer(
         model=settings.embedding_model,
@@ -405,6 +421,58 @@ async def create_indices() -> bool:
     except Exception as e:
         logger.error(f"Failed to create indices: {e}")
         return False
+
+
+async def recreate_indices(index_name: str | None = None) -> dict:
+    """Drop and recreate RediSearch indices.
+
+    This is useful when the schema has changed (e.g., new fields added).
+
+    Args:
+        index_name: Specific index to recreate ('knowledge', 'schedules', 'threads',
+                   'tasks', 'instances'), or None to recreate all.
+
+    Returns:
+        Dictionary with success status and details for each index.
+    """
+    result = {"success": True, "indices": {}}
+
+    index_configs = [
+        ("knowledge", SRE_KNOWLEDGE_INDEX, get_knowledge_index),
+        ("schedules", SRE_SCHEDULES_INDEX, get_schedules_index),
+        ("threads", SRE_THREADS_INDEX, get_threads_index),
+        ("tasks", SRE_TASKS_INDEX, get_tasks_index),
+        ("instances", SRE_INSTANCES_INDEX, get_instances_index),
+    ]
+
+    for name, idx_name, get_fn in index_configs:
+        # Skip if a specific index was requested and this isn't it
+        if index_name and name != index_name:
+            continue
+
+        try:
+            idx = await get_fn()
+
+            # Drop index if it exists
+            if await idx.exists():
+                try:
+                    # Use FT.DROPINDEX to drop without deleting documents
+                    await idx._redis_client.execute_command("FT.DROPINDEX", idx_name)
+                    logger.info(f"Dropped index: {idx_name}")
+                except Exception as drop_err:
+                    logger.warning(f"Could not drop index {idx_name}: {drop_err}")
+
+            # Recreate with current schema
+            await idx.create()
+            logger.info(f"Created index: {idx_name}")
+            result["indices"][name] = "recreated"
+
+        except Exception as e:
+            logger.error(f"Failed to recreate index {name}: {e}")
+            result["indices"][name] = f"error: {e}"
+            result["success"] = False
+
+    return result
 
 
 async def initialize_redis() -> dict:

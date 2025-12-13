@@ -53,10 +53,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
   const refetchTimeoutRef = useRef<number | null>(null);
 
   const mapThreadToMessages = (threadData: any): ChatMessage[] => {
-    // Start with any persisted transcript messages
-    const baseMsgs: any[] = Array.isArray(threadData?.context?.messages)
-      ? threadData.context.messages
-      : [];
+    // Messages are now at threadData.messages (top-level), with fallback to context.messages for old data
+    const baseMsgs: any[] = Array.isArray(threadData?.messages)
+      ? threadData.messages
+      : Array.isArray(threadData?.context?.messages)
+        ? threadData.context.messages
+        : [];
 
     const out: ChatMessage[] = [];
 
@@ -79,17 +81,18 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     baseMsgs.forEach((msg: any, index: number) => {
       if (!msg || !msg.content) return;
       out.push({
-        id: `${msg.role}-${index}-${msg.timestamp || index}`,
+        id: `${msg.role}-${index}-${msg.metadata?.timestamp || index}`,
         role: msg.role,
         content: msg.content,
         timestamp:
-          msg.timestamp ||
+          msg.metadata?.timestamp ||
           threadData?.metadata?.updated_at ||
           new Date().toISOString(),
       });
     });
 
-    // Merge in live updates as assistant/user bubbles even when context.messages exists
+    // Merge in live updates as assistant/user bubbles even when messages exist
+    // Updates now come from the latest task, not the thread directly
     // This ensures reflections and interim responses are visible during the turn.
     const seen = new Set(out.map((m) => `${m.role}::${m.content}`));
     const updates = Array.isArray(threadData?.updates)

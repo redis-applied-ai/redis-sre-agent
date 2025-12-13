@@ -215,13 +215,35 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
         if len(_active_connections[thread_id]) == 1:
             await _stream_manager.start_consumer(thread_id)
 
-        # Send current thread state immediately (no thread status)
+        # Get the latest task for this thread to send updates/result/error
+        from redis_sre_agent.core.tasks import TaskManager
+
+        task_manager = TaskManager(redis_client=redis_client)
+        latest_task_ids = await redis_client.zrevrange(
+            RedisKeys.thread_tasks_index(thread_id), 0, 0
+        )
+
+        updates = []
+        result = None
+        error_message = None
+
+        if latest_task_ids:
+            latest_task_id = latest_task_ids[0]
+            if isinstance(latest_task_id, bytes):
+                latest_task_id = latest_task_id.decode()
+            task_state = await task_manager.get_task_state(latest_task_id)
+            if task_state:
+                updates = task_state.updates[-10:] if task_state.updates else []
+                result = task_state.result
+                error_message = task_state.error_message
+
+        # Send current state immediately
         initial_event = InitialStateEvent(
             update_type="initial_state",
             thread_id=thread_id,
-            updates=thread_state.updates[-10:],  # Last 10 updates
-            result=thread_state.result,
-            error_message=thread_state.error_message,
+            updates=updates,
+            result=result,
+            error_message=error_message,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
         await websocket.send_text(initial_event.model_dump_json())
