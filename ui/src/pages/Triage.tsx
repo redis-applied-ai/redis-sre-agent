@@ -120,8 +120,8 @@ const Triage = () => {
 
   const loadInstances = async () => {
     try {
-      const apiInstances = await sreAgentApi.listInstances();
-      setInstances(apiInstances);
+      const response = await sreAgentApi.listInstances();
+      setInstances(response.instances);
     } catch (err) {
       console.error("Failed to load instances:", err);
       // Don't show error to user, just log it
