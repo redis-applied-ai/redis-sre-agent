@@ -326,6 +326,8 @@ class TestListInstancesTool:
     @pytest.mark.asyncio
     async def test_list_instances_success(self):
         """Test successful instance listing."""
+        from redis_sre_agent.core.instances import InstanceQueryResult
+
         mock_instance = MagicMock()
         mock_instance.id = "redis-prod-1"
         mock_instance.name = "Production Redis"
@@ -335,11 +337,18 @@ class TestListInstancesTool:
         mock_instance.instance_type = "redis_cloud"
         mock_instance.repo_url = "https://github.com/example/repo"
 
+        mock_result = InstanceQueryResult(
+            instances=[mock_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
         with patch(
-            "redis_sre_agent.core.instances.get_instances",
+            "redis_sre_agent.core.instances.query_instances",
             new_callable=AsyncMock,
-        ) as mock_get:
-            mock_get.return_value = [mock_instance]
+        ) as mock_query:
+            mock_query.return_value = mock_result
 
             result = await redis_sre_list_instances()
 
@@ -351,11 +360,20 @@ class TestListInstancesTool:
     @pytest.mark.asyncio
     async def test_list_instances_empty(self):
         """Test empty instance list."""
+        from redis_sre_agent.core.instances import InstanceQueryResult
+
+        mock_result = InstanceQueryResult(
+            instances=[],
+            total=0,
+            limit=100,
+            offset=0,
+        )
+
         with patch(
-            "redis_sre_agent.core.instances.get_instances",
+            "redis_sre_agent.core.instances.query_instances",
             new_callable=AsyncMock,
-        ) as mock_get:
-            mock_get.return_value = []
+        ) as mock_query:
+            mock_query.return_value = mock_result
 
             result = await redis_sre_list_instances()
 
@@ -363,13 +381,56 @@ class TestListInstancesTool:
             assert result["instances"] == []
 
     @pytest.mark.asyncio
+    async def test_list_instances_with_filters(self):
+        """Test instance listing with filter parameters."""
+        from redis_sre_agent.core.instances import InstanceQueryResult
+
+        mock_instance = MagicMock()
+        mock_instance.id = "redis-prod-1"
+        mock_instance.name = "Production Redis"
+        mock_instance.environment = "production"
+        mock_instance.usage = "cache"
+        mock_instance.description = "Main cache"
+        mock_instance.instance_type = "redis_cloud"
+        mock_instance.repo_url = None
+
+        mock_result = InstanceQueryResult(
+            instances=[mock_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch(
+            "redis_sre_agent.core.instances.query_instances",
+            new_callable=AsyncMock,
+        ) as mock_query:
+            mock_query.return_value = mock_result
+
+            result = await redis_sre_list_instances(
+                environment="production",
+                usage="cache",
+                status="healthy",
+            )
+
+            # Verify query_instances was called with the correct parameters
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            assert call_kwargs["environment"] == "production"
+            assert call_kwargs["usage"] == "cache"
+            assert call_kwargs["status"] == "healthy"
+
+            assert result["total"] == 1
+            assert result["instances"][0]["environment"] == "production"
+
+    @pytest.mark.asyncio
     async def test_list_instances_error(self):
         """Test list instances error handling."""
         with patch(
-            "redis_sre_agent.core.instances.get_instances",
+            "redis_sre_agent.core.instances.query_instances",
             new_callable=AsyncMock,
-        ) as mock_get:
-            mock_get.side_effect = Exception("Connection failed")
+        ) as mock_query:
+            mock_query.side_effect = Exception("Connection failed")
 
             result = await redis_sre_list_instances()
 

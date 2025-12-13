@@ -100,7 +100,7 @@ const Dashboard = () => {
 
     // Instances
     if (instancesRes.status === "fulfilled") {
-      setInstances(instancesRes.value);
+      setInstances(instancesRes.value.instances);
     } else {
       console.warn("Instances unavailable:", instancesRes.reason);
       setInstances([]);

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
 
 from redis_sre_agent.core import instances as core_instances
@@ -91,6 +91,15 @@ class RedisInstanceResponse(BaseModel):
     # Redis Cloud metadata
     redis_cloud_subscription_type: Optional[str] = None
     redis_cloud_database_name: Optional[str] = None
+
+
+class InstanceListResponse(BaseModel):
+    """Response model for paginated instance list with filtering."""
+
+    instances: List[RedisInstanceResponse]
+    total: int = Field(..., description="Total number of instances matching the filter")
+    limit: int = Field(..., description="Maximum number of results returned")
+    offset: int = Field(..., description="Number of results skipped")
 
 
 class CreateInstanceRequest(BaseModel):
@@ -268,12 +277,48 @@ class UpdateInstanceRequest(BaseModel):
     connections: Optional[int] = None
 
 
-@router.get("/instances", response_model=List[RedisInstanceResponse])
-async def list_instances():
-    """List all Redis instances with masked credentials."""
+@router.get("/instances", response_model=InstanceListResponse)
+async def list_instances(
+    environment: Optional[str] = Query(
+        None, description="Filter by environment (development, staging, production)"
+    ),
+    usage: Optional[str] = Query(
+        None, description="Filter by usage type (cache, analytics, session, queue, custom)"
+    ),
+    status: Optional[str] = Query(
+        None, description="Filter by status (healthy, unhealthy, unknown)"
+    ),
+    instance_type: Optional[str] = Query(
+        None,
+        description="Filter by type (oss_single, oss_cluster, redis_enterprise, redis_cloud)",
+    ),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    search: Optional[str] = Query(None, description="Search by instance name"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip for pagination"),
+):
+    """List Redis instances with server-side filtering and pagination.
+
+    All filters are optional. When no filters are provided, returns all instances.
+    Results are sorted by updated_at descending (most recently updated first).
+    """
     try:
-        instances = await core_instances.get_instances()
-        return [to_response(inst) for inst in instances]
+        result = await core_instances.query_instances(
+            environment=environment,
+            usage=usage,
+            status=status,
+            instance_type=instance_type,
+            user_id=user_id,
+            search=search,
+            limit=limit,
+            offset=offset,
+        )
+        return InstanceListResponse(
+            instances=[to_response(inst) for inst in result.instances],
+            total=result.total,
+            limit=result.limit,
+            offset=result.offset,
+        )
     except Exception as e:
         logger.error(f"Failed to list instances: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve instances")
