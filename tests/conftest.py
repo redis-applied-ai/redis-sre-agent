@@ -3,8 +3,6 @@ Test configuration and fixtures for Redis SRE Agent.
 """
 
 import os
-import subprocess
-import time
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -67,34 +65,9 @@ def pytest_configure(config):
         os.environ["OPENAI_INTEGRATION_TESTS"] = "true"
         os.environ["AGENT_BEHAVIOR_TESTS"] = "true"
         os.environ["INTEGRATION_TESTS"] = "true"  # Needed for redis_container fixture
-
-    # If running full suite and INTEGRATION_TESTS requested, ensure docker compose is up
-    if os.environ.get("INTEGRATION_TESTS") and not os.environ.get("CI"):
-        try:
-            # Start only infra services to avoid building app images during tests
-            subprocess.run(
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    "docker-compose.yml",
-                    "-f",
-                    "docker-compose.test.yml",
-                    "up",
-                    "-d",
-                    "redis",
-                    "redis-exporter",
-                    "prometheus",
-                    "node-exporter",
-                    "grafana",
-                ],
-                check=False,
-            )
-            # Give services a moment to start
-            time.sleep(3)
-        except Exception:
-            # Non-fatal; testcontainers fallback will still work
-            pass
+    # Note: We intentionally do NOT start docker-compose here.
+    # Integration tests use testcontainers via the redis_container fixture,
+    # which manages Redis lifecycle automatically with docker-compose.integration.yml.
 
 
 def pytest_collection_modifyitems(config, items):

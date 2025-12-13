@@ -67,4 +67,7 @@ async def get_task(task_id: str) -> TaskResponse:
         updates=[u.model_dump() for u in state.updates],
         result=state.result,
         error_message=state.error_message,
+        subject=state.metadata.subject if state.metadata else None,
+        created_at=state.metadata.created_at if state.metadata else None,
+        updated_at=state.metadata.updated_at if state.metadata else None,
     )

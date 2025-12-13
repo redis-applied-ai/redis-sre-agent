@@ -65,20 +65,16 @@ const Schedules = () => {
   const loadData = async () => {
     try {
       setError(null);
-      const schedulesPromise = fetch("/api/v1/schedules/");
-      const instancesPromise = sreAgentApi.listInstances();
-
       const [schedulesRes, instancesRes] = await Promise.allSettled([
-        schedulesPromise,
-        instancesPromise,
+        sreAgentApi.listSchedules(),
+        sreAgentApi.listInstances(),
       ]);
 
-      if (schedulesRes.status !== "fulfilled" || !schedulesRes.value.ok) {
+      if (schedulesRes.status !== "fulfilled") {
         throw new Error("Failed to load schedules");
       }
 
-      const schedulesData = await schedulesRes.value.json();
-      setSchedules(schedulesData);
+      setSchedules(schedulesRes.value);
 
       if (instancesRes.status === "fulfilled") {
         // Map API instances to minimal shape used by this page
@@ -105,26 +101,15 @@ const Schedules = () => {
       setError(null);
       const scheduleData = {
         name: formData.get("name") as string,
-        description: (formData.get("description") as string) || undefined,
         interval_type: formData.get("interval_type") as string,
-        interval_value: parseInt(formData.get("interval_value") as string),
+        interval_value: parseInt(formData.get("interval_value") as string, 10),
         redis_instance_id:
           (formData.get("redis_instance_id") as string) || undefined,
         instructions: formData.get("instructions") as string,
         enabled: formData.get("enabled") === "on",
       };
 
-      const response = await fetch("/api/v1/schedules/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(scheduleData),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create schedule");
-      }
+      await sreAgentApi.createSchedule(scheduleData);
 
       await loadData();
       setShowCreateForm(false);
@@ -143,26 +128,15 @@ const Schedules = () => {
       setError(null);
       const updateData = {
         name: formData.get("name") as string,
-        description: (formData.get("description") as string) || undefined,
         interval_type: formData.get("interval_type") as string,
-        interval_value: parseInt(formData.get("interval_value") as string),
+        interval_value: parseInt(formData.get("interval_value") as string, 10),
         redis_instance_id:
           (formData.get("redis_instance_id") as string) || undefined,
         instructions: formData.get("instructions") as string,
         enabled: formData.get("enabled") === "on",
       };
 
-      const response = await fetch(`/api/v1/schedules/${scheduleId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updateData),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to update schedule");
-      }
+      await sreAgentApi.updateSchedule(scheduleId, updateData);
 
       await loadData();
       setEditingSchedule(null);
@@ -187,14 +161,7 @@ const Schedules = () => {
 
     try {
       setError(null);
-      const response = await fetch(`/api/v1/schedules/${scheduleId}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to delete schedule");
-      }
-
+      await sreAgentApi.deleteSchedule(scheduleId);
       await loadData();
     } catch (err) {
       setError(
@@ -206,14 +173,7 @@ const Schedules = () => {
   const handleTriggerSchedule = async (scheduleId: string) => {
     try {
       setError(null);
-      const response = await fetch(`/api/v1/schedules/${scheduleId}/trigger`, {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to trigger schedule");
-      }
-
+      await sreAgentApi.triggerSchedule(scheduleId);
       alert("Schedule triggered successfully!");
     } catch (err) {
       setError(
@@ -225,13 +185,7 @@ const Schedules = () => {
   const handleViewRuns = async (schedule: Schedule) => {
     try {
       setError(null);
-      const response = await fetch(`/api/v1/schedules/${schedule.id}/runs`);
-
-      if (!response.ok) {
-        throw new Error("Failed to load schedule runs");
-      }
-
-      const runs = await response.json();
+      const runs = await sreAgentApi.getScheduleRuns(schedule.id);
       setSelectedScheduleRuns(runs);
       setShowRunsModal(true);
     } catch (err) {

@@ -76,7 +76,7 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
         thread_id = await tm.create_thread(
             user_id=req.user_id,
             session_id=req.session_id,
-            initial_context=req.context or {"messages": []},
+            initial_context=req.context or {},
             tags=req.tags or [],
         )
         if req.subject:
@@ -91,12 +91,18 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
             await tm.append_messages(thread_id, [m.model_dump() for m in req.messages])
 
         state = await tm.get_thread(thread_id)
-        messages = state.context.get("messages", []) if state else []
-        # Return created thread state (messages + context)
+        if not state:
+            raise HTTPException(status_code=500, detail="Failed to retrieve created thread")
+
+        # Convert Message objects to API schema
+        messages = [
+            Message(role=m.role, content=m.content, metadata=m.metadata) for m in state.messages
+        ]
+
         return ThreadResponse(
             thread_id=thread_id,
-            messages=[Message(**m) for m in messages] if messages else [],
-            context=state.context if state else {},
+            messages=messages,
+            context=state.context,
         )
     except Exception as e:
         logger.error(f"Failed to create thread: {e}")
@@ -111,9 +117,6 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    # Extract messages from context if present
-    messages = state.context.get("messages", [])
-
     # Build metadata dict compatible with UI expectations
     try:
         metadata = state.metadata.model_dump()
@@ -123,18 +126,50 @@ async def get_thread(thread_id: str) -> ThreadResponse:
         except Exception:
             metadata = None
 
+    # Convert Message objects to API schema
+    messages = [
+        Message(role=m.role, content=m.content, metadata=m.metadata) for m in state.messages
+    ]
+
+    # Fetch the latest task's updates, result, and status for real-time UI display
+    updates = []
+    result = None
+    error_message = None
+    task_status = None
+
+    try:
+        from redis_sre_agent.core.keys import RedisKeys
+        from redis_sre_agent.core.tasks import TaskManager
+
+        task_manager = TaskManager(redis_client=rc)
+        # Get the latest task for this thread
+        latest_task_ids = await rc.zrevrange(RedisKeys.thread_tasks_index(thread_id), 0, 0)
+        if latest_task_ids:
+            latest_task_id = latest_task_ids[0]
+            if isinstance(latest_task_id, bytes):
+                latest_task_id = latest_task_id.decode()
+            task_state = await task_manager.get_task_state(latest_task_id)
+            if task_state:
+                updates = [u.model_dump() for u in (task_state.updates or [])]
+                result = task_state.result
+                error_message = task_state.error_message
+                task_status = task_state.status
+    except Exception as e:
+        logger.warning(f"Failed to fetch task updates for thread {thread_id}: {e}")
+
     return ThreadResponse(
         thread_id=thread_id,
         user_id=(metadata.get("user_id") if metadata else None),
         priority=(metadata.get("priority", 0) if metadata else 0),
         tags=(metadata.get("tags", []) if metadata else []),
         subject=(metadata.get("subject") if metadata else None),
-        messages=[Message(**m) for m in messages] if messages else [],
+        messages=messages,
         context=state.context,
-        updates=[u.model_dump() for u in state.updates] if state.updates else [],
-        result=state.result,
-        error_message=state.error_message,
         metadata=metadata,
+        updates=updates,
+        result=result,
+        error_message=error_message,
+        status=task_status,
     )
 
 

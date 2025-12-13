@@ -95,6 +95,9 @@ class TaskResponse(BaseModel):
     updates: List[Dict[str, Any]] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+    subject: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 # Thread schemas
@@ -126,6 +129,12 @@ class ThreadAppendMessagesRequest(BaseModel):
 
 
 class ThreadResponse(BaseModel):
+    """Response model for thread data.
+
+    Updates, result, and error_message are fetched from the latest task
+    associated with this thread to support real-time UI updates.
+    """
+
     thread_id: str
     user_id: Optional[str] = None
     priority: int = 0
@@ -133,10 +142,11 @@ class ThreadResponse(BaseModel):
     subject: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     messages: List[Message] = Field(default_factory=list)
-    # New fields to expose full thread state for UI streaming
-    updates: List[Dict[str, Any]] = Field(default_factory=list)
-    result: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Task-level fields for real-time updates
+    updates: List[Dict[str, Any]] = Field(default_factory=list)
+    result: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    status: Optional[str] = None

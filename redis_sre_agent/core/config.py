@@ -1,27 +1,153 @@
 """Configuration management using Pydantic Settings."""
 
-from typing import TYPE_CHECKING, List, Optional
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union
 
-from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, SecretStr
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
+
+from redis_sre_agent.tools.models import ToolCapability
 
 if TYPE_CHECKING:
     pass
 
+
+class MCPToolConfig(BaseModel):
+    """Configuration for a specific tool exposed by an MCP server.
+
+    This allows overriding or constraining how the agent sees and uses
+    a specific MCP tool.
+
+    Example:
+        MCPToolConfig(
+            capability=ToolCapability.LOGS,
+            description="Use this tool when searching for memories..."
+        )
+    """
+
+    capability: Optional[ToolCapability] = Field(
+        default=None,
+        description="The capability category for this tool (e.g., LOGS, METRICS). "
+        "If not specified, defaults to UTILITIES.",
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Alternative description for this tool. "
+        "If provided, the agent sees this instead of the MCP server's description.",
+    )
+
+
+class MCPServerConfig(BaseModel):
+    """Configuration for an MCP server.
+
+    This follows the standard MCP configuration format used by Claude, VS Code,
+    and other tools, with additional fields for tool constraints.
+
+    Example:
+        MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-memory"],
+            tools={
+                "search_memories": MCPToolConfig(capability=ToolCapability.LOGS),
+                "create_memories": MCPToolConfig(description="Use this tool when..."),
+            }
+        )
+    """
+
+    # Standard MCP configuration fields
+    command: Optional[str] = Field(
+        default=None,
+        description="Command to launch the MCP server (for stdio transport).",
+    )
+    args: Optional[List[str]] = Field(
+        default=None,
+        description="Arguments to pass to the MCP server command.",
+    )
+    env: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Environment variables to set when launching the server.",
+    )
+
+    # URL-based transport (alternative to command-based)
+    url: Optional[str] = Field(
+        default=None,
+        description="URL for SSE or HTTP-based MCP transport.",
+    )
+
+    # Headers for HTTP/SSE transport (e.g., Authorization)
+    headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Headers to send with HTTP/SSE requests (e.g., Authorization).",
+    )
+
+    # Transport type for URL-based connections
+    transport: Optional[str] = Field(
+        default=None,
+        description="Transport type for URL-based connections: 'sse' for Server-Sent Events "
+        "(legacy), 'streamable_http' for Streamable HTTP (recommended for modern servers like "
+        "GitHub's remote MCP). If not specified, defaults to 'streamable_http' for better "
+        "compatibility with modern MCP servers.",
+    )
+
+    # Tool constraints - if provided, only these tools are exposed to the agent
+    tools: Optional[Dict[str, MCPToolConfig]] = Field(
+        default=None,
+        description="Optional mapping of tool names to their configurations. "
+        "If provided, only these tools are exposed to the agent from the MCP server. "
+        "Each tool can have a custom capability and/or description override.",
+    )
+
+
 # Load environment variables from .env file if it exists
 # In Docker/production, environment variables are set directly
-from pathlib import Path
-
-from dotenv import load_dotenv
-
 ENV_FILE_OPT: str | None = None
 TWENTY_MINUTES_IN_SECONDS = 1200
 
 # Only load .env if it exists (for local development)
+# In Docker/production, environment variables are set directly.
+# We check existence before calling load_dotenv to avoid FileNotFoundError.
 _env_path = Path(".env")
-if _env_path.exists():
+if _env_path.is_file():
     load_dotenv(dotenv_path=_env_path)
     ENV_FILE_OPT = str(_env_path)
+else:
+    # Try loading from default locations without erroring if not found
+    load_dotenv()
+
+
+# Default config file paths (checked in order)
+# SRE_AGENT_CONFIG environment variable takes precedence if set
+DEFAULT_CONFIG_PATHS = [
+    "config.yaml",
+    "config.yml",
+    "sre_agent_config.yaml",
+    "sre_agent_config.yml",
+]
+
+
+def _get_yaml_config_path() -> str | list[str] | None:
+    """Get the YAML config file path to use.
+
+    Returns:
+        - The path from SRE_AGENT_CONFIG env var if set
+        - Or the list of default paths to check
+        - Or None if SRE_AGENT_CONFIG is set to a nonexistent file
+    """
+    config_path = os.environ.get("SRE_AGENT_CONFIG")
+
+    if config_path:
+        # If explicitly specified, use it (pydantic will handle missing files)
+        return config_path
+
+    # Return list of default paths - pydantic-settings will check each in order
+    return DEFAULT_CONFIG_PATHS
 
 
 class Settings(BaseSettings):
@@ -29,6 +155,18 @@ class Settings(BaseSettings):
 
     Loads settings from environment variables. In local development, these can be
     provided via a .env file. In Docker/production, they should be set directly.
+
+    Configuration can also be loaded from YAML files. The following paths are checked
+    (first match wins):
+    - Path specified in SRE_AGENT_CONFIG environment variable
+    - config.yaml, config.yml, sre_agent_config.yaml, sre_agent_config.yml
+
+    Priority (highest to lowest):
+    1. Values passed to Settings() constructor
+    2. Environment variables
+    3. .env file
+    4. YAML config file
+    5. Default values
     """
 
     model_config = SettingsConfigDict(
@@ -38,6 +176,8 @@ class Settings(BaseSettings):
         extra="ignore",
         # Don't error if .env file is missing (Docker/production use env vars directly)
         env_ignore_empty=True,
+        # Note: yaml_file is set dynamically in settings_customise_sources
+        # to support SRE_AGENT_CONFIG env var being set after module import
     )
 
     # Application
@@ -70,6 +210,10 @@ class Settings(BaseSettings):
         default="text-embedding-3-small", description="OpenAI embedding model"
     )
     vector_dim: int = Field(default=1536, description="Vector dimensions")
+    embeddings_cache_ttl: Optional[int] = Field(
+        default=86400 * 7,  # 7 days
+        description="TTL in seconds for cached embeddings. None means no expiration.",
+    )
 
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
@@ -135,6 +279,107 @@ class Settings(BaseSettings):
         description="Enabled tool providers (fully qualified class paths). "
         "Example: redis_sre_agent.tools.metrics.prometheus.PrometheusToolProvider",
     )
+
+    # MCP Server Configuration
+    # Uses "uv tool run" (equivalent to uvx) to auto-install the package from PyPI.
+    # Override via MCP_SERVERS environment variable (JSON) if needed.
+    mcp_servers: Dict[str, Union[MCPServerConfig, Dict[str, Any]]] = Field(
+        default_factory=lambda: {
+            "redis-memory-server": {
+                "command": "uv",
+                "args": [
+                    "tool",
+                    "run",
+                    "--from",
+                    "agent-memory-server",
+                    "agent-memory",
+                    "mcp",
+                ],
+                "env": {"REDIS_URL": "redis://localhost:6399"},
+                # Only include specific tools, with context-aware descriptions.
+                # Use {original} to include the tool's original description.
+                "tools": {
+                    "get_current_datetime": {
+                        "description": (
+                            "Get the current date and time. Use this when you need to "
+                            "record timestamps for Redis instance events or incidents.\n\n"
+                            "{original}"
+                        ),
+                    },
+                    "create_long_term_memories": {
+                        "description": (
+                            "Save long-term memories about Redis instances. Use this to "
+                            "record: past incidents and their resolutions, configuration "
+                            "changes, performance baselines, known issues, maintenance "
+                            "history, and lessons learned. Always include the instance_id "
+                            "in the memory text for future retrieval.\n\n{original}"
+                        ),
+                    },
+                    "search_long_term_memory": {
+                        "description": (
+                            "Search saved memories about Redis instances. ALWAYS use this "
+                            "before troubleshooting a Redis instance to recall past issues, "
+                            "solutions, and context. Search by instance_id, error patterns, "
+                            "or symptoms.\n\n{original}"
+                        ),
+                    },
+                    "get_long_term_memory": {
+                        "description": (
+                            "Retrieve a specific memory by ID. Use this to get full details "
+                            "of a memory found via search.\n\n{original}"
+                        ),
+                    },
+                    "edit_long_term_memory": {
+                        "description": (
+                            "Update an existing memory. Use this to add new information to "
+                            "a past incident record, update resolution status, or correct "
+                            "outdated information.\n\n{original}"
+                        ),
+                    },
+                    "delete_long_term_memories": {
+                        "description": (
+                            "Delete memories that are no longer relevant. Use sparingly - "
+                            "prefer editing to add context rather than deleting.\n\n{original}"
+                        ),
+                    },
+                },
+            }
+        },
+        description="MCP (Model Context Protocol) servers to connect to. "
+        "Each key is the server name, and the value is the server configuration. "
+        "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
+        "'tools': {'search_memories': {'capability': 'logs'}}}}",
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """Customize settings sources to include YAML config file.
+
+        Priority (highest to lowest):
+        1. init_settings (passed to Settings())
+        2. env_settings (environment variables)
+        3. dotenv_settings (.env file)
+        4. yaml_settings (config.yaml file)
+        5. file_secret_settings (Docker secrets)
+        """
+        # Use the built-in YamlConfigSettingsSource from pydantic-settings
+        # Get the yaml_file path dynamically to respect SRE_AGENT_CONFIG env var
+        # set after module import
+        yaml_file = _get_yaml_config_path()
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            YamlConfigSettingsSource(settings_cls, yaml_file=yaml_file),
+            file_secret_settings,
+        )
 
 
 # Global settings instance

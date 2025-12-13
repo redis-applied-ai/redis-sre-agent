@@ -25,8 +25,9 @@ def knowledge():
 
 @knowledge.command("search")
 @click.argument("query", nargs=-1)
-@click.option("--limit", "-l", default=5, help="Number of results to return")
 @click.option("--category", "-c", type=str, help="Filter by category")
+@click.option("--limit", "-l", default=10, help="Number of results to return")
+@click.option("--offset", "-o", default=0, help="Offset for pagination")
 @click.option("--distance-threshold", "-d", type=float, help="Cosine distance threshold")
 @click.option(
     "--hybrid-search",
@@ -35,11 +36,14 @@ def knowledge():
     default=False,
     help="Use hybrid search (vector + full-text)",
 )
+@click.option("--version", "-v", type=str, default="latest", help="Redis version filter")
 def knowledge_search(
-    limit: int,
     category: Optional[str],
+    limit: int,
+    offset: int,
     distance_threshold: Optional[float],
-    hybrid_search: bool = False,
+    hybrid_search: bool,
+    version: Optional[str],
     query: str = "*",
 ):
     """Search the knowledge base (query helpers group)."""
@@ -48,6 +52,7 @@ def knowledge_search(
         kwargs = {
             "query": " ".join(query),
             "limit": limit,
+            "offset": offset,
             "distance_threshold": distance_threshold,
             "hybrid_search": hybrid_search,
         }
@@ -58,6 +63,9 @@ def knowledge_search(
             click.echo(f"📂 Category filter: {category}")
         if distance_threshold:
             click.echo(f"📏 Distance threshold: {distance_threshold}")
+        if version:
+            kwargs["version"] = version
+            click.echo(f"🔢 Version filter: {version}")
         click.echo(f"🔢 Limit: {limit}")
 
         result = await search_knowledge_base_helper(**kwargs)
@@ -73,6 +81,7 @@ def knowledge_search(
                     click.echo(f"Title: {doc.get('title', 'Unknown')}")
                     click.echo(f"Source: {doc.get('source', 'Unknown')}")
                     click.echo(f"Category: {doc.get('category', 'general')}")
+                    click.echo(f"Version: {doc.get('version', 'None')}")
                     content = doc.get("content", "")
                     if len(content) > 1000:
                         content = content[:1000] + "..."

@@ -15,7 +15,7 @@ docker compose up -d \
   prometheus grafana \
   loki promtail
   ```
-  - API: http://localhost:8000
+  - API: http://localhost:8080 (Docker Compose exposes port 8080)
 - Local processes (no Docker)
   ```bash
   # API
@@ -122,4 +122,4 @@ uv run redis-sre-agent thread sources <thread_id>
 ### Tips
 - Use the Docker stack to get Prometheus/Loki; set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL so the agent can fetch metrics/logs.
 - Prefer `docker compose exec -T sre-agent uv run ...` inside containers when running in Docker (uses in-cluster addresses).
-- Health endpoints: `curl http://localhost:8000/` and `/api/v1/health` to verify API and worker availability.
+- Health endpoints: `curl http://localhost:8080/` (Docker Compose) or `http://localhost:8000/` (local uvicorn) and `/api/v1/health` to verify API and worker availability.

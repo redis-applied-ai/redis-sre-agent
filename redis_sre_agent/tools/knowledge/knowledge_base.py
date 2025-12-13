@@ -52,7 +52,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "runbooks, Redis documentation, troubleshooting guides, and SRE procedures. "
                     "Use this to find solutions to problems, understand Redis features, or get "
                     "guidance on SRE best practices. Always cite the source document and title "
-                    "when using information from search results."
+                    "when using information from search results. By default, returns only the "
+                    "latest version of documentation to avoid duplicates."
                 ),
                 capability=ToolCapability.KNOWLEDGE,
                 parameters={
@@ -67,7 +68,23 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "description": "Maximum number of results to return (default: 10)",
                             "default": 10,
                             "minimum": 1,
-                            "maximum": 20,
+                            "maximum": 50,
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Number of results to skip for pagination (default: 0)",
+                            "default": 0,
+                            "minimum": 0,
+                        },
+                        "version": {
+                            "type": "string",
+                            "description": (
+                                "Redis documentation version filter. Defaults to 'latest' which "
+                                "returns only the most current documentation. Available versions: "
+                                "'latest' (default, recommended), '7.8', '7.4', '7.2'. "
+                                "Set to null to return all versions (may include duplicates)."
+                            ),
+                            "default": "latest",
                         },
                         "distance_threshold": {
                             "type": "number",
@@ -198,6 +215,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         self,
         query: str,
         limit: int = 10,
+        offset: int = 0,
+        version: Optional[str] = "latest",
         distance_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search the knowledge base.
@@ -205,17 +224,22 @@ class KnowledgeBaseToolProvider(ToolProvider):
         Args:
             query: Search query
             limit: Maximum number of results
+            offset: Number of results to skip for pagination
+            version: Version filter - "latest" (default), specific version like "7.8",
+                     or None to return all versions
             distance_threshold: Optional cosine distance threshold. If provided, overrides the backend default.
 
         Returns:
             Search results with relevant knowledge base content
         """
         logger.info(
-            f"Knowledge base search: {query} (limit={limit}, distance_threshold={distance_threshold})"
+            f"Knowledge base search: {query} (limit={limit}, offset={offset}, version={version})"
         )
         kwargs = {
             "query": query,
             "limit": limit,
+            "offset": offset,
+            "version": version,
             "distance_threshold": distance_threshold,
         }
         # OTel: instrument knowledge search without leaking raw query
@@ -232,6 +256,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
                 "query.len": len(query or ""),
                 "query.sha1": _qhash,
                 "limit": int(limit),
+                "offset": int(offset),
+                "version": version or "all",
                 "distance_threshold.set": distance_threshold is not None,
             },
         ):

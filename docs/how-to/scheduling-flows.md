@@ -24,7 +24,7 @@ uv run redis-sre-agent schedule run-now <schedule_id>
 
 ### 2) Create a schedule (API)
 ```bash
-curl -X POST http://localhost:8000/api/v1/schedules \
+curl -X POST http://localhost:8080/api/v1/schedules \
   -H "Content-Type: application/json" \
   -d '{
         "name": "redis-health",
@@ -38,20 +38,20 @@ curl -X POST http://localhost:8000/api/v1/schedules \
 
 List schedules:
 ```bash
-curl http://localhost:8000/api/v1/schedules/
+curl http://localhost:8080/api/v1/schedules/
 ```
 
 Get a schedule:
 ```bash
-curl http://localhost:8000/api/v1/schedules/{schedule_id}
+curl http://localhost:8080/api/v1/schedules/{schedule_id}
 ```
 
 Trigger a run immediately:
 ```bash
-curl -X POST http://localhost:8000/api/v1/schedules/{schedule_id}/trigger
+curl -X POST http://localhost:8080/api/v1/schedules/{schedule_id}/trigger
 ```
 
 List recent runs:
 ```bash
-curl http://localhost:8000/api/v1/schedules/{schedule_id}/runs
+curl http://localhost:8080/api/v1/schedules/{schedule_id}/runs
 ```

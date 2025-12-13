@@ -15,6 +15,8 @@ _COMMANDS = {
     "runbook": "redis_sre_agent.cli.runbook:runbook",
     "query": "redis_sre_agent.cli.query:query",
     "worker": "redis_sre_agent.cli.worker:worker",
+    "mcp": "redis_sre_agent.cli.mcp:mcp",
+    "index": "redis_sre_agent.cli.index:index",
 }
 
 

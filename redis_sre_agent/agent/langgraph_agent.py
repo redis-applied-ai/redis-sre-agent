@@ -29,6 +29,7 @@ from ..core.instances import (
     get_instances,
     save_instances,
 )
+from ..core.progress import CallbackEmitter, NullEmitter, ProgressEmitter
 from ..tools.manager import ToolManager
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
@@ -313,10 +314,28 @@ class SREToolCall(BaseModel):
 class SRELangGraphAgent:
     """LangGraph-based SRE Agent with multi-turn conversation and tool calling."""
 
-    def __init__(self, progress_callback=None):
-        """Initialize the SRE LangGraph agent."""
+    def __init__(
+        self,
+        progress_callback=None,
+        progress_emitter: Optional[ProgressEmitter] = None,
+    ):
+        """Initialize the SRE LangGraph agent.
+
+        Args:
+            progress_callback: Deprecated. Legacy callback for progress updates.
+                              Use progress_emitter instead.
+            progress_emitter: ProgressEmitter instance for emitting status updates.
+                             If not provided but progress_callback is, wraps callback
+                             in a CallbackEmitter for backward compatibility.
+        """
         self.settings = settings
-        self.progress_callback = progress_callback
+        # Support both new emitter and legacy callback
+        if progress_emitter is not None:
+            self._progress_emitter: ProgressEmitter = progress_emitter
+        elif progress_callback is not None:
+            self._progress_emitter = CallbackEmitter(progress_callback)
+        else:
+            self._progress_emitter = NullEmitter()
         # LLM with both reasoning and function calling capabilities
         self.llm = ChatOpenAI(
             model=self.settings.openai_model,
@@ -519,6 +538,196 @@ JSON payload of analyses artifacts:
                 pass
 
         return content
+
+    async def _summarize_envelopes_for_reasoning(
+        self,
+        envelopes: List[Dict[str, Any]],
+        max_data_chars: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Summarize tool output envelopes to reduce context size for reasoning.
+
+        For envelopes with large data payloads, uses the mini LLM to extract
+        key findings. Small payloads are kept as-is.
+
+        Args:
+            envelopes: List of ResultEnvelope dicts from tool executions
+            max_data_chars: Threshold above which to summarize (default 500 chars)
+
+        Returns:
+            List of summarized envelope dicts with condensed data
+        """
+        if not envelopes:
+            return []
+
+        summarized = []
+        to_summarize = []
+        to_summarize_indices = []
+
+        # Identify which envelopes need summarization
+        for i, env in enumerate(envelopes):
+            data = env.get("data", {})
+            data_str = json.dumps(data, default=str) if data else ""
+
+            if len(data_str) > max_data_chars:
+                to_summarize.append(env)
+                to_summarize_indices.append(i)
+            else:
+                summarized.append((i, env))
+
+        # Batch summarize large envelopes
+        if to_summarize:
+            logger.info(
+                f"Reasoning: summarizing {len(to_summarize)} envelopes "
+                f"(>{max_data_chars} chars each)"
+            )
+
+            # Build batch prompt for efficiency
+            batch_prompt = (
+                "You are summarizing tool outputs for an SRE agent. "
+                "For each tool result below, extract ONLY the key findings in 2-3 sentences. "
+                "Focus on: errors, warnings, anomalies, key metrics, and actionable insights. "
+                "Preserve exact numbers, error messages, and metric values. "
+                "Return a JSON array with one summary object per input.\n\n"
+            )
+
+            for j, env in enumerate(to_summarize):
+                tool_name = env.get("name", "tool")
+                data = env.get("data", {})
+                batch_prompt += f"--- Tool {j + 1}: {tool_name} ---\n"
+                batch_prompt += json.dumps(data, default=str)[:2000]  # Cap individual items
+                batch_prompt += "\n\n"
+
+            batch_prompt += (
+                'Return JSON array format: [{"summary": "key findings..."}, {"summary": "..."}]'
+            )
+
+            try:
+                summary_response = await self._ainvoke_memo(
+                    "envelope_summarizer",
+                    self.mini_llm,
+                    [HumanMessage(content=batch_prompt)],
+                )
+                content = summary_response.content or ""
+
+                # Parse summaries from response
+                summaries = []
+                try:
+                    # Try to extract JSON array from response
+                    import re
+
+                    json_match = re.search(r"\[[\s\S]*\]", content)
+                    if json_match:
+                        summaries = json.loads(json_match.group())
+                except Exception:
+                    pass
+
+                # Apply summaries to envelopes
+                for j, (orig_idx, env) in enumerate(zip(to_summarize_indices, to_summarize)):
+                    summary_text = (
+                        summaries[j].get("summary", "")
+                        if j < len(summaries) and isinstance(summaries[j], dict)
+                        else ""
+                    )
+                    if not summary_text:
+                        # Fallback: truncate data
+                        data_str = json.dumps(env.get("data", {}), default=str)
+                        summary_text = data_str[:max_data_chars] + "..."
+
+                    condensed_env = {
+                        "tool_key": env.get("tool_key"),
+                        "name": env.get("name"),
+                        "description": env.get("description"),
+                        "args": env.get("args"),
+                        "status": env.get("status"),
+                        "data": {"summary": summary_text},
+                    }
+                    summarized.append((orig_idx, condensed_env))
+
+            except Exception as e:
+                logger.warning(f"Envelope summarization failed, using truncation: {e}")
+                # Fallback: truncate all large envelopes
+                for orig_idx, env in zip(to_summarize_indices, to_summarize):
+                    data_str = json.dumps(env.get("data", {}), default=str)
+                    condensed_env = {
+                        "tool_key": env.get("tool_key"),
+                        "name": env.get("name"),
+                        "description": env.get("description"),
+                        "args": env.get("args"),
+                        "status": env.get("status"),
+                        "data": {"truncated": data_str[:max_data_chars] + "..."},
+                    }
+                    summarized.append((orig_idx, condensed_env))
+
+        # Sort by original index to preserve order
+        summarized.sort(key=lambda x: x[0])
+        return [env for _, env in summarized]
+
+    def _build_expand_evidence_tool(
+        self,
+        original_envelopes: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Build a tool that allows the LLM to retrieve full tool output details.
+
+        When we summarize tool outputs, the LLM only sees condensed versions.
+        This tool lets the LLM request the full original output for any tool_key
+        if it needs more detail.
+
+        Args:
+            original_envelopes: The original (unsummarized) envelopes
+
+        Returns:
+            A LangChain-compatible tool dict that can be bound to an LLM
+        """
+        # Build lookup from tool_key to original envelope
+        originals_by_key = {e.get("tool_key"): e for e in original_envelopes}
+        available_keys = list(originals_by_key.keys())
+
+        def expand_evidence(tool_key: str) -> Dict[str, Any]:
+            """Retrieve the full, unsummarized output from a previous tool call.
+
+            Use this when you need more detail than the summary provides.
+            Only call this for tool_keys that appear in the evidence summaries.
+
+            Args:
+                tool_key: The tool_key from a summarized evidence item
+
+            Returns:
+                The full original tool output with all details
+            """
+            if tool_key not in originals_by_key:
+                return {
+                    "status": "error",
+                    "error": f"Unknown tool_key: {tool_key}. Available keys: {available_keys}",
+                }
+            original = originals_by_key[tool_key]
+            return {
+                "status": "success",
+                "tool_key": tool_key,
+                "name": original.get("name"),
+                "description": original.get("description"),
+                "full_data": original.get("data"),
+            }
+
+        # Return as a LangChain tool-compatible format
+        return {
+            "name": "expand_evidence",
+            "description": (
+                "Retrieve the full, unsummarized output from a previous tool call. "
+                "Use this when the summary doesn't have enough detail for your analysis. "
+                f"Available tool_keys: {available_keys}"
+            ),
+            "func": expand_evidence,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool_key": {
+                        "type": "string",
+                        "description": "The tool_key from a summarized evidence item",
+                    }
+                },
+                "required": ["tool_key"],
+            },
+        }
 
     def _build_workflow(
         self, tool_mgr: ToolManager, target_instance: Optional[Any] = None
@@ -785,12 +994,12 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 try:
                     tool_name = tc.get("name")
                     tool_args = tc.get("args") or {}
-                    if self.progress_callback and tool_name:
+                    if tool_name:
                         status_msg = tool_mgr.get_status_update(
                             tool_name, tool_args
                         ) or self._generate_tool_reflection(tool_name, tool_args)
                         if status_msg:
-                            await self.progress_callback(status_msg, "agent_reflection")
+                            await self._progress_emitter.emit(status_msg, "agent_reflection")
                 except Exception:
                     pass
 
@@ -839,8 +1048,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         # Knowledge fragments progress (best-effort)
                         try:
                             if (
-                                self.progress_callback
-                                and isinstance(data_obj, dict)
+                                isinstance(data_obj, dict)
                                 and isinstance(tool_name, str)
                                 and tool_name.startswith("knowledge_")
                                 and tool_name.endswith("_search")
@@ -863,7 +1071,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                                             f"Failed to build fragment from knowledge search result: {e}"
                                         )
                                 if fragments:
-                                    await self.progress_callback(
+                                    await self._progress_emitter.emit(
                                         "Retrieved knowledge fragments",
                                         "knowledge_sources",
                                         {"fragments": fragments},
@@ -912,9 +1120,16 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 except Exception:
                     return None
 
-            # New path: topic extraction with structured output based on full envelopes
+            # New path: topic extraction with structured output based on summarized envelopes
             envelopes = state.get("signals_envelopes") or []
             logger.info(f"Reasoning: envelopes captured={len(envelopes)}")
+
+            # Summarize large envelopes to reduce context size
+            summarized_envelopes = await self._summarize_envelopes_for_reasoning(
+                envelopes, max_data_chars=500
+            )
+            logger.info(f"Reasoning: envelopes after summarization={len(summarized_envelopes)}")
+
             topics: List[Dict[str, Any]] = []
             try:
                 from .models import TopicsList
@@ -927,13 +1142,13 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     "name": target_instance.name,
                 }
                 preface = (
-                    "About this JSON: signals from upstream tool calls (each has a tool description, args, and raw JSON results).\n"
+                    "About this JSON: summarized signals from upstream tool calls (each has a tool description, args, and key findings).\n"
                     "Use only these as evidence. Return a list of topics with evidence_keys referencing tool_key.\n"
                     "For EACH topic, include: id, title, category, scope, narrative, evidence_keys, and severity.\n"
                     "severity MUST be one of: critical | high | medium | low, based on operational risk/impact/urgency.\n"
                     "Order the topics by severity (critical->low)."
                 )
-                payload = json.dumps(envelopes, default=str)
+                payload = json.dumps(summarized_envelopes, default=str)
                 human = HumanMessage(
                     content=(
                         preface
@@ -975,6 +1190,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
             # If we have extracted topics, run dynamic per-topic recommendation workers
             if topics:
+                from langchain_core.tools import StructuredTool
+
                 from .subgraphs.recommendation_worker import build_recommendation_worker
 
                 rec_tasks = []
@@ -988,32 +1205,50 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 # Use all knowledge tools for the mini knowledge agent; no op-level filtering.
                 knowledge_tools = tool_mgr.get_tools_for_capability(_ToolCap.KNOWLEDGE)
                 knowledge_adapters = await _build_adapters(tool_mgr, knowledge_tools)
-                if knowledge_adapters:
-                    knowledge_llm = self.mini_llm.bind_tools(knowledge_adapters)
 
-                if knowledge_adapters:
+                # Build expand_evidence tool so LLM can retrieve full details if needed
+                # This gives the LLM access to original (unsummarized) tool outputs
+                expand_tool_spec = self._build_expand_evidence_tool(envelopes)
+                expand_tool = StructuredTool.from_function(
+                    func=expand_tool_spec["func"],
+                    name=expand_tool_spec["name"],
+                    description=expand_tool_spec["description"],
+                )
+                # Add expand_evidence to the available tools
+                all_adapters = list(knowledge_adapters) + [expand_tool]
+
+                if all_adapters:
+                    knowledge_llm = self.mini_llm.bind_tools(all_adapters)
+
+                if all_adapters:
                     logger.info(
-                        f"Reasoning: knowledge adapters available={len(knowledge_adapters)}; topics to run={len(topics)}"
+                        f"Reasoning: knowledge adapters available={len(all_adapters)} "
+                        f"(includes expand_evidence tool); topics to run={len(topics)}"
                     )
                     worker = build_recommendation_worker(
                         knowledge_llm,
-                        knowledge_adapters,
+                        all_adapters,
                         max_tool_steps=self.settings.max_tool_calls_per_stage,
                         memoize=self._ainvoke_memo,
                     )
-                    env_by_key = {
-                        e.get("tool_key"): e for e in (state.get("signals_envelopes") or [])
-                    }
+                    # Use summarized envelopes for recommendation workers
+                    # LLM can call expand_evidence to get full details if needed
+                    env_by_key = {e.get("tool_key"): e for e in summarized_envelopes}
                     for t in topics:
                         ev_keys = [k for k in (t.get("evidence_keys") or []) if isinstance(k, str)]
                         ev = [env_by_key[k] for k in ev_keys if k in env_by_key]
                         inp = {
                             "messages": [
                                 SystemMessage(
-                                    content="You will research and then synthesize recommendations for the given topic."
+                                    content=(
+                                        "You will research and then synthesize recommendations for the given topic. "
+                                        "The evidence provided contains summaries of tool outputs. "
+                                        "If you need more detail from any evidence item, use the expand_evidence tool "
+                                        "with the tool_key to retrieve the full original output."
+                                    )
                                 ),
                                 HumanMessage(
-                                    content=f"Topic: {json.dumps(t, default=str)}\nInstance: {json.dumps(instance_ctx, default=str)}\nEvidence: {json.dumps(ev, default=str)}"
+                                    content=f"Topic: {json.dumps(t, default=str)}\nInstance: {json.dumps(instance_ctx, default=str)}\nEvidence (summaries): {json.dumps(ev, default=str)}"
                                 ),
                             ],
                             "budget": int(self.settings.max_tool_calls_per_stage),
@@ -1178,6 +1413,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
+        progress_emitter: Optional[ProgressEmitter] = None,
     ) -> str:
         """Process a single SRE query through the LangGraph workflow.
 
@@ -1187,15 +1423,19 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             user_id: User identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
+            progress_callback: Deprecated. Use progress_emitter instead.
+            progress_emitter: ProgressEmitter for status updates during this query.
 
         Returns:
             Agent's response as a string
         """
         logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
 
-        # Set progress callback for this query
-        if progress_callback:
-            self.progress_callback = progress_callback
+        # Set progress emitter for this query (prefer emitter over callback)
+        if progress_emitter is not None:
+            self._progress_emitter = progress_emitter
+        elif progress_callback is not None:
+            self._progress_emitter = CallbackEmitter(progress_callback)
 
         # Determine target Redis instance from context
         target_instance = None
@@ -1214,6 +1454,12 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         f"Found target instance: {target_instance.name} ({target_instance.connection_url})"
                     )
                     # Add instance context to the query
+                    repo_context = ""
+                    if target_instance.repo_url:
+                        repo_context = f"""- Repository URL: {target_instance.repo_url}
+
+If you have repository tools available (e.g., GitHub MCP), you can use them to access code, configuration files, or documentation related to this instance.
+"""
                     enhanced_query = f"""User Query: {query}
 
 IMPORTANT CONTEXT: This query is specifically about Redis instance:
@@ -1222,7 +1468,7 @@ IMPORTANT CONTEXT: This query is specifically about Redis instance:
 - Connection URL: {target_instance.connection_url}
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
-
+{repo_context}
 Your diagnostic tools are PRE-CONFIGURED for this instance. You do NOT need to specify redis_url or instance details - they are already set. Just call the tools directly.
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this specific Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations.
@@ -1311,6 +1557,12 @@ Please verify the details and try again, or let me know if you'd like help with 
                             f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})"
                         )
 
+                        repo_context = ""
+                        if target_instance.repo_url:
+                            repo_context = f"""- Repository URL: {target_instance.repo_url}
+
+If you have repository tools available (e.g., GitHub MCP), you can use them to access code, configuration files, or documentation related to this instance.
+"""
                         enhanced_query = f"""User Query: {query}
 
 AUTO-DETECTED CONTEXT: Since no specific Redis instance was mentioned, I am analyzing the available Redis instance:
@@ -1319,7 +1571,7 @@ AUTO-DETECTED CONTEXT: Since no specific Redis instance was mentioned, I am anal
 - Port: {port}
 - Environment: {target_instance.environment}
 - Usage: {target_instance.usage}
-
+{repo_context}
 When using Redis diagnostic tools, use this Redis URL: {redis_url}
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations."""
@@ -1675,8 +1927,20 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
+        progress_emitter: Optional[ProgressEmitter] = None,
     ) -> str:
-        """Process a query once, then attach Safety and Fact-Checking notes."""
+        """Process a query once, then attach Safety and Fact-Checking notes.
+
+        Args:
+            query: User's SRE question or request
+            session_id: Session identifier for conversation context
+            user_id: User identifier
+            max_iterations: Maximum number of workflow iterations
+            context: Additional context including instance_id if specified
+            progress_callback: Deprecated. Use progress_emitter instead.
+            conversation_history: Optional list of previous messages for context
+            progress_emitter: ProgressEmitter for status updates during this query.
+        """
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
         try:
@@ -1689,6 +1953,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 context,
                 progress_callback,
                 conversation_history,
+                progress_emitter,
             )
 
             # Skip correction if this message isn't about Redis
@@ -1771,6 +2036,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                                     "version": inst.version,
                                     "memory": inst.memory,
                                     "connections": inst.connections,
+                                    "repo_url": inst.repo_url,
                                 }
                 except Exception:
                     instance_ctx = {}

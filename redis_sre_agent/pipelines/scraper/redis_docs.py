@@ -50,6 +50,31 @@ class RedisDocsScraper(BaseScraper):
         except Exception:
             return False
 
+    def _extract_version_from_url(self, url: str) -> str:
+        """Extract version from URL path.
+
+        Examples:
+            /rs/7.8/clusters/... -> "7.8"
+            /rs/7.4/clusters/... -> "7.4"
+            /rs/clusters/... -> "latest"
+            /latest/operate/... -> "latest"
+
+        Returns:
+            Version string (e.g., "7.8", "7.4") or "latest" for unversioned docs.
+        """
+        import re
+        from urllib.parse import urlparse
+
+        try:
+            path = urlparse(url).path
+            # Match version patterns like /7.8/, /7.4/, /6.2/
+            match = re.search(r"/(\d+\.\d+)/", path)
+            if match:
+                return match.group(1)
+            return "latest"
+        except Exception:
+            return "latest"
+
     def get_source_name(self) -> str:
         return "redis_documentation"
 
@@ -244,6 +269,12 @@ class RedisDocsScraper(BaseScraper):
             # Extract main content
             main_content = await self._extract_page_content(soup, section_url)
             if main_content:
+                # Extract version from URL and add to metadata
+                version = self._extract_version_from_url(section_url)
+                metadata = {
+                    **main_content["metadata"],
+                    "version": version,
+                }
                 doc = ScrapedDocument(
                     title=main_content["title"],
                     content=main_content["content"],
@@ -251,7 +282,7 @@ class RedisDocsScraper(BaseScraper):
                     category=category,
                     doc_type=doc_type,
                     severity=severity,
-                    metadata=main_content["metadata"],
+                    metadata=metadata,
                 )
                 documents.append(doc)
 

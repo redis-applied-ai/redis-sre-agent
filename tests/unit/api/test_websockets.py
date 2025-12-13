@@ -201,6 +201,8 @@ class TestWebSocketEndpoint:
             patch("redis_sre_agent.api.websockets._stream_manager") as mock_stream_manager,
         ):
             mock_redis = AsyncMock()
+            # Mock Redis operations that the websocket endpoint uses
+            mock_redis.zrevrange = AsyncMock(return_value=[])  # No latest task
             mock_get_redis.return_value = mock_redis
 
             mock_manager = AsyncMock()
@@ -216,8 +218,8 @@ class TestWebSocketEndpoint:
 
                 assert data["update_type"] == "initial_state"
                 assert data["thread_id"] == thread_id
-                assert len(data["updates"]) == 2
-                assert data["updates"][0]["message"] == "Processing..."  # Most recent first
+                # With no task, updates should be empty
+                assert data["updates"] == []
 
                 # Verify stream consumer was started
                 mock_stream_manager.start_consumer.assert_called_once_with(thread_id)

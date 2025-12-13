@@ -11,13 +11,13 @@ The docker-compose stack includes Prometheus, Grafana, Loki, and Tempo for local
 ### Quick health check
 Fast endpoint for load balancers (no external dependencies):
 ```bash
-curl -fsS http://localhost:8000/
+curl -fsS http://localhost:8080/
 ```
 
 ### Detailed health check
 Checks Redis connectivity, vector index, and worker availability:
 ```bash
-curl -fsS http://localhost:8000/api/v1/health | jq
+curl -fsS http://localhost:8080/api/v1/health | jq
 ```
 
 Returns status and component details. Status may be `degraded` if workers aren't running.
@@ -43,7 +43,7 @@ The agent exposes Prometheus metrics at `/api/v1/metrics` for scraping.
 
 ### Scrape the API
 ```bash
-curl -fsS http://localhost:8000/api/v1/metrics | head -n 30
+curl -fsS http://localhost:8080/api/v1/metrics | head -n 30
 ```
 
 ### Prometheus configuration

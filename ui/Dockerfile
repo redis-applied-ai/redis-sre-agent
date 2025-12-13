@@ -9,12 +9,19 @@ FROM base AS development
 
 # Copy package files
 COPY package*.json ./
+COPY ui-kit/package*.json ./ui-kit/
 
-# Install all dependencies (including dev dependencies)
-RUN npm ci
+# Install root dependencies, skipping postinstall (we'll build ui-kit after copying source)
+RUN npm ci --ignore-scripts
+
+# Install ui-kit dependencies
+RUN npm --prefix ./ui-kit ci --ignore-scripts
 
 # Copy source code
 COPY . .
+
+# Build ui-kit now that source files are present
+RUN npm --prefix ./ui-kit run build
 
 # Expose port
 EXPOSE 3000
@@ -27,15 +34,19 @@ FROM base AS build
 
 # Copy package files
 COPY package*.json ./
+COPY ui-kit/package*.json ./ui-kit/
 
-# Install dependencies
-RUN npm ci
+# Install root dependencies, skipping postinstall
+RUN npm ci --ignore-scripts
+
+# Install ui-kit dependencies
+RUN npm --prefix ./ui-kit ci --ignore-scripts
 
 # Copy source code
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build ui-kit first, then the main app
+RUN npm --prefix ./ui-kit run build && npm run build
 
 # Production stage
 FROM nginx:alpine AS production

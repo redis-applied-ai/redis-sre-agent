@@ -20,8 +20,12 @@ logger = logging.getLogger(__name__)
 class AgentType(Enum):
     """Types of available agents."""
 
-    REDIS_FOCUSED = "redis_focused"
-    KNOWLEDGE_ONLY = "knowledge_only"
+    REDIS_TRIAGE = "redis_triage"  # Full triage/health check agent
+    REDIS_CHAT = "redis_chat"  # Lightweight chat agent for quick Q&A
+    KNOWLEDGE_ONLY = "knowledge_only"  # No instance, general knowledge
+
+    # Keep old value for backward compatibility
+    REDIS_FOCUSED = "redis_triage"  # Alias for REDIS_TRIAGE
 
 
 async def route_to_appropriate_agent(
@@ -31,6 +35,11 @@ async def route_to_appropriate_agent(
 ) -> AgentType:
     """
     Route a query to the appropriate agent using a fast LLM categorization.
+
+    Routing logic:
+    - No Redis instance: KNOWLEDGE_ONLY (general knowledge questions)
+    - Has Redis instance + asks for full/comprehensive health check or triage: REDIS_TRIAGE
+    - Has Redis instance + quick question: REDIS_CHAT (fast diagnostic loop)
 
     Args:
         query: The user's query text
@@ -42,48 +51,89 @@ async def route_to_appropriate_agent(
     """
     logger.info(f"Routing query: {query[:100]}...")
 
-    # 1. Check for explicit Redis instance context
-    if context and context.get("instance_id"):
-        logger.info("Query has explicit Redis instance context - routing to Redis-focused agent")
-        return AgentType.REDIS_FOCUSED
+    has_instance = context and context.get("instance_id")
 
-    # 2. Check user preferences
+    # 1. No instance context - route to knowledge agent
+    if not has_instance:
+        # Use LLM to decide if query needs instance access or is knowledge-only
+        try:
+            llm = ChatOpenAI(
+                model=settings.openai_model_nano,
+                api_key=settings.openai_api_key,
+                timeout=10.0,
+                temperature=0,
+            )
+
+            system_prompt = """You are a query categorization system for a Redis SRE agent.
+
+Categorize if this query requires access to a live Redis instance or is just seeking general knowledge.
+
+1. NEEDS_INSTANCE: Queries that require access to a specific Redis instance for diagnostics, monitoring, or troubleshooting.
+   Examples: "Check my Redis memory", "Why is Redis slow?", "Show me the slowlog"
+
+2. KNOWLEDGE_ONLY: Queries seeking general knowledge, best practices, or guidance.
+   Examples: "What are Redis best practices?", "How does Redis replication work?"
+
+Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
+
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"Categorize this query: {query}"),
+            ]
+
+            response = await llm.ainvoke(messages)
+            category = response.content.strip().upper()
+
+            if "NEEDS_INSTANCE" in category:
+                logger.info("Query needs instance but none provided - routing to KNOWLEDGE_ONLY")
+            else:
+                logger.info("LLM categorized query as KNOWLEDGE_ONLY")
+
+            return AgentType.KNOWLEDGE_ONLY
+
+        except Exception as e:
+            logger.error(f"Error during LLM routing: {e}, defaulting to KNOWLEDGE_ONLY")
+            return AgentType.KNOWLEDGE_ONLY
+
+    # 2. Has instance - decide between triage (full) and chat (quick)
+    # Check user preferences first
     if user_preferences and user_preferences.get("preferred_agent"):
         preferred = user_preferences["preferred_agent"]
         if preferred in [agent.value for agent in AgentType]:
             logger.info(f"Using user preference: {preferred}")
             return AgentType(preferred)
 
-    # 3. Use fast LLM to categorize the query
+    # 3. Use LLM to categorize triage vs chat
     try:
         llm = ChatOpenAI(
             model=settings.openai_model_nano,
             api_key=settings.openai_api_key,
-            timeout=10.0,  # Fast timeout for categorization
-            temperature=0,  # Deterministic categorization
+            timeout=10.0,
+            temperature=0,
         )
 
         system_prompt = """You are a query categorization system for a Redis SRE agent.
 
-Your task is to categorize user queries into one of two categories:
+The user has a Redis instance available. Determine what kind of agent should handle their query:
 
-1. REDIS_FOCUSED: Queries that require access to a specific Redis instance for diagnostics, monitoring, or troubleshooting.
+1. TRIAGE: Full health check, comprehensive diagnostics, or in-depth analysis.
+   Trigger words: "full health check", "triage", "comprehensive", "full analysis", "complete diagnostic", "thorough check", "audit"
    Examples:
-   - "Check the memory usage of my Redis instance"
-   - "Why is Redis slow?"
+   - "Run a full health check on my Redis"
+   - "I need a comprehensive triage of this instance"
+   - "Do a complete diagnostic"
+   - "Give me a thorough analysis"
+
+2. CHAT: Quick questions, specific lookups, or targeted queries.
+   Examples:
+   - "What do you know about this instance?"
+   - "Check the memory usage"
    - "Show me the slowlog"
-   - "What's the current connection count?"
-   - "Diagnose performance issues"
+   - "How many connections are there?"
+   - "What's the current ops/sec?"
+   - "Is replication working?"
 
-2. KNOWLEDGE_ONLY: Queries seeking general knowledge, best practices, or guidance that don't require instance access.
-   Examples:
-   - "What are Redis best practices?"
-   - "How does Redis replication work?"
-   - "Explain Redis persistence options"
-   - "What is an SRE runbook?"
-   - "How should I configure Redis for high availability?"
-
-Respond with ONLY one word: either "REDIS_FOCUSED" or "KNOWLEDGE_ONLY"."""
+Respond with ONLY one word: either "TRIAGE" or "CHAT"."""
 
         messages = [
             SystemMessage(content=system_prompt),
@@ -93,18 +143,13 @@ Respond with ONLY one word: either "REDIS_FOCUSED" or "KNOWLEDGE_ONLY"."""
         response = await llm.ainvoke(messages)
         category = response.content.strip().upper()
 
-        if "REDIS_FOCUSED" in category:
-            logger.info("LLM categorized query as REDIS_FOCUSED")
-            return AgentType.REDIS_FOCUSED
-        elif "KNOWLEDGE_ONLY" in category:
-            logger.info("LLM categorized query as KNOWLEDGE_ONLY")
-            return AgentType.KNOWLEDGE_ONLY
+        if "TRIAGE" in category:
+            logger.info("LLM categorized query as REDIS_TRIAGE (full health check)")
+            return AgentType.REDIS_TRIAGE
         else:
-            logger.warning(
-                f"LLM returned unexpected category: {category}, defaulting to KNOWLEDGE_ONLY"
-            )
-            return AgentType.KNOWLEDGE_ONLY
+            logger.info("LLM categorized query as REDIS_CHAT (quick Q&A)")
+            return AgentType.REDIS_CHAT
 
     except Exception as e:
-        logger.error(f"Error during LLM routing: {e}, defaulting to KNOWLEDGE_ONLY")
-        return AgentType.KNOWLEDGE_ONLY
+        logger.error(f"Error during LLM routing: {e}, defaulting to REDIS_CHAT")
+        return AgentType.REDIS_CHAT
