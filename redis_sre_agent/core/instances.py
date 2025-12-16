@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
 from redisvl.query import CountQuery, FilterQuery
-from redisvl.query.filter import Tag
+from redisvl.query.filter import FilterExpression, Tag
 
 from .encryption import encrypt_secret, get_secret_value
 from .keys import RedisKeys
@@ -414,8 +414,8 @@ async def query_instances(
             filter_expr = user_filter if filter_expr is None else (filter_expr & user_filter)
 
         if search:
-            # Tag filter on name field with wildcard for partial matching
-            name_filter = Tag("name") == f"*{search}*"
+            # Use raw FilterExpression for wildcard matching (Tag escapes wildcards)
+            name_filter = FilterExpression(f"@name:{{*{search}*}}")
             filter_expr = name_filter if filter_expr is None else (filter_expr & name_filter)
 
         # Get total count with filter
