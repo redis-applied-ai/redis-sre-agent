@@ -3,23 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 
 import click
 from docket import Worker
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
-from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.instrumentation.openai import OpenAIInstrumentor
-from opentelemetry.instrumentation.redis import RedisInstrumentor
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import register_sre_tasks
+from redis_sre_agent.observability.tracing import setup_tracing
 
 
 # TODO: rename start
@@ -49,33 +39,8 @@ def worker(concurrency: int):
         redis_url = settings.redis_url.get_secret_value()
         logger.info("Starting SRE Docket worker connected to Redis")
 
-        # OpenTelemetry tracing (enabled when OTEL endpoint is present)
-        otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-        if not otlp_endpoint:
-            logger.info("OTel tracing disabled in worker (no OTEL_EXPORTER_OTLP_ENDPOINT)")
-        else:
-            resource = Resource.create(
-                {
-                    "service.name": "redis-sre-worker",
-                    "service.version": "0.1.0",
-                }
-            )
-            provider = TracerProvider(resource=resource)
-            exporter = OTLPSpanExporter(
-                endpoint=otlp_endpoint,
-                headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
-            )
-            provider.add_span_processor(BatchSpanProcessor(exporter))
-            trace.set_tracer_provider(provider)
-
-            # Libraries
-            RedisInstrumentor().instrument()
-            HTTPXClientInstrumentor().instrument()
-            AioHttpClientInstrumentor().instrument()
-            AsyncioInstrumentor().instrument()
-            OpenAIInstrumentor().instrument()
-
-            logger.info("OTel tracing enabled in worker (redis/httpx/aiohttp/asyncio)")
+        # OpenTelemetry tracing with centralized setup (includes Redis hooks for filtering)
+        setup_tracing("redis-sre-worker", "0.1.0")
 
         # Start a Prometheus metrics HTTP server to expose worker metrics (incl. LLM tokens)
         try:

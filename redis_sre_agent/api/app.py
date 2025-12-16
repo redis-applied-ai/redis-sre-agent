@@ -6,17 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
-from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.instrumentation.openai import OpenAIInstrumentor
-from opentelemetry.instrumentation.redis import RedisInstrumentor
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
@@ -29,6 +19,7 @@ from redis_sre_agent.api.threads import router as threads_router
 from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import initialize_redis
+from redis_sre_agent.observability.tracing import setup_tracing as setup_base_tracing
 
 # Configure logging with consistent format
 # Note: When running via uvicorn with --log-config, this is overridden by logging_config.yaml
@@ -49,34 +40,12 @@ logger = logging.getLogger(__name__)
 def setup_tracing(app: FastAPI) -> None:
     """Initialize OpenTelemetry tracing if an OTLP endpoint is configured.
 
-    If OTEL_EXPORTER_OTLP_ENDPOINT is not set, tracing is disabled and this
-    function logs an info message and returns.
+    Uses the centralized tracing module for consistent span attributes
+    and Redis filtering hooks.
     """
-    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if not otlp_endpoint:
-        logger.info("OpenTelemetry tracing disabled (no OTEL_EXPORTER_OTLP_ENDPOINT)")
-        return
-
-    resource = Resource.create(
-        {
-            "service.name": settings.app_name,
-            "service.version": "0.1.0",
-        }
-    )
-    provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(
-        endpoint=otlp_endpoint,
-        headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
-    )
-    provider.add_span_processor(BatchSpanProcessor(exporter))
-    trace.set_tracer_provider(provider)
-
-    # Instrument libraries
-    RedisInstrumentor().instrument()
-    HTTPXClientInstrumentor().instrument()
-    AioHttpClientInstrumentor().instrument()
-    AsyncioInstrumentor().instrument()
-    OpenAIInstrumentor().instrument()
+    # Setup base tracing (Redis with hooks, HTTP clients, OpenAI)
+    if not setup_base_tracing(settings.app_name, "0.1.0"):
+        return  # Tracing not enabled
 
     # Instrument FastAPI (exclude common health/docs paths)
     excluded = ",".join(

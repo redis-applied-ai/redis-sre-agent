@@ -40,25 +40,34 @@ async def list_threads(
         tm = ThreadManager(redis_client=rc)
         summaries = await tm.list_threads(user_id=user_id, limit=limit, offset=offset)
 
-        # Enrich with message_count for UI display. Be defensive about failures.
+        # Enrich with message_count and latest_message for UI display.
         enriched: List[Dict[str, Any]] = []
         for s in summaries or []:
             s_out = dict(s)
-            if "message_count" not in s_out:
-                try:
-                    state = await tm.get_thread(s_out.get("thread_id"))
-                    msgs = []
-                    if state is not None:
-                        ctx = state.context or {}
-                        msgs = ctx.get("messages", []) or []
-                    # Only count user/assistant messages (exclude tools/system)
-                    s_out["message_count"] = sum(
-                        1
-                        for m in msgs
-                        if isinstance(m, dict) and m.get("role") in ("user", "assistant")
-                    )
-                except Exception:
-                    # If we cannot fetch the state, default to 0 rather than failing the list
+            try:
+                state = await tm.get_thread(s_out.get("thread_id"))
+                if state is not None:
+                    # Get messages from the Thread.messages list (primary storage)
+                    msgs = state.messages or []
+                    # Count user/assistant messages
+                    user_assistant_msgs = [
+                        m for m in msgs if m.role in ("user", "assistant")
+                    ]
+                    s_out["message_count"] = len(user_assistant_msgs)
+
+                    # Get latest message content from the last assistant or user message
+                    if user_assistant_msgs:
+                        last_msg = user_assistant_msgs[-1]
+                        content = last_msg.content or ""
+                        # Truncate for preview
+                        s_out["latest_message"] = (
+                            content[:100] + "..." if len(content) > 100 else content
+                        )
+                else:
+                    s_out["message_count"] = 0
+            except Exception:
+                # If we cannot fetch the state, default to 0 rather than failing the list
+                if "message_count" not in s_out:
                     s_out["message_count"] = 0
             enriched.append(s_out)
         return enriched
