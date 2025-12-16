@@ -94,6 +94,24 @@ export interface RedisInstance {
   updated_at: string;
 }
 
+export interface ListInstancesParams {
+  environment?: string;
+  usage?: string;
+  status?: string;
+  instance_type?: string;
+  user_id?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface InstanceListResponse {
+  instances: RedisInstance[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface CreateInstanceRequest {
   name: string;
   connection_url: string;
@@ -728,8 +746,27 @@ class SREAgentAPI {
   }
 
   // Instance Management Methods
-  async listInstances(): Promise<RedisInstance[]> {
-    const response = await fetch(`${this.tasksBaseUrl}/instances`);
+  async listInstances(
+    params?: ListInstancesParams,
+  ): Promise<InstanceListResponse> {
+    const url = new URL(`${this.tasksBaseUrl}/instances`);
+
+    if (params) {
+      if (params.environment)
+        url.searchParams.set("environment", params.environment);
+      if (params.usage) url.searchParams.set("usage", params.usage);
+      if (params.status) url.searchParams.set("status", params.status);
+      if (params.instance_type)
+        url.searchParams.set("instance_type", params.instance_type);
+      if (params.user_id) url.searchParams.set("user_id", params.user_id);
+      if (params.search) url.searchParams.set("search", params.search);
+      if (params.limit !== undefined)
+        url.searchParams.set("limit", params.limit.toString());
+      if (params.offset !== undefined)
+        url.searchParams.set("offset", params.offset.toString());
+    }
+
+    const response = await fetch(url.toString());
     if (!response.ok) {
       throw new Error(`Failed to list instances: ${response.statusText}`);
     }

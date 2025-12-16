@@ -746,28 +746,53 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def redis_sre_list_instances() -> Dict[str, Any]:
-    """List all configured Redis instances.
+async def redis_sre_list_instances(
+    environment: Optional[str] = None,
+    usage: Optional[str] = None,
+    status: Optional[str] = None,
+    instance_type: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    """List configured Redis instances with optional filtering.
 
-    Returns a list of all Redis instances that have been configured
-    in the SRE agent. Sensitive information like connection URLs and
-    passwords are masked.
+    Returns a list of Redis instances that have been configured in the SRE agent.
+    All filter parameters are optional - when not provided, returns all instances.
 
     Use this to find instance IDs before calling other tools like
     redis_sre_deep_triage() or redis_sre_general_chat().
 
-    Returns:
-        Dictionary with list of instance information
-    """
-    from redis_sre_agent.core.instances import get_instances
+    Args:
+        environment: Filter by environment (development, staging, production)
+        usage: Filter by usage type (cache, analytics, session, queue, custom)
+        status: Filter by status (healthy, unhealthy, unknown)
+        instance_type: Filter by type (oss_single, oss_cluster, redis_enterprise, redis_cloud)
+        search: Search by instance name (partial match supported)
+        limit: Maximum number of results (default 100)
 
-    logger.info("MCP list_instances request")
+    Returns:
+        Dictionary with filtered list of instance information and total count
+    """
+    from redis_sre_agent.core.instances import query_instances
+
+    logger.info(
+        f"MCP list_instances request: env={environment}, usage={usage}, "
+        f"status={status}, type={instance_type}, search={search}, limit={limit}"
+    )
 
     try:
-        instances = await get_instances()
+        result = await query_instances(
+            environment=environment,
+            usage=usage,
+            status=status,
+            instance_type=instance_type,
+            search=search,
+            limit=limit,
+            offset=0,
+        )
 
         instance_list = []
-        for inst in instances:
+        for inst in result.instances:
             instance_list.append(
                 {
                     "id": inst.id,
@@ -783,7 +808,8 @@ async def redis_sre_list_instances() -> Dict[str, Any]:
 
         return {
             "instances": instance_list,
-            "total": len(instance_list),
+            "total": result.total,
+            "limit": result.limit,
         }
 
     except Exception as e:

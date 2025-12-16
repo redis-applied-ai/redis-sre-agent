@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from redis_sre_agent.api.app import app
-from redis_sre_agent.core.instances import get_instances
+from redis_sre_agent.core.instances import InstanceQueryResult, get_instances
 
 
 @pytest.fixture
@@ -39,26 +39,141 @@ class TestInstancesAPI:
 
     def test_list_instances_success(self, client, sample_instance):
         """Test successful instance listing."""
-        with patch("redis_sre_agent.core.instances.get_instances") as mock_get:
-            mock_get.return_value = [sample_instance]
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
 
             response = client.get("/api/v1/instances")
 
             assert response.status_code == 200
             data = response.json()
-            assert len(data) == 1
-            assert data[0]["id"] == "test-instance-123"
+            assert data["total"] == 1
+            assert len(data["instances"]) == 1
+            assert data["instances"][0]["id"] == "test-instance-123"
 
     def test_list_instances_empty(self, client):
         """Test instance listing when no instances exist."""
-        with patch("redis_sre_agent.core.instances.get_instances") as mock_get:
-            mock_get.return_value = []
+        mock_result = InstanceQueryResult(
+            instances=[],
+            total=0,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
 
             response = client.get("/api/v1/instances")
 
             assert response.status_code == 200
             data = response.json()
-            assert len(data) == 0
+            assert data["total"] == 0
+            assert len(data["instances"]) == 0
+
+    def test_list_instances_with_filters(self, client, sample_instance):
+        """Test instance listing with query parameters."""
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
+
+            response = client.get(
+                "/api/v1/instances",
+                params={
+                    "environment": "production",
+                    "usage": "cache",
+                    "status": "healthy",
+                    "limit": 50,
+                    "offset": 10,
+                },
+            )
+
+            assert response.status_code == 200
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            assert call_kwargs["environment"] == "production"
+            assert call_kwargs["usage"] == "cache"
+            assert call_kwargs["status"] == "healthy"
+            assert call_kwargs["limit"] == 50
+            assert call_kwargs["offset"] == 10
+
+    def test_list_instances_with_search(self, client, sample_instance):
+        """Test instance listing with search parameter."""
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
+
+            response = client.get(
+                "/api/v1/instances",
+                params={"search": "test-redis"},
+            )
+
+            assert response.status_code == 200
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            assert call_kwargs["search"] == "test-redis"
+
+    def test_list_instances_with_empty_search(self, client, sample_instance):
+        """Test instance listing with empty search string."""
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
+
+            response = client.get(
+                "/api/v1/instances",
+                params={"search": ""},
+            )
+
+            assert response.status_code == 200
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            # Empty string should be passed as empty (falsy)
+            assert call_kwargs["search"] == ""
+
+    def test_list_instances_with_instance_type_filter(self, client, sample_instance):
+        """Test instance listing with instance_type filter."""
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
+
+            response = client.get(
+                "/api/v1/instances",
+                params={"instance_type": "redis_cloud"},
+            )
+
+            assert response.status_code == 200
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            assert call_kwargs["instance_type"] == "redis_cloud"
 
     def test_get_instance_success(self, client, sample_instance):
         """Test successful instance retrieval."""
@@ -237,8 +352,8 @@ class TestInstancesAPIErrorHandling:
 
     def test_list_instances_redis_error(self, client):
         """Test list instances when Redis fails."""
-        with patch("redis_sre_agent.core.instances.get_instances") as mock_get:
-            mock_get.side_effect = Exception("Redis connection failed")
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.side_effect = Exception("Redis connection failed")
 
             response = client.get("/api/v1/instances")
 

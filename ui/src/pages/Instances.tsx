@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, Button } from "@radar/ui-kit";
 import sreAgentApi, {
   RedisInstance as APIRedisInstance,
   CreateInstanceRequest,
+  ListInstancesParams,
 } from "../services/sreAgentApi";
 import { ConfirmDialog } from "../components/Modal";
 import { maskRedisUrl } from "../utils/urlMasking";
@@ -823,44 +824,57 @@ const Instances = () => {
   const [deletingInstance, setDeletingInstance] =
     useState<RedisInstance | null>(null);
 
-  // Load instances on component mount
-  useEffect(() => {
-    loadInstances();
-  }, []);
+  // Convert API instance to UI format
+  const convertToUIInstance = (instance: APIRedisInstance): RedisInstance => ({
+    ...instance,
+    connectionUrl: instance.connection_url,
+    repoUrl: instance.repo_url,
+    lastChecked: instance.last_checked,
+    createdAt: instance.created_at,
+    updatedAt: instance.updated_at,
+    monitoringIdentifier: instance.monitoring_identifier,
+    loggingIdentifier: instance.logging_identifier,
+    instanceType: instance.instance_type || "unknown",
+    adminUrl: instance.admin_url,
+    adminUsername: instance.admin_username,
+    adminPassword: instance.admin_password,
+    // Redis Cloud identifiers to UI camelCase
+    cloudSubscriptionType:
+      (instance as any).redis_cloud_subscription_type || "",
+    cloudSubscriptionId: (instance as any).redis_cloud_subscription_id
+      ? String((instance as any).redis_cloud_subscription_id)
+      : "",
+    cloudDatabaseId: (instance as any).redis_cloud_database_id
+      ? String((instance as any).redis_cloud_database_id)
+      : "",
+    cloudDatabaseName: (instance as any).redis_cloud_database_name || "",
+  });
 
-  const loadInstances = async () => {
+  // Build API params from current filter state
+  const buildFilterParams = useCallback((): ListInstancesParams => {
+    const params: ListInstancesParams = {
+      limit: 100,
+    };
+    if (selectedEnvironment !== "all") {
+      params.environment = selectedEnvironment;
+    }
+    if (selectedUsage !== "all") {
+      params.usage = selectedUsage;
+    }
+    return params;
+  }, [selectedEnvironment, selectedUsage]);
+
+  const loadInstances = useCallback(async () => {
     try {
       setIsLoading(true);
       setError("");
 
-      // Load instances from API
-      const apiInstances = await sreAgentApi.listInstances();
+      // Load instances from API with server-side filtering
+      const response = await sreAgentApi.listInstances(buildFilterParams());
 
       // Convert API format to UI format
-      const uiInstances: RedisInstance[] = apiInstances.map((instance) => ({
-        ...instance,
-        connectionUrl: instance.connection_url,
-        repoUrl: instance.repo_url,
-        lastChecked: instance.last_checked,
-        createdAt: instance.created_at,
-        updatedAt: instance.updated_at,
-        monitoringIdentifier: instance.monitoring_identifier,
-        loggingIdentifier: instance.logging_identifier,
-        instanceType: instance.instance_type || "unknown",
-        adminUrl: instance.admin_url,
-        adminUsername: instance.admin_username,
-        adminPassword: instance.admin_password,
-        // Redis Cloud identifiers to UI camelCase
-        cloudSubscriptionType:
-          (instance as any).redis_cloud_subscription_type || "",
-        cloudSubscriptionId: (instance as any).redis_cloud_subscription_id
-          ? String((instance as any).redis_cloud_subscription_id)
-          : "",
-        cloudDatabaseId: (instance as any).redis_cloud_database_id
-          ? String((instance as any).redis_cloud_database_id)
-          : "",
-        cloudDatabaseName: (instance as any).redis_cloud_database_name || "",
-      }));
+      const uiInstances: RedisInstance[] =
+        response.instances.map(convertToUIInstance);
 
       setInstances(uiInstances);
     } catch (err) {
@@ -870,7 +884,12 @@ const Instances = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [buildFilterParams]);
+
+  // Load instances when component mounts or filters change
+  useEffect(() => {
+    loadInstances();
+  }, [loadInstances]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -1002,6 +1021,9 @@ const Instances = () => {
     return new Date(dateString).toLocaleString();
   };
 
+  // Filtering is now done server-side, but we keep client-side filtering
+  // as a safety net in case filters change before the API response arrives.
+  // In most cases, instances will already be filtered correctly from the server.
   const filteredInstances = instances.filter((instance) => {
     const environmentMatch =
       selectedEnvironment === "all" ||

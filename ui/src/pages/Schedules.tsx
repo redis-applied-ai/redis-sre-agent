@@ -78,7 +78,7 @@ const Schedules = () => {
 
       if (instancesRes.status === "fulfilled") {
         // Map API instances to minimal shape used by this page
-        const mapped = instancesRes.value.map((i: any) => ({
+        const mapped = instancesRes.value.instances.map((i: any) => ({
           id: i.id,
           name: i.name,
           connection_url: i.connection_url,
