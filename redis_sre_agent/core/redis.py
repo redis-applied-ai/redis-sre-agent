@@ -188,7 +188,7 @@ SRE_INSTANCES_SCHEMA = {
         "storage_type": "hash",
     },
     "fields": [
-        {"name": "name", "type": "text"},
+        {"name": "name", "type": "tag"},
         {"name": "environment", "type": "tag"},
         {"name": "usage", "type": "tag"},
         {"name": "instance_type", "type": "tag"},

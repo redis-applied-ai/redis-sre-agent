@@ -33,8 +33,14 @@ check_knowledge_base() {
     fi
 
     # Check if knowledge base has any documents
+    # grep -c returns 0 and exits with status 1 when there are no matches, so
+    # we ignore its exit code and default empty output to 0.
     local doc_count=$(redis-cli -u "${REDIS_URL:-redis://localhost:6379/0}" \
-        FT._LIST 2>/dev/null | grep -c "sre_knowledge" || echo "0")
+        FT._LIST 2>/dev/null | grep -c "sre_knowledge" || true)
+
+    if [ -z "$doc_count" ]; then
+        doc_count=0
+    fi
 
     if [ "$doc_count" -eq 0 ]; then
         log "Knowledge base is empty"

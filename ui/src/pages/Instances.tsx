@@ -812,7 +812,6 @@ const AddInstanceForm = ({
 
 const Instances = () => {
   const [instances, setInstances] = useState<RedisInstance[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -878,12 +877,10 @@ const Instances = () => {
         response.instances.map(convertToUIInstance);
 
       setInstances(uiInstances);
-      setTotalCount(response.total);
     } catch (err) {
       setError("Failed to load Redis instances. Please try again.");
       console.error("Error loading instances:", err);
       setInstances([]);
-      setTotalCount(0);
     } finally {
       setIsLoading(false);
     }
