@@ -108,6 +108,73 @@ class TestInstancesAPI:
             assert call_kwargs["limit"] == 50
             assert call_kwargs["offset"] == 10
 
+    def test_list_instances_with_search(self, client, sample_instance):
+        """Test instance listing with search parameter."""
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
+
+            response = client.get(
+                "/api/v1/instances",
+                params={"search": "test-redis"},
+            )
+
+            assert response.status_code == 200
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            assert call_kwargs["search"] == "test-redis"
+
+    def test_list_instances_with_empty_search(self, client, sample_instance):
+        """Test instance listing with empty search string."""
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
+
+            response = client.get(
+                "/api/v1/instances",
+                params={"search": ""},
+            )
+
+            assert response.status_code == 200
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            # Empty string should be passed as empty (falsy)
+            assert call_kwargs["search"] == ""
+
+    def test_list_instances_with_instance_type_filter(self, client, sample_instance):
+        """Test instance listing with instance_type filter."""
+        mock_result = InstanceQueryResult(
+            instances=[sample_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch("redis_sre_agent.core.instances.query_instances") as mock_query:
+            mock_query.return_value = mock_result
+
+            response = client.get(
+                "/api/v1/instances",
+                params={"instance_type": "redis_cloud"},
+            )
+
+            assert response.status_code == 200
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            assert call_kwargs["instance_type"] == "redis_cloud"
+
     def test_get_instance_success(self, client, sample_instance):
         """Test successful instance retrieval."""
         with patch("redis_sre_agent.core.instances.get_instances") as mock_get:

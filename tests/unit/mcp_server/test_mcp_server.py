@@ -424,6 +424,43 @@ class TestListInstancesTool:
             assert result["instances"][0]["environment"] == "production"
 
     @pytest.mark.asyncio
+    async def test_list_instances_with_search(self):
+        """Test instance listing with search parameter."""
+        from redis_sre_agent.core.instances import InstanceQueryResult
+
+        mock_instance = MagicMock()
+        mock_instance.id = "redis-prod-1"
+        mock_instance.name = "Production Redis"
+        mock_instance.environment = "production"
+        mock_instance.usage = "cache"
+        mock_instance.description = "Main cache"
+        mock_instance.instance_type = "redis_cloud"
+        mock_instance.repo_url = None
+
+        mock_result = InstanceQueryResult(
+            instances=[mock_instance],
+            total=1,
+            limit=100,
+            offset=0,
+        )
+
+        with patch(
+            "redis_sre_agent.core.instances.query_instances",
+            new_callable=AsyncMock,
+        ) as mock_query:
+            mock_query.return_value = mock_result
+
+            result = await redis_sre_list_instances(search="Production")
+
+            # Verify query_instances was called with the search parameter
+            mock_query.assert_called_once()
+            call_kwargs = mock_query.call_args[1]
+            assert call_kwargs["search"] == "Production"
+
+            assert result["total"] == 1
+            assert result["instances"][0]["name"] == "Production Redis"
+
+    @pytest.mark.asyncio
     async def test_list_instances_error(self):
         """Test list instances error handling."""
         with patch(
