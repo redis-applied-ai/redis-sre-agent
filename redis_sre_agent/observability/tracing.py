@@ -69,8 +69,16 @@ def _redis_request_hook(span: trace.Span, instance: Any, args: tuple, kwargs: di
     # Add category for filtering
     span.set_attribute(ATTR_CATEGORY, SpanCategory.REDIS.value)
 
-    # Extract command name for filtering
-    command = args[0].upper() if args else "UNKNOWN"
+    # Extract command name for filtering (handle bytes and string)
+    if args:
+        cmd = args[0]
+        if isinstance(cmd, bytes):
+            cmd_str = cmd.decode("utf-8", errors="replace")
+        else:
+            cmd_str = str(cmd)
+        command = cmd_str.upper()
+    else:
+        command = "UNKNOWN"
     span.set_attribute("redis.command", command)
 
     # Mark infrastructure commands for easy filtering

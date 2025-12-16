@@ -175,6 +175,15 @@ class TestRedisRequestHook:
 
         mock_span.set_attribute.assert_any_call("redis.command", "UNKNOWN")
 
+    def test_hook_handles_bytes_command(self):
+        """Hook should handle bytes command names."""
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = True
+
+        _redis_request_hook(mock_span, None, (b"GET", b"mykey"), {})
+
+        mock_span.set_attribute.assert_any_call("redis.command", "GET")
+
 
 class TestRedisResponseHook:
     """Test the Redis response hook."""
