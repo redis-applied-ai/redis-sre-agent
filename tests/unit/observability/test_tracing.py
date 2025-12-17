@@ -233,6 +233,7 @@ class TestSetupTracing:
         with patch.dict("os.environ", {}, clear=True):
             # Remove OTEL_EXPORTER_OTLP_ENDPOINT if present
             import os
+
             os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
             result = setup_tracing("test-service")
             assert result is False
@@ -286,6 +287,7 @@ class TestTraceGraphNodeDecorator:
     @pytest.mark.asyncio
     async def test_decorator_wraps_function(self):
         """Decorator should preserve function behavior."""
+
         @trace_graph_node("test_graph", "test_node")
         async def my_node(state):
             return {"processed": True}
@@ -295,6 +297,7 @@ class TestTraceGraphNodeDecorator:
 
     def test_decorator_preserves_function_name(self):
         """Decorator should preserve function name."""
+
         @trace_graph_node("test_graph", "test_node")
         async def my_special_node(state):
             return state
@@ -308,6 +311,7 @@ class TestTraceToolDecorator:
     @pytest.mark.asyncio
     async def test_decorator_wraps_function(self):
         """Decorator should preserve function behavior."""
+
         @trace_tool("test_tool")
         async def my_tool(query):
             return f"result for {query}"
@@ -318,6 +322,7 @@ class TestTraceToolDecorator:
     @pytest.mark.asyncio
     async def test_decorator_with_component(self):
         """Decorator should work with component parameter."""
+
         @trace_tool("search", component="knowledge")
         async def search_knowledge(query):
             return ["doc1", "doc2"]
@@ -332,6 +337,7 @@ class TestTraceLlmDecorator:
     @pytest.mark.asyncio
     async def test_decorator_wraps_function(self):
         """Decorator should preserve function behavior."""
+
         @trace_llm("router")
         async def call_llm(prompt):
             return "response"

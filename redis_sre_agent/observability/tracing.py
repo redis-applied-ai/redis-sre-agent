@@ -37,6 +37,7 @@ class SpanCategory(str, Enum):
 
     Use TraceQL like: {span.sre_agent.category = "llm"}
     """
+
     LLM = "llm"
     TOOL = "tool"
     GRAPH_NODE = "graph_node"
@@ -53,12 +54,29 @@ ATTR_GRAPH_NAME = "langgraph.graph"
 ATTR_NODE_NAME = "langgraph.node"
 
 # Redis commands that are "noisy" infrastructure - useful for filtering
-REDIS_INFRA_COMMANDS = frozenset({
-    "PING", "SELECT", "INFO", "CONFIG", "CLIENT", "DEBUG",
-    "SLOWLOG", "MEMORY", "DBSIZE", "LASTSAVE", "TIME",
-    "SCAN", "HSCAN", "SSCAN", "ZSCAN",  # Iteration commands
-    "WATCH", "MULTI", "EXEC", "DISCARD",  # Transaction commands
-})
+REDIS_INFRA_COMMANDS = frozenset(
+    {
+        "PING",
+        "SELECT",
+        "INFO",
+        "CONFIG",
+        "CLIENT",
+        "DEBUG",
+        "SLOWLOG",
+        "MEMORY",
+        "DBSIZE",
+        "LASTSAVE",
+        "TIME",
+        "SCAN",
+        "HSCAN",
+        "SSCAN",
+        "ZSCAN",  # Iteration commands
+        "WATCH",
+        "MULTI",
+        "EXEC",
+        "DISCARD",  # Transaction commands
+    }
+)
 
 
 def _redis_request_hook(span: trace.Span, instance: Any, args: tuple, kwargs: dict) -> None:
@@ -114,13 +132,17 @@ def setup_tracing(
     """
     otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
     if not otlp_endpoint:
-        logger.info(f"OpenTelemetry tracing disabled for {service_name} (no OTEL_EXPORTER_OTLP_ENDPOINT)")
+        logger.info(
+            f"OpenTelemetry tracing disabled for {service_name} (no OTEL_EXPORTER_OTLP_ENDPOINT)"
+        )
         return False
 
-    resource = Resource.create({
-        "service.name": service_name,
-        "service.version": service_version,
-    })
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.version": service_version,
+        }
+    )
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(
         endpoint=otlp_endpoint,
@@ -152,6 +174,7 @@ def get_tracer(name: str) -> trace.Tracer:
 
 def trace_graph_node(graph_name: str, node_name: str):
     """Decorator to trace LangGraph node execution with standard attributes."""
+
     def decorator(fn: F) -> F:
         tracer = get_tracer(fn.__module__)
 
@@ -166,12 +189,15 @@ def trace_graph_node(graph_name: str, node_name: str):
                 },
             ):
                 return await fn(*args, **kwargs)
+
         return wrapper  # type: ignore
+
     return decorator
 
 
 def trace_tool(tool_name: str, component: Optional[str] = None):
     """Decorator to trace tool execution with standard attributes."""
+
     def decorator(fn: F) -> F:
         tracer = get_tracer(fn.__module__)
 
@@ -185,7 +211,9 @@ def trace_tool(tool_name: str, component: Optional[str] = None):
                 attrs[ATTR_COMPONENT] = component
             with tracer.start_as_current_span(f"tool.{tool_name}", attributes=attrs):
                 return await fn(*args, **kwargs)
+
         return wrapper  # type: ignore
+
     return decorator
 
 
@@ -194,6 +222,7 @@ def trace_llm(component: str):
 
     Note: This creates the span; use record_llm_call_metrics() to add token usage.
     """
+
     def decorator(fn: F) -> F:
         tracer = get_tracer(fn.__module__)
 
@@ -207,7 +236,9 @@ def trace_llm(component: str):
                 },
             ):
                 return await fn(*args, **kwargs)
+
         return wrapper  # type: ignore
+
     return decorator
 
 

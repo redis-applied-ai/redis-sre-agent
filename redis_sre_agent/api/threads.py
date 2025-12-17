@@ -50,9 +50,7 @@ async def list_threads(
                     # Get messages from the Thread.messages list (primary storage)
                     msgs = state.messages or []
                     # Count user/assistant messages
-                    user_assistant_msgs = [
-                        m for m in msgs if m.role in ("user", "assistant")
-                    ]
+                    user_assistant_msgs = [m for m in msgs if m.role in ("user", "assistant")]
                     s_out["message_count"] = len(user_assistant_msgs)
 
                     # Get latest message content from the last assistant or user message

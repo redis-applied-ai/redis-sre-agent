@@ -1,7 +1,6 @@
 """Main FastAPI application for Redis SRE Agent."""
 
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
