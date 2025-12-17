@@ -197,6 +197,10 @@ class Settings(BaseSettings):
 
     # OpenAI (optional at import time to allow CLI/docs to load without secrets)
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
+    openai_base_url: Optional[str] = Field(
+        default=None,
+        description="OpenAI API base URL (optional, for using LLM proxy or alternative endpoints)",
+    )
     openai_model: str = Field(default="gpt-5", description="OpenAI model for agent reasoning")
     openai_model_mini: str = Field(
         default="gpt-5-mini", description="OpenAI model for knowledge/search and utility tasks"

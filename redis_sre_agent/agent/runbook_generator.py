@@ -11,12 +11,12 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 import openai
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import search_knowledge_base
+from redis_sre_agent.core.llm_helpers import create_llm
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -127,7 +127,7 @@ class RunbookGenerator:
     """LangGraph agent for generating Redis SRE runbooks."""
 
     def __init__(self):
-        self.llm = ChatOpenAI(model="gpt-4o", api_key=settings.openai_api_key)
+        self.llm = create_llm(model="gpt-4o")
         self.tavily = TavilySearchTool()
         self.graph = self._build_graph()
 

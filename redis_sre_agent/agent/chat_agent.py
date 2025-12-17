@@ -13,7 +13,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode as LGToolNode
@@ -21,6 +20,7 @@ from opentelemetry import trace
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.core.llm_helpers import create_llm, create_mini_llm
 from redis_sre_agent.core.progress import (
     CallbackEmitter,
     NullEmitter,
@@ -118,14 +118,8 @@ class ChatAgent:
         else:
             self._emitter = NullEmitter()
 
-        self.llm = ChatOpenAI(
-            model=self.settings.openai_model,
-            openai_api_key=self.settings.openai_api_key,
-        )
-        self.mini_llm = ChatOpenAI(
-            model=self.settings.openai_model_mini,
-            openai_api_key=self.settings.openai_api_key,
-        )
+        self.llm = create_llm()
+        self.mini_llm = create_mini_llm()
 
         logger.info(
             f"Chat agent initialized (instance: {redis_instance.name if redis_instance else 'none'})"
