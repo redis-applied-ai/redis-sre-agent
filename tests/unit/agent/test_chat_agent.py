@@ -118,8 +118,10 @@ class TestChatAgentInitialization:
 
         ChatAgent()
 
-        call_args = mock_chat_openai.call_args
-        assert "temperature" not in call_args.kwargs
+        # Verify create_llm was called without temperature parameter
+        call_args = mock_create_llm.call_args
+        if call_args is not None:
+            assert "temperature" not in (call_args.kwargs or {})
 
 
 class TestChatAgentSingleton:

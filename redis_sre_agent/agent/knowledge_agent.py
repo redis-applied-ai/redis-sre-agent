@@ -12,6 +12,7 @@ import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
