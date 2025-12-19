@@ -51,21 +51,16 @@ FROM python:3.12-slim
 # commands that use `uv run` work correctly.
 COPY --from=builder /bin/uv /bin/uv
 
-# Copy the uv-managed Python installation used by the virtualenv in /app/.venv.
-# Without this, /app/.venv/bin/python points at a non-existent interpreter under
-# /root/.local/share/uv, which causes `uv run` and even direct venv usage to
-# fail with "permission denied" when running as the non-root `app` user.
-COPY --from=builder /root/.local/share/uv /root/.local/share/uv
-
-# Make the uv Python tree readable and traversable by the unprivileged `app`
-# user so that symlinks in /app/.venv/bin/python* can be resolved.
-RUN chmod 755 /root && chmod -R 755 /root/.local/share/uv || true
+# Note: With UV_LINK_MODE=copy set in the builder stage, the virtualenv at
+# /app/.venv is self-contained and doesn't require a shared Python installation
+# under /root/.local/share/uv. All necessary files are copied directly into the venv.
 
 WORKDIR /app
 
 # Install ONLY runtime system dependencies
 # We repeat the Docker/Redis install here because they are needed at runtime.
 RUN apt-get update && apt-get install -y \
+    git \
     curl \
     ca-certificates \
     redis-tools \

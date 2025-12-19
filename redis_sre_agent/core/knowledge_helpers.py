@@ -27,7 +27,7 @@ async def search_knowledge_base_helper(
     category: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
-    distance_threshold: Optional[float] = 0.5,
+    distance_threshold: Optional[float] = 0.8,
     hybrid_search: bool = False,
     version: Optional[str] = "latest",
 ) -> Dict[str, Any]:
@@ -37,7 +37,7 @@ async def search_knowledge_base_helper(
           hybrid_search is True, distance_threshold is ignored.
 
     Behavior:
-        - Default: distance_threshold=0.5 (filters by cosine distance)
+        - Default: distance_threshold=0.8 (filters by cosine distance)
         - Explicit None: disables threshold (pure KNN, return top-k regardless of distance)
         - Default version: "latest" (filters to unversioned/latest docs)
         - Explicit version: Filter to specific version (e.g., "7.8", "7.4")

@@ -79,3 +79,9 @@ See `.env.example` for required configuration:
 - `REDIS_URL`: Redis connection string
 - `PROMETHEUS_URL`: Metrics endpoint
 - `GRAFANA_URL`: Dashboard access
+
+## Knowledge Base
+
+- **Data sources**: redis.io/kb articles, local redis-docs clone, and `source_documents/` (user-provided)
+- **Pipeline**: Two-phase process - `pipeline scrape` creates artifacts, `pipeline ingest` indexes into Redis
+- **Index**: `sre_knowledge` in Redis (call `create_indices()` if missing)

@@ -77,13 +77,65 @@ Both the API and worker will automatically instrument and export spans when this
 
 ### What gets traced
 - **FastAPI requests** (excluding health/metrics endpoints)
-- **Redis operations** (via RedisInstrumentor)
+- **Redis operations** (via RedisInstrumentor with custom hooks)
 - **HTTP clients** (HTTPX, AioHTTP)
 - **OpenAI API calls** (via OpenAIInstrumentor)
 - **LangGraph nodes**: Each node in the agent workflow gets a custom span with attributes:
   - `langgraph.graph` - which graph (e.g., `sre_agent`, `knowledge`, `runbook`)
   - `langgraph.node` - which node (e.g., `agent`, `tools`, `reasoning`)
 - **LLM calls**: Token usage and latency are added as span attributes
+
+### Span Categories for Filtering
+
+All spans include a `sre_agent.category` attribute to help you filter out noise (especially Redis commands) and focus on application logic. Available categories:
+
+| Category | Description |
+|----------|-------------|
+| `llm` | LLM API calls |
+| `tool` | Tool invocations |
+| `graph_node` | LangGraph node execution |
+| `agent` | High-level agent operations |
+| `knowledge` | Knowledge base operations |
+| `redis` | Redis commands (filter these out to reduce noise) |
+
+Redis spans also include:
+- `redis.command` - the Redis command (GET, SET, HSET, etc.)
+- `redis.is_infrastructure` - `true` for internal ops (PING, INFO, etc.)
+- `redis.key_prefix` - the key prefix (before first `:`) for grouping
+
+### TraceQL Queries for Grafana/Tempo
+
+Use these queries in Grafana's Tempo Explore view to filter traces:
+
+```traceql
+# Hide all Redis spans - see only app logic
+{ span.sre_agent.category != "redis" }
+
+# Show only LLM calls
+{ span.sre_agent.category = "llm" }
+
+# Slow LLM calls (> 5 seconds)
+{ span.sre_agent.category = "llm" && duration > 5s }
+
+# Show only tool invocations
+{ span.sre_agent.category = "tool" }
+
+# Filter by LangGraph graph name
+{ span.langgraph.graph = "sre_agent" }
+
+# Show app-level Redis ops only (hide PING, INFO, etc.)
+{ span.sre_agent.category = "redis" && span.redis.is_infrastructure = false }
+```
+
+### SRE Agent Traces Dashboard
+
+A pre-built Grafana dashboard is available at `monitoring/grafana/provisioning/dashboards/json/agent-traces.json` that provides:
+- Trace list with category filtering
+- LLM call duration percentiles
+- Token usage rates by component
+- Tokens by model breakdown
+
+Access it in Grafana under Dashboards → SRE Agent Traces.
 
 ### Example: Tempo (local dev)
 The docker-compose stack includes Tempo as an OTLP collector:

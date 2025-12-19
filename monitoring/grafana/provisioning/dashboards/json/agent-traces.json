@@ -1,0 +1,133 @@
+{
+  "id": null,
+  "uid": "agent-traces",
+  "title": "SRE Agent Traces",
+  "description": "OpenTelemetry traces for the Redis SRE Agent - filter out Redis noise to see LLM calls, tool invocations, and graph node execution",
+  "tags": ["traces", "tempo", "agent", "llm"],
+  "timezone": "",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "custom",
+        "options": [
+          { "text": "All", "value": "", "selected": true },
+          { "text": "API", "value": "redis-sre-agent" },
+          { "text": "Worker", "value": "redis-sre-worker" }
+        ],
+        "current": { "text": "All", "value": "" }
+      },
+      {
+        "name": "category",
+        "label": "Span Category",
+        "type": "custom",
+        "options": [
+          { "text": "All (no Redis)", "value": "exclude_redis", "selected": true },
+          { "text": "LLM Calls", "value": "llm" },
+          { "text": "Tool Calls", "value": "tool" },
+          { "text": "Graph Nodes", "value": "graph_node" },
+          { "text": "Agent", "value": "agent" },
+          { "text": "Knowledge", "value": "knowledge" },
+          { "text": "All (including Redis)", "value": "all" }
+        ],
+        "current": { "text": "All (no Redis)", "value": "exclude_redis" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "Trace Filtering Guide",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 3 },
+      "options": {
+        "mode": "markdown",
+        "content": "## TraceQL Queries for Filtering\n\n| Query | Description |\n|-------|-------------|\n| `{ span.sre_agent.category != \"redis\" }` | Hide all Redis spans |\n| `{ span.sre_agent.category = \"llm\" }` | Show only LLM calls |\n| `{ span.sre_agent.category = \"tool\" }` | Show only tool invocations |\n| `{ span.langgraph.graph = \"sre_agent\" }` | Filter by specific graph |\n| `{ duration > 5s && span.sre_agent.category = \"llm\" }` | Slow LLM calls |\n| `{ span.redis.is_infrastructure = false }` | App-level Redis ops only |"
+      }
+    },
+    {
+      "type": "traces",
+      "title": "Recent Agent Traces",
+      "description": "Traces filtered by selected category. Use Tempo Explore for advanced queries.",
+      "gridPos": { "x": 0, "y": 3, "w": 24, "h": 12 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceqlSearch",
+          "limit": 50,
+          "tableType": "traces",
+          "filters": [
+            { "id": "service-name", "tag": "service.name", "operator": "=~", "value": ["redis-sre-.*"], "scope": "resource" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM Call Duration (p95)",
+      "gridPos": { "x": 0, "y": 15, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(sre_agent_llm_duration_seconds_bucket[5m])) by (le, component))",
+          "legendFormat": "{{component}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM Token Usage (rate/min)",
+      "gridPos": { "x": 8, "y": 15, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(sre_agent_llm_tokens_total[1m])) by (component) * 60",
+          "legendFormat": "{{component}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "tokens/min" } }
+    },
+    {
+      "type": "stat",
+      "title": "LLM Requests (last hour)",
+      "gridPos": { "x": 16, "y": 15, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(sre_agent_llm_requests_total[1h]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "requests" } }
+    },
+    {
+      "type": "stat",
+      "title": "Total Tokens (last hour)",
+      "gridPos": { "x": 20, "y": 15, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(sre_agent_llm_tokens_total[1h]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "tokens" } }
+    },
+    {
+      "type": "piechart",
+      "title": "Tokens by Model",
+      "gridPos": { "x": 16, "y": 19, "w": 8, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(sre_agent_llm_tokens_total[1h])) by (model)",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    }
+  ]
+}
