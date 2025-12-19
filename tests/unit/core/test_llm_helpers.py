@@ -1,6 +1,5 @@
 """Unit tests for LLM helper functions."""
 
-import pytest
 from unittest.mock import patch
 
 from redis_sre_agent.core.llm_helpers import create_llm, create_mini_llm, create_nano_llm
