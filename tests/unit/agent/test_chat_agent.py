@@ -76,7 +76,9 @@ class TestChatAgentInitialization:
 
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
-    def test_agent_initializes_with_progress_callback_deprecated(self, mock_create_mini_llm, mock_create_llm):
+    def test_agent_initializes_with_progress_callback_deprecated(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
         """Test that ChatAgent still accepts deprecated progress_callback."""
         mock_llm = MagicMock()
         mock_create_llm.return_value = mock_llm
@@ -92,7 +94,9 @@ class TestChatAgentInitialization:
 
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
-    def test_progress_emitter_takes_precedence_over_callback(self, mock_create_mini_llm, mock_create_llm):
+    def test_progress_emitter_takes_precedence_over_callback(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
         """Test that progress_emitter takes precedence over progress_callback."""
         mock_llm = MagicMock()
         mock_create_llm.return_value = mock_llm

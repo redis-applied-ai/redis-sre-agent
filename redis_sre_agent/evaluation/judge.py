@@ -7,7 +7,6 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
-from ..core.config import settings
 from ..core.llm_helpers import create_mini_llm
 
 logger = logging.getLogger(__name__)

@@ -11,7 +11,6 @@ from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_nano_llm
 
 logger = logging.getLogger(__name__)
