@@ -11,8 +11,16 @@ from redis_sre_agent.api.app import app
 
 
 def make_state_with_messages(n: int):
+    """Create a mock state with messages in the Thread.messages list (primary storage)."""
+
+    class MockMessage:
+        def __init__(self, role: str, content: str):
+            self.role = role
+            self.content = content
+
     class State:
-        context = {"messages": [{"role": "user", "content": f"m{i}"} for i in range(n)]}
+        messages = [MockMessage("user", f"m{i}") for i in range(n)]
+        context = {}
         metadata = MagicMock()
 
     return State()

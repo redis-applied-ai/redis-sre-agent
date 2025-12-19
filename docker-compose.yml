@@ -293,6 +293,7 @@ services:
         condition: service_started
     volumes:
       - .env:/app/.env
+      - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
       - ./artifacts:/app/artifacts  # For data pipeline
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
@@ -318,6 +319,7 @@ services:
         condition: service_healthy
     volumes:
       - .env:/app/.env
+      - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
       - ./artifacts:/app/artifacts
       - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for log access
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development

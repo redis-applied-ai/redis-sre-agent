@@ -42,6 +42,12 @@ Generated from the Click command tree.
 - instance test — Test connection to a configured instance by ID.
 - instance test-url — Test a Redis connection URL without creating an instance.
 - instance update — Update fields of an existing instance.
+
+    Use --set-extension to add/update extension_data fields:
+        --set-extension zendesk_organization_id=12345
+
+    Use --unset-extension to remove extension_data fields:
+        --unset-extension zendesk_organization_id
 - task — Task management commands.
 - task get — Get a task by TASK_ID and show details.
 - task list — List recent tasks and their statuses.

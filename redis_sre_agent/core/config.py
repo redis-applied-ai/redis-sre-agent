@@ -114,12 +114,16 @@ TWENTY_MINUTES_IN_SECONDS = 1200
 # In Docker/production, environment variables are set directly.
 # We check existence before calling load_dotenv to avoid FileNotFoundError.
 _env_path = Path(".env")
-if _env_path.is_file():
-    load_dotenv(dotenv_path=_env_path)
-    ENV_FILE_OPT = str(_env_path)
-else:
-    # Try loading from default locations without erroring if not found
-    load_dotenv()
+try:
+    if _env_path.is_file():
+        load_dotenv(dotenv_path=_env_path)
+        ENV_FILE_OPT = str(_env_path)
+    else:
+        # Try loading from default locations without erroring if not found
+        load_dotenv()
+except (FileNotFoundError, OSError):
+    # File may have been removed after is_file() check, or mount issues in Docker
+    pass
 
 
 # Default config file paths (checked in order)
