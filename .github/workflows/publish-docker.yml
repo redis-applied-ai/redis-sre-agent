@@ -65,7 +65,7 @@ jobs:
         with:
           images: |
             redislabs/redis-sre-agent
-            ghcr.io/${{ toLower(github.repository_owner) }}/${{ toLower(github.event.repository.name) }}
+            ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ github.event.inputs.tag }}
             type=raw,value=latest,enable=${{ github.event.inputs.push_latest }}
