@@ -10,9 +10,8 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.llm_helpers import create_nano_llm
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +56,7 @@ async def route_to_appropriate_agent(
     if not has_instance:
         # Use LLM to decide if query needs instance access or is knowledge-only
         try:
-            llm = ChatOpenAI(
-                model=settings.openai_model_nano,
-                api_key=settings.openai_api_key,
-                timeout=10.0,
-                temperature=0,
-            )
+            llm = create_nano_llm(timeout=10.0, temperature=0)
 
             system_prompt = """You are a query categorization system for a Redis SRE agent.
 
@@ -105,12 +99,7 @@ Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
 
     # 3. Use LLM to categorize triage vs chat
     try:
-        llm = ChatOpenAI(
-            model=settings.openai_model_nano,
-            api_key=settings.openai_api_key,
-            timeout=10.0,
-            temperature=0,
-        )
+        llm = create_nano_llm(timeout=10.0, temperature=0)
 
         system_prompt = """You are a query categorization system for a Redis SRE agent.
 

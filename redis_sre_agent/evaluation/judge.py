@@ -5,10 +5,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from ..core.config import settings
+from ..core.llm_helpers import create_mini_llm
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +109,7 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
 
     def __init__(self):
         """Initialize the judge with LLM."""
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            openai_api_key=settings.openai_api_key,
-        )
+        self.llm = create_mini_llm(model="gpt-4o-mini")
 
     async def evaluate_response(
         self, agent_response: str, test_case: Dict[str, Any], criteria: List[EvaluationCriteria]

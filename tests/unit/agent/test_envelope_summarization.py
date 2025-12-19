@@ -13,7 +13,7 @@ class TestEnvelopeSummarization:
     @pytest.fixture
     def agent(self):
         """Create agent instance with mocked LLM."""
-        with patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI"):
+        with patch("redis_sre_agent.agent.langgraph_agent.create_mini_llm"):
             agent = SRELangGraphAgent()
             # Mock the mini_llm
             agent.mini_llm = MagicMock()
@@ -155,7 +155,7 @@ class TestExpandEvidenceTool:
     @pytest.fixture
     def agent(self):
         """Create agent instance with mocked LLM."""
-        with patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI"):
+        with patch("redis_sre_agent.agent.langgraph_agent.create_mini_llm"):
             agent = SRELangGraphAgent()
             return agent
 

@@ -29,12 +29,12 @@ class TestRouteToAppropriateAgent:
 
     async def test_no_instance_routes_to_knowledge(self):
         """Test that queries without instance context route to knowledge agent."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             mock_llm = MagicMock()
             mock_response = MagicMock()
             mock_response.content = "KNOWLEDGE_ONLY"
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_chat.return_value = mock_llm
+            mock_create.return_value = mock_llm
 
             result = await route_to_appropriate_agent(
                 query="What are Redis best practices?",
@@ -45,12 +45,12 @@ class TestRouteToAppropriateAgent:
 
     async def test_instance_with_triage_request_routes_to_triage(self):
         """Test that triage requests with instance route to triage agent."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             mock_llm = MagicMock()
             mock_response = MagicMock()
             mock_response.content = "TRIAGE"
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_chat.return_value = mock_llm
+            mock_create.return_value = mock_llm
 
             result = await route_to_appropriate_agent(
                 query="Run a full health check on my Redis",
@@ -61,12 +61,12 @@ class TestRouteToAppropriateAgent:
 
     async def test_instance_with_quick_question_routes_to_chat(self):
         """Test that quick questions with instance route to chat agent."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             mock_llm = MagicMock()
             mock_response = MagicMock()
             mock_response.content = "CHAT"
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_chat.return_value = mock_llm
+            mock_create.return_value = mock_llm
 
             result = await route_to_appropriate_agent(
                 query="What's the memory usage?",
@@ -77,10 +77,10 @@ class TestRouteToAppropriateAgent:
 
     async def test_llm_error_with_instance_defaults_to_chat(self):
         """Test that LLM errors with instance default to chat agent."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             mock_llm = MagicMock()
             mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM error"))
-            mock_chat.return_value = mock_llm
+            mock_create.return_value = mock_llm
 
             result = await route_to_appropriate_agent(
                 query="Check something",
@@ -91,10 +91,10 @@ class TestRouteToAppropriateAgent:
 
     async def test_llm_error_without_instance_defaults_to_knowledge(self):
         """Test that LLM errors without instance default to knowledge agent."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             mock_llm = MagicMock()
             mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM error"))
-            mock_chat.return_value = mock_llm
+            mock_create.return_value = mock_llm
 
             result = await route_to_appropriate_agent(
                 query="What is Redis?",
@@ -105,9 +105,9 @@ class TestRouteToAppropriateAgent:
 
     async def test_user_preference_respected(self):
         """Test that user preferences are respected when instance exists."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             # LLM should not be called when preference is set
-            mock_chat.return_value = MagicMock()
+            mock_create.return_value = MagicMock()
 
             result = await route_to_appropriate_agent(
                 query="Some query",
@@ -119,12 +119,12 @@ class TestRouteToAppropriateAgent:
 
     async def test_comprehensive_triggers_triage(self):
         """Test that 'comprehensive' keyword triggers triage routing."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             mock_llm = MagicMock()
             mock_response = MagicMock()
             mock_response.content = "TRIAGE"
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_chat.return_value = mock_llm
+            mock_create.return_value = mock_llm
 
             result = await route_to_appropriate_agent(
                 query="Give me a comprehensive analysis",
@@ -135,12 +135,12 @@ class TestRouteToAppropriateAgent:
 
     async def test_unexpected_llm_response_defaults_to_chat(self):
         """Test that unexpected LLM responses default to chat when instance exists."""
-        with patch("redis_sre_agent.agent.router.ChatOpenAI") as mock_chat:
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
             mock_llm = MagicMock()
             mock_response = MagicMock()
             mock_response.content = "UNEXPECTED_VALUE"
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_chat.return_value = mock_llm
+            mock_create.return_value = mock_llm
 
             result = await route_to_appropriate_agent(
                 query="Some query",

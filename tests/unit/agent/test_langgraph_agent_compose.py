@@ -32,7 +32,7 @@ async def test_compose_final_markdown_builds_messages_and_payload(caplog):
         fake_llm = FakeLLM()
 
         # Patch ChatOpenAI used inside _compose_final_markdown
-        with patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI", return_value=fake_llm):
+        with patch("redis_sre_agent.agent.langgraph_agent.create_mini_llm", return_value=fake_llm):
             initial = ["Duplicated", "Duplicated", "Unique finding"]
             recommendations = [
                 {
@@ -112,7 +112,7 @@ async def test_compose_final_markdown_normalizes_list_content():
                 ]
                 return SimpleNamespace(content=parts)
 
-        with patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI", return_value=FakeLLM()):
+        with patch("redis_sre_agent.agent.langgraph_agent.create_mini_llm", return_value=FakeLLM()):
             result = await agent._compose_final_markdown(
                 initial_assessment_lines=["x"],
                 per_topic_recommendations=[],
@@ -135,7 +135,7 @@ async def test_compose_final_markdown_handles_empty_content(caplog):
             async def ainvoke(self, msgs):
                 return SimpleNamespace(content="")
 
-        with patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI", return_value=FakeLLM()):
+        with patch("redis_sre_agent.agent.langgraph_agent.create_mini_llm", return_value=FakeLLM()):
             with caplog.at_level("WARNING"):
                 result = await agent._compose_final_markdown(
                     initial_assessment_lines=[],

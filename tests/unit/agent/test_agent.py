@@ -19,10 +19,12 @@ def mock_settings():
 @pytest.fixture
 def mock_llm():
     """Mock LLM for testing."""
-    with patch("redis_sre_agent.agent.langgraph_agent.ChatOpenAI") as mock_chat:
-        mock_llm = MagicMock()
-        mock_chat.return_value = mock_llm
-        yield mock_llm
+    mock_llm_instance = MagicMock()
+    with patch("redis_sre_agent.agent.langgraph_agent.create_llm") as mock_create_llm:
+        with patch("redis_sre_agent.agent.langgraph_agent.create_mini_llm") as mock_create_mini:
+            mock_create_llm.return_value = mock_llm_instance
+            mock_create_mini.return_value = mock_llm_instance
+            yield mock_llm_instance
 
 
 @pytest.fixture

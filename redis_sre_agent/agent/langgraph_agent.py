@@ -29,6 +29,7 @@ from ..core.instances import (
     get_instances,
     save_instances,
 )
+from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import CallbackEmitter, NullEmitter, ProgressEmitter
 from ..tools.manager import ToolManager
 from .helpers import build_adapters_for_tooldefs as _build_adapters
@@ -118,11 +119,7 @@ async def _detect_instance_type_with_llm(
 
     # Create LLM if not provided
     if llm is None:
-        llm = ChatOpenAI(
-            model=settings.openai_model_mini,
-            api_key=settings.openai_api_key,
-            timeout=settings.llm_timeout,
-        )
+        llm = create_mini_llm()
 
     # Build analysis prompt with all available metadata
     # Extract secret value from SecretStr (or plain str after decryption)
@@ -337,17 +334,9 @@ class SRELangGraphAgent:
         else:
             self._progress_emitter = NullEmitter()
         # LLM with both reasoning and function calling capabilities
-        self.llm = ChatOpenAI(
-            model=self.settings.openai_model,
-            openai_api_key=self.settings.openai_api_key,
-            timeout=self.settings.llm_timeout,
-        )
+        self.llm = create_llm()
         # Faster LLM for utility tasks
-        self.mini_llm = ChatOpenAI(
-            model=self.settings.openai_model_mini,
-            openai_api_key=self.settings.openai_api_key,
-            timeout=self.settings.llm_timeout,
-        )
+        self.mini_llm = create_mini_llm()
 
         # Tools will be loaded per-query using ToolManager
         # No tools bound at initialization - they're bound per conversation
@@ -445,11 +434,7 @@ class SRELangGraphAgent:
         if safety_and_fact_check_notes:
             payload["safety_and_fact_check_notes"] = safety_and_fact_check_notes
 
-        composer_llm = ChatOpenAI(
-            model=self.settings.openai_model_mini,
-            openai_api_key=self.settings.openai_api_key,
-            timeout=self.settings.llm_timeout,
-        )
+        composer_llm = create_mini_llm()
         from langchain_core.messages import HumanMessage, SystemMessage
 
         msgs = [

@@ -18,11 +18,13 @@ from redis_sre_agent.core.progress import (
 class TestChatAgentInitialization:
     """Test ChatAgent initialization."""
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_agent_initializes_without_instance(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_initializes_without_instance(self, mock_create_mini_llm, mock_create_llm):
         """Test that ChatAgent initializes correctly without a Redis instance."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         agent = ChatAgent()
 
@@ -32,13 +34,16 @@ class TestChatAgentInitialization:
         # Should have NullEmitter by default
         assert isinstance(agent._emitter, NullEmitter)
         # Now creates 2 LLM instances (llm and mini_llm)
-        assert mock_chat_openai.call_count == 2
+        assert mock_create_llm.call_count == 1
+        assert mock_create_mini_llm.call_count == 1
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_agent_initializes_with_instance(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_initializes_with_instance(self, mock_create_mini_llm, mock_create_llm):
         """Test that ChatAgent initializes correctly with a Redis instance."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         instance = RedisInstance(
             id="test-id",
@@ -56,22 +61,28 @@ class TestChatAgentInitialization:
         assert agent.redis_instance is instance
         assert agent.redis_instance.name == "test-instance"
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_agent_initializes_with_progress_emitter(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_initializes_with_progress_emitter(self, mock_create_mini_llm, mock_create_llm):
         """Test that ChatAgent accepts a progress_emitter."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         emitter = NullEmitter()
         agent = ChatAgent(progress_emitter=emitter)
 
         assert agent._emitter is emitter
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_agent_initializes_with_progress_callback_deprecated(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_initializes_with_progress_callback_deprecated(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
         """Test that ChatAgent still accepts deprecated progress_callback."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         async def my_callback(msg, type):
             pass
@@ -81,11 +92,15 @@ class TestChatAgentInitialization:
         # Should wrap callback in CallbackEmitter
         assert isinstance(agent._emitter, CallbackEmitter)
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_progress_emitter_takes_precedence_over_callback(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_progress_emitter_takes_precedence_over_callback(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
         """Test that progress_emitter takes precedence over progress_callback."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         emitter = NullEmitter()
 
@@ -97,16 +112,20 @@ class TestChatAgentInitialization:
         # Should use the emitter, not the callback
         assert agent._emitter is emitter
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_agent_no_temperature_parameter(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_no_temperature_parameter(self, mock_create_mini_llm, mock_create_llm):
         """Test that ChatAgent doesn't use temperature parameter (reasoning models)."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         ChatAgent()
 
-        call_args = mock_chat_openai.call_args
-        assert "temperature" not in call_args.kwargs
+        # Verify create_llm was called without temperature parameter
+        call_args = mock_create_llm.call_args
+        if call_args is not None:
+            assert "temperature" not in (call_args.kwargs or {})
 
 
 class TestChatAgentSingleton:
@@ -217,11 +236,13 @@ class TestChatAgentState:
 class TestChatAgentWorkflowBuild:
     """Test the _build_workflow method and emitter parameter."""
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_build_workflow_accepts_emitter(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_build_workflow_accepts_emitter(self, mock_create_mini_llm, mock_create_llm):
         """Test that _build_workflow accepts an emitter parameter."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         agent = ChatAgent()
 
@@ -243,11 +264,13 @@ class TestChatAgentWorkflowBuild:
 
         assert workflow is not None
 
-    @patch("redis_sre_agent.agent.chat_agent.ChatOpenAI")
-    def test_build_workflow_works_without_emitter(self, mock_chat_openai):
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_build_workflow_works_without_emitter(self, mock_create_mini_llm, mock_create_llm):
         """Test that _build_workflow works when emitter is None."""
         mock_llm = MagicMock()
-        mock_chat_openai.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
 
         agent = ChatAgent()
 

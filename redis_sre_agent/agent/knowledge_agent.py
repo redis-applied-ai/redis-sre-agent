@@ -18,6 +18,7 @@ from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.progress import (
     CallbackEmitter,
     NullEmitter,
@@ -107,10 +108,7 @@ class KnowledgeOnlyAgent:
             self._emitter = NullEmitter()
 
         # LLM optimized for knowledge tasks
-        self.llm = ChatOpenAI(
-            model=self.settings.openai_model,
-            openai_api_key=self.settings.openai_api_key,
-        )
+        self.llm = create_llm()
 
         # Tools will be loaded per-query using ToolManager (without redis_instance)
         # This loads only the always-on providers (knowledge, utilities)
