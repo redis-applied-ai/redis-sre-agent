@@ -187,9 +187,7 @@ class RedisKBScraper(BaseScraper):
                 self.logger.error(f"Failed to scrape page {page} of {category_name}: {e}")
                 break
 
-        self.logger.info(
-            f"Found {articles_found} articles in {category_name} across {page} pages"
-        )
+        self.logger.info(f"Found {articles_found} articles in {category_name} across {page} pages")
 
     def _extract_article_links_from_page(self, soup: BeautifulSoup) -> List[str]:
         """Extract article links from a category page."""

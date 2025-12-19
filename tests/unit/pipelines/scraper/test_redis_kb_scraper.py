@@ -1,6 +1,6 @@
 """Unit tests for Redis KB scraper."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from bs4 import BeautifulSoup
@@ -290,9 +290,7 @@ class TestRedisKBScraper:
         # Mock the entire workflow
         with (
             patch.object(scraper, "_discover_kb_urls") as mock_discover,
-            patch.object(
-                scraper, "_scrape_article_with_semaphore"
-            ) as mock_scrape_with_sem,
+            patch.object(scraper, "_scrape_article_with_semaphore") as mock_scrape_with_sem,
         ):
             # Setup mocks - use url_to_categories dict
             scraper.url_to_categories["https://redis.io/kb/doc/article1"].add("Redis Cloud")

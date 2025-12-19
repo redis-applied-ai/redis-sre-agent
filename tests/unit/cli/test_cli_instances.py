@@ -240,9 +240,7 @@ def test_instance_get_shows_extension_data():
         extension_data={"zendesk_organization_id": "12345"},
     )
 
-    with patch.object(
-        core_instances, "get_instance_by_id", new=AsyncMock(return_value=item)
-    ):
+    with patch.object(core_instances, "get_instance_by_id", new=AsyncMock(return_value=item)):
         result = runner.invoke(instance, ["get", "redis-dev-123", "--json"])
 
     assert result.exit_code == 0

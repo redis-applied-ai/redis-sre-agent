@@ -60,9 +60,7 @@ class LoggingMiddleware:
             await self.app(scope, receive, send_wrapper)
             process_time = time.time() - start_time
             logger.info(
-                f"Response: {status_code} | "
-                f"Time: {process_time:.4f}s | "
-                f"Path: {request.url.path}"
+                f"Response: {status_code} | Time: {process_time:.4f}s | Path: {request.url.path}"
             )
         except Exception as e:
             process_time = time.time() - start_time
