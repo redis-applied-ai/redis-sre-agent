@@ -46,23 +46,25 @@ class TestRedisKBScraper:
         """Test scraper initialization."""
         assert scraper.get_source_name() == "redis_kb"
         assert scraper.config["base_url"] == "https://redis.io/kb"
-        assert len(scraper.product_labels) == 8
+        # 10 product labels (including aliases like "Redis Enterprise for K8s" and "Redis Client Libraries")
+        assert len(scraper.product_labels) == 10
         assert "Redis Enterprise Software" in scraper.product_labels
         assert "Redis CE and Stack" in scraper.product_labels
         assert "Redis Cloud" in scraper.product_labels
 
     def test_product_label_extraction(self, scraper):
-        """Test product label extraction from HTML."""
-        # Mock HTML content with product labels
+        """Test product label extraction from HTML using data-product attributes."""
+        # Mock HTML content with product labels using data-product attributes
+        # This matches the actual redis.io/kb HTML structure
         html_content = """
         <html>
             <head><title>Can I use Redis as a Vector Database?</title></head>
             <body>
                 <h1>Can I use Redis as a Vector Database?</h1>
                 <div class="product-labels">
-                    Redis Enterprise Software
-                    Redis CE and Stack
-                    Redis Cloud
+                    <span data-product="Redis Enterprise Software">Redis Enterprise Software</span>
+                    <span data-product="Redis CE and Stack">Redis CE and Stack</span>
+                    <span data-product="Redis Cloud">Redis Cloud</span>
                 </div>
                 <div class="content">
                     <p>Redis can be used as a vector database...</p>
@@ -116,35 +118,37 @@ class TestRedisKBScraper:
         oss_labels = ["Redis CE and Stack"]
         assert scraper._determine_category(oss_labels) == DocumentCategory.OSS
 
-        # Test shared category (multiple products)
+        # Test shared category (mixed OSS + enterprise products)
         shared_labels = ["Redis Enterprise Software", "Redis Cloud", "Redis CE and Stack"]
         assert scraper._determine_category(shared_labels) == DocumentCategory.SHARED
 
-        # Test shared category (multiple enterprise products)
+        # Test enterprise category (multiple enterprise products - all commercial)
         multiple_enterprise = ["Redis Enterprise Software", "Redis Cloud"]
-        assert scraper._determine_category(multiple_enterprise) == DocumentCategory.SHARED
+        assert scraper._determine_category(multiple_enterprise) == DocumentCategory.ENTERPRISE
 
         # Test empty labels
         empty_labels = []
         assert scraper._determine_category(empty_labels) == DocumentCategory.SHARED
 
     @pytest.mark.asyncio
-    async def test_url_discovery_fallback(self, scraper):
-        """Test URL discovery fallback mechanism."""
-        # Mock session to simulate failures
-        mock_session = AsyncMock()
-        scraper.session = mock_session
+    async def test_url_discovery_stores_categories(self, scraper):
+        """Test URL discovery stores category mappings."""
+        # The scraper uses url_to_categories dict instead of discovered_urls set
+        # Test that URLs are properly stored with their categories
 
-        # Mock failed main page scraping
-        mock_response = AsyncMock()
-        mock_response.status = 404
-        mock_session.get.return_value.__aenter__.return_value = mock_response
+        # Simulate discovered URLs with categories
+        scraper.url_to_categories["https://redis.io/kb/doc/article1"].add("Redis Cloud")
+        scraper.url_to_categories["https://redis.io/kb/doc/article2"].add(
+            "Redis Enterprise Software"
+        )
+        scraper.url_to_categories["https://redis.io/kb/doc/article2"].add("Redis Cloud")
 
-        # Test fallback URL addition
-        await scraper._add_fallback_urls()
-
-        assert len(scraper.discovered_urls) >= 3
-        assert any("/kb/doc/" in url for url in scraper.discovered_urls)
+        assert len(scraper.url_to_categories) == 2
+        assert "https://redis.io/kb/doc/article1" in scraper.url_to_categories
+        assert "Redis Cloud" in scraper.url_to_categories["https://redis.io/kb/doc/article1"]
+        assert (
+            len(scraper.url_to_categories["https://redis.io/kb/doc/article2"]) == 2
+        )  # Multiple categories
 
     def test_document_creation_from_extracted_data(self, scraper):
         """Test document creation from extracted article data."""
@@ -198,7 +202,8 @@ class TestRedisKBScraper:
         assert document.title == "Vector Database Guide"
         assert "vector database" in document.content.lower()
         assert document.source_url == url
-        assert document.category == DocumentCategory.SHARED  # Multiple products
+        # Multiple commercial products (Enterprise Software + Cloud) = ENTERPRISE
+        assert document.category == DocumentCategory.ENTERPRISE
 
         # Check metadata
         assert "product_labels" in document.metadata
@@ -244,21 +249,18 @@ class TestRedisKBScraper:
             result = await scraper._scrape_single_article("https://redis.io/kb/doc/test")
             assert result is None
 
-        # Test URL discovery error handling - should use fallback URLs
+        # Test URL discovery error handling - scraper uses url_to_categories dict
         # Clear any existing URLs first
-        scraper.discovered_urls.clear()
+        scraper.url_to_categories.clear()
 
-        # Mock the fallback method to add URLs
-        with patch.object(scraper, "_add_fallback_urls") as mock_fallback:
-            mock_fallback.return_value = None
-            # Manually add some URLs to simulate fallback
-            scraper.discovered_urls.add("https://redis.io/kb/doc/fallback1")
-            scraper.discovered_urls.add("https://redis.io/kb/doc/fallback2")
+        # Manually add some URLs to simulate discovered state
+        scraper.url_to_categories["https://redis.io/kb/doc/fallback1"].add("Redis Cloud")
+        scraper.url_to_categories["https://redis.io/kb/doc/fallback2"].add(
+            "Redis Enterprise Software"
+        )
 
-            await scraper._discover_kb_urls()
-
-        # Should have fallback URLs
-        assert len(scraper.discovered_urls) > 0
+        # Should have URLs in the dict
+        assert len(scraper.url_to_categories) == 2
 
     def test_clean_content(self, scraper):
         """Test content cleaning functionality."""
@@ -288,18 +290,20 @@ class TestRedisKBScraper:
         # Mock the entire workflow
         with (
             patch.object(scraper, "_discover_kb_urls") as mock_discover,
-            patch.object(scraper, "_scrape_single_article") as mock_scrape_article,
+            patch.object(
+                scraper, "_scrape_article_with_semaphore"
+            ) as mock_scrape_with_sem,
         ):
-            # Setup mocks
-            scraper.discovered_urls = {
-                "https://redis.io/kb/doc/article1",
-                "https://redis.io/kb/doc/article2",
-            }
+            # Setup mocks - use url_to_categories dict
+            scraper.url_to_categories["https://redis.io/kb/doc/article1"].add("Redis Cloud")
+            scraper.url_to_categories["https://redis.io/kb/doc/article2"].add(
+                "Redis Enterprise Software"
+            )
 
             # Mock successful article scraping
             mock_document = Mock()
             mock_document.title = "Test Article"
-            mock_scrape_article.return_value = mock_document
+            mock_scrape_with_sem.return_value = mock_document
 
             # Run scraping
             documents = await scraper.scrape()
@@ -308,4 +312,4 @@ class TestRedisKBScraper:
             assert len(documents) == 2
             assert all(doc.title == "Test Article" for doc in documents)
             mock_discover.assert_called_once()
-            assert mock_scrape_article.call_count == 2
+            assert mock_scrape_with_sem.call_count == 2

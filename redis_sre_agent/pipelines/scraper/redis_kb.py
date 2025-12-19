@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin
 
@@ -30,7 +31,7 @@ class RedisKBScraper(BaseScraper):
             "timeout": 30,
             "delay_between_requests": 1.0,
             "max_concurrent_requests": 5,
-            "max_articles": 50,  # Reasonable limit for comprehensive coverage
+            "max_articles": 500,  # Scrape all available KB articles
         }
 
         if config:
@@ -38,9 +39,10 @@ class RedisKBScraper(BaseScraper):
 
         super().__init__(storage, default_config)
         self.session: Optional[aiohttp.ClientSession] = None
-        self.discovered_urls: Set[str] = set()
+        # Map URL -> set of product categories it was discovered in
+        self.url_to_categories: Dict[str, Set[str]] = defaultdict(set)
 
-        # Product label mappings
+        # Product label mappings (display name -> tag name)
         self.product_labels = {
             "Redis Enterprise Software": "redis_enterprise_software",
             "Redis CE and Stack": "redis_ce_stack",
@@ -48,8 +50,10 @@ class RedisKBScraper(BaseScraper):
             "Redis Enterprise": "redis_enterprise",
             "Redis Insight": "redis_insight",
             "Redis Enterprise for K8s": "redis_enterprise_k8s",
+            "Redis Enterprise for Kubernetes": "redis_enterprise_k8s",
             "Redis Data Integration": "redis_data_integration",
             "Client Libraries": "client_libraries",
+            "Redis Client Libraries": "client_libraries",
         }
 
     def get_source_name(self) -> str:
@@ -66,17 +70,19 @@ class RedisKBScraper(BaseScraper):
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
             self.session = session
 
-            # Step 1: Discover all KB article URLs
+            # Step 1: Discover all KB article URLs by crawling product category pages
             self.logger.info("Discovering Redis KB article URLs...")
             await self._discover_kb_urls()
 
-            self.logger.info(f"Found {len(self.discovered_urls)} KB articles to scrape")
+            self.logger.info(f"Found {len(self.url_to_categories)} KB articles to scrape")
 
             # Step 2: Scrape articles with concurrency control
+            # Product labels are extracted from each article page (authoritative source)
             semaphore = asyncio.Semaphore(self.config["max_concurrent_requests"])
             tasks = []
 
-            for url in list(self.discovered_urls)[: self.config["max_articles"]]:
+            urls_to_scrape = list(self.url_to_categories.keys())[: self.config["max_articles"]]
+            for url in urls_to_scrape:
                 task = self._scrape_article_with_semaphore(semaphore, url)
                 tasks.append(task)
 
@@ -99,77 +105,15 @@ class RedisKBScraper(BaseScraper):
     async def _discover_kb_urls(self) -> None:
         """Discover all KB article URLs using comprehensive product-based strategy."""
         try:
-            # Method 1: Scrape all product category pages with pagination
+            # Scrape all product category pages with pagination
             self.logger.info("Starting comprehensive category-based URL discovery...")
             await self._discover_by_product_categories()
             self.logger.info(
-                f"After category-based discovery: {len(self.discovered_urls)} URLs found"
+                f"After category-based discovery: {len(self.url_to_categories)} URLs found"
             )
 
         except Exception as e:
             self.logger.error(f"Failed to discover KB URLs: {e}")
-
-        # Always add fallback URLs if we don't have enough
-        if len(self.discovered_urls) < 10:
-            self.logger.info("Adding fallback URLs...")
-            await self._add_fallback_urls()
-
-    async def _scrape_main_kb_page(self) -> None:
-        """Scrape the main KB page for article links."""
-        try:
-            async with self.session.get(self.config["base_url"]) as response:
-                if response.status != 200:
-                    self.logger.warning(f"HTTP {response.status} for main KB page")
-                    return
-
-                html = await response.text()
-                soup = BeautifulSoup(html, "html.parser")
-
-                # Look for article links in the page
-                for link in soup.find_all("a", href=True):
-                    href = link["href"]
-
-                    # Check if it's a KB article URL
-                    if "/kb/doc/" in href:
-                        full_url = urljoin(self.config["base_url"], href)
-                        self.discovered_urls.add(full_url)
-
-        except Exception as e:
-            self.logger.error(f"Failed to scrape main KB page: {e}")
-
-    async def _add_fallback_urls(self) -> None:
-        """Add some known KB article URLs as fallback."""
-        fallback_urls = [
-            # Vector database and AI
-            "https://redis.io/kb/doc/28x16buszr/can-i-use-redis-as-a-vector-database",
-            # Migration and setup
-            "https://redis.io/kb/doc/1iqt9z27dz/how-to-migrate-redis-oss-to-redis-enterprise",
-            "https://redis.io/kb/doc/1yfuezjxdv/migrating-from-elasticache-to-redis-cloud-via-s3-bucket",
-            # Performance and troubleshooting
-            "https://redis.io/kb/doc/1mebipyp1e/performance-tuning-best-practices",
-            "https://redis.io/kb/doc/2no7qfbtpf/how-to-troubleshoot-latency-issues",
-            # High availability and disaster recovery
-            "https://redis.io/kb/doc/21rbquorvb/considerations-about-consistency-and-data-loss-in-a-crdb-regional-failure",
-            "https://redis.io/kb/doc/12ffgrmwbe/how-long-does-it-take-to-a-recover-a-large-database-from-persistence-rdb-aof",
-            # Redis Enterprise specific
-            "https://redis.io/kb/doc/164wz116f6/what-happens-if-a-redis-enterprise-license-expires",
-            "https://redis.io/kb/doc/19yzdivas3/applying-license-to-a-redis-enterprise-cluster-in-kubernetes-deployment",
-            "https://redis.io/kb/doc/1165ynamyu/the-cluster-keyslot-command-does-not-work-in-redis-enterprise-why",
-            "https://redis.io/kb/doc/2pzjdqk77u/how-do-i-migrate-redis-enterprise-shards-and-endpoints-to-other-nodes",
-            "https://redis.io/kb/doc/2d6sxrbhhj/does-redis-enterprise-support-logical-databases-using-the-select-command",
-            "https://redis.io/kb/doc/1g3kwd7hca/error-from-web-console-when-creating-a-redis-enterprise-database-memory-limit-is-larger-than-amount-of-memory",
-            "https://redis.io/kb/doc/1mjomfbkom/how-do-i-configure-the-dns-in-redis-enterprise",
-            "https://redis.io/kb/doc/1sneb4qq3t/how-can-i-take-a-redis-enterprise-node-offline-safely-for-patching-upgrade",
-            # Redis Cloud specific
-            "https://redis.io/kb/doc/1hcgha9u9q/how-many-connections-can-be-established-to-a-redis-cloud-database",
-            "https://redis.io/kb/doc/1jdtj3ryok/how-to-create-redis-cloud-vpc-peering-in-aws",
-        ]
-
-        for url in fallback_urls:
-            self.discovered_urls.add(url)
-
-        self.logger.info(f"Added {len(fallback_urls)} fallback URLs")
-        self.logger.debug(f"Fallback URLs: {list(self.discovered_urls)}")
 
     async def _discover_by_product_categories(self) -> None:
         """Discover all KB article URLs by scraping each product category with pagination."""
@@ -221,10 +165,10 @@ class RedisKBScraper(BaseScraper):
                         self.logger.debug(f"No articles found on page {page} for {category_name}")
                         break
 
-                    # Add all found article URLs
+                    # Add all found article URLs with their category
                     for link in article_links:
                         full_url = urljoin("https://redis.io", link)
-                        self.discovered_urls.add(full_url)
+                        self.url_to_categories[full_url].add(category_name)
                         articles_found += 1
 
                     self.logger.debug(f"Found {len(article_links)} articles on page {page}")
@@ -244,7 +188,7 @@ class RedisKBScraper(BaseScraper):
                 break
 
         self.logger.info(
-            f"Found {articles_found} articles in {category_name} across {page - 1} pages"
+            f"Found {articles_found} articles in {category_name} across {page} pages"
         )
 
     def _extract_article_links_from_page(self, soup: BeautifulSoup) -> List[str]:
@@ -305,7 +249,7 @@ class RedisKBScraper(BaseScraper):
                 await asyncio.sleep(self.config["delay_between_requests"])
 
     async def _scrape_single_article(self, url: str) -> Optional[ScrapedDocument]:
-        """Scrape a single KB article and extract product labels."""
+        """Scrape a single KB article, extracting product labels from page content."""
         try:
             async with self.session.get(url) as response:
                 if response.status != 200:
@@ -320,7 +264,7 @@ class RedisKBScraper(BaseScraper):
                 if not article_data:
                     return None
 
-                # Extract product labels
+                # Extract product labels from the article page (authoritative source)
                 product_labels = self._extract_product_labels(soup)
 
                 # Create document with enhanced metadata
@@ -421,63 +365,18 @@ class RedisKBScraper(BaseScraper):
             return None
 
     def _extract_product_labels(self, soup: BeautifulSoup) -> List[str]:
-        """Extract Redis product labels from the article page."""
+        """Extract Redis product labels from the article page using data-product attributes."""
         labels = []
 
         try:
-            # Method 1: Look for product labels in the article header/metadata area
-            # Based on the KB article structure, labels appear near the title
-            header_area = soup.find("h1") or soup.find(".kb-header")
-            if header_area:
-                # Look for labels in the vicinity of the title
-                parent = header_area.parent
-                if parent:
-                    header_text = parent.get_text()
-                    for product_name in self.product_labels.keys():
-                        if product_name in header_text:
-                            labels.append(product_name)
-
-            # Method 2: Look for specific patterns in the page content
-            # KB articles often have product labels displayed prominently
-            page_text = soup.get_text()
-
-            # Look for exact matches of product names
-            for product_name in self.product_labels.keys():
-                # Use word boundaries to avoid partial matches
-                import re
-
-                pattern = r"\b" + re.escape(product_name) + r"\b"
-                if re.search(pattern, page_text, re.IGNORECASE):
-                    labels.append(product_name)
-
-            # Method 3: Look for specific CSS classes or data attributes
-            label_selectors = [
-                ".product-label",
-                ".badge",
-                ".tag",
-                ".kb-tag",
-                ".product-tag",
-                "[data-product]",
-                ".kb-product-tag",
-                ".product-badge",
-            ]
-
-            for selector in label_selectors:
-                elements = soup.select(selector)
-                for elem in elements:
-                    text = elem.get_text().strip()
-                    # Check if the text matches any known product
-                    for product_name in self.product_labels.keys():
-                        if product_name.lower() in text.lower():
-                            labels.append(product_name)
-
-            # Method 4: Look in meta tags or structured data
-            meta_tags = soup.find_all("meta")
-            for meta in meta_tags:
-                content = meta.get("content", "")
-                for product_name in self.product_labels.keys():
-                    if product_name in content:
-                        labels.append(product_name)
+            # Primary method: Extract from data-product attributes
+            # These are the authoritative product labels displayed on the article
+            # HTML structure: <span data-product="Redis CE and Stack">Redis CE and Stack</span>
+            product_elements = soup.select("[data-product]")
+            for elem in product_elements:
+                product = elem.get("data-product", "").strip()
+                if product and product in self.product_labels:
+                    labels.append(product)
 
             # Remove duplicates while preserving order
             seen = set()
@@ -494,24 +393,36 @@ class RedisKBScraper(BaseScraper):
             return []
 
     def _determine_category(self, product_labels: List[str]) -> DocumentCategory:
-        """Determine document category based on product labels."""
+        """Determine document category based on product labels.
+
+        Maps KB product categories to our document categories:
+        - OSS: "Redis CE and Stack" only
+        - ENTERPRISE: Enterprise Software, K8s, or Cloud only (all managed/commercial products)
+        - SHARED: Multiple products or other categories (Insight, RDI, Client Libraries)
+        """
         if not product_labels:
             return DocumentCategory.SHARED
 
-        # If it's only CE/Stack, categorize as OSS
-        if len(product_labels) == 1 and product_labels[0] == "Redis CE and Stack":
+        # Normalize to a set for easier checking
+        labels_set = set(product_labels)
+
+        # OSS-only categories
+        oss_only = {"Redis CE and Stack"}
+
+        # Enterprise/Commercial categories (including Cloud as it's a managed offering)
+        enterprise_categories = {
+            "Redis Enterprise Software",
+            "Redis Enterprise for Kubernetes",
+            "Redis Cloud",
+        }
+
+        # If all labels are OSS-only
+        if labels_set.issubset(oss_only):
             return DocumentCategory.OSS
 
-        # If it mentions Enterprise and nothing else, categorize as enterprise
-        enterprise_keywords = [
-            "Redis Enterprise Software",
-            "Redis Enterprise",
-            "Redis Enterprise for K8s",
-        ]
-        if len(product_labels) == 1 and any(
-            label in enterprise_keywords for label in product_labels
-        ):
+        # If all labels are enterprise/commercial categories
+        if labels_set.issubset(enterprise_categories):
             return DocumentCategory.ENTERPRISE
 
-        # If it applies to multiple products, it's shared
+        # Everything else is shared (multiple products, or Insight/RDI/Client Libraries)
         return DocumentCategory.SHARED

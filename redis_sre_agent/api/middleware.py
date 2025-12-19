@@ -1,47 +1,69 @@
-"""FastAPI middleware for CORS, error handling, and logging."""
+"""FastAPI middleware for CORS, error handling, and logging.
+
+NOTE: We use pure ASGI middleware instead of BaseHTTPMiddleware to avoid
+issues with WebSocket connections. BaseHTTPMiddleware doesn't properly handle
+WebSocket protocol upgrades and can cause "WebSocket closed before established"
+errors. See: https://starlette.dev/middleware/#pure-asgi-middleware
+"""
 
 import logging
 import time
-from typing import Callable
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from redis_sre_agent.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-class LoggingMiddleware(BaseHTTPMiddleware):
-    """Log HTTP requests and responses with timing."""
+class LoggingMiddleware:
+    """Pure ASGI middleware for logging HTTP requests and responses with timing.
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    This middleware skips WebSocket connections (scope["type"] == "websocket")
+    to avoid interfering with WebSocket handshakes.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Skip non-HTTP connections (WebSocket, lifespan events)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         start_time = time.time()
+        request = Request(scope)
 
         # Log request
         logger.info(f"Request: {request.method} {request.url}")
 
-        # Process request
+        # Track response status code
+        status_code: int = 0
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 0)
+                # Add timing header
+                process_time = time.time() - start_time
+                headers = list(message.get("headers", []))
+                headers.append((b"x-process-time", str(process_time).encode()))
+                message = {**message, "headers": headers}
+            await send(message)
+
         try:
-            response = await call_next(request)
-
-            # Calculate processing time
+            await self.app(scope, receive, send_wrapper)
             process_time = time.time() - start_time
-
-            # Log response
             logger.info(
-                f"Response: {response.status_code} | "
+                f"Response: {status_code} | "
                 f"Time: {process_time:.4f}s | "
                 f"Path: {request.url.path}"
             )
-
-            # Add timing header
-            response.headers["X-Process-Time"] = str(process_time)
-
-            return response
-
         except Exception as e:
             process_time = time.time() - start_time
             logger.error(
@@ -52,21 +74,31 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             raise
 
 
-class ErrorHandlerMiddleware(BaseHTTPMiddleware):
-    """Global error handling middleware."""
+class ErrorHandlerMiddleware:
+    """Pure ASGI middleware for global error handling.
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    This middleware skips WebSocket connections (scope["type"] == "websocket")
+    to avoid interfering with WebSocket handshakes.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Skip non-HTTP connections (WebSocket, lifespan events)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         try:
-            return await call_next(request)
-        except HTTPException:
-            # Let FastAPI handle HTTP exceptions normally
-            raise
+            await self.app(scope, receive, send)
         except Exception as e:
+            request = Request(scope)
             # Log unexpected errors
             logger.exception(f"Unhandled error in {request.method} {request.url}: {e}")
 
             # Return generic error response
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=500,
                 content={
                     "error": "Internal server error",
@@ -75,6 +107,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                     "method": request.method,
                 },
             )
+            await response(scope, receive, send)
 
 
 def setup_middleware(app: FastAPI) -> None:

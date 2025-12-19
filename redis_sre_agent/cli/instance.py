@@ -132,6 +132,14 @@ def instances_get(instance_id: str, as_json: bool):
             ]:
                 table.add_row(k, str(d.get(k)))
 
+            # Display extension_data if present
+            ext_data = d.get("extension_data")
+            if ext_data:
+                table.add_row("", "")  # blank row separator
+                table.add_row("[bold]extension_data[/bold]", "")
+                for ek, ev in ext_data.items():
+                    table.add_row(f"  {ek}", str(ev))
+
             console.print(table)
         except Exception as e:
             if as_json:
@@ -281,6 +289,18 @@ def instances_create(
 @click.option("--memory")
 @click.option("--connections", type=int)
 @click.option("--user-id")
+@click.option(
+    "--set-extension",
+    "set_extensions",
+    multiple=True,
+    help="Set extension_data field: key=value (can be repeated)",
+)
+@click.option(
+    "--unset-extension",
+    "unset_extensions",
+    multiple=True,
+    help="Remove extension_data field by key (can be repeated)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output JSON")
 def instances_update(
     instance_id: str,
@@ -306,9 +326,18 @@ def instances_update(
     memory: Optional[str],
     connections: Optional[int],
     user_id: Optional[str],
+    set_extensions: tuple,
+    unset_extensions: tuple,
     as_json: bool,
 ):
-    """Update fields of an existing instance."""
+    """Update fields of an existing instance.
+
+    Use --set-extension to add/update extension_data fields:
+        --set-extension zendesk_organization_id=12345
+
+    Use --unset-extension to remove extension_data fields:
+        --unset-extension zendesk_organization_id
+    """
 
     async def _update():
         try:
@@ -367,6 +396,35 @@ def instances_update(
                 update_data["connections"] = connections
             if user_id is not None:
                 update_data["user_id"] = user_id
+
+            # Handle extension_data updates
+            if set_extensions or unset_extensions:
+                ext_data = dict(current.extension_data or {})
+
+                # Parse and set new extension values
+                for item in set_extensions:
+                    if "=" not in item:
+                        raise RuntimeError(
+                            f"Invalid --set-extension format: '{item}'. Use key=value"
+                        )
+                    key, value = item.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if not key:
+                        raise RuntimeError("Extension key cannot be empty")
+                    # Try to parse value as JSON for complex types, otherwise keep as string
+                    try:
+                        ext_data[key] = _json.loads(value)
+                    except _json.JSONDecodeError:
+                        ext_data[key] = value
+
+                # Remove specified extension keys
+                for key in unset_extensions:
+                    key = key.strip()
+                    ext_data.pop(key, None)
+
+                update_data["extension_data"] = ext_data if ext_data else None
+
             update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
             updated = current.model_copy(update=update_data)
