@@ -97,6 +97,28 @@ mcp_servers:
     env:
       # Set your GitHub Personal Access Token here or via environment variable
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    # Optionally constrain to search/read tools only with capability categories
+    tools:
+      search_code:
+        capability: repos
+      search_issues:
+        capability: tickets
+      search_pull_requests:
+        capability: repos
+      get_file_contents:
+        capability: repos
+      list_issues:
+        capability: tickets
+      list_pull_requests:
+        capability: repos
+      issue_read:
+        capability: tickets
+      pull_request_read:
+        capability: repos
+      list_commits:
+        capability: repos
+      get_commit:
+        capability: repos
 
   # Option 2: Remote GitHub MCP server (recommended, no Docker needed)
   # Uncomment the following and comment out the local Docker option above:
@@ -104,9 +126,31 @@ mcp_servers:
   #   url: "https://api.githubcopilot.com/mcp/"
   #   headers:
   #     Authorization: "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
-  #   # transport: streamable_http  # default, uses Streamable HTTP protocol
+  #   tools:
+  #     search_code:
+  #       capability: repos
+  #     search_issues:
+  #       capability: tickets
+  #     search_pull_requests:
+  #       capability: repos
+  #     get_file_contents:
+  #       capability: repos
+  #     list_issues:
+  #       capability: tickets
+  #     list_pull_requests:
+  #       capability: repos
+  #     issue_read:
+  #       capability: tickets
+  #     pull_request_read:
+  #       capability: repos
+  #     list_commits:
+  #       capability: repos
+  #     get_commit:
+  #       capability: repos
 
-# Tool providers configuration (fully qualified class paths)
+# Manually overriding tool providers configuration (fully qualified class paths).
+# Useful to disable some built-in tool providers and/or enable your own custom providers.
+# For more on custom tool providers, see: https://redis-applied-ai.github.io/redis-sre-agent/how-to/tool-providers/#create-a-custom-provider
 # tool_providers:
 #   - redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider
 #   - redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider
