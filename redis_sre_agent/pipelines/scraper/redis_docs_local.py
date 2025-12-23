@@ -33,18 +33,19 @@ class RedisDocsLocalScraper(BaseScraper):
             # Path to local clone of redis/docs repo
             "docs_repo_path": "./redis-docs",
             # Subdirectories to scrape within content/
+            # Note: redis/docs repo structure has all content at top level (no "latest/" prefix).
+            # Versioned content (e.g., develop/ai/redisvl/0.9.0/) is filtered by --latest-only.
             "content_paths": [
                 "commands",  # Redis commands reference
                 "develop",  # Development guides
                 "integrate",  # Integration guides
-                "operate",  # Operations and SRE content
-                "latest/operate/rs",  # Redis Enterprise Software
+                "operate",  # Operations and SRE content (includes rs/, rc/, oss_and_stack/)
             ],
             # File patterns to include
             "include_patterns": ["*.md", "*.markdown"],
             # File patterns to exclude
             "exclude_patterns": ["README.md", "readme.md", "_index.md"],
-            # If True, only include latest docs and skip versioned directories like 7.8/
+            # If True, only include latest docs and skip versioned directories like 0.9.0/
             "latest_only": False,
             **self.config,
         }
@@ -124,21 +125,13 @@ class RedisDocsLocalScraper(BaseScraper):
                     if any(md_file.name == exclude for exclude in self.config["exclude_patterns"]):
                         continue
 
-                    # latest-only: skip files in versioned directories like 7.8/
+                    # latest-only: skip files in versioned directories like 0.9.0/
                     if self.config.get("latest_only"):
                         rel_path = md_file.relative_to(content_dir)
                         rel_parts = rel_path.parts
-                        # Skip files in versioned directories like 7.8/
+                        # Skip files in versioned directories (e.g., develop/ai/redisvl/0.9.0/)
                         if any(self._is_version_dir(p) for p in rel_parts):
                             continue
-                        # Prefer latest/ subtree for Enterprise docs; but only skip non-latest
-                        # under operate/rs if a latest/operate/rs subtree actually exists.
-                        rel_str = str(rel_path)
-                        if "operate/rs" in rel_str and not rel_str.startswith("latest/"):
-                            latest_rs_dir = content_dir / "latest" / "operate" / "rs"
-                            if latest_rs_dir.exists():
-                                # A latest/ subtree exists; skip non-latest to avoid duplicates
-                                continue
 
                     # Skip if already added
                     if md_file not in markdown_files:
