@@ -15,8 +15,5 @@ This is an early release with built-in support for Prometheus, Loki, Redis CLI d
 - Integrations (Providers): [how-to/tool-providers.md](how-to/tool-providers.md)
 
 ## Concepts
-- **Without Redis instance details**: Get knowledge-based advice from docs and runbooks
-- **With Redis instance details**: Get live triage with metrics, logs, and instance-specific analysis using a deep-research approach (parallel investigation tracks)
-- **Tasks**: How you interact with the agent (create, poll status)
-- **Threads**: What happened during execution (messages, results, history)
-- **Providers**: Pluggable integrations for metrics/logs/diagnostics - fully extensible
+
+See [Core Concepts](concepts/core.md) for details on agents, tasks, threads, providers, and more.

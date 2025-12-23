@@ -4,6 +4,82 @@ This section explains the core ideas behind Redis SRE Agent and how pieces fit t
 
 ---
 
+## How the Agent Uses LLMs
+
+The Redis SRE Agent is powered by Large Language Models (LLMs) — AI systems that understand natural language and can reason about complex problems. If you're new to LLMs, here's what you need to know:
+
+### What is an LLM?
+
+An LLM is an AI model trained on vast amounts of text that can:
+- Understand questions in plain English
+- Reason about technical problems
+- Decide what actions to take
+- Generate helpful responses
+
+The agent uses OpenAI's GPT models, but the architecture supports other providers.
+
+### The Agent Loop
+
+When you ask the agent a question, it doesn't just generate text — it **thinks, acts, and observes** in a loop:
+
+```mermaid
+flowchart LR
+    Q[Your Question] --> LLM[LLM Thinks]
+    LLM --> |"Need more info?"| Tools[Call Tools]
+    Tools --> |Results| LLM
+    LLM --> |"Ready to answer"| Response[Final Response]
+```
+
+1. **Think**: The LLM reads your question and decides what information it needs
+2. **Act**: It calls tools (Prometheus queries, Redis commands, log searches, etc.)
+3. **Observe**: It receives tool results and incorporates them into its reasoning
+4. **Repeat**: If more information is needed, it calls more tools
+5. **Respond**: Once it has enough context, it generates a comprehensive answer
+
+### Model Tiers
+
+The agent uses different model sizes for different tasks to balance speed and capability:
+
+| Model Tier | Use Case | Example Tasks |
+|------------|----------|---------------|
+| **Main Model** | Complex reasoning | Triage analysis, recommendations, synthesis |
+| **Mini Model** | Knowledge tasks | Searching docs, summarizing results |
+| **Nano Model** | Simple classification | Query routing, yes/no decisions |
+
+This multi-tier approach keeps the agent fast for simple queries while preserving deep reasoning for complex investigations.
+
+### Tool Calling
+
+The LLM doesn't execute commands directly. Instead, it requests "tool calls" that the agent executes safely:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant LLM as LLM (Brain)
+    participant Agent as Agent (Executor)
+    participant Tools as Tools (Prometheus, Redis, etc.)
+
+    User->>Agent: "Why is Redis slow?"
+    Agent->>LLM: User question + available tools
+    LLM->>Agent: "Call slowlog_get tool"
+    Agent->>Tools: Execute slowlog_get
+    Tools-->>Agent: Slowlog results
+    Agent->>LLM: Tool results
+    LLM->>Agent: "Call prometheus_query for latency"
+    Agent->>Tools: Execute prometheus_query
+    Tools-->>Agent: Latency metrics
+    Agent->>LLM: Tool results
+    LLM->>Agent: Final analysis + recommendations
+    Agent->>User: Comprehensive response
+```
+
+This separation ensures:
+- **Safety**: The LLM proposes actions; the agent validates and executes them
+- **Auditability**: Every tool call is logged and traceable
+- **Extensibility**: New tools can be added without retraining the model
+
+---
+
 ## Agent Architecture
 
 The system uses **three specialized agents** selected automatically based on your query and context:
@@ -50,6 +126,31 @@ You can override routing via CLI (`--agent triage|chat|knowledge`) or API (`pref
 - Each topic runs its own tool-calling loop
 - Synthesizes findings into comprehensive analysis with recommendations
 - Good for: "Run a full health check", "I need comprehensive diagnostics", "Audit this instance"
+
+```mermaid
+flowchart LR
+  User[User/Caller]
+  Router[Router]
+  KA[Knowledge Agent]
+  CA[Chat Agent]
+  TA[Triage Agent]
+  KB[(Knowledge Base)]
+  Prov[Providers<br>Prometheus/Loki/MCP]
+  Redis[(Target Redis)]
+
+  User --> Router
+  Router -->|No instance| KA
+  Router -->|Quick question| CA
+  Router -->|Full triage| TA
+
+  KA --> KB
+  CA --> KB
+  CA --> Prov
+  CA --> Redis
+  TA --> KB
+  TA --> Prov
+  TA --> Redis
+```
 
 ---
 
@@ -117,12 +218,31 @@ When you create a task, the API creates or reuses a thread to store the executio
 - Read the thread for results: `GET /api/v1/threads/{thread_id}`
 - Stream updates via WebSocket: `ws://localhost:8080/api/v1/ws/tasks/{thread_id}` (Docker Compose) or port 8000 (local)
 
+```mermaid
+sequenceDiagram
+  participant Client
+  participant API
+  participant Worker
+
+  Client->>API: POST /api/v1/tasks (message+context)
+  API-->>Client: task_id, thread_id
+  API->>Worker: enqueue task
+  Worker->>Providers: query metrics/logs
+  Worker->>Redis: check instance
+  Worker-->>API: stream updates to thread
+  Client->>API: GET /api/v1/tasks/{task_id}
+  API-->>Client: status/result
+```
+
 ---
 
-## Jobs
+## Schedules
 
-- **Ad-hoc jobs**: On-demand via CLI or API. Each run creates a task and streams results to a thread.
-- **Scheduled jobs**: Recurring health checks defined by schedules. Each execution produces a task and posts into the same thread.
+Schedules define recurring health checks that run automatically:
+
+- Each schedule specifies an interval (minutes, hours, days, weeks) and optionally a Redis instance
+- When a schedule triggers, it creates a new Task and streams results to a Thread
+- Manage schedules via CLI (`redis-sre-agent schedule`) or API (`/api/v1/schedules`)
 
 ---
 
@@ -145,50 +265,3 @@ Configure via environment. See: `docs/how-to/tool-providers.md`
 
 Use a 32-byte master key for envelope encryption of secrets at rest.
 See: `docs/how-to/configuration/encryption.md`
-
----
-
-## Diagrams
-
-### Agents, Routing & Providers
-```mermaid
-flowchart LR
-  User[User/Caller]
-  Router[Router]
-  KA[Knowledge Agent]
-  CA[Chat Agent]
-  TA[Triage Agent]
-  KB[(Knowledge Base)]
-  Prov[Providers\n(Prometheus/Loki/MCP)]
-  Redis[(Target Redis)]
-
-  User --> Router
-  Router -->|No instance| KA
-  Router -->|Quick question| CA
-  Router -->|Full triage| TA
-
-  KA --> KB
-  CA --> KB
-  CA --> Prov
-  CA --> Redis
-  TA --> KB
-  TA --> Prov
-  TA --> Redis
-```
-
-### Diagram: Threads & Tasks lifecycle (simplified)
-```mermaid
-sequenceDiagram
-  participant Client
-  participant API
-  participant Worker
-
-  Client->>API: POST /api/v1/tasks (message+context)
-  API-->>Client: task_id, thread_id
-  API->>Worker: enqueue task
-  Worker->>Providers: query metrics/logs
-  Worker->>Redis: check instance
-  Worker-->>API: stream updates to thread
-  Client->>API: GET /api/v1/tasks/{task_id}
-  API-->>Client: status/result
-```

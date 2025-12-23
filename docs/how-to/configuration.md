@@ -11,6 +11,28 @@ Configuration values are loaded from these sources (highest precedence first):
 3. **YAML config file** (for complex nested configurations like MCP servers)
 4. Code defaults in `redis_sre_agent/core/config.py`
 
+```mermaid
+flowchart TB
+    subgraph Sources["Configuration Sources"]
+        direction TB
+        ENV["1. Environment Variables<br><i>Highest priority</i>"]
+        DOTENV["2. .env File<br><i>Auto-loaded in dev</i>"]
+        YAML["3. YAML Config File<br><i>config.yaml</i>"]
+        CODE["4. Code Defaults<br><i>config.py</i>"]
+    end
+
+    ENV --> |overrides| DOTENV
+    DOTENV --> |overrides| YAML
+    YAML --> |overrides| CODE
+
+    CODE --> FINAL["Final Settings"]
+    YAML --> FINAL
+    DOTENV --> FINAL
+    ENV --> FINAL
+```
+
+For example, if `REDIS_URL` is set in both `.env` and as an environment variable, the environment variable wins.
+
 ### YAML configuration
 
 For complex nested settings like MCP server configurations, you can use a YAML config file. This is particularly useful for configuring multiple MCP servers with tool descriptions.

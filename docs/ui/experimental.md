@@ -1,6 +1,6 @@
-## Experimental UI
+## UI (Experimental)
 
-The UI lives in `ui/` and is experimental. There is no toggle — build and run it to use it.
+The web UI lives in `ui/` and is experimental. Build and run it to use it.
 
 ### Run via Docker Compose
 ```bash

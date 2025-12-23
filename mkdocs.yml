@@ -22,12 +22,18 @@ markdown_extensions:
       permalink: true
   - tables
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
   - pymdownx.highlight
   - pymdownx.inlinehilite
 
 plugins:
   - search
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 
 nav:
   - Home: index.md
@@ -44,8 +50,7 @@ nav:
       - Configuration (Advanced):
           - Encryption: how-to/configuration/encryption.md
       - Scheduling flows: how-to/scheduling-flows.md
-  - UI:
-      - Experimental: ui/experimental.md
+  - UI (Experimental): ui/experimental.md
   - Concepts:
       - Overview: concepts/core.md
   - Operations:
