@@ -1124,7 +1124,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     TopicsList
                 )  # return TopicsList
                 instance_ctx = {
-                    "instance_type": target_instance.instance_type if target_instance else "support_package",
+                    "instance_type": target_instance.instance_type
+                    if target_instance
+                    else "support_package",
                     "name": target_instance.name if target_instance else "support_package_analysis",
                 }
                 preface = (
@@ -1182,7 +1184,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 rec_tasks = []
                 instance_ctx = {
-                    "instance_type": target_instance.instance_type if target_instance else "support_package",
+                    "instance_type": target_instance.instance_type
+                    if target_instance
+                    else "support_package",
                     "name": target_instance.name if target_instance else "support_package_analysis",
                 }
                 # Build knowledge-only adapters locally (mini model)
@@ -1266,8 +1270,12 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 try:
                     instance_ctx_local = {
-                        "instance_type": target_instance.instance_type if target_instance else "support_package",
-                        "name": target_instance.name if target_instance else "support_package_analysis",
+                        "instance_type": target_instance.instance_type
+                        if target_instance
+                        else "support_package",
+                        "name": target_instance.name
+                        if target_instance
+                        else "support_package_analysis",
                     }
                     composed_markdown = await self._compose_final_markdown(
                         initial_assessment_lines=[initial_writeup] if initial_writeup else [],
@@ -1476,7 +1484,9 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
         elif context and context.get("support_package_path"):
             # Support package provided without specific instance - focus on the package
             support_pkg_path = context["support_package_path"]
-            logger.info(f"Support package provided without instance - focusing on package: {support_pkg_path}")
+            logger.info(
+                f"Support package provided without instance - focusing on package: {support_pkg_path}"
+            )
             enhanced_query = f"""User Query: {query}
 
 IMPORTANT CONTEXT: This query is specifically about a Redis Enterprise support package.
