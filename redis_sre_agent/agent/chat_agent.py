@@ -9,7 +9,8 @@ or safety-evaluation chains.
 
 import json
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
@@ -29,6 +30,9 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from .helpers import build_result_envelope
 
@@ -96,6 +100,7 @@ class ChatAgent:
         progress_emitter: Optional[ProgressEmitter] = None,
         progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         exclude_mcp_categories: Optional[List["ToolCapability"]] = None,
+        support_package_path: Optional["Path"] = None,
     ):
         """Initialize the Chat agent.
 
@@ -106,10 +111,14 @@ class ChatAgent:
             exclude_mcp_categories: Optional list of MCP tool capability categories to exclude.
                 Use this to filter out specific types of MCP tools. Common categories:
                 METRICS, LOGS, TICKETS, REPOS, TRACES, DIAGNOSTICS, KNOWLEDGE, UTILITIES.
+            support_package_path: Optional path to an extracted support package.
+                When provided, loads tools for analyzing logs, diagnostics, and
+                Redis data from the package.
         """
         self.settings = settings
         self.redis_instance = redis_instance
         self.exclude_mcp_categories = exclude_mcp_categories
+        self.support_package_path = support_package_path
 
         # Handle emitter (prefer progress_emitter, fall back to callback wrapper)
         if progress_emitter is not None:
@@ -389,6 +398,7 @@ class ChatAgent:
         async with ToolManager(
             redis_instance=self.redis_instance,
             exclude_mcp_categories=self.exclude_mcp_categories,
+            support_package_path=self.support_package_path,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
             logger.info(f"Chat agent loaded {len(tools)} tools")

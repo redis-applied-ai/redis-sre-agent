@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -1778,8 +1779,18 @@ Once configured, I'll be able to:
 For now, I can still perform basic Redis diagnostics using the database connection URL, but cloud management features will be limited."""
             )
 
+        # Extract support package path from context if provided
+        support_package_path = None
+        if context and context.get("support_package_path"):
+            pkg_path = context["support_package_path"]
+            support_package_path = Path(pkg_path) if isinstance(pkg_path, str) else pkg_path
+            logger.info(f"Processing query with support package: {support_package_path}")
+
         # Create ToolManager for this query with the target instance
-        async with ToolManager(redis_instance=target_instance) as tool_mgr:
+        async with ToolManager(
+            redis_instance=target_instance,
+            support_package_path=support_package_path,
+        ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()
 

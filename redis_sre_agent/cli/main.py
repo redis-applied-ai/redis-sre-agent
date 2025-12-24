@@ -17,6 +17,7 @@ _COMMANDS = {
     "worker": "redis_sre_agent.cli.worker:worker",
     "mcp": "redis_sre_agent.cli.mcp:mcp",
     "index": "redis_sre_agent.cli.index:index",
+    "support-package": "redis_sre_agent.cli.support_package:support_package",
 }
 
 
