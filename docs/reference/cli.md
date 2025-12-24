@@ -78,12 +78,6 @@ Generated from the Click command tree.
     Supports conversation threads for multi-turn interactions. Use --thread-id
     to continue an existing conversation, or omit it to start a new one.
 
-    Options:
-      -r, --redis-instance-id TEXT    Redis instance ID to investigate
-      -p, --support-package-id TEXT   Support package ID to analyze
-      -t, --thread-id TEXT            Thread ID to continue conversation
-      -a, --agent [auto|triage|chat|knowledge]  Agent to use (default: auto)
-
     
     The agent is automatically selected based on the query, or use --agent:
       - knowledge: General Redis questions (no instance needed)

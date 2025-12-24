@@ -249,3 +249,57 @@ class TestAgentRetryLogic:
             await agent._retry_with_backoff(always_failing_func, max_retries=2, initial_delay=0.01)
 
         assert call_count == 3  # Initial attempt + 2 retries
+
+
+@pytest.mark.asyncio
+class TestSupportPackageContext:
+    """Test support package context handling.
+
+    Regression tests for support package queries being correctly focused
+    on the package data rather than configured Redis instances.
+    """
+
+    async def test_support_package_context_passed_to_tool_manager(self, mock_settings, mock_llm):
+        """Test that support package context is passed to ToolManager.
+
+        Regression test: When a support package path is provided, it should be
+        passed to the ToolManager so support package tools are loaded.
+        """
+        # Track what ToolManager was called with
+        captured_kwargs = {}
+
+        class MockToolManager:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                self._tools = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            def get_tools(self):
+                return []
+
+        # Mock ToolManager at module level before creating agent
+        with patch("redis_sre_agent.agent.langgraph_agent.ToolManager", MockToolManager):
+            agent = SRELangGraphAgent()
+
+            # Execute with support package context - will fail but we just need
+            # to verify ToolManager was called with the right args
+            context = {"support_package_path": "/tmp/packages/test-package"}
+            try:
+                await agent.process_query(
+                    query="What databases are in this package?",
+                    session_id="test-session",
+                    user_id="test-user",
+                    context=context,
+                )
+            except Exception:
+                # Expected - we're not fully mocking the workflow
+                pass
+
+        # Verify support_package_path was passed to ToolManager
+        assert "support_package_path" in captured_kwargs
+        assert str(captured_kwargs["support_package_path"]) == "/tmp/packages/test-package"
