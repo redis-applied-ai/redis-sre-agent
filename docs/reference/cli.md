@@ -122,5 +122,11 @@ Generated from the Click command tree.
     This is useful when the schema has changed (e.g., new fields added).
     WARNING: This will delete all indexed data. The underlying Redis keys
     remain, but you'll need to re-index documents.
+- support-package — Manage support packages.
+- support-package delete — Delete a support package.
+- support-package extract — Extract a support package.
+- support-package info — Get information about a support package.
+- support-package list — List uploaded support packages.
+- support-package upload — Upload a support package.
 
 See How-to guides for examples.

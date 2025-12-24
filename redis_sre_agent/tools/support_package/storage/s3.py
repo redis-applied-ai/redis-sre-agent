@@ -143,9 +143,7 @@ class S3Storage(SupportPackageStorage):
                 # Parse LastModified - handle both string and datetime
                 last_modified = obj["LastModified"]
                 if isinstance(last_modified, str):
-                    uploaded_at = datetime.fromisoformat(
-                        last_modified.replace("Z", "+00:00")
-                    )
+                    uploaded_at = datetime.fromisoformat(last_modified.replace("Z", "+00:00"))
                 else:
                     uploaded_at = last_modified
 

@@ -30,9 +30,7 @@ def get_manager() -> SupportPackageManager:
             endpoint_url=getattr(settings, "support_package_s3_endpoint", None),
         )
     else:
-        storage = LocalStorage(
-            base_path=settings.support_package_artifacts_dir / "storage"
-        )
+        storage = LocalStorage(base_path=settings.support_package_artifacts_dir / "storage")
 
     return SupportPackageManager(
         storage=storage,
@@ -83,11 +81,7 @@ def list_packages(as_json: bool, limit: int):
             packages = await manager.list_packages()
 
             if as_json:
-                print(
-                    _json.dumps(
-                        [p.model_dump(mode="json") for p in packages[:limit]], indent=2
-                    )
-                )
+                print(_json.dumps([p.model_dump(mode="json") for p in packages[:limit]], indent=2))
                 return
 
             if not packages:

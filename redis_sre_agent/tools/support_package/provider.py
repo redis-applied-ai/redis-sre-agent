@@ -187,9 +187,7 @@ class SupportPackageToolProvider(ToolProvider):
     # ----------------------------- Tool Implementations -----------------------------
 
     @status_update("Reading database INFO from support package for database {database_id}.")
-    async def info(
-        self, database_id: str, section: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def info(self, database_id: str, section: Optional[str] = None) -> Dict[str, Any]:
         """Get Redis INFO output for a database.
 
         Args:

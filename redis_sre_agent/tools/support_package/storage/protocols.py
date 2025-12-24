@@ -26,12 +26,8 @@ class PackageMetadata(BaseModel):
     storage_path: Optional[str] = Field(
         default=None, description="Path in storage (local path or S3 key)"
     )
-    content_type: str = Field(
-        default="application/gzip", description="MIME type of the package"
-    )
-    checksum: Optional[str] = Field(
-        default=None, description="SHA-256 checksum of the package"
-    )
+    content_type: str = Field(default="application/gzip", description="MIME type of the package")
+    checksum: Optional[str] = Field(default=None, description="SHA-256 checksum of the package")
 
 
 class SupportPackageStorage(ABC):

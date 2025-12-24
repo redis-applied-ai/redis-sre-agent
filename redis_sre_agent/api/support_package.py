@@ -29,9 +29,7 @@ def get_manager() -> SupportPackageManager:
             endpoint_url=getattr(settings, "support_package_s3_endpoint", None),
         )
     else:
-        storage = LocalStorage(
-            base_path=settings.support_package_artifacts_dir / "storage"
-        )
+        storage = LocalStorage(base_path=settings.support_package_artifacts_dir / "storage")
 
     return SupportPackageManager(
         storage=storage,

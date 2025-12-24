@@ -340,7 +340,9 @@ class ToolManager:
             # Use a synthetic path for tracking
             provider_path = f"support_package:{self.support_package_path}"
             if provider_path in self._loaded_provider_paths:
-                logger.debug(f"Support package provider already loaded: {self.support_package_path}")
+                logger.debug(
+                    f"Support package provider already loaded: {self.support_package_path}"
+                )
                 return
 
             # Create and enter the provider's async context
@@ -373,7 +375,9 @@ class ToolManager:
             )
 
         except Exception:
-            logger.exception(f"Failed to load support package provider for '{self.support_package_path}'")
+            logger.exception(
+                f"Failed to load support package provider for '{self.support_package_path}'"
+            )
             # Don't fail entire manager if support package provider fails
 
     @classmethod

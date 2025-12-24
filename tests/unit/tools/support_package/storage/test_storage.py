@@ -207,8 +207,16 @@ class TestS3Storage:
         """Test that list_packages calls S3 list_objects_v2."""
         mock_s3_client.list_objects_v2.return_value = {
             "Contents": [
-                {"Key": "packages/pkg-1.tar.gz", "Size": 1024, "LastModified": "2024-01-01T00:00:00Z"},
-                {"Key": "packages/pkg-2.tar.gz", "Size": 2048, "LastModified": "2024-01-02T00:00:00Z"},
+                {
+                    "Key": "packages/pkg-1.tar.gz",
+                    "Size": 1024,
+                    "LastModified": "2024-01-01T00:00:00Z",
+                },
+                {
+                    "Key": "packages/pkg-2.tar.gz",
+                    "Size": 2048,
+                    "LastModified": "2024-01-02T00:00:00Z",
+                },
             ]
         }
 

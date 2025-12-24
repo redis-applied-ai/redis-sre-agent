@@ -16,8 +16,12 @@ class TestSupportPackageDatabase:
 
         # Create mock files
         (db_dir / "database_4.info").write_text("# Server\nredis_version:8.4.0\n")
-        (db_dir / "database_4.slowlog").write_text("SLOWLOG\n1 2025-11-24T11:42:01+00:00Z 65.325 [b'CLUSTER']\n")
-        (db_dir / "database_4.clientlist").write_text("CLIENT LIST\nid=1000 addr=10.0.101.36:58696\n")
+        (db_dir / "database_4.slowlog").write_text(
+            "SLOWLOG\n1 2025-11-24T11:42:01+00:00Z 65.325 [b'CLUSTER']\n"
+        )
+        (db_dir / "database_4.clientlist").write_text(
+            "CLIENT LIST\nid=1000 addr=10.0.101.36:58696\n"
+        )
         (db_dir / "database_4.rladmin").write_text("DB INFO FOR BDB 4\ndb:4 [test-db-asm]:\n")
 
         db = SupportPackageDatabase.from_directory(db_dir)
