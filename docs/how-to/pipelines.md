@@ -9,6 +9,70 @@ This separation allows you to prepare artifacts once (slow) and re-ingest them m
 
 ---
 
+## Pipeline Architecture
+
+```mermaid
+flowchart TB
+    subgraph Sources["📥 Data Sources"]
+        WEB["redis.io/docs"]
+        KB["redis.io/kb"]
+        API["Cloud API Spec"]
+        LOCAL["Local Docs Clone"]
+        USER["source_documents/"]
+    end
+
+    subgraph Phase1["Phase 1: Scraping / Preparation"]
+        direction TB
+        SCRAPERS["Scrapers"]
+        WEB --> SCRAPERS
+        KB --> SCRAPERS
+        API --> SCRAPERS
+        LOCAL --> SCRAPERS
+
+        PREPARE["prepare_sources"]
+        USER --> PREPARE
+
+        SCRAPERS --> ARTIFACTS
+        PREPARE --> ARTIFACTS
+
+        ARTIFACTS[("📁 artifacts/YYYY-MM-DD/<br/>JSON documents + manifest")]
+    end
+
+    subgraph Phase2["Phase 2: Ingestion"]
+        direction TB
+        LOAD["Load Artifacts"]
+        ARTIFACTS --> LOAD
+
+        CHUNK["Chunk Documents<br/><i>1000 chars, 200 overlap</i>"]
+        LOAD --> CHUNK
+
+        DEDUP{"Deduplication<br/>Check"}
+        CHUNK --> DEDUP
+
+        DEDUP -->|"Changed"| EMBED
+        DEDUP -->|"Unchanged"| REUSE["Reuse Existing"]
+
+        EMBED["Generate Embeddings<br/><i>text-embedding-3-small</i>"]
+
+        EMBED --> INDEX
+        REUSE --> INDEX
+        INDEX["Index in Redis"]
+    end
+
+    subgraph Redis["🔴 Redis Vector Store"]
+        VEC[("sre_knowledge index<br/>Vector + Metadata")]
+    end
+
+    INDEX --> VEC
+
+    style Sources fill:#e8f4f8,stroke:#0969da
+    style Phase1 fill:#fff8e6,stroke:#bf8700
+    style Phase2 fill:#f0fff4,stroke:#1a7f37
+    style Redis fill:#ffe6e6,stroke:#cf222e
+```
+
+---
+
 ## Overview: How It Works
 
 ### Phase 1: Scraping/Preparation → Artifacts
