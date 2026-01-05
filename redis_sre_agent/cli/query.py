@@ -23,6 +23,7 @@ from redis_sre_agent.core.threads import ThreadManager
 @click.command()
 @click.argument("query")
 @click.option("--redis-instance-id", "-r", help="Redis instance ID to investigate")
+@click.option("--support-package-id", "-p", help="Support package ID to analyze")
 @click.option("--thread-id", "-t", help="Thread ID to continue an existing conversation")
 @click.option(
     "--agent",
@@ -31,7 +32,13 @@ from redis_sre_agent.core.threads import ThreadManager
     default="auto",
     help="Agent to use (default: auto-select based on query)",
 )
-def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str], agent: str):
+def query(
+    query: str,
+    redis_instance_id: Optional[str],
+    support_package_id: Optional[str],
+    thread_id: Optional[str],
+    agent: str,
+):
     """Execute an agent query.
 
     Supports conversation threads for multi-turn interactions. Use --thread-id
@@ -46,6 +53,8 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
     """
 
     async def _query():
+        from redis_sre_agent.cli.support_package import get_manager as get_support_package_manager
+
         console = Console()
         redis_client = get_redis_client()
         thread_manager = ThreadManager(redis_client=redis_client)
@@ -57,6 +66,18 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
             if not instance:
                 console.print(f"[red]❌ Instance not found: {redis_instance_id}[/red]")
                 exit(1)
+
+        # Resolve support package if provided
+        support_package_path = None
+        if support_package_id:
+            manager = get_support_package_manager()
+            metadata = await manager.get_metadata(support_package_id)
+            if not metadata:
+                console.print(f"[red]❌ Support package not found: {support_package_id}[/red]")
+                exit(1)
+            # Extract if needed and get path
+            support_package_path = await manager.extract(support_package_id)
+            console.print(f"[dim]📦 Support package: {metadata.filename}[/dim]")
 
         # Get or create thread
         active_thread_id = thread_id
@@ -89,6 +110,9 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
             initial_context = {}
             if instance:
                 initial_context["instance_id"] = instance.id
+            if support_package_id:
+                initial_context["support_package_id"] = support_package_id
+                initial_context["support_package_path"] = str(support_package_path)
 
             active_thread_id = await thread_manager.create_thread(
                 user_id="cli_user",
@@ -105,7 +129,11 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
             console.print(f"[dim]🔗 Redis instance: {instance.name}[/dim]")
 
         # Build context for routing
-        routing_context = {"instance_id": instance.id} if instance else None
+        routing_context = {}
+        if instance:
+            routing_context["instance_id"] = instance.id
+        if support_package_path:
+            routing_context["support_package_path"] = str(support_package_path)
 
         # Map CLI agent choice to AgentType
         agent_choice_map = {
@@ -140,7 +168,12 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
             selected_agent = get_knowledge_agent()
 
         try:
-            context = {"instance_id": instance.id} if instance else None
+            # Build context with instance and/or support package
+            context = {}
+            if instance:
+                context["instance_id"] = instance.id
+            if support_package_path:
+                context["support_package_path"] = str(support_package_path)
 
             # Run the agent
             response = await selected_agent.process_query(
@@ -148,7 +181,7 @@ def query(query: str, redis_instance_id: Optional[str], thread_id: Optional[str]
                 session_id="cli",
                 user_id="cli_user",
                 max_iterations=settings.max_iterations,
-                context=context,
+                context=context if context else None,
                 conversation_history=conversation_history if conversation_history else None,
             )
 

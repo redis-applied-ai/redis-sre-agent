@@ -270,6 +270,9 @@ services:
       - sre-network
 
   # SRE Agent API
+  # NOTE: Uses LiteLLM proxy for LLM calls. The OPENAI_API_KEY here is the
+  # LiteLLM master key (for auth to proxy), NOT the real OpenAI key.
+  # The real OpenAI key is configured only in the litellm service below.
   sre-agent:
     build:
       context: .
@@ -282,15 +285,19 @@ services:
       - TOOLS_LOKI_URL=http://loki:3100
       - GRAFANA_URL=http://grafana:3000
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
+      # LiteLLM proxy config: point to proxy, use master key for auth
+      - OPENAI_BASE_URL=http://litellm:4000/v1
+      - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
       # OTEL: export spans to Tempo via OTLP HTTP
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.1.0,deployment.environment=dev
-
     depends_on:
       redis:
         condition: service_healthy
       prometheus:
         condition: service_started
+      litellm:
+        condition: service_healthy
     volumes:
       - .env:/app/.env
       - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
@@ -302,6 +309,9 @@ services:
       - sre-network
 
   # SRE Agent Background Worker
+  # NOTE: Uses LiteLLM proxy for LLM calls. The OPENAI_API_KEY here is the
+  # LiteLLM master key (for auth to proxy), NOT the real OpenAI key.
+  # The real OpenAI key is configured only in the litellm service below.
   sre-worker:
     build:
       context: .
@@ -311,11 +321,16 @@ services:
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - TOOLS_LOKI_URL=http://loki:3100
+      # LiteLLM proxy config: point to proxy, use master key for auth
+      - OPENAI_BASE_URL=http://litellm:4000/v1
+      - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
       # OpenTelemetry export to Tempo
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
+        condition: service_healthy
+      litellm:
         condition: service_healthy
     volumes:
       - .env:/app/.env
@@ -416,6 +431,63 @@ services:
       - sre-network
 
 
+  # LiteLLM Database - PostgreSQL for UI and usage tracking
+  litellm-db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=litellm
+      - POSTGRES_PASSWORD=litellm
+      - POSTGRES_DB=litellm
+    volumes:
+      - litellm_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sre-network
+
+  # LiteLLM Proxy - LLM gateway for OpenAI, Anthropic, etc.
+  #
+  # TOKEN FLOW:
+  # 1. LiteLLM receives the REAL provider API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY)
+  # 2. Clients (sre-agent, sre-worker) authenticate to LiteLLM using LITELLM_MASTER_KEY
+  # 3. Clients set OPENAI_BASE_URL=http://litellm:4000/v1 and OPENAI_API_KEY=$LITELLM_MASTER_KEY
+  #
+  # In .env you need:
+  #   OPENAI_API_KEY=sk-your-real-openai-key    # Real key, used ONLY by LiteLLM
+  #   LITELLM_MASTER_KEY=sk-1234                # Proxy auth key, used by clients
+  #
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    environment:
+      # Real provider API keys - LiteLLM uses these to call OpenAI/Anthropic
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Master key for client authentication (sre-agent, sre-worker use this)
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-1234}
+      # UI credentials
+      - UI_USERNAME=${LITELLM_UI_USERNAME:-admin}
+      - UI_PASSWORD=${LITELLM_UI_PASSWORD:-admin}
+      - DATABASE_URL=postgresql://litellm:litellm@litellm-db:5432/litellm
+    volumes:
+      - ./monitoring/litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - sre-network
+
   # Tempo - Traces backend (OTLP receiver + query)
   tempo:
     image: grafana/tempo:latest
@@ -480,3 +552,4 @@ volumes:
   grafana_data:
   loki_data:
   tempo_data:
+  litellm_db_data:

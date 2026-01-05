@@ -149,3 +149,30 @@ class TestRouteToAppropriateAgent:
 
             # Should default to CHAT when unexpected value with instance
             assert result == AgentType.REDIS_CHAT
+
+    async def test_support_package_routes_to_triage(self):
+        """Test that queries with support_package_path route to triage agent.
+
+        Regression test: support packages require diagnostic tools that are
+        only available in the triage agent, not the knowledge agent.
+        """
+        # No LLM should be called - support package takes precedence
+        result = await route_to_appropriate_agent(
+            query="What databases are in this package?",
+            context={"support_package_path": "/tmp/extracted/package-123"},
+        )
+
+        assert result == AgentType.REDIS_TRIAGE
+
+    async def test_support_package_with_instance_routes_to_triage(self):
+        """Test that queries with both instance and support package route to triage."""
+        # No LLM should be called - support package takes precedence
+        result = await route_to_appropriate_agent(
+            query="Compare current memory with package snapshot",
+            context={
+                "instance_id": "test-instance",
+                "support_package_path": "/tmp/extracted/package-123",
+            },
+        )
+
+        assert result == AgentType.REDIS_TRIAGE

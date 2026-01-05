@@ -276,6 +276,32 @@ class Settings(BaseSettings):
     api_key: Optional[str] = Field(default=None, description="API authentication key")
     allowed_hosts: list[str] = Field(default=["*"], description="Allowed hosts for CORS")
 
+    # Support Package Configuration
+    support_package_artifacts_dir: Path = Field(
+        default=Path("/tmp/sre_agent/support_packages"),
+        description="Directory where support packages are extracted and stored",
+    )
+    support_package_storage_type: str = Field(
+        default="local",
+        description="Storage backend type: 'local' or 's3'",
+    )
+    support_package_s3_bucket: Optional[str] = Field(
+        default=None,
+        description="S3 bucket name for support package storage (when storage_type='s3')",
+    )
+    support_package_s3_prefix: str = Field(
+        default="support-packages/",
+        description="S3 key prefix for support packages",
+    )
+    support_package_s3_region: Optional[str] = Field(
+        default=None,
+        description="AWS region for S3 bucket (optional, uses default if not set)",
+    )
+    support_package_s3_endpoint: Optional[str] = Field(
+        default=None,
+        description="Custom S3 endpoint URL (for S3-compatible storage like MinIO)",
+    )
+
     # Tool Provider Configuration
     tool_providers: List[str] = Field(
         default_factory=lambda: [

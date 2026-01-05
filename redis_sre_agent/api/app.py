@@ -13,6 +13,7 @@ from redis_sre_agent.api.knowledge import router as knowledge_router
 from redis_sre_agent.api.metrics import router as metrics_router
 from redis_sre_agent.api.middleware import setup_middleware
 from redis_sre_agent.api.schedules import router as schedules_router
+from redis_sre_agent.api.support_package import router as support_package_router
 from redis_sre_agent.api.tasks import router as tasks_api_router
 from redis_sre_agent.api.threads import router as threads_router
 from redis_sre_agent.api.websockets import router as websockets_router
@@ -153,6 +154,7 @@ app.include_router(tasks_api_router, prefix="/api/v1", tags=["Tasks"])
 
 app.include_router(schedules_router, tags=["Schedules"])
 app.include_router(websockets_router, prefix="/api/v1", tags=["WebSockets"])
+app.include_router(support_package_router, prefix="/api/v1", tags=["Support Packages"])
 
 
 if __name__ == "__main__":

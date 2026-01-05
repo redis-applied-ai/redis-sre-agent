@@ -51,8 +51,14 @@ async def route_to_appropriate_agent(
     logger.info(f"Routing query: {query[:100]}...")
 
     has_instance = context and context.get("instance_id")
+    has_support_package = context and context.get("support_package_path")
 
-    # 1. No instance context - route to knowledge agent
+    # 1. Has support package - route to triage (needs diagnostic tools)
+    if has_support_package:
+        logger.info("Support package provided - routing to REDIS_TRIAGE for diagnostic tools")
+        return AgentType.REDIS_TRIAGE
+
+    # 2. No instance context - route to knowledge agent
     if not has_instance:
         # Use LLM to decide if query needs instance access or is knowledge-only
         try:

@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -1123,8 +1124,10 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     TopicsList
                 )  # return TopicsList
                 instance_ctx = {
-                    "instance_type": target_instance.instance_type,
-                    "name": target_instance.name,
+                    "instance_type": target_instance.instance_type
+                    if target_instance
+                    else "support_package",
+                    "name": target_instance.name if target_instance else "support_package_analysis",
                 }
                 preface = (
                     "About this JSON: summarized signals from upstream tool calls (each has a tool description, args, and key findings).\n"
@@ -1181,8 +1184,10 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 rec_tasks = []
                 instance_ctx = {
-                    "instance_type": target_instance.instance_type,
-                    "name": target_instance.name,
+                    "instance_type": target_instance.instance_type
+                    if target_instance
+                    else "support_package",
+                    "name": target_instance.name if target_instance else "support_package_analysis",
                 }
                 # Build knowledge-only adapters locally (mini model)
                 from redis_sre_agent.tools.models import ToolCapability as _ToolCap
@@ -1265,8 +1270,12 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 try:
                     instance_ctx_local = {
-                        "instance_type": target_instance.instance_type,
-                        "name": target_instance.name,
+                        "instance_type": target_instance.instance_type
+                        if target_instance
+                        else "support_package",
+                        "name": target_instance.name
+                        if target_instance
+                        else "support_package_analysis",
                     }
                     composed_markdown = await self._compose_final_markdown(
                         initial_assessment_lines=[initial_writeup] if initial_writeup else [],
@@ -1471,6 +1480,30 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but the instance
                 enhanced_query = f"""User Query: {query}
 
 CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an error retrieving instance details. Please proceed with general Redis troubleshooting."""
+
+        elif context and context.get("support_package_path"):
+            # Support package provided without specific instance - focus on the package
+            support_pkg_path = context["support_package_path"]
+            logger.info(
+                f"Support package provided without instance - focusing on package: {support_pkg_path}"
+            )
+            enhanced_query = f"""User Query: {query}
+
+IMPORTANT CONTEXT: This query is specifically about a Redis Enterprise support package.
+- Support Package Path: {support_pkg_path}
+
+You have access to support package diagnostic tools that can:
+- List databases in the package (support_package_*_list_databases)
+- Get Redis INFO output for specific databases (support_package_*_get_info)
+- Get SLOWLOG entries (support_package_*_get_slowlog)
+- Get CLIENT LIST output (support_package_*_get_client_list)
+- Search logs for patterns (support_package_*_search_logs)
+- Get log files (support_package_*_get_logs)
+- Get package summary (support_package_*_get_summary)
+
+FOCUS ON THE SUPPORT PACKAGE: Do NOT try to connect to live Redis instances. Instead, use the support package tools to analyze the data captured in the package. Start by listing the databases in the package to understand what's available.
+
+Please use the support package tools to analyze this package and answer the user's question."""
 
         else:
             # No specific instance provided - check if we should auto-detect
@@ -1778,8 +1811,18 @@ Once configured, I'll be able to:
 For now, I can still perform basic Redis diagnostics using the database connection URL, but cloud management features will be limited."""
             )
 
+        # Extract support package path from context if provided
+        support_package_path = None
+        if context and context.get("support_package_path"):
+            pkg_path = context["support_package_path"]
+            support_package_path = Path(pkg_path) if isinstance(pkg_path, str) else pkg_path
+            logger.info(f"Processing query with support package: {support_package_path}")
+
         # Create ToolManager for this query with the target instance
-        async with ToolManager(redis_instance=target_instance) as tool_mgr:
+        async with ToolManager(
+            redis_instance=target_instance,
+            support_package_path=support_package_path,
+        ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()
 

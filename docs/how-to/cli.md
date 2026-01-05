@@ -105,7 +105,45 @@ uv run redis-sre-agent schedule update <schedule_id> --name "new-name"
 uv run redis-sre-agent schedule delete <schedule_id> -y
 ```
 
-### 7) See task status and thread contents
+### 7) Analyze support packages
+Upload and analyze Redis Enterprise support packages (debuginfo archives).
+
+```bash
+# Upload a support package
+uv run redis-sre-agent support-package upload /path/to/debuginfo.tar.gz
+
+# List uploaded packages
+uv run redis-sre-agent support-package list
+
+# Get package info
+uv run redis-sre-agent support-package info <package_id>
+
+# Query with a support package (agent gets access to INFO, SLOWLOG, CLIENT LIST, logs)
+uv run redis-sre-agent query -p <package_id> "What databases are in this package?"
+
+# Combine instance + support package (compare live vs snapshot)
+uv run redis-sre-agent query -r <instance_id> -p <package_id> "Compare current memory with the snapshot"
+```
+
+#### Docker Compose usage
+When running in Docker, use `docker compose exec` to access the CLI. For file uploads,
+you need to copy the file into the container first or mount a volume.
+
+```bash
+# Option 1: Copy file into container, then upload
+docker compose cp /local/path/debuginfo.tar.gz sre-agent:/tmp/debuginfo.tar.gz
+docker compose exec -T sre-agent uv run redis-sre-agent support-package upload /tmp/debuginfo.tar.gz
+
+# Option 2: Mount a volume in docker-compose.yml and upload from there
+# Add to sre-agent service volumes: - ./packages:/packages
+docker compose exec -T sre-agent uv run redis-sre-agent support-package upload /packages/debuginfo.tar.gz
+
+# List/query from Docker
+docker compose exec -T sre-agent uv run redis-sre-agent support-package list
+docker compose exec -T sre-agent uv run redis-sre-agent query -p <package_id> "Show database memory usage"
+```
+
+### 8) See task status and thread contents
 Tasks track execution; threads hold the conversation + context.
 ```bash
 # Tasks

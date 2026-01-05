@@ -9,7 +9,8 @@ This module provides the ToolManager class which handles:
 
 import logging
 from contextlib import AsyncExitStack
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from opentelemetry import trace
 
@@ -17,6 +18,9 @@ from redis_sre_agent.core.instances import RedisInstance
 
 from .models import Tool, ToolCapability, ToolDefinition
 from .protocols import ToolProvider
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -57,6 +61,7 @@ class ToolManager:
         self,
         redis_instance: Optional[RedisInstance] = None,
         exclude_mcp_categories: Optional[List[ToolCapability]] = None,
+        support_package_path: Optional["Path"] = None,
     ):
         """Initialize tool manager.
 
@@ -67,9 +72,13 @@ class ToolManager:
                 or pass all capabilities to exclude all MCP tools.
                 Common categories: METRICS, LOGS, TICKETS, REPOS, TRACES,
                 DIAGNOSTICS, KNOWLEDGE, UTILITIES.
+            support_package_path: Optional path to an extracted support package.
+                When provided, loads SupportPackageToolProvider with tools for
+                analyzing logs, diagnostics, and Redis data from the package.
         """
         self.redis_instance = redis_instance
         self.exclude_mcp_categories = exclude_mcp_categories
+        self.support_package_path = support_package_path
         # Track loaded provider class paths to avoid duplicates
         self._loaded_provider_paths: set[str] = set()
 
@@ -171,6 +180,10 @@ class ToolManager:
         # Load MCP servers (these are always-on and don't require redis_instance)
         # Pass excluded categories to filter which MCP tools are loaded
         await self._load_mcp_providers()
+
+        # Load support package provider if a package path is provided
+        if self.support_package_path:
+            await self._load_support_package_provider()
 
         logger.info(
             f"ToolManager initialized with {len(self._tools)} tools "
@@ -308,6 +321,64 @@ class ToolManager:
             except Exception:
                 logger.exception(f"Failed to load MCP provider '{server_name}'")
                 # Don't fail entire manager if one MCP provider fails
+
+    async def _load_support_package_provider(self) -> None:
+        """Load support package tool provider if a package path is configured.
+
+        This method creates a SupportPackageToolProvider for the configured
+        support package path, enabling tools for analyzing logs, diagnostics,
+        and Redis data from the package.
+        """
+        if not self.support_package_path:
+            return
+
+        try:
+            from redis_sre_agent.tools.support_package.provider import (
+                SupportPackageToolProvider,
+            )
+
+            # Use a synthetic path for tracking
+            provider_path = f"support_package:{self.support_package_path}"
+            if provider_path in self._loaded_provider_paths:
+                logger.debug(
+                    f"Support package provider already loaded: {self.support_package_path}"
+                )
+                return
+
+            # Create and enter the provider's async context
+            provider = SupportPackageToolProvider(package_path=self.support_package_path)
+            provider = await self._stack.enter_async_context(provider)
+
+            # Set back-reference
+            try:
+                setattr(provider, "_manager", self)
+            except Exception:
+                pass
+
+            # Register tools
+            tools = provider.tools()
+            for tool in tools:
+                name = tool.metadata.name
+                if not name:
+                    continue
+                self._routing_table[name] = provider
+                self._tools.append(tool)
+                self._tool_by_name[name] = tool
+
+            # Track provider
+            self._providers.append(provider)
+            self._loaded_provider_paths.add(provider_path)
+
+            logger.info(
+                f"Loaded support package provider for '{self.support_package_path}' "
+                f"with {len(tools)} tools"
+            )
+
+        except Exception:
+            logger.exception(
+                f"Failed to load support package provider for '{self.support_package_path}'"
+            )
+            # Don't fail entire manager if support package provider fails
 
     @classmethod
     def _get_provider_class(cls, provider_path: str) -> type:
