@@ -108,9 +108,11 @@ class TestTasksAPI:
 
             resp = client.delete("/api/v1/tasks/t1")
 
-            assert resp.status_code == 204
-            # No JSON body for 204 responses
-            assert resp.content in (b"", None)
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["message"] == "Task deleted successfully"
+            assert data["task_id"] == "t1"
+            assert "cancel_message" in data
 
             mock_delete.assert_awaited_once_with(task_id="t1", redis_client=mock_client)
             docket_instance.cancel.assert_awaited_once_with("t1")
