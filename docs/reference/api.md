@@ -45,6 +45,7 @@ For interactive docs, see http://localhost:8000/docs
 - GET /api/v1/support-packages/{package_id} — get_package_info
 - POST /api/v1/support-packages/{package_id}/extract — extract_package
 - POST /api/v1/tasks — create_task_endpoint
+- DELETE /api/v1/tasks/{task_id} — delete_task
 - GET /api/v1/tasks/{task_id} — get_task
 - GET /api/v1/tasks/{thread_id}/stream-info — get_task_stream_info
 - GET /api/v1/threads — list_threads
