@@ -77,10 +77,9 @@ def _write_cli_md(dest: Path, items: List[Tuple[str, str]]):
     lines.append("Generated from the Click command tree.\n\n")
     lines.append("### Commands\n\n")
     for path, help_text in items:
-        if " " in path:
-            lines.append(f"- {path} — {help_text}")
-        else:
-            lines.append(f"- {path} — {help_text}")
+        # Take only the first line of help text to keep the list clean
+        first_line = help_text.split("\n")[0].strip() if help_text else ""
+        lines.append(f"- {path} — {first_line}")
     lines.append("\nSee How-to guides for examples.")
     dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
