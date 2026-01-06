@@ -40,7 +40,7 @@ cp .env.example .env
 # Edit .env with your API keys and configuration
 
 # Start Redis 8
-docker run -d -p 6379:6379 redis:8-alpine
+docker run -d -p 7843:6379 redis:8-alpine
 
 # Start worker
 uv run redis-sre-agent worker
@@ -59,7 +59,7 @@ curl http://localhost:8000/api/v1/health
 # Submit a triage request (returns task_id and thread_id)
 curl -X POST http://localhost:8000/api/v1/tasks \\
   -H "Content-Type: application/json" \\
-  -d '{"message": "Check Redis cluster health and memory usage", "context": {"instance_id": "<instance_id>"}}'
+  -d '{"message": "Check Redis cluster health and memory usage"}'
 
 # Check task status
 curl http://localhost:8000/api/v1/tasks/{task_id}

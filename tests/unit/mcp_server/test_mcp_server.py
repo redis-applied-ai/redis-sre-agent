@@ -9,6 +9,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_create_instance,
     redis_sre_database_chat,
     redis_sre_deep_triage,
+    redis_sre_delete_task,
     redis_sre_general_chat,
     redis_sre_get_task_status,
     redis_sre_get_thread,
@@ -40,6 +41,7 @@ class TestMCPServerSetup:
         assert "redis_sre_knowledge_query" in tool_names
         assert "redis_sre_get_thread" in tool_names
         assert "redis_sre_get_task_status" in tool_names
+        assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
         assert "redis_sre_create_instance" in tool_names
 
@@ -672,3 +674,68 @@ class TestGetTaskStatusTool:
 
             assert result["status"] == "not_found"
             assert "error" in result
+
+
+class TestDeleteTaskTool:
+    """Test the redis_sre_delete_task MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_delete_task_success(self):
+        """Task delete should cancel via Docket and call core delete."""
+
+        mock_client = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_client),
+            patch(
+                "redis_sre_agent.core.tasks.delete_task",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_redis_url", new_callable=AsyncMock
+            ) as mock_url,
+            patch("docket.Docket") as mock_docket,
+        ):
+            mock_url.return_value = "redis://test"
+
+            # Configure Docket context manager with async cancel
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            mock_docket.return_value = docket_instance
+
+            result = await redis_sre_delete_task(task_id="task-123")
+
+            mock_delete.assert_awaited_once_with(task_id="task-123", redis_client=mock_client)
+            docket_instance.cancel.assert_awaited_once_with("task-123")
+            assert result["status"] == "deleted"
+            assert result["task_id"] == "task-123"
+
+    @pytest.mark.asyncio
+    async def test_delete_task_failure(self):
+        """If core delete fails, tool should return error payload."""
+
+        mock_client = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_client),
+            patch(
+                "redis_sre_agent.core.tasks.delete_task",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch("redis_sre_agent.core.docket_tasks.get_redis_url", new_callable=AsyncMock),
+            patch("docket.Docket") as mock_docket,
+        ):
+            mock_delete.side_effect = Exception("boom")
+
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            mock_docket.return_value = docket_instance
+
+            result = await redis_sre_delete_task(task_id="task-err")
+
+            mock_delete.assert_awaited_once()
+            assert result["status"] == "error"
+            assert result["task_id"] == "task-err"
+            assert "boom" in result["error"]

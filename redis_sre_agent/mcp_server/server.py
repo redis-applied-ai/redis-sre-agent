@@ -165,9 +165,10 @@ async def redis_sre_deep_triage(
             redis_client=redis_client,
         )
 
-        # Submit to Docket for processing (this is what the API does)
+        # Submit to Docket for processing (this is what the API does).
+        # Use the task_id as the Docket key so we can cancel by task_id later.
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_agent_turn)
+            task_func = docket.add(process_agent_turn, key=result["task_id"])
             await task_func(
                 thread_id=result["thread_id"],
                 message=query,
@@ -178,9 +179,11 @@ async def redis_sre_deep_triage(
         return {
             "thread_id": result["thread_id"],
             "task_id": result["task_id"],
-            "status": result["status"].value
-            if hasattr(result["status"], "value")
-            else str(result["status"]),
+            "status": (
+                result["status"].value
+                if hasattr(result["status"], "value")
+                else str(result["status"])
+            ),
             "message": result.get("message", "Triage queued for processing"),
         }
 
@@ -256,9 +259,9 @@ async def redis_sre_general_chat(
             redis_client=redis_client,
         )
 
-        # Submit to Docket for processing
+        # Submit to Docket for processing; key by task_id for later cancellation.
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_chat_turn)
+            task_func = docket.add(process_chat_turn, key=result["task_id"])
             await task_func(
                 query=query,
                 task_id=result["task_id"],
@@ -270,9 +273,11 @@ async def redis_sre_general_chat(
         return {
             "thread_id": result["thread_id"],
             "task_id": result["task_id"],
-            "status": result["status"].value
-            if hasattr(result["status"], "value")
-            else str(result["status"]),
+            "status": (
+                result["status"].value
+                if hasattr(result["status"], "value")
+                else str(result["status"])
+            ),
             "message": "Chat task queued for processing",
         }
 
@@ -377,9 +382,9 @@ async def redis_sre_database_chat(
             redis_client=redis_client,
         )
 
-        # Submit to Docket for processing with category exclusions
+        # Submit to Docket for processing with category exclusions; key by task_id.
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_chat_turn)
+            task_func = docket.add(process_chat_turn, key=result["task_id"])
             await task_func(
                 query=query,
                 task_id=result["task_id"],
@@ -392,9 +397,11 @@ async def redis_sre_database_chat(
         return {
             "thread_id": result["thread_id"],
             "task_id": result["task_id"],
-            "status": result["status"].value
-            if hasattr(result["status"], "value")
-            else str(result["status"]),
+            "status": (
+                result["status"].value
+                if hasattr(result["status"], "value")
+                else str(result["status"])
+            ),
             "message": f"Database chat task queued (excluded categories: {exclude_mcp_categories})",
         }
 
@@ -536,9 +543,9 @@ async def redis_sre_knowledge_query(
             redis_client=redis_client,
         )
 
-        # Submit to Docket for processing
+        # Submit to Docket for processing; key by task_id for later cancellation.
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_knowledge_query)
+            task_func = docket.add(process_knowledge_query, key=result["task_id"])
             await task_func(
                 query=query,
                 task_id=result["task_id"],
@@ -549,9 +556,11 @@ async def redis_sre_knowledge_query(
         return {
             "thread_id": result["thread_id"],
             "task_id": result["task_id"],
-            "status": result["status"].value
-            if hasattr(result["status"], "value")
-            else str(result["status"]),
+            "status": (
+                result["status"].value
+                if hasattr(result["status"], "value")
+                else str(result["status"])
+            ),
             "message": "Knowledge query task queued for processing",
         }
 
@@ -743,6 +752,52 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
             "error": str(e),
             "task_id": task_id,
         }
+
+
+@mcp.tool()
+async def redis_sre_delete_task(task_id: str) -> Dict[str, Any]:
+    """Best-effort cancel and delete a task by task_id.
+
+    This tool mirrors the REST/CLI behavior:
+
+    1. Try to cancel the corresponding Docket task using task_id as the key.
+    2. Run core Redis cleanup via core.tasks.delete_task.
+    """
+
+    from docket import Docket
+
+    from redis_sre_agent.core.docket_tasks import get_redis_url
+    from redis_sre_agent.core.redis import get_redis_client
+    from redis_sre_agent.core.tasks import delete_task as delete_task_core
+
+    logger.info(f"MCP delete_task: {task_id}")
+
+    client = get_redis_client()
+
+    # Best-effort Docket cancellation
+    try:
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            try:
+                await docket.cancel(task_id)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("Failed to initialize Docket for cancel of %s: %s", task_id, e)
+
+    try:
+        await delete_task_core(task_id=task_id, redis_client=client)
+    except Exception as e:
+        logger.error("Failed to delete task %s via MCP: %s", task_id, e)
+        return {
+            "task_id": task_id,
+            "status": "error",
+            "error": str(e),
+        }
+
+    return {
+        "task_id": task_id,
+        "status": "deleted",
+    }
 
 
 @mcp.tool()

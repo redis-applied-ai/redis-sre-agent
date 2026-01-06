@@ -352,3 +352,62 @@ def task_purge(
         console.print(f"[green]Done.[/green] Scanned: {scanned}, Tasks deleted: {deleted}")
 
     asyncio.run(_run())
+
+
+@task.command("delete")
+@click.argument("task_id")
+@click.option("--yes", is_flag=True, help="Do not prompt for confirmation")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON")
+def task_delete(task_id: str, yes: bool, as_json: bool):
+    """Delete a single task by TASK_ID.
+
+    This is intended for targeted cancellation/cleanup of an individual task,
+    as opposed to bulk GC via ``task purge``.
+    """
+
+    async def _run():
+        import json as _json
+
+        from docket import Docket
+
+        from redis_sre_agent.core.docket_tasks import get_redis_url
+        from redis_sre_agent.core.redis import get_redis_client
+        from redis_sre_agent.core.tasks import delete_task as delete_task_core
+
+        # Interactive confirmation for safety (unless JSON or --yes)
+        if not yes and not as_json:
+            if not click.confirm(f"Delete task {task_id}?", default=False):
+                click.echo("Cancelled")
+                return
+
+        # Best-effort: attempt to cancel any in-flight Docket task for this id.
+        try:
+            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+                try:
+                    await docket.cancel(task_id)
+                except Exception:
+                    # Best-effort; do not fail CLI if cancel is not possible.
+                    pass
+        except Exception:
+            # If Docket is unavailable, continue with Redis cleanup.
+            pass
+
+        client = get_redis_client()
+
+        try:
+            await delete_task_core(task_id=task_id, redis_client=client)
+        except Exception as e:
+            payload = {"task_id": task_id, "status": "error", "error": str(e)}
+            if as_json:
+                print(_json.dumps(payload))
+            else:
+                click.echo(f"\N{CROSS MARK} Error deleting task {task_id}: {e}")
+            return
+
+        payload = {"task_id": task_id, "status": "deleted"}
+        if as_json:
+            print(_json.dumps(payload))
+        else:
+            click.echo(f"\N{WHITE HEAVY CHECK MARK} Deleted task {task_id}")
+
+    asyncio.run(_run())

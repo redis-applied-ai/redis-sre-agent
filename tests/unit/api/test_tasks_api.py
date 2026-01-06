@@ -81,3 +81,66 @@ class TestTasksAPI:
         assert data["subject"] == "Test subject"
         assert data["created_at"] == "2024-01-01T00:00:00Z"
         assert data["updated_at"] == "2024-01-01T00:01:00Z"
+
+    def test_delete_task_success(self, client):
+        """DELETE /api/v1/tasks/{task_id} cancels Docket task and deletes core state."""
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client") as mock_get_client,
+            patch(
+                "redis_sre_agent.api.tasks.delete_task_core",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new_callable=AsyncMock,
+            ) as mock_get_url,
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
+            mock_get_url.return_value = "redis://test"
+
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            mock_docket.return_value = docket_instance
+
+            resp = client.delete("/api/v1/tasks/t1")
+
+            assert resp.status_code == 204
+            # No JSON body for 204 responses
+            assert resp.content in (b"", None)
+
+            mock_delete.assert_awaited_once_with(task_id="t1", redis_client=mock_client)
+            docket_instance.cancel.assert_awaited_once_with("t1")
+
+    def test_delete_task_failure_returns_500(self, client):
+        """If core delete fails, DELETE /tasks/{id} returns 500 with detail."""
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client") as mock_get_client,
+            patch(
+                "redis_sre_agent.api.tasks.delete_task_core",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new_callable=AsyncMock,
+            ),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
+            mock_delete.side_effect = Exception("boom")
+
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            mock_docket.return_value = docket_instance
+
+            resp = client.delete("/api/v1/tasks/t1")
+
+            assert resp.status_code == 500
+            data = resp.json()
+            assert "Failed to delete task t1" in data["detail"]
