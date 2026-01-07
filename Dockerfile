@@ -10,6 +10,10 @@ WORKDIR /app
 # Set uv environment variables for optimization
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
+# Install uv-managed Python into a neutral, shared location so it can be used
+# by the non-root "app" user in the runtime image. This prevents venv
+# interpreters from pointing into /root/.local, which "app" cannot execute.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
 # Install system dependencies required ONLY for building/fetching (like git)
 # We don't need Docker CLI here unless your build script relies on it.
@@ -51,11 +55,18 @@ FROM python:3.12-slim
 # commands that use `uv run` work correctly.
 COPY --from=builder /bin/uv /bin/uv
 
-# Note: With UV_LINK_MODE=copy set in the builder stage, the virtualenv at
-# /app/.venv is self-contained and doesn't require a shared Python installation
-# under /root/.local/share/uv. All necessary files are copied directly into the venv.
+# Copy uv's managed Python installation from the builder stage. With
+# UV_PYTHON_INSTALL_DIR set to /opt/uv/python in the builder, the
+# /app/.venv/bin/python interpreter inside the project venv will point into
+# this directory instead of /root/.local, making it executable by the "app"
+# user in the runtime image.
+COPY --from=builder /opt/uv /opt/uv
 
 WORKDIR /app
+
+# Ensure uv in the runtime container also uses the shared Python install
+# under /opt/uv/python instead of /root/.local/share/uv.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
 # Install ONLY runtime system dependencies
 # We repeat the Docker/Redis install here because they are needed at runtime.
