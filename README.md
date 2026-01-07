@@ -59,7 +59,7 @@ curl http://localhost:8000/api/v1/health
 # Submit a triage request (returns task_id and thread_id)
 curl -X POST http://localhost:8000/api/v1/tasks \\
   -H "Content-Type: application/json" \\
-  -d '{"message": "Check Redis cluster health and memory usage"}'
+  -d '{"message": "Check Redis cluster health and memory usage", "context": {"instance_id": "<instance_id>"}}'
 
 # Check task status
 curl http://localhost:8000/api/v1/tasks/{task_id}
