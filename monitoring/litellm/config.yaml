@@ -1,0 +1,55 @@
+# LiteLLM Proxy Configuration
+# https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+  # OpenAI models
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4-turbo
+    litellm_params:
+      model: openai/gpt-4-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Anthropic models (optional - only if ANTHROPIC_API_KEY is set)
+  - model_name: claude-3-5-sonnet-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-opus-20240229
+    litellm_params:
+      model: anthropic/claude-3-opus-20240229
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  # Enable request logging
+  set_verbose: false
+  # Cache settings
+  cache: false
+  # Timeout settings
+  request_timeout: 600
+
+general_settings:
+  # Master key for authentication
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # Database for UI and usage tracking
+  database_url: os.environ/DATABASE_URL
+
