@@ -40,7 +40,7 @@ cp .env.example .env
 # Edit .env with your API keys and configuration
 
 # Start Redis 8
-docker run -d -p 6379:6379 redis:8-alpine
+docker run -d -p 7843:6379 redis:8-alpine
 
 # Start worker
 uv run redis-sre-agent worker

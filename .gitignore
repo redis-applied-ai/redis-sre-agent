@@ -99,6 +99,7 @@ secrets/
 reference_code/
 artifacts/*/
 !artifacts/.gitkeep
+.vscode
 
 
 # Generated local maps

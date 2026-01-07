@@ -127,3 +127,49 @@ class TestTaskPurgeCLI:
         assert result.exit_code == 0
         # Should have options for purging
         assert "--" in result.output or "purge" in result.output.lower()
+
+
+class TestTaskDeleteCLI:
+    """Tests for the task delete command."""
+
+    def test_delete_help_shows_argument(self, cli_runner):
+        """delete --help should mention TASK_ID argument."""
+        result = cli_runner.invoke(task, ["delete", "--help"])
+
+        assert result.exit_code == 0
+        assert "TASK_ID" in result.output or "task_id" in result.output.lower()
+
+    def test_delete_invokes_core_delete_and_docket_cancel(self, cli_runner):
+        """task delete should cancel via Docket and call core delete_task."""
+
+        mock_client = MagicMock()
+
+        with (
+            patch(
+                "redis_sre_agent.core.redis.get_redis_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "redis_sre_agent.core.tasks.delete_task",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_redis_url",
+                new_callable=AsyncMock,
+            ) as mock_get_url,
+            patch("docket.Docket") as mock_docket,
+        ):
+            mock_get_url.return_value = "redis://test"
+
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            mock_docket.return_value = docket_instance
+
+            result = cli_runner.invoke(task, ["delete", "t1", "--yes"])
+
+            assert result.exit_code == 0
+            assert "Deleted task t1" in result.output
+
+            mock_delete.assert_awaited_once_with(task_id="t1", redis_client=mock_client)
+            docket_instance.cancel.assert_awaited_once_with("t1")
