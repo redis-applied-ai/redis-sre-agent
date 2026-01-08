@@ -304,7 +304,7 @@ services:
       - ./artifacts:/app/artifacts  # For data pipeline
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
-    command: uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - sre-network
 
@@ -339,7 +339,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for log access
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
-    command: uv run redis-sre-agent worker
+    # Run the worker directly from the project virtualenv instead of via
+    # `uv run` to avoid querying /app/.venv/bin/python3 at runtime.
+    command: redis-sre-agent worker
     # Disable healthcheck for worker (it doesn't run a web server)
     healthcheck:
       disable: true
