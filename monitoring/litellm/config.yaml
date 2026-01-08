@@ -2,7 +2,69 @@
 # https://docs.litellm.ai/docs/proxy/configs
 
 model_list:
-  # OpenAI models
+  # ============================================================================
+  # OpenAI Models
+  # ============================================================================
+
+  # GPT-5 Series (Latest)
+  - model_name: gpt-5
+    litellm_params:
+      model: openai/gpt-5
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-5-mini
+    litellm_params:
+      model: openai/gpt-5-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-5-nano
+    litellm_params:
+      model: openai/gpt-5-nano
+      api_key: os.environ/OPENAI_API_KEY
+
+  # GPT-4.1 Series
+  - model_name: gpt-4.1
+    litellm_params:
+      model: openai/gpt-4.1
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4.1-mini
+    litellm_params:
+      model: openai/gpt-4.1-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4.1-nano
+    litellm_params:
+      model: openai/gpt-4.1-nano
+      api_key: os.environ/OPENAI_API_KEY
+
+  # O-Series Reasoning Models
+  - model_name: o4-mini
+    litellm_params:
+      model: openai/o4-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: o3
+    litellm_params:
+      model: openai/o3
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: o3-mini
+    litellm_params:
+      model: openai/o3-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: o1
+    litellm_params:
+      model: openai/o1
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: o1-mini
+    litellm_params:
+      model: openai/o1-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # GPT-4o Series
   - model_name: gpt-4o
     litellm_params:
       model: openai/gpt-4o
@@ -13,14 +75,15 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
 
-  - model_name: text-embedding-3-small
-    litellm_params:
-      model: openai/text-embedding-3-small
-      api_key: os.environ/OPENAI_API_KEY
-
+  # GPT-4 Series (Legacy)
   - model_name: gpt-4-turbo
     litellm_params:
       model: openai/gpt-4-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4
+    litellm_params:
+      model: openai/gpt-4
       api_key: os.environ/OPENAI_API_KEY
 
   - model_name: gpt-3.5-turbo
@@ -28,16 +91,131 @@ model_list:
       model: openai/gpt-3.5-turbo
       api_key: os.environ/OPENAI_API_KEY
 
-  # Anthropic models (optional - only if ANTHROPIC_API_KEY is set)
+  # OpenAI Embeddings
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: text-embedding-3-large
+    litellm_params:
+      model: openai/text-embedding-3-large
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: text-embedding-ada-002
+    litellm_params:
+      model: openai/text-embedding-ada-002
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ============================================================================
+  # Anthropic Models (requires ANTHROPIC_API_KEY)
+  # ============================================================================
+
+  # Claude 4 Series (Latest)
+  - model_name: claude-sonnet-4-5-20250929
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-opus-4-5-20251101
+    litellm_params:
+      model: anthropic/claude-opus-4-5-20251101
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-opus-4-1-20250805
+    litellm_params:
+      model: anthropic/claude-opus-4-1-20250805
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-opus-4-20250514
+    litellm_params:
+      model: anthropic/claude-opus-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet-4-20250514
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Claude 3.7 Series
+  - model_name: claude-3-7-sonnet-20250219
+    litellm_params:
+      model: anthropic/claude-3-7-sonnet-20250219
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Claude 3.5 Series
   - model_name: claude-3-5-sonnet-20241022
     litellm_params:
       model: anthropic/claude-3-5-sonnet-20241022
       api_key: os.environ/ANTHROPIC_API_KEY
 
+  - model_name: claude-3-5-sonnet-20240620
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20240620
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-5-haiku-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Claude 3 Series (Legacy)
   - model_name: claude-3-opus-20240229
     litellm_params:
       model: anthropic/claude-3-opus-20240229
       api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-sonnet-20240229
+    litellm_params:
+      model: anthropic/claude-3-sonnet-20240229
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-haiku-20240307
+    litellm_params:
+      model: anthropic/claude-3-haiku-20240307
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ============================================================================
+  # Google Gemini Models (requires GEMINI_API_KEY)
+  # ============================================================================
+
+  # Gemini 2.5 Series (Latest)
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      model: gemini/gemini-2.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Gemini 2.0 Series
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-2.0-flash-lite
+    litellm_params:
+      model: gemini/gemini-2.0-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Gemini 1.5 Series (Legacy)
+  - model_name: gemini-1.5-pro
+    litellm_params:
+      model: gemini/gemini-1.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-1.5-flash
+    litellm_params:
+      model: gemini/gemini-1.5-flash
+      api_key: os.environ/GEMINI_API_KEY
 
 litellm_settings:
   # Enable request logging
