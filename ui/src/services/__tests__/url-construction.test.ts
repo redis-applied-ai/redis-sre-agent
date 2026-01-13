@@ -37,12 +37,12 @@ describe("URL Construction", () => {
     expect(baseUrl).toBe("/api/v1");
   });
 
-  test("should use current hostname with port 8000 in development", () => {
+  test("should use current hostname with port 8080 in development", () => {
     mockLocation("localhost", "3000");
     const api = new (SREAgentAPI as any)();
 
     const baseUrl = api.getApiBaseUrl();
-    expect(baseUrl).toBe("http://localhost:8000/api/v1");
+    expect(baseUrl).toBe("http://localhost:8080/api/v1");
   });
 
   test("should handle different development ports", () => {
@@ -50,7 +50,7 @@ describe("URL Construction", () => {
     const api = new (SREAgentAPI as any)();
 
     const baseUrl = api.getApiBaseUrl();
-    expect(baseUrl).toBe("http://localhost:8000/api/v1");
+    expect(baseUrl).toBe("http://localhost:8080/api/v1");
   });
 
   test("should use environment variable when provided", () => {
@@ -71,6 +71,6 @@ describe("URL Construction", () => {
     const api = new (SREAgentAPI as any)();
 
     const baseUrl = api.getApiBaseUrl();
-    expect(baseUrl).toBe("http://my-server.example.com:8000/api/v1");
+    expect(baseUrl).toBe("http://my-server.example.com:8080/api/v1");
   });
 });

@@ -15,12 +15,12 @@ export interface TaskUpdate {
 export interface TaskStatusResponse {
   thread_id: string;
   status:
-    | "queued"
-    | "in_progress"
-    | "completed"
-    | "done"
-    | "failed"
-    | "cancelled";
+  | "queued"
+  | "in_progress"
+  | "completed"
+  | "done"
+  | "failed"
+  | "cancelled";
   // Messages are now at top level (conversation history)
   messages: Array<{
     role: string;
@@ -229,8 +229,8 @@ class SREAgentAPI {
       const protocol = window.location.protocol;
       const hostname = window.location.hostname;
 
-      // Use the current hostname but with backend port (8000)
-      return `${protocol}//${hostname}:8000/api/v1`;
+      // Use the current hostname but with backend port (8080)
+      return `${protocol}//${hostname}:8080/api/v1`;
     }
 
     // 4. Fallback for server-side rendering or other edge cases
@@ -355,11 +355,11 @@ class SREAgentAPI {
       // Updates may come from the API if backend provides them from latest task
       updates: Array.isArray(thread.updates)
         ? thread.updates.map((u: any) => ({
-            timestamp: u.timestamp,
-            message: u.message,
-            type: u.update_type,
-            metadata: u.metadata || {},
-          }))
+          timestamp: u.timestamp,
+          message: u.message,
+          type: u.update_type,
+          metadata: u.metadata || {},
+        }))
         : [],
       result: thread.result,
       error_message: thread.error_message,
@@ -920,7 +920,7 @@ class SREAgentAPI {
       const error = await response.json();
       throw new Error(
         error.detail ||
-          `Failed to test admin API connection: ${response.statusText}`,
+        `Failed to test admin API connection: ${response.statusText}`,
       );
     }
 
