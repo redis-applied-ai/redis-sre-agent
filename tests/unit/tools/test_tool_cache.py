@@ -1,12 +1,12 @@
 """Tests for ToolManager shared Redis cache functionality."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from redis_sre_agent.core.instances import RedisInstance
-from redis_sre_agent.tools.cache import ToolCache, DEFAULT_TOOL_TTLS
+from redis_sre_agent.tools.cache import DEFAULT_TOOL_TTLS, ToolCache
 from redis_sre_agent.tools.manager import ToolManager
 
 

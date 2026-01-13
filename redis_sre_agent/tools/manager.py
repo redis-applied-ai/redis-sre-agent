@@ -21,6 +21,7 @@ from .protocols import ToolProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
+
     from redis_sre_agent.tools.cache import ToolCache
 
 logger = logging.getLogger(__name__)

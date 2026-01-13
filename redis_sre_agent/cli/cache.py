@@ -8,7 +8,6 @@ from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.tools.cache import ToolCache
@@ -81,7 +80,7 @@ def cache_stats(instance_id: Optional[str], show_all: bool, as_json: bool):
             if as_json:
                 console.print(_json.dumps(stats, indent=2))
             else:
-                console.print(f"[bold]Cache Statistics (All Instances)[/bold]")
+                console.print("[bold]Cache Statistics (All Instances)[/bold]")
                 console.print(f"  Total cached keys: {stats.get('total_keys', 0)}")
                 instances = stats.get("instances", [])
                 if instances:
@@ -106,7 +105,7 @@ def cache_stats(instance_id: Optional[str], show_all: bool, as_json: bool):
             if as_json:
                 console.print(_json.dumps(stats, indent=2))
             else:
-                console.print(f"[bold]Cache Statistics[/bold]")
+                console.print("[bold]Cache Statistics[/bold]")
                 console.print(f"  Total cached keys: {stats.get('total_keys', 0)}")
                 instances = stats.get("instances", [])
                 if instances:
