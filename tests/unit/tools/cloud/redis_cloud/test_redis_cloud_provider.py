@@ -136,6 +136,7 @@ async def test_resolve_tool_call_get_database(mock_config):
         "Instance",
         (),
         {
+            "id": "test-instance-id",
             "instance_type": "redis_cloud",
             "redis_cloud_subscription_id": 12345,
             "redis_cloud_database_id": 67890,
