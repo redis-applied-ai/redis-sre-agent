@@ -1822,6 +1822,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         cache_client = None
         if settings.tool_cache_enabled and target_instance:
             from ..core.redis import get_redis_client
+
             cache_client = get_redis_client()
             logger.debug(f"Tool caching enabled for instance {target_instance.id}")
 

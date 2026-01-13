@@ -88,6 +88,7 @@ class ToolCache:
         provider instances have different memory addresses.
         """
         import re
+
         # Match pattern: underscore + 6 hex chars + underscore
         # Replace with just underscore to preserve provider_operation format
         return re.sub(r"_([0-9a-f]{6})_", "_", tool_name)
@@ -154,9 +155,7 @@ class ToolCache:
             logger.warning(f"Cache get failed: {e}")
             return None
 
-    async def set(
-        self, tool_name: str, args: Dict[str, Any], result: Any
-    ) -> bool:
+    async def set(self, tool_name: str, args: Dict[str, Any], result: Any) -> bool:
         """Cache a tool result with appropriate TTL.
 
         Returns True if cached successfully, False otherwise.

@@ -141,9 +141,7 @@ class MCPConnectionPool:
             else:
                 raise ValueError(f"MCP server '{server_name}' needs 'command' or 'url'")
 
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
+            session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
             tools_result = await session.list_tools()
 

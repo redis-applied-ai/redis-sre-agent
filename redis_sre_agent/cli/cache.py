@@ -38,6 +38,7 @@ def cache_clear(instance_id: Optional[str], clear_all: bool):
     Use --instance to clear cache for a specific Redis instance,
     or --all to clear cache across all instances.
     """
+
     async def _clear():
         console = Console()
 
@@ -52,7 +53,9 @@ def cache_clear(instance_id: Optional[str], clear_all: bool):
         else:
             tool_cache = get_tool_cache(instance_id)
             deleted = await tool_cache.clear()
-            console.print(f"[green]✓ Cleared {deleted} cached keys for instance {instance_id}[/green]")
+            console.print(
+                f"[green]✓ Cleared {deleted} cached keys for instance {instance_id}[/green]"
+            )
 
     asyncio.run(_clear())
 
@@ -67,6 +70,7 @@ def cache_stats(instance_id: Optional[str], show_all: bool, as_json: bool):
     Use --instance to get stats for a specific Redis instance,
     or --all to get aggregate stats across all instances.
     """
+
     async def _stats():
         console = Console()
         tool_cache = get_tool_cache(instance_id if instance_id else "__all__")
@@ -79,7 +83,7 @@ def cache_stats(instance_id: Optional[str], show_all: bool, as_json: bool):
             else:
                 console.print(f"[bold]Cache Statistics (All Instances)[/bold]")
                 console.print(f"  Total cached keys: {stats.get('total_keys', 0)}")
-                instances = stats.get('instances', [])
+                instances = stats.get("instances", [])
                 if instances:
                     console.print(f"  Instances with cache: {', '.join(instances)}")
                 else:
@@ -93,7 +97,7 @@ def cache_stats(instance_id: Optional[str], show_all: bool, as_json: bool):
                 console.print(f"[bold]Cache Statistics for {instance_id}[/bold]")
                 console.print(f"  Cached keys: {stats.get('cached_keys', 0)}")
                 console.print(f"  Enabled: {stats.get('enabled', True)}")
-                if stats.get('error'):
+                if stats.get("error"):
                     console.print(f"  [red]Error: {stats['error']}[/red]")
         else:
             # Default: show all
@@ -104,7 +108,7 @@ def cache_stats(instance_id: Optional[str], show_all: bool, as_json: bool):
             else:
                 console.print(f"[bold]Cache Statistics[/bold]")
                 console.print(f"  Total cached keys: {stats.get('total_keys', 0)}")
-                instances = stats.get('instances', [])
+                instances = stats.get("instances", [])
                 if instances:
                     console.print(f"  Instances: {', '.join(instances)}")
 

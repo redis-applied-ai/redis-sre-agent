@@ -118,9 +118,7 @@ class TestToolCache:
         """Test cache set with custom TTL overrides."""
         custom_ttls = {"info": 120}
         cache = ToolCache(
-            redis_client=mock_redis,
-            instance_id=test_instance.id,
-            ttl_overrides=custom_ttls
+            redis_client=mock_redis, instance_id=test_instance.id, ttl_overrides=custom_ttls
         )
         data = {"status": "success"}
 
@@ -170,11 +168,7 @@ class TestToolCache:
     @pytest.mark.asyncio
     async def test_cache_disabled_returns_none(self, mock_redis, test_instance):
         """Test that disabled cache always returns None."""
-        cache = ToolCache(
-            redis_client=mock_redis,
-            instance_id=test_instance.id,
-            enabled=False
-        )
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id, enabled=False)
 
         result = await cache.get("redis_cli_info", {})
 

@@ -104,6 +104,7 @@ class ToolManager:
         self._shared_cache: Optional["ToolCache"] = None
         if cache_client is not None and redis_instance is not None:
             from redis_sre_agent.tools.cache import ToolCache
+
             self._shared_cache = ToolCache(
                 redis_client=cache_client,
                 instance_id=redis_instance.id,

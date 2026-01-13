@@ -155,6 +155,7 @@ class ToolProvider(ABC):
         # Use stable hash based on instance ID (for caching) or fallback to memory address
         if redis_instance is not None:
             import hashlib
+
             self._instance_hash = hashlib.sha256(redis_instance.id.encode()).hexdigest()[:6]
         else:
             self._instance_hash = hex(id(self))[2:8]

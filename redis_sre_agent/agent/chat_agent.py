@@ -398,6 +398,7 @@ class ChatAgent:
         cache_client = None
         if settings.tool_cache_enabled and self.redis_instance:
             from redis_sre_agent.core.redis import get_redis_client
+
             cache_client = get_redis_client()
             logger.info(f"Tool caching enabled for instance {self.redis_instance.id}")
 
