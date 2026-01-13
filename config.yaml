@@ -1,0 +1,158 @@
+# Redis SRE Agent Configuration
+# Copy this file to config.yaml and customize for your environment.
+#
+# Settings can be loaded from (priority order):
+#   1. Environment variables (highest priority)
+#   2. .env file
+#   3. config.yaml (this file)
+#   4. Default values (lowest priority)
+#
+# Set SRE_AGENT_CONFIG environment variable to use a custom path.
+
+# Application settings
+# debug: false
+# log_level: INFO
+
+# Server settings
+# host: "0.0.0.0"
+# port: 8000
+
+# OpenAI API Configuration
+# openai_api_key: your_openai_api_key_here
+# openai_base_url: https://your-llm-proxy.example.com/v1  # Optional: Custom API endpoint for LLM proxy
+# openai_model: gpt-4
+# openai_model_mini: gpt-4o-mini
+# openai_model_nano: gpt-4o-nano
+
+# MCP (Model Context Protocol) servers configuration
+# This is the primary use case for YAML config - complex nested structures
+mcp_servers:
+  # Memory server for long-term agent memory
+  redis-memory-server:
+    command: uv
+    args:
+      - tool
+      - run
+      - --from
+      - agent-memory-server
+      - agent-memory
+      - mcp
+    env:
+      REDIS_URL: redis://localhost:6399
+    tools:
+      get_current_datetime:
+        description: |
+          Get the current date and time. Use this when you need to
+          record timestamps for Redis instance events or incidents.
+
+          {original}
+      create_long_term_memories:
+        description: |
+          Save long-term memories about Redis instances. Use this to
+          record: past incidents and their resolutions, configuration
+          changes, performance baselines, known issues, maintenance
+          history, and lessons learned. Always include the instance_id
+          in the memory text for future retrieval.
+
+          {original}
+      search_long_term_memory:
+        description: |
+          Search saved memories about Redis instances. ALWAYS use this
+          before troubleshooting a Redis instance to recall past issues,
+          solutions, and context. Search by instance_id, error patterns,
+          or symptoms.
+
+          {original}
+      get_long_term_memory:
+        description: |
+          Retrieve a specific memory by ID. Use this to get full details
+          of a memory found via search.
+
+          {original}
+      edit_long_term_memory:
+        description: |
+          Update an existing memory. Use this to add new information to
+          a past incident record, update resolution status, or correct
+          outdated information.
+
+          {original}
+      delete_long_term_memories:
+        description: |
+          Delete memories that are no longer relevant. Use sparingly -
+          prefer editing to add context rather than deleting.
+
+          {original}
+
+  # GitHub MCP server for repository operations
+  # Option 1: Local Docker (requires Docker to be running)
+  github:
+    command: docker
+    args:
+      - run
+      - -i
+      - --rm
+      - -e
+      - GITHUB_PERSONAL_ACCESS_TOKEN
+      - ghcr.io/github/github-mcp-server
+    env:
+      # Set your GitHub Personal Access Token here or via environment variable
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    # Optionally constrain to search/read tools only with capability categories
+    tools:
+      search_code:
+        capability: repos
+      search_issues:
+        capability: tickets
+      search_pull_requests:
+        capability: repos
+      get_file_contents:
+        capability: repos
+      list_issues:
+        capability: tickets
+      list_pull_requests:
+        capability: repos
+      issue_read:
+        capability: tickets
+      pull_request_read:
+        capability: repos
+      list_commits:
+        capability: repos
+      get_commit:
+        capability: repos
+
+  # Option 2: Remote GitHub MCP server (recommended, no Docker needed)
+  # Uncomment the following and comment out the local Docker option above:
+  # github:
+  #   url: "https://api.githubcopilot.com/mcp/"
+  #   headers:
+  #     Authorization: "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+  #   tools:
+  #     search_code:
+  #       capability: repos
+  #     search_issues:
+  #       capability: tickets
+  #     search_pull_requests:
+  #       capability: repos
+  #     get_file_contents:
+  #       capability: repos
+  #     list_issues:
+  #       capability: tickets
+  #     list_pull_requests:
+  #       capability: repos
+  #     issue_read:
+  #       capability: tickets
+  #     pull_request_read:
+  #       capability: repos
+  #     list_commits:
+  #       capability: repos
+  #     get_commit:
+  #       capability: repos
+
+# Manually overriding tool providers configuration (fully qualified class paths).
+# Useful to disable some built-in tool providers and/or enable your own custom providers.
+# For more on custom tool providers, see: https://redis-applied-ai.github.io/redis-sre-agent/how-to/tool-providers/#create-a-custom-provider
+# tool_providers:
+#   - redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider
+#   - redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider
+#   - redis_sre_agent.tools.logs.loki.provider.LokiToolProvider
+#   - redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider

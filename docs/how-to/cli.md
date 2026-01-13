@@ -30,7 +30,7 @@ Tell the agent about the Redis you want to triage.
 # Create (adjust URL/env/usage/description)
 uv run redis-sre-agent instance create \
   --name prod-cache \
-  --connection-url redis://your-redis-host:6379/0 \
+  --connection-url redis://localhost:6379/0 \
   --environment production \
   --usage cache \
   --description "Primary Redis"

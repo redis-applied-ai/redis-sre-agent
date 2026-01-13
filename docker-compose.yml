@@ -423,7 +423,7 @@ services:
       - "3002:3000"
     environment:
       - NODE_ENV=development
-      - VITE_API_URL=http://sre-agent:8000
+      - VITE_API_URL=http://sre-agent:8080
     depends_on:
       - sre-agent
     volumes:
