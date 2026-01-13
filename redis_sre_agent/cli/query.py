@@ -54,10 +54,15 @@ def query(
 
     async def _query():
         from redis_sre_agent.cli.support_package import get_manager as get_support_package_manager
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
 
         console = Console()
         redis_client = get_redis_client()
         thread_manager = ThreadManager(redis_client=redis_client)
+
+        # Start MCP connection pool (keeps connections warm)
+        mcp_pool = MCPConnectionPool.get_instance()
+        await mcp_pool.start()
 
         # Resolve instance if provided
         instance = None

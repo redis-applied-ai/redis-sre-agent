@@ -105,6 +105,18 @@ async def lifespan(app: FastAPI):
         logger.info(f"Embedding model: {settings.embedding_model}")
         logger.info(f"Debug mode: {settings.debug}")
 
+        # Start MCP connection pool (keeps connections warm across queries)
+        try:
+            from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
+
+            mcp_pool = MCPConnectionPool.get_instance()
+            mcp_status = await mcp_pool.start()
+            _app_startup_state["mcp_pool"] = mcp_status
+            logger.info(f"✅ MCP connection pool started: {mcp_status}")
+        except Exception as e:
+            logger.warning(f"MCP connection pool failed to start: {e}")
+            _app_startup_state["mcp_pool"] = {"error": str(e)}
+
         logger.info("✅ Startup completed successfully")
 
     except Exception as e:
@@ -116,7 +128,15 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down FastAPI application...")
-    # No Redis cleanup required; clients are not cached.
+
+    # Shutdown MCP connection pool
+    try:
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
+
+        mcp_pool = MCPConnectionPool.get_instance()
+        await mcp_pool.shutdown()
+    except Exception as e:
+        logger.warning(f"Error shutting down MCP pool: {e}")
 
 
 # Create FastAPI application
