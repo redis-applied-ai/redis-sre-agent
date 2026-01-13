@@ -394,11 +394,19 @@ class ChatAgent:
         else:
             emitter = self._emitter
 
+        # Get cache client if tool caching is enabled
+        cache_client = None
+        if settings.tool_cache_enabled and self.redis_instance:
+            from redis_sre_agent.core.redis import get_redis_client
+            cache_client = get_redis_client()
+            logger.info(f"Tool caching enabled for instance {self.redis_instance.id}")
+
         # Create ToolManager with Redis instance for full tool access
         async with ToolManager(
             redis_instance=self.redis_instance,
             exclude_mcp_categories=self.exclude_mcp_categories,
             support_package_path=self.support_package_path,
+            cache_client=cache_client,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
             logger.info(f"Chat agent loaded {len(tools)} tools")

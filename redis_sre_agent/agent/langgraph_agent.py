@@ -1818,10 +1818,18 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             support_package_path = Path(pkg_path) if isinstance(pkg_path, str) else pkg_path
             logger.info(f"Processing query with support package: {support_package_path}")
 
+        # Get cache client if tool caching is enabled
+        cache_client = None
+        if settings.tool_cache_enabled and target_instance:
+            from ..core.redis import get_redis_client
+            cache_client = get_redis_client()
+            logger.debug(f"Tool caching enabled for instance {target_instance.id}")
+
         # Create ToolManager for this query with the target instance
         async with ToolManager(
             redis_instance=target_instance,
             support_package_path=support_package_path,
+            cache_client=cache_client,
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()

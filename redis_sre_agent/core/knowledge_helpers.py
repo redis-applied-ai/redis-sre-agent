@@ -61,7 +61,7 @@ async def search_knowledge_base_helper(
     return_fields = [
         "id",
         "document_hash",
-        "chunk_index",
+        # "chunk_index",
         "title",
         "content",
         "source",

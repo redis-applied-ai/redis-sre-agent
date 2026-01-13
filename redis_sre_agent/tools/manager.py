@@ -21,6 +21,7 @@ from .protocols import ToolProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from redis_sre_agent.tools.cache import ToolCache
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -62,6 +63,8 @@ class ToolManager:
         redis_instance: Optional[RedisInstance] = None,
         exclude_mcp_categories: Optional[List[ToolCapability]] = None,
         support_package_path: Optional["Path"] = None,
+        cache_client: Optional[Any] = None,
+        cache_ttl_overrides: Optional[Dict[str, int]] = None,
     ):
         """Initialize tool manager.
 
@@ -75,6 +78,9 @@ class ToolManager:
             support_package_path: Optional path to an extracted support package.
                 When provided, loads SupportPackageToolProvider with tools for
                 analyzing logs, diagnostics, and Redis data from the package.
+            cache_client: Optional async Redis client for shared tool result caching.
+                When provided, tool outputs are cached across runs with TTL.
+            cache_ttl_overrides: Optional custom TTLs for specific tools.
         """
         self.redis_instance = redis_instance
         self.exclude_mcp_categories = exclude_mcp_categories
@@ -93,6 +99,16 @@ class ToolManager:
         self._stack: Optional[AsyncExitStack] = None
         # Per-run cache of tool results: (tool_name, stable_args_json) -> result
         self._call_cache: Dict[str, Any] = {}
+
+        # Shared Redis-backed cache (optional)
+        self._shared_cache: Optional["ToolCache"] = None
+        if cache_client is not None and redis_instance is not None:
+            from redis_sre_agent.tools.cache import ToolCache
+            self._shared_cache = ToolCache(
+                redis_client=cache_client,
+                instance_id=redis_instance.id,
+                ttl_overrides=cache_ttl_overrides,
+            )
 
     async def __aenter__(self) -> "ToolManager":
         """Enter context manager and load all providers."""
@@ -553,7 +569,10 @@ class ToolManager:
         return providers[0] if providers else None
 
     async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Route tool call to appropriate provider with per-run memoization.
+        """Route tool call to appropriate provider with caching.
+
+        Uses both per-run in-memory cache and optional shared Redis cache.
+        The shared cache persists across runs and threads for the same instance.
 
         Args:
             tool_name: Tool name from LLM
@@ -583,9 +602,18 @@ class ToolManager:
             # Fallback to string repr
             args_key = str(args or {})
 
+        # Check per-run in-memory cache first (fastest)
         cache_key = f"{tool_name}|{args_key}"
         if cache_key in self._call_cache:
             return self._call_cache[cache_key]
+
+        # Check shared Redis cache (if enabled)
+        if self._shared_cache:
+            cached_result = await self._shared_cache.get(tool_name, args or {})
+            if cached_result is not None:
+                # Also store in per-run cache for faster subsequent lookups
+                self._call_cache[cache_key] = cached_result
+                return cached_result
 
         # OTel: per-tool resolve span
         _provider_name = provider.provider_name if provider else None
@@ -603,8 +631,14 @@ class ToolManager:
             },
         ):
             result = await tool.invoke(args)
-        # Cache result for this run
+
+        # Cache result in per-run cache
         self._call_cache[cache_key] = result
+
+        # Cache result in shared Redis cache (if enabled)
+        if self._shared_cache:
+            await self._shared_cache.set(tool_name, args or {}, result)
+
         return result
 
     async def execute_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Any]:

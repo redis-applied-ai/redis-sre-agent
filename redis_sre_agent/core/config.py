@@ -257,6 +257,16 @@ class Settings(BaseSettings):
     )
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
 
+    # Tool Caching
+    tool_cache_enabled: bool = Field(
+        default=True,
+        description="Enable Redis-backed caching of tool outputs across runs",
+    )
+    tool_cache_default_ttl: int = Field(
+        default=60,
+        description="Default TTL in seconds for cached tool outputs",
+    )
+
     # LLM Retry Configuration
     llm_max_retries: int = Field(default=3, description="Maximum retries for LLM calls")
     llm_initial_delay: float = Field(
