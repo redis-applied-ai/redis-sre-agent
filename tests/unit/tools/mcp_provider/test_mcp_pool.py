@@ -50,9 +50,7 @@ class TestMCPConnectionPool:
         """Test start when no MCP servers are configured."""
         pool = MCPConnectionPool.get_instance()
 
-        with patch(
-            "redis_sre_agent.core.config.settings"
-        ) as mock_settings:
+        with patch("redis_sre_agent.core.config.settings") as mock_settings:
             mock_settings.mcp_servers = {}
             status = await pool.start()
 
@@ -69,9 +67,7 @@ class TestMCPConnectionPool:
         mock_config.url = None
 
         # Mock the settings to return one server
-        with patch(
-            "redis_sre_agent.core.config.settings"
-        ) as mock_settings:
+        with patch("redis_sre_agent.core.config.settings") as mock_settings:
             mock_settings.mcp_servers = {"test-server": mock_config}
 
             # Mock the connection method

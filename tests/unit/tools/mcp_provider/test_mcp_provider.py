@@ -175,8 +175,6 @@ class TestMCPToolProviderAsync:
         assert result["status"] == "error"
         assert "not connected" in result["error"]
 
-
-
     @pytest.mark.asyncio
     async def test_connect_uses_pool_when_available(self):
         """Test that _connect uses pooled connection when available."""
@@ -200,9 +198,7 @@ class TestMCPToolProviderAsync:
         pool._started = True
 
         config = MCPServerConfig(command="test")
-        provider = MCPToolProvider(
-            server_name="test-server", server_config=config, use_pool=True
-        )
+        provider = MCPToolProvider(server_name="test-server", server_config=config, use_pool=True)
 
         await provider._connect()
 
