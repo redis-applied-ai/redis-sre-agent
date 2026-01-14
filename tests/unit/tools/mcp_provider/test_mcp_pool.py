@@ -1,6 +1,5 @@
 """Unit tests for MCP connection pool."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

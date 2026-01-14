@@ -178,7 +178,7 @@ class TestMCPToolProviderAsync:
     @pytest.mark.asyncio
     async def test_connect_uses_pool_when_available(self):
         """Test that _connect uses pooled connection when available."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         from redis_sre_agent.tools.mcp.pool import MCPConnectionPool, PooledConnection
 
