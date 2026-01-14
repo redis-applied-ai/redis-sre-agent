@@ -78,7 +78,6 @@ async def search_knowledge_base_helper(
         # Filter by specific version (e.g., "latest", "7.8", "7.4")
         filter_expr = Tag("version") == version
         logger.debug(f"Applying version filter: {version}")
-
     # Always use vector search (tests rely on embedding being used)
     vectorizer = get_vectorizer()
 
@@ -348,7 +347,9 @@ async def get_all_document_fragments(
         # Get document metadata if requested
         metadata = {}
         if include_metadata:
-            from redis_sre_agent.pipelines.ingestion.deduplication import DocumentDeduplicator
+            from redis_sre_agent.pipelines.ingestion.deduplication import (
+                DocumentDeduplicator,
+            )
 
             deduplicator = DocumentDeduplicator(index)
             metadata = await deduplicator.get_document_metadata(document_hash) or {}

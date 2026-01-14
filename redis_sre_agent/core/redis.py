@@ -74,6 +74,10 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "tag",
         },
         {
+            "name": "chunk_index",
+            "type": "numeric",
+        },
+        {
             "name": "created_at",
             "type": "numeric",
         },

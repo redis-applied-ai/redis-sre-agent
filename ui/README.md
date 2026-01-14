@@ -76,7 +76,7 @@ The UI automatically detects the correct API endpoint based on the current host.
 
 1. **Environment Variable**: Uses `VITE_API_BASE_URL` if set
 2. **Production Mode**: Uses relative URLs (relies on nginx proxy)
-3. **Development Mode**: Uses current hostname with port 8000
+3. **Development Mode**: Uses current hostname with port 8080
 4. **Fallback**: Uses relative URLs
 
 ### Styling
@@ -116,7 +116,7 @@ The UI automatically detects the correct API endpoint, but you can override it:
 cp .env.example .env
 
 # Edit .env to set custom API URL (optional)
-VITE_API_BASE_URL=http://your-custom-host:8000
+VITE_API_BASE_URL=http://your-custom-host:8080
 ```
 
 **Note**: In most cases, you don't need to set `VITE_API_BASE_URL` as the UI will automatically use the correct host.

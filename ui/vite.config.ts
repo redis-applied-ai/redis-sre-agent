@@ -17,16 +17,16 @@ export default defineConfig({
     allowedHosts: ["gt43y0t0jf-andrew-brookins-1", "gt43y0t0jf-andrew-brookins-1.taila74d4.ts.net", "localhost"],
     proxy: {
       '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:8000',
+        target: process.env.VITE_API_URL || 'http://localhost:8080',
         changeOrigin: true,
         ws: true, // Enable WebSocket proxying
       },
       '/health': {
-        target: process.env.VITE_API_URL || 'http://localhost:8000',
+        target: process.env.VITE_API_URL || 'http://localhost:8080',
         changeOrigin: true,
       },
       '/metrics': {
-        target: process.env.VITE_API_URL || 'http://localhost:8000',
+        target: process.env.VITE_API_URL || 'http://localhost:8080',
         changeOrigin: true,
       },
     },
