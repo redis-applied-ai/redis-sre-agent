@@ -201,11 +201,33 @@ class MCPConnectionPool:
                 logger.warning(f"Timeout closing '{server_name}'")
             except asyncio.CancelledError:
                 logger.debug(f"Cleanup cancelled for '{server_name}' (expected during shutdown)")
+            except RuntimeError as e:
+                # This can happen when shutdown is called from a different task than startup
+                # (common in CLI mode where the process is exiting anyway)
+                if "different task" in str(e):
+                    logger.debug(f"Cross-task cleanup for '{server_name}' (expected in CLI mode)")
+                else:
+                    logger.warning(f"Runtime error closing '{server_name}': {e}")
+            except BaseExceptionGroup as e:
+                # anyio wraps exceptions in ExceptionGroups during cleanup
+                logger.debug(f"Cleanup exception group for '{server_name}' (expected during shutdown)")
             except Exception as e:
                 logger.warning(f"Error closing '{server_name}': {e}")
 
-    async def shutdown(self) -> None:
-        """Shutdown the pool and close all connections."""
+    async def shutdown(self, force: bool = False) -> None:
+        """Shutdown the pool and close all connections.
+
+        Args:
+            force: If True, just clear connections without proper cleanup.
+                   Use for CLI mode where the process is exiting anyway.
+        """
+        if force:
+            # Just abandon connections - process is exiting anyway
+            logger.debug("Force-closing MCP connection pool (process exit)")
+            self._connections.clear()
+            self._started = False
+            return
+
         logger.info("Shutting down MCP connection pool...")
         for server_name in list(self._connections.keys()):
             await self._disconnect_server(server_name)

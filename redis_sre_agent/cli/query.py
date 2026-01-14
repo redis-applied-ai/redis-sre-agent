@@ -211,5 +211,8 @@ def query(
         except Exception as e:
             console.print(f"[red]❌ Error: {e}[/red]")
             exit(1)
+        finally:
+            # Force-close MCP pool to avoid cross-task cleanup errors on exit
+            await mcp_pool.shutdown(force=True)
 
     asyncio.run(_query())
