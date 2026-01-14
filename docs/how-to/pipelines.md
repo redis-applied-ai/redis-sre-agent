@@ -118,10 +118,9 @@ This ensures CLI commands, API examples, and code blocks stay intact for better 
 
 The fastest way to get started is to clone Redis docs locally and scrape from there:
 
-# this needs to be uv run.
 ```bash
 # Download Redis docs (one-time setup)
-./scripts/setup_redis_docs_local.sh
+uv run ./scripts/setup_redis_docs_local.sh
 
 # This clones redis/docs repo and runs the scraper
 # Artifacts saved to ./artifacts/YYYY-MM-DD/

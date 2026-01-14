@@ -66,16 +66,17 @@ async def search_knowledge_base_helper(
         "source",
         "category",
         "severity",
+        "version",
     ]
 
     # Build version filter expression if version is specified
     from redisvl.query.filter import Tag
 
     filter_expr = None
-    # if version is not None:
-    #     # Filter by specific version (e.g., "latest", "7.8", "7.4")
-    #     filter_expr = Tag("version") == version
-    #     logger.debug(f"Applying version filter: {version}")
+    if version is not None:
+        # Filter by specific version (e.g., "latest", "7.8", "7.4")
+        filter_expr = Tag("version") == version
+        logger.debug(f"Applying version filter: {version}")
     # Always use vector search (tests rely on embedding being used)
     vectorizer = get_vectorizer()
 
@@ -131,7 +132,7 @@ async def search_knowledge_base_helper(
         _span.set_attribute("limit", int(limit))
         _span.set_attribute("offset", int(offset))
         _span.set_attribute("hybrid_search", bool(hybrid_search))
-        # _span.set_attribute("version", version or "all")
+        _span.set_attribute("version", version or "all")
         _span.set_attribute(
             "distance_threshold",
             float(distance_threshold) if distance_threshold is not None else -1.0,
@@ -145,7 +146,7 @@ async def search_knowledge_base_helper(
     search_result = {
         "query": query,
         "category": category,
-        # "version": version,
+        "version": version,
         "offset": offset,
         "limit": limit,
         "timestamp": datetime.now(timezone.utc).isoformat(),
