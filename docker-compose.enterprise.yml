@@ -1,0 +1,133 @@
+# Redis Enterprise Software - Multi-node cluster for testing enterprise runbooks
+# Use: docker compose -f docker-compose.yml -f docker-compose.enterprise.yml up
+#
+# This file contains the Redis Enterprise 3-node cluster which requires
+# significant resources (4GB memory per node). Keep it separate from the
+# default compose file for developers who don't need enterprise testing.
+
+services:
+  redis-enterprise-node1:
+    image: kurtfm/rs:latest
+    container_name: redis-enterprise-node1
+    hostname: redis-enterprise-node1
+    ports:
+      - "8443:8443"   # HTTPS Cluster Manager UI
+      - "9443:9443"   # REST API
+      - "12000:12000" # Database port
+      - "12001:12001" # Additional database port
+      - "12002:12002" # Additional database port
+    cap_add:
+      - sys_resource
+    volumes:
+      - redis_enterprise_node1_data:/opt/redislabs/persist
+    environment:
+      - CLUSTER_FQDN=cluster.local
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      sre-network:
+        ipv4_address: 172.28.0.10
+        aliases:
+          - redis-enterprise  # Add alias for backward compatibility
+
+  redis-enterprise-node2:
+    image: kurtfm/rs:latest
+    container_name: redis-enterprise-node2
+    hostname: redis-enterprise-node2
+    ports:
+      - "8444:8443"   # HTTPS Cluster Manager UI
+      - "9444:9443"   # REST API
+      - "12003:12000" # Database port
+    cap_add:
+      - sys_resource
+    volumes:
+      - redis_enterprise_node2_data:/opt/redislabs/persist
+    environment:
+      - CLUSTER_FQDN=cluster.local
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      sre-network:
+        ipv4_address: 172.28.0.11
+    depends_on:
+      - redis-enterprise-node1
+
+  redis-enterprise-node3:
+    image: kurtfm/rs:latest
+    container_name: redis-enterprise-node3
+    hostname: redis-enterprise-node3
+    ports:
+      - "8445:8443"   # HTTPS Cluster Manager UI
+      - "9445:9443"   # REST API
+      - "12004:12000" # Database port
+    cap_add:
+      - sys_resource
+    volumes:
+      - redis_enterprise_node3_data:/opt/redislabs/persist
+    environment:
+      - CLUSTER_FQDN=cluster.local
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      sre-network:
+        ipv4_address: 172.28.0.12
+    depends_on:
+      - redis-enterprise-node1
+
+  # Alias for backward compatibility
+  redis-enterprise:
+    image: kurtfm/rs:latest
+    container_name: redis-enterprise
+    network_mode: "service:redis-enterprise-node1"
+    depends_on:
+      - redis-enterprise-node1
+    entrypoint: ["tail", "-f", "/dev/null"]
+
+  # Redis Enterprise database exporter (expects a DB on 12000)
+  redis-enterprise-exporter:
+    image: oliver006/redis_exporter:latest
+    ports:
+      - "9123:9121"
+    environment:
+      - REDIS_ADDR=redis://redis-enterprise-node1:12000
+      - REDIS_EXPORTER_LOG_FORMAT=txt
+    depends_on:
+      - redis-enterprise-node1
+    networks:
+      sre-network:
+        ipv4_address: 172.28.0.20
+
+volumes:
+  redis_enterprise_node1_data:
+  redis_enterprise_node2_data:
+  redis_enterprise_node3_data:
