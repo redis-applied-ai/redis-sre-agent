@@ -208,7 +208,7 @@ class MCPConnectionPool:
                     logger.debug(f"Cross-task cleanup for '{server_name}' (expected in CLI mode)")
                 else:
                     logger.warning(f"Runtime error closing '{server_name}': {e}")
-            except BaseExceptionGroup as e:
+            except BaseExceptionGroup:
                 # anyio wraps exceptions in ExceptionGroups during cleanup
                 logger.debug(
                     f"Cleanup exception group for '{server_name}' (expected during shutdown)"
