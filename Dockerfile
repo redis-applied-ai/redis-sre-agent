@@ -39,6 +39,8 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev && \
     mkdir -p /app/artifacts && \
+    # Ensure /opt/uv exists even if uv uses the system Python
+    mkdir -p /opt/uv && \
     # Attempt to build artifacts, but don't fail build if it requires runtime services
     (uv run --no-sync redis-sre-agent pipeline prepare-sources \
     --source-dir /app/source_documents \
