@@ -32,6 +32,7 @@ from ..core.instances import (
 )
 from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import CallbackEmitter, NullEmitter, ProgressEmitter
+from ..core.redis import get_redis_client
 from ..tools.manager import ToolManager
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
@@ -1821,8 +1822,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         # Get cache client if tool caching is enabled
         cache_client = None
         if settings.tool_cache_enabled and target_instance:
-            from ..core.redis import get_redis_client
-
             cache_client = get_redis_client()
             logger.debug(f"Tool caching enabled for instance {target_instance.id}")
 

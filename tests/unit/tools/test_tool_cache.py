@@ -58,24 +58,25 @@ class TestToolCache:
         assert "redis_cli_info" in key
 
     @pytest.mark.asyncio
-    async def test_cache_key_normalizes_instance_hash(self, mock_redis, test_instance):
-        """Test cache key normalizes tool name by removing instance hash.
+    async def test_cache_key_uses_stable_tool_name(self, mock_redis, test_instance):
+        """Test cache key uses the full tool name including stable hash.
 
-        Tool names include a 6-char hex hash that changes between runs.
-        The cache should normalize these to ensure stable cache keys.
+        Tool names include a SHA256-based hash derived from instance ID,
+        which is stable across runs. Different hashes produce different keys.
         """
         cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
 
-        # Same operation with different instance hashes should produce same key
+        # Same tool name with same args should produce same key
         key1 = cache.build_key("redis_command_104c81_info", {"section": "memory"})
-        key2 = cache.build_key("redis_command_abc123_info", {"section": "memory"})
-
+        key2 = cache.build_key("redis_command_104c81_info", {"section": "memory"})
         assert key1 == key2
-        # Both should normalize to redis_command_info
-        assert "redis_command_info" in key1
-        # Should NOT contain the hex hash
-        assert "104c81" not in key1
-        assert "abc123" not in key2
+
+        # Different tool names (different hashes) should produce different keys
+        key3 = cache.build_key("redis_command_abc123_info", {"section": "memory"})
+        assert key1 != key3
+
+        # Key should contain the full tool name including hash
+        assert "redis_command_104c81_info" in key1
 
     @pytest.mark.asyncio
     async def test_cache_get_miss(self, mock_redis, test_instance):
@@ -141,22 +142,31 @@ class TestToolCache:
     @pytest.mark.asyncio
     async def test_cache_clear_by_instance(self, mock_redis, test_instance):
         """Test clearing cache for a specific instance."""
-        mock_redis.keys.return_value = [
-            b"sre_cache:tool:test-instance-123:redis_cli_info:abc123",
-            b"sre_cache:tool:test-instance-123:redis_cli_memory:def456",
-        ]
+        # Mock scan_iter as an async generator
+        async def mock_scan_iter(*args, **kwargs):
+            for key in [
+                b"sre_cache:tool:test-instance-123:redis_cli_info:abc123",
+                b"sre_cache:tool:test-instance-123:redis_cli_memory:def456",
+            ]:
+                yield key
+
+        mock_redis.scan_iter = mock_scan_iter
         mock_redis.delete.return_value = 2  # Return number of deleted keys
         cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
 
         deleted = await cache.clear()
 
-        mock_redis.keys.assert_called_once()
         assert deleted == 2
 
     @pytest.mark.asyncio
     async def test_cache_stats(self, mock_redis, test_instance):
         """Test getting cache statistics."""
-        mock_redis.keys.return_value = [b"key1", b"key2", b"key3"]
+        # Mock scan_iter as an async generator
+        async def mock_scan_iter(*args, **kwargs):
+            for key in [b"key1", b"key2", b"key3"]:
+                yield key
+
+        mock_redis.scan_iter = mock_scan_iter
         cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
 
         stats = await cache.stats()

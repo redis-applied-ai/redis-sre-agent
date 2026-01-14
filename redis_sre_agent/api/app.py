@@ -20,6 +20,7 @@ from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import initialize_redis
 from redis_sre_agent.observability.tracing import setup_tracing as setup_base_tracing
+from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
 
 # Configure logging with consistent format
 # Note: When running via uvicorn with --log-config, this is overridden by logging_config.yaml
@@ -107,8 +108,6 @@ async def lifespan(app: FastAPI):
 
         # Start MCP connection pool (keeps connections warm across queries)
         try:
-            from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
-
             mcp_pool = MCPConnectionPool.get_instance()
             mcp_status = await mcp_pool.start()
             _app_startup_state["mcp_pool"] = mcp_status
@@ -131,8 +130,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown MCP connection pool
     try:
-        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
-
         mcp_pool = MCPConnectionPool.get_instance()
         await mcp_pool.shutdown()
     except Exception as e:

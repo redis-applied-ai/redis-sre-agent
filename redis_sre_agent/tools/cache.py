@@ -11,10 +11,12 @@ from typing import Any, Dict, Optional
 
 from redis.asyncio import Redis
 
+from redis_sre_agent.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # Default TTLs by tool operation (in seconds)
-# These can be overridden via configuration
+# These can be overridden via settings.tool_cache_ttl_overrides
 DEFAULT_TOOL_TTLS: Dict[str, int] = {
     # Redis diagnostic tools - relatively stable data
     "info": 60,  # INFO command output
@@ -35,11 +37,8 @@ DEFAULT_TOOL_TTLS: Dict[str, int] = {
     "prometheus_query_range": 60,
 }
 
-# Cache key prefix
+# Cache key prefix - can be overridden via settings
 CACHE_PREFIX = "sre_cache:tool"
-
-# Default TTL for tools not in the mapping
-DEFAULT_TTL = 60
 
 
 class ToolCache:
@@ -78,51 +77,40 @@ class ToolCache:
         self._ttl_overrides = ttl_overrides or {}
         self._enabled = enabled
 
-    def _normalize_tool_name(self, tool_name: str) -> str:
-        """Normalize tool name by removing the instance hash.
-
-        Tool names follow format: {provider}_{instance_hash}_{operation}
-        e.g., redis_command_104c81_info -> redis_command_info
-
-        This ensures cache keys are stable across runs even when
-        provider instances have different memory addresses.
-        """
-        import re
-
-        # Match pattern: underscore + 6 hex chars + underscore
-        # Replace with just underscore to preserve provider_operation format
-        return re.sub(r"_([0-9a-f]{6})_", "_", tool_name)
-
     def build_key(self, tool_name: str, args: Dict[str, Any]) -> str:
         """Build cache key from tool name and arguments.
 
-        Key format: sre_cache:tool:{instance_id}:{normalized_tool_name}:{args_hash}
+        Key format: sre_cache:tool:{instance_id}:{tool_name}:{args_hash}
 
-        Tool names are normalized to remove instance hashes, ensuring
-        cache keys are stable across runs.
+        Tool names include a stable SHA256-based hash derived from the
+        instance ID, ensuring cache keys are stable across runs.
         """
-        # Normalize tool name to remove instance hash
-        normalized_name = self._normalize_tool_name(tool_name)
-
         # Create stable hash of arguments
         args_json = json.dumps(args, sort_keys=True, default=str)
         args_hash = hashlib.sha256(args_json.encode()).hexdigest()[:16]
 
-        return f"{CACHE_PREFIX}:{self._instance_id}:{normalized_name}:{args_hash}"
+        return f"{CACHE_PREFIX}:{self._instance_id}:{tool_name}:{args_hash}"
 
     def _get_ttl(self, tool_name: str) -> int:
-        """Get TTL for a tool, checking overrides then defaults."""
-        # Check overrides first
+        """Get TTL for a tool, checking overrides then defaults.
+
+        Priority order:
+        1. Instance-level overrides (passed to constructor)
+        2. Built-in tool-specific defaults
+        3. Global default from settings.tool_cache_default_ttl
+        """
+        # Check instance overrides first
         for key, ttl in self._ttl_overrides.items():
             if key in tool_name.lower():
                 return ttl
 
-        # Check defaults
+        # Check built-in defaults
         for key, ttl in DEFAULT_TOOL_TTLS.items():
             if key in tool_name.lower():
                 return ttl
 
-        return DEFAULT_TTL
+        # Fall back to configurable global default
+        return settings.tool_cache_default_ttl
 
     def _should_cache(self, result: Any) -> bool:
         """Determine if a result should be cached.
@@ -179,6 +167,16 @@ class ToolCache:
             logger.warning(f"Cache set failed: {e}")
             return False
 
+    async def _scan_keys(self, pattern: str) -> list:
+        """Scan for keys matching pattern using SCAN (production-safe).
+
+        Uses SCAN instead of KEYS to avoid blocking Redis on large datasets.
+        """
+        keys = []
+        async for key in self._redis.scan_iter(match=pattern, count=100):
+            keys.append(key)
+        return keys
+
     async def clear(self) -> int:
         """Clear all cached entries for this instance.
 
@@ -186,7 +184,7 @@ class ToolCache:
         """
         try:
             pattern = f"{CACHE_PREFIX}:{self._instance_id}:*"
-            keys = await self._redis.keys(pattern)
+            keys = await self._scan_keys(pattern)
             if keys:
                 deleted = await self._redis.delete(*keys)
                 logger.info(f"Cleared {deleted} cache keys for {self._instance_id}")
@@ -203,7 +201,7 @@ class ToolCache:
         """
         try:
             pattern = f"{CACHE_PREFIX}:*"
-            keys = await self._redis.keys(pattern)
+            keys = await self._scan_keys(pattern)
             if keys:
                 deleted = await self._redis.delete(*keys)
                 logger.info(f"Cleared {deleted} total cache keys")
@@ -220,7 +218,7 @@ class ToolCache:
         """
         try:
             pattern = f"{CACHE_PREFIX}:{self._instance_id}:*"
-            keys = await self._redis.keys(pattern)
+            keys = await self._scan_keys(pattern)
             return {
                 "instance_id": self._instance_id,
                 "cached_keys": len(keys),
@@ -242,7 +240,7 @@ class ToolCache:
         """
         try:
             pattern = f"{CACHE_PREFIX}:*"
-            keys = await self._redis.keys(pattern)
+            keys = await self._scan_keys(pattern)
 
             # Extract unique instance IDs from keys
             instances = set()
