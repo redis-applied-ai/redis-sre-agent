@@ -139,7 +139,6 @@ ui/test-results/
 # SSL certificates (generated locally)
 monitoring/nginx/certs/
 eval_reports
-/config.yaml
 
-!monitoring/litellm/config.yaml
-redis-docs/
+# Root config.yaml only (subdirectory config.yaml files are preserved)
+/config.yaml
