@@ -142,6 +142,7 @@ class TestToolCache:
     @pytest.mark.asyncio
     async def test_cache_clear_by_instance(self, mock_redis, test_instance):
         """Test clearing cache for a specific instance."""
+
         # Mock scan_iter as an async generator
         async def mock_scan_iter(*args, **kwargs):
             for key in [
@@ -161,6 +162,7 @@ class TestToolCache:
     @pytest.mark.asyncio
     async def test_cache_stats(self, mock_redis, test_instance):
         """Test getting cache statistics."""
+
         # Mock scan_iter as an async generator
         async def mock_scan_iter(*args, **kwargs):
             for key in [b"key1", b"key2", b"key3"]:
