@@ -210,7 +210,9 @@ class MCPConnectionPool:
                     logger.warning(f"Runtime error closing '{server_name}': {e}")
             except BaseExceptionGroup as e:
                 # anyio wraps exceptions in ExceptionGroups during cleanup
-                logger.debug(f"Cleanup exception group for '{server_name}' (expected during shutdown)")
+                logger.debug(
+                    f"Cleanup exception group for '{server_name}' (expected during shutdown)"
+                )
             except Exception as e:
                 logger.warning(f"Error closing '{server_name}': {e}")
 
