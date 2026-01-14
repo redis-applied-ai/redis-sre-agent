@@ -174,3 +174,58 @@ class TestMCPToolProviderAsync:
         result = await provider._call_mcp_tool("some_tool", {"arg": "value"})
         assert result["status"] == "error"
         assert "not connected" in result["error"]
+
+
+
+    @pytest.mark.asyncio
+    async def test_connect_uses_pool_when_available(self):
+        """Test that _connect uses pooled connection when available."""
+        from unittest.mock import MagicMock, patch
+
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool, PooledConnection
+
+        # Reset and set up the pool
+        MCPConnectionPool.reset_instance()
+        pool = MCPConnectionPool.get_instance()
+
+        # Create a mock pooled connection
+        mock_session = MagicMock()
+        mock_tools = [MagicMock(name="tool1")]
+        pool._connections["test-server"] = PooledConnection(
+            server_name="test-server",
+            session=mock_session,
+            tools=mock_tools,
+            exit_stack=MagicMock(),
+        )
+        pool._started = True
+
+        config = MCPServerConfig(command="test")
+        provider = MCPToolProvider(
+            server_name="test-server", server_config=config, use_pool=True
+        )
+
+        await provider._connect()
+
+        assert provider._session is mock_session
+        assert provider._using_pooled_connection is True
+
+        # Cleanup
+        MCPConnectionPool.reset_instance()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_does_not_close_pooled_connection(self):
+        """Test that _disconnect doesn't close pooled connections."""
+        from unittest.mock import MagicMock
+
+        config = MCPServerConfig(command="test")
+        provider = MCPToolProvider(server_name="test", server_config=config)
+
+        # Simulate using a pooled connection
+        provider._session = MagicMock()
+        provider._using_pooled_connection = True
+
+        await provider._disconnect()
+
+        # Session should be cleared but not closed
+        assert provider._session is None
+        assert provider._using_pooled_connection is False
