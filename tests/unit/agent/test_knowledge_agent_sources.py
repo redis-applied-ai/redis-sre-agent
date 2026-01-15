@@ -1,6 +1,7 @@
 import pytest
 
 from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
+from redis_sre_agent.core.progress import ProgressEmitter
 from redis_sre_agent.tools.manager import ToolManager
 
 
@@ -19,17 +20,22 @@ class FakeLLM:
         return FakeResponse()
 
 
+class CapturingEmitter(ProgressEmitter):
+    """Emitter that captures all calls for testing."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def emit(self, message: str, update_type: str, metadata=None):
+        self.calls.append((update_type, metadata))
+
+
 @pytest.mark.asyncio
 async def test_knowledge_agent_emits_knowledge_sources(monkeypatch):
-    agent = KnowledgeOnlyAgent()
+    emitter = CapturingEmitter()
+    agent = KnowledgeOnlyAgent(progress_emitter=emitter)
     # Replace real LLM with our fake
     agent.llm = FakeLLM()
-
-    # Capture progress callback calls (support optional metadata)
-    calls = []
-
-    async def cb(message, update_type, metadata=None):  # noqa: ARG001
-        calls.append((update_type, metadata))
 
     # Patch ToolManager.execute_tool_calls to return a knowledge search result
     async def fake_execute_tool_calls(self, tool_calls):  # noqa: ARG001
@@ -60,13 +66,13 @@ async def test_knowledge_agent_emits_knowledge_sources(monkeypatch):
 
     # Run a single query; the fake LLM triggers a tool call, and our patched tool manager returns results
     await agent.process_query(
-        "test query", session_id="sess-1", user_id="user-1", progress_callback=cb
+        "test query", session_id="sess-1", user_id="user-1", progress_emitter=emitter
     )
 
     # Validate that a knowledge_sources update was emitted with fragments
-    assert any(u == "knowledge_sources" for (u, _md) in calls)
+    assert any(u == "knowledge_sources" for (u, _md) in emitter.calls)
     # Find the metadata for the knowledge_sources call
-    md = next((md for (u, md) in calls if u == "knowledge_sources"), None)
+    md = next((md for (u, md) in emitter.calls if u == "knowledge_sources"), None)
     assert md is not None
     frags = md.get("fragments") or []
     assert len(frags) == 2

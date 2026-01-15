@@ -476,107 +476,6 @@ Subject:"""
             logger.error(f"Failed to get thread state {thread_id}: {e}")
             return None
 
-    async def add_thread_update(
-        self,
-        thread_id: str,
-        message: str,
-        update_type: str = "progress",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> bool:
-        """Add a progress update to the thread.
-
-        DEPRECATED: Progress updates should be stored on TaskState via TaskManager.
-        This method now only publishes to the stream for WebSocket updates.
-        """
-        import warnings
-
-        warnings.warn(
-            "add_thread_update is deprecated. Use TaskManager.add_task_update instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        try:
-            # Only publish to stream for real-time WebSocket updates
-            # Don't store on thread - updates belong on tasks
-            update = ThreadUpdate(message=message, update_type=update_type, metadata=metadata)
-            await self._publish_stream_update(
-                thread_id,
-                "thread_update",
-                {
-                    "message": message,
-                    "update_type": update_type,
-                    "metadata": metadata or {},
-                    "timestamp": update.timestamp,
-                },
-            )
-
-            logger.debug(f"Published update for thread {thread_id}: {message}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to publish update for thread {thread_id}: {e}")
-            return False
-
-    async def set_thread_result(self, thread_id: str, result: Dict[str, Any]) -> bool:
-        """Set the final result for a thread.
-
-        DEPRECATED: Results should be stored on TaskState via TaskManager.
-        This method now only publishes to the stream for WebSocket updates.
-        """
-        import warnings
-
-        warnings.warn(
-            "set_thread_result is deprecated. Use TaskManager.set_task_result instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        try:
-            # Only publish to stream for real-time WebSocket updates
-            await self._publish_stream_update(
-                thread_id, "result_set", {"result": result, "message": "Task result available"}
-            )
-
-            logger.info(f"Published result for thread {thread_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to publish result for thread {thread_id}: {e}")
-            return False
-
-    async def _publish_stream_update(
-        self, thread_id: str, update_type: str, data: Dict[str, Any]
-    ) -> bool:
-        """Publish an update to the Redis Stream for real-time WebSocket updates."""
-        try:
-            # Import here to avoid circular imports
-            from redis_sre_agent.api.websockets import get_stream_manager
-
-            stream_manager = await get_stream_manager()
-            return await stream_manager.publish_task_update(thread_id, update_type, data)
-
-        except Exception as e:
-            logger.error(f"Failed to publish stream update for {thread_id}: {e}")
-            return False
-
-    async def set_thread_error(self, thread_id: str, error_message: str) -> bool:
-        """Set error message for a thread.
-
-        DEPRECATED: Errors should be stored on TaskState via TaskManager.
-        This method is now a no-op but kept for backward compatibility.
-        """
-        import warnings
-
-        warnings.warn(
-            "set_thread_error is deprecated. Use TaskManager.set_task_error instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        logger.warning(f"set_thread_error called (deprecated) for thread {thread_id}")
-        return True
-
     async def update_thread_context(
         self, thread_id: str, context_updates: Dict[str, Any], merge: bool = True
     ) -> bool:
@@ -899,14 +798,25 @@ async def cancel_thread(*, thread_id: str, redis_client=None) -> Dict[str, Any]:
 
         redis_client = _get()
 
+    from redis_sre_agent.core.keys import RedisKeys
+    from redis_sre_agent.core.tasks import TaskManager
+
     thread_manager = ThreadManager(redis_client=redis_client)
     thread_state = await thread_manager.get_thread(thread_id)
     if not thread_state:
         raise ValueError(f"Thread {thread_id} not found")
 
-    await thread_manager.add_thread_update(
-        thread_id, "Task cancelled by user request", "cancellation"
+    # Get the latest task for this thread to add cancellation update
+    latest_task_ids = await redis_client.zrevrange(
+        RedisKeys.thread_tasks_index(thread_id), 0, 0
     )
+    if latest_task_ids:
+        task_id = latest_task_ids[0]
+        if isinstance(task_id, bytes):
+            task_id = task_id.decode()
+        task_manager = TaskManager(redis_client=redis_client)
+        await task_manager.add_task_update(task_id, "Task cancelled by user request", "cancellation")
+
     return {"cancelled": True}
 
 

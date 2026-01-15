@@ -100,10 +100,9 @@ class TaskManager:
         update_type: str = "progress",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        update = TaskUpdate(message=message, update_type=update_type, metadata=metadata)
-        # Using RPUSH of JSON strings would be ideal, but elsewhere updates are stored as JSON strings or hashes.
-        # For simplicity, store as a JSON-serializable dict
         import json
+
+        update = TaskUpdate(message=message, update_type=update_type, metadata=metadata)
 
         ok = await self._redis.rpush(
             RedisKeys.task_updates(task_id), json.dumps(update.model_dump())
@@ -112,7 +111,46 @@ class TaskManager:
             RedisKeys.task_metadata(task_id), "updated_at", datetime.now(timezone.utc).isoformat()
         )
         await self._upsert_task_search_doc(task_id)
+
+        # Publish to stream for WebSocket real-time updates
+        thread_id = await self._get_task_thread_id(task_id)
+        if thread_id:
+            await self._publish_stream_update(
+                thread_id,
+                update_type,
+                {
+                    "message": message,
+                    "update_type": update_type,
+                    "metadata": metadata or {},
+                    "timestamp": update.timestamp,
+                    "task_id": task_id,
+                },
+            )
+
         return bool(ok)
+
+    async def _get_task_thread_id(self, task_id: str) -> Optional[str]:
+        """Get the thread_id for a task from its metadata."""
+        thread_id = await self._redis.hget(RedisKeys.task_metadata(task_id), "thread_id")
+        if thread_id and isinstance(thread_id, bytes):
+            thread_id = thread_id.decode()
+        return thread_id
+
+    async def _publish_stream_update(
+        self, thread_id: str, update_type: str, data: Dict[str, Any]
+    ) -> bool:
+        """Publish an update to the Redis Stream for real-time WebSocket updates."""
+        try:
+            from redis_sre_agent.api.websockets import get_stream_manager
+
+            stream_manager = await get_stream_manager()
+            return await stream_manager.publish_task_update(thread_id, update_type, data)
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to publish stream update for {thread_id}: {e}")
+            return False
 
     async def set_task_result(self, task_id: str, result: Dict[str, Any]) -> bool:
         import json

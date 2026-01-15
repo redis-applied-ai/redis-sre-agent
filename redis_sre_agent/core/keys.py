@@ -22,14 +22,6 @@ class RedisKeys:
         return f"sre:thread:{thread_id}:status"
 
     @staticmethod
-    def thread_updates(thread_id: str) -> str:
-        """Key for thread updates list.
-
-        DEPRECATED: Use task_updates() instead. Progress updates belong on tasks.
-        """
-        return f"sre:thread:{thread_id}:updates"
-
-    @staticmethod
     def thread_messages(thread_id: str) -> str:
         """Key for thread messages list (conversation history)."""
         return f"sre:thread:{thread_id}:messages"
@@ -43,16 +35,6 @@ class RedisKeys:
     def thread_metadata(thread_id: str) -> str:
         """Key for thread metadata."""
         return f"sre:thread:{thread_id}:metadata"
-
-    @staticmethod
-    def thread_result(thread_id: str) -> str:
-        """Key for thread result."""
-        return f"sre:thread:{thread_id}:result"
-
-    @staticmethod
-    def thread_error(thread_id: str) -> str:
-        """Key for thread error information."""
-        return f"sre:thread:{thread_id}:error"
 
     @staticmethod
     def threads_index() -> str:
@@ -175,9 +157,6 @@ class RedisKeys:
         return {
             "status": RedisKeys.thread_status(thread_id),
             "messages": RedisKeys.thread_messages(thread_id),
-            "updates": RedisKeys.thread_updates(thread_id),  # DEPRECATED
             "context": RedisKeys.thread_context(thread_id),
             "metadata": RedisKeys.thread_metadata(thread_id),
-            "result": RedisKeys.thread_result(thread_id),  # DEPRECATED
-            "error": RedisKeys.thread_error(thread_id),  # DEPRECATED
         }

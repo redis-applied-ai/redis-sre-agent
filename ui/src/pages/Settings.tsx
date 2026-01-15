@@ -398,10 +398,11 @@ const Settings = () => {
                       setActiveSection(section.id);
                       setSearchParams({ section: section.id });
                     }}
-                    className={`w-full flex items-center px-4 py-3 text-left text-sm font-medium rounded-none first:rounded-t-lg last:rounded-b-lg transition-colors ${activeSection === section.id
+                    className={`w-full flex items-center px-4 py-3 text-left text-sm font-medium rounded-none first:rounded-t-lg last:rounded-b-lg transition-colors ${
+                      activeSection === section.id
                         ? "bg-redis-blue-03 text-white"
                         : "text-foreground hover:bg-redis-dusk-09"
-                      }`}
+                    }`}
                   >
                     {section.label}
                   </button>

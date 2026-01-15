@@ -548,7 +548,7 @@ async def process_agent_turn(
                 thread_id=thread_id, user_id=thread.metadata.user_id if thread else None
             )
         await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
-        await thread_manager.add_thread_update(thread_id, f"Started task {task_id}", "task_start")
+        await task_manager.add_task_update(task_id, f"Started task {task_id}", "task_start")
         if not thread:
             raise ValueError(f"Thread {thread_id} not found")
 
@@ -579,8 +579,8 @@ async def process_agent_turn(
             await thread_manager.update_thread_context(
                 thread_id, {"instance_id": active_instance_id}, merge=True
             )
-            await thread_manager.add_thread_update(
-                thread_id,
+            await task_manager.add_task_update(
+                task_id,
                 f"Using Redis instance: {active_instance_id}",
                 "instance_context",
             )
@@ -589,8 +589,8 @@ async def process_agent_turn(
             # No instance_id from client, but we have one saved in thread
             active_instance_id = instance_id_from_thread
             logger.info(f"Using instance_id from thread context: {active_instance_id}")
-            await thread_manager.add_thread_update(
-                thread_id,
+            await task_manager.add_task_update(
+                task_id,
                 f"Continuing with Redis instance: {active_instance_id}",
                 "instance_context",
             )
@@ -625,16 +625,16 @@ async def process_agent_turn(
                     await thread_manager.update_thread_context(
                         thread_id, {"instance_id": active_instance_id}, merge=True
                     )
-                    await thread_manager.add_thread_update(
-                        thread_id,
+                    await task_manager.add_task_update(
+                        task_id,
                         f"Created Redis instance: {new_instance.name} ({active_instance_id})",
                         "instance_created",
                     )
 
                 except Exception as e:
                     logger.warning(f"Failed to create instance from user details: {e}")
-                    await thread_manager.add_thread_update(
-                        thread_id,
+                    await task_manager.add_task_update(
+                        task_id,
                         f"Could not create instance from provided details: {str(e)}",
                         "instance_error",
                     )
@@ -728,8 +728,8 @@ async def process_agent_turn(
         # Run the appropriate agent
         if agent_type == AgentType.KNOWLEDGE_ONLY:
             # Use knowledge-only agent with simpler interface
-            await thread_manager.add_thread_update(
-                thread_id, "Processing query with knowledge-only agent", "agent_processing"
+            await task_manager.add_task_update(
+                task_id, "Processing query with knowledge-only agent", "agent_processing"
             )
 
             # Convert conversation history to LangChain messages for knowledge agent
@@ -761,8 +761,8 @@ async def process_agent_turn(
             }
         elif agent_type == AgentType.REDIS_CHAT:
             # Use lightweight chat agent with process_query interface
-            await thread_manager.add_thread_update(
-                thread_id, "Processing query with chat agent", "agent_processing"
+            await task_manager.add_task_update(
+                task_id, "Processing query with chat agent", "agent_processing"
             )
 
             # Convert conversation history to LangChain messages
@@ -911,8 +911,8 @@ async def process_agent_turn(
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
-        # Publish completion to stream for WebSocket updates (deprecated methods but still publish)
-        await thread_manager._publish_stream_update(
+        # Publish completion to stream for WebSocket updates
+        await task_manager._publish_stream_update(
             thread_id,
             "turn_complete",
             {"task_id": task_id, "message": "Task completed successfully"},
@@ -940,10 +940,15 @@ async def process_agent_turn(
         except Exception:
             pass
 
-        # Update thread with error
-        await thread_manager.set_thread_error(thread_id, error_message)
-        await thread_manager.add_thread_update(thread_id, f"Error: {error_message}", "error")
+        # Update task with error (also publishes to stream for WebSocket updates)
         await task_manager.set_task_error(task_id, error_message)
+        await task_manager.add_task_update(task_id, f"Error: {error_message}", "error")
+
+        # Add an assistant message to the thread so the error is visible in the conversation
+        await thread_manager.append_messages(
+            thread_id,
+            [{"role": "assistant", "content": f"I encountered an error while processing your request: {str(e)}"}]
+        )
 
         # End root span on error
         try:

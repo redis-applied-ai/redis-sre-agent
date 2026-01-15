@@ -576,3 +576,204 @@ async def test_system_hosts_from_nodes(provider):
         hs = [h.host for h in hosts]
         assert "10.0.0.1" in hs and "10.0.0.2" in hs
         assert all(h.role == "enterprise-node" for h in hosts)
+
+
+class TestRedisEnterpriseAdminConfig:
+    """Test RedisEnterpriseAdminConfig model."""
+
+    def test_default_verify_ssl_is_false(self):
+        """Test default verify_ssl is False."""
+        config = RedisEnterpriseAdminConfig()
+        assert config.verify_ssl is False
+
+    def test_custom_verify_ssl(self):
+        """Test custom verify_ssl value."""
+        config = RedisEnterpriseAdminConfig(verify_ssl=True)
+        assert config.verify_ssl is True
+
+
+class TestRedisEnterpriseAdminToolProviderProperties:
+    """Test RedisEnterpriseAdminToolProvider properties."""
+
+    def test_provider_name_is_re_admin(self, provider):
+        """Test provider_name is re_admin."""
+        assert provider.provider_name == "re_admin"
+
+    def test_requires_redis_instance_is_true(self, provider):
+        """Test requires_redis_instance is True."""
+        assert provider.requires_redis_instance is True
+
+    def test_client_initially_none(self, provider):
+        """Test _client is initially None."""
+        assert provider._client is None
+
+
+class TestRedisEnterpriseAdminToolProviderResolveOperation:
+    """Test resolve_operation method."""
+
+    def test_resolve_operation_extracts_operation_name(self, provider):
+        """Test resolve_operation extracts operation name from tool name."""
+        result = provider.resolve_operation("re_admin_abc123_get_cluster_info", {})
+        assert result == "get_cluster_info"
+
+    def test_resolve_operation_with_invalid_format(self, provider):
+        """Test resolve_operation returns None for invalid format."""
+        result = provider.resolve_operation("invalid_tool_name", {})
+        assert result is None
+
+    def test_resolve_operation_with_complex_operation_name(self, provider):
+        """Test resolve_operation with complex operation name."""
+        result = provider.resolve_operation("re_admin_def456_list_database_shards", {})
+        assert result == "list_database_shards"
+
+
+class TestRedisEnterpriseAdminGetNode:
+    """Test get_node method."""
+
+    @pytest.mark.asyncio
+    async def test_get_node_success(self, provider):
+        """Test get_node method success."""
+        node_data = {"uid": 1, "addr": "10.0.0.1", "status": "active"}
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = node_data
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_get_client.return_value = mock_client
+
+            result = await provider.get_node(uid=1)
+
+            assert result["status"] == "success"
+            assert result["node"]["uid"] == 1
+            mock_client.get.assert_called_once_with("/v1/nodes/1", params={})
+
+    @pytest.mark.asyncio
+    async def test_get_node_with_fields(self, provider):
+        """Test get_node with field filtering."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"uid": 1, "status": "active"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_get_client.return_value = mock_client
+
+            result = await provider.get_node(uid=1, fields="uid,status")
+
+            assert result["status"] == "success"
+            mock_client.get.assert_called_once_with("/v1/nodes/1", params={"fields": "uid,status"})
+
+    @pytest.mark.asyncio
+    async def test_get_node_http_error(self, provider):
+        """Test get_node HTTP error handling."""
+        from httpx import HTTPStatusError, Request, Response
+
+        mock_request = Request("GET", "https://test.com/v1/nodes/1")
+        mock_response = Response(404, request=mock_request, text="Not Found")
+
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(
+                side_effect=HTTPStatusError("Not Found", request=mock_request, response=mock_response)
+            )
+            mock_get_client.return_value = mock_client
+
+            result = await provider.get_node(uid=99)
+
+            assert result["status"] == "error"
+            assert "HTTP 404" in result["error"]
+
+
+class TestRedisEnterpriseAdminGetDatabase:
+    """Test get_database method."""
+
+    @pytest.mark.asyncio
+    async def test_get_database_http_error(self, provider):
+        """Test get_database HTTP error handling."""
+        from httpx import HTTPStatusError, Request, Response
+
+        mock_request = Request("GET", "https://test.com/v1/bdbs/99")
+        mock_response = Response(404, request=mock_request, text="Database not found")
+
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(
+                side_effect=HTTPStatusError("Not Found", request=mock_request, response=mock_response)
+            )
+            mock_get_client.return_value = mock_client
+
+            result = await provider.get_database(uid=99)
+
+            assert result["status"] == "error"
+            assert "HTTP 404" in result["error"]
+
+
+class TestRedisEnterpriseAdminListDatabases:
+    """Test list_databases method."""
+
+    @pytest.mark.asyncio
+    async def test_list_databases_http_error(self, provider):
+        """Test list_databases HTTP error handling."""
+        from httpx import HTTPStatusError, Request, Response
+
+        mock_request = Request("GET", "https://test.com/v1/bdbs")
+        mock_response = Response(500, request=mock_request, text="Internal error")
+
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(
+                side_effect=HTTPStatusError("Error", request=mock_request, response=mock_response)
+            )
+            mock_get_client.return_value = mock_client
+
+            result = await provider.list_databases()
+
+            assert result["status"] == "error"
+            assert "HTTP 500" in result["error"]
+
+
+class TestRedisEnterpriseAdminListNodes:
+    """Test list_nodes method."""
+
+    @pytest.mark.asyncio
+    async def test_list_nodes_http_error(self, provider):
+        """Test list_nodes HTTP error handling."""
+        from httpx import HTTPStatusError, Request, Response
+
+        mock_request = Request("GET", "https://test.com/v1/nodes")
+        mock_response = Response(503, request=mock_request, text="Service unavailable")
+
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(
+                side_effect=HTTPStatusError("Error", request=mock_request, response=mock_response)
+            )
+            mock_get_client.return_value = mock_client
+
+            result = await provider.list_nodes()
+
+            assert result["status"] == "error"
+            assert "HTTP 503" in result["error"]
+
+
+class TestRedisEnterpriseAdminSSLError:
+    """Test SSL error handling."""
+
+    @pytest.mark.asyncio
+    async def test_cluster_info_ssl_error(self, provider):
+        """Test get_cluster_info SSL error provides helpful message."""
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(
+                side_effect=Exception("CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate")
+            )
+            mock_get_client.return_value = mock_client
+
+            result = await provider.get_cluster_info()
+
+            assert result["status"] == "error"
+            assert "SSL" in result["error"] or "certificate" in result["error"].lower()

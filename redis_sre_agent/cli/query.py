@@ -151,6 +151,7 @@ def query(
             agent_type = await route_to_appropriate_agent(
                 query=query,
                 context=routing_context,
+                conversation_history=conversation_history if conversation_history else None,
             )
             agent_label = {
                 AgentType.REDIS_TRIAGE: "Triage",

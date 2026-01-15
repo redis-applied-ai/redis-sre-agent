@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
+import sreAgentApi from "../services/sreAgentApi";
 
 interface TaskUpdate {
   timestamp: string;
@@ -154,17 +155,19 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
 
   const fetchThreadAndUpdate = async () => {
     try {
-      const response = await fetch(`/api/v1/threads/${threadId}`);
-      if (!response.ok) {
-        console.error(
-          "Failed to load thread:",
-          response.status,
-          response.statusText,
-        );
-        setIsThinking(false);
-        return;
-      }
-      const threadData = await response.json();
+      // Use sreAgentApi.getTaskStatus which handles the correct base URL
+      const taskStatus = await sreAgentApi.getTaskStatus(threadId);
+      // Convert to threadData format for mapThreadToMessages
+      const threadData = {
+        thread_id: taskStatus.thread_id,
+        messages: taskStatus.messages,
+        updates: taskStatus.updates,
+        result: taskStatus.result,
+        error_message: taskStatus.error_message,
+        status: taskStatus.status,
+        metadata: taskStatus.metadata,
+        context: taskStatus.context,
+      };
       let chatMessages = mapThreadToMessages(threadData);
 
       // If we have a pending user message that hasn't shown up in the server transcript yet,
@@ -192,12 +195,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
 
       setMessages(chatMessages);
 
-      // Derive a status from thread data
-      const derivedStatus = threadData?.error_message
-        ? "failed"
-        : threadData?.result
-          ? "completed"
-          : "in_progress";
+      // Use status from API if available; fallback to deriving from thread data
+      let derivedStatus = threadData?.status;
+      if (!derivedStatus) {
+        derivedStatus = threadData?.error_message
+          ? "failed"
+          : threadData?.result
+            ? "completed"
+            : "in_progress";
+      }
 
       setCurrentStatus(derivedStatus);
       onStatusChange?.(derivedStatus);
@@ -295,7 +301,8 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
           const port = window.location.port ? `:${window.location.port}` : "";
           return `${protocol}//${hostname}${port}/api/v1/ws/tasks/${threadId}`;
         }
-        return `${protocol}//${hostname}:8000/api/v1/ws/tasks/${threadId}`;
+        // In development, use port 8080 for the API server
+        return `${protocol}//${hostname}:8080/api/v1/ws/tasks/${threadId}`;
       };
 
       const wsUrl = getWebSocketUrl();

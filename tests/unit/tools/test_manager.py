@@ -200,3 +200,65 @@ def test_mask_redis_url_credentials():
     assert "admin@company.com" not in masked
     assert "password123" not in masked
     assert "redis-host" in masked
+
+
+class TestToolManagerProviders:
+    """Test ToolManager provider management."""
+
+    @pytest.mark.asyncio
+    async def test_get_tools_returns_tool_definitions(self):
+        """Test get_tools returns ToolDefinition objects."""
+        async with ToolManager() as mgr:
+            tools = mgr.get_tools()
+
+            assert isinstance(tools, list)
+            for tool in tools:
+                assert isinstance(tool, ToolDefinition)
+
+    @pytest.mark.asyncio
+    async def test_tool_manager_has_routing_table(self):
+        """Test ToolManager builds routing table."""
+        async with ToolManager() as mgr:
+            assert hasattr(mgr, "_routing_table")
+            assert isinstance(mgr._routing_table, dict)
+
+    @pytest.mark.asyncio
+    async def test_tool_manager_multiple_context_entries(self):
+        """Test ToolManager handles multiple context entries."""
+        mgr = ToolManager()
+
+        await mgr.__aenter__()
+        tools1 = mgr.get_tools()
+
+        await mgr.__aexit__(None, None, None)
+
+        # Re-enter context
+        await mgr.__aenter__()
+        tools2 = mgr.get_tools()
+
+        # Should have same tools available
+        assert len(tools1) == len(tools2)
+
+        await mgr.__aexit__(None, None, None)
+
+
+class TestToolManagerGetStatusUpdate:
+    """Test ToolManager get_status_update method."""
+
+    @pytest.mark.asyncio
+    async def test_get_status_update_returns_none_for_unknown_tool(self):
+        """Test get_status_update returns None for unknown tool."""
+        async with ToolManager() as mgr:
+            result = mgr.get_status_update("unknown_tool_name", {})
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_status_update_for_known_tool(self):
+        """Test get_status_update for a known tool."""
+        async with ToolManager() as mgr:
+            tools = mgr.get_tools()
+            if tools:
+                tool_name = tools[0].name
+                # May return None or a string depending on tool
+                result = mgr.get_status_update(tool_name, {})
+                assert result is None or isinstance(result, str)

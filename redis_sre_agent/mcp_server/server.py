@@ -54,6 +54,7 @@ After calling any of these, you MUST:
 |------|---------|
 | `redis_sre_knowledge_search()` | Direct search of docs (raw results) |
 | `redis_sre_list_instances()` | List available Redis instances |
+| `redis_sre_list_threads()` | List conversation threads (find previous chats) |
 | `redis_sre_get_task_status()` | Check task progress |
 | `redis_sre_get_thread()` | Get conversation history |
 
@@ -663,6 +664,126 @@ async def redis_sre_get_thread(thread_id: str) -> Dict[str, Any]:
         return {
             "error": str(e),
             "thread_id": thread_id,
+        }
+
+
+@mcp.tool()
+async def redis_sre_list_threads(
+    user_id: Optional[str] = None,
+    instance_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """List conversation threads with optional filtering.
+
+    Use this to find previous conversations with the agent. Each thread represents
+    a conversation (triage, chat, or knowledge query) and contains:
+    - thread_id: Unique identifier (use with redis_sre_get_thread)
+    - subject: A brief description of what the conversation was about
+    - created_at/updated_at: Timestamps
+    - instance_id: The Redis instance discussed (if any)
+    - message_count: Number of messages in the conversation
+
+    ## Filtering
+
+    - **user_id**: Filter by the user who created the thread
+    - **instance_id**: Filter by the Redis instance discussed in the thread
+
+    ## Pagination
+
+    Results are sorted by most recently updated first. Use `limit` and `offset`
+    for pagination through large result sets.
+
+    ## Example Workflow
+
+    ```
+    # List recent threads about a specific instance
+    threads = redis_sre_list_threads(instance_id="redis-prod-1", limit=10)
+
+    # Get full details for a specific thread
+    thread = redis_sre_get_thread(threads["threads"][0]["thread_id"])
+    ```
+
+    Args:
+        user_id: Filter by user ID (optional)
+        instance_id: Filter by Redis instance ID (optional)
+        limit: Maximum number of results (1-100, default 50)
+        offset: Number of results to skip for pagination (default 0)
+
+    Returns:
+        threads: Array of thread summaries with id, subject, dates, etc.
+        total: Number of threads returned
+        limit: The limit used
+        offset: The offset used
+        has_more: Whether there are more results beyond this page
+    """
+    from redis_sre_agent.core.redis import get_redis_client
+    from redis_sre_agent.core.threads import ThreadManager
+
+    logger.info(
+        f"MCP list_threads: user_id={user_id}, instance_id={instance_id}, "
+        f"limit={limit}, offset={offset}"
+    )
+
+    try:
+        # Clamp limit to valid range
+        limit = max(1, min(100, limit))
+        offset = max(0, offset)
+
+        redis_client = get_redis_client()
+        tm = ThreadManager(redis_client=redis_client)
+
+        # Get thread summaries from ThreadManager
+        summaries = await tm.list_threads(user_id=user_id, limit=limit, offset=offset)
+
+        # Filter by instance_id if specified (done in-memory since ThreadManager
+        # doesn't support instance_id filtering directly)
+        if instance_id:
+            summaries = [s for s in summaries if s.get("instance_id") == instance_id]
+
+        # Enrich with message_count for each thread
+        enriched_threads: List[Dict[str, Any]] = []
+        for summary in summaries:
+            thread_summary = dict(summary)
+            try:
+                thread = await tm.get_thread(summary.get("thread_id", ""))
+                if thread:
+                    # Count user/assistant messages
+                    user_assistant_msgs = [
+                        m for m in thread.messages if m.role in ("user", "assistant")
+                    ]
+                    thread_summary["message_count"] = len(user_assistant_msgs)
+
+                    # Get latest message preview
+                    if user_assistant_msgs:
+                        last_msg = user_assistant_msgs[-1]
+                        content = last_msg.content or ""
+                        thread_summary["latest_message"] = (
+                            content[:100] + "..." if len(content) > 100 else content
+                        )
+                else:
+                    thread_summary["message_count"] = 0
+            except Exception:
+                if "message_count" not in thread_summary:
+                    thread_summary["message_count"] = 0
+            enriched_threads.append(thread_summary)
+
+        return {
+            "threads": enriched_threads,
+            "total": len(enriched_threads),
+            "limit": limit,
+            "offset": offset,
+            "has_more": len(summaries) == limit,  # Hint for pagination
+        }
+
+    except Exception as e:
+        logger.error(f"List threads failed: {e}")
+        return {
+            "error": str(e),
+            "threads": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
         }
 
 

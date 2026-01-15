@@ -181,3 +181,265 @@ async def test_client_base_url(mock_config):
     assert client._base_url == mock_config.base_url
     # httpx adds a trailing slash to base_url on the underlying client
     assert str(client.get_async_httpx_client().base_url) == f"{mock_config.base_url}/"
+
+
+class TestRedisCloudConfig:
+    """Test RedisCloudConfig model."""
+
+    def test_config_with_required_fields(self):
+        """Test config with required fields."""
+        config = RedisCloudConfig(
+            api_key="key123",
+            api_secret_key="secret456",
+        )
+        assert config.api_key.get_secret_value() == "key123"
+        assert config.api_secret_key.get_secret_value() == "secret456"
+        assert config.base_url == "https://api.redislabs.com/v1"
+
+    def test_config_with_custom_base_url(self):
+        """Test config with custom base URL."""
+        config = RedisCloudConfig(
+            api_key="key",
+            api_secret_key="secret",
+            base_url="https://custom.api.com/v2",
+        )
+        assert config.base_url == "https://custom.api.com/v2"
+
+
+class TestRedisCloudToolProviderProperties:
+    """Test RedisCloudToolProvider properties."""
+
+    def test_provider_name(self, mock_config):
+        """Test provider_name is redis_cloud."""
+        provider = RedisCloudToolProvider(config=mock_config)
+        assert provider.provider_name == "redis_cloud"
+
+    def test_requires_redis_instance_is_false(self, mock_config):
+        """Test requires_redis_instance is False."""
+        provider = RedisCloudToolProvider(config=mock_config)
+        assert provider.requires_redis_instance is False
+
+    def test_client_initially_none(self, mock_config):
+        """Test _client is initially None."""
+        provider = RedisCloudToolProvider(config=mock_config)
+        assert provider._client is None
+
+
+class TestRedisCloudToolProviderSchemaDetails:
+    """Test RedisCloudToolProvider schema details."""
+
+    def test_schemas_have_parameters(self, provider):
+        """Test all schemas have parameters."""
+        schemas = provider.create_tool_schemas()
+        for schema in schemas:
+            assert isinstance(schema.parameters, dict)
+            assert "type" in schema.parameters
+            assert schema.parameters["type"] == "object"
+
+    def test_schemas_have_descriptions(self, provider):
+        """Test all schemas have descriptions."""
+        schemas = provider.create_tool_schemas()
+        for schema in schemas:
+            assert schema.description
+            assert len(schema.description) > 10  # Not trivially short
+
+
+class TestRedisCloudToolProviderListDatabases:
+    """Test list_databases method."""
+
+    @pytest.mark.asyncio
+    async def test_list_databases_requires_subscription_id(self, mock_config):
+        """Test list_databases raises error without subscription ID."""
+        provider = RedisCloudToolProvider(config=mock_config)
+
+        with pytest.raises(ValueError, match="subscription ID is not configured"):
+            await provider.list_databases()
+
+    @pytest.mark.asyncio
+    async def test_list_databases_essentials_success(self, mock_config):
+        """Test list_databases with essentials subscription type."""
+        fake_instance = type(
+            "Instance",
+            (),
+            {
+                "instance_type": "redis_cloud",
+                "redis_cloud_subscription_id": 12345,
+                "redis_cloud_database_id": None,
+                "redis_cloud_subscription_type": "essentials",
+            },
+        )()
+        provider = RedisCloudToolProvider(redis_instance=fake_instance, config=mock_config)
+
+        class Dummy:
+            def to_dict(self):
+                return {"subscription": {"databases": [{"id": 1, "name": "db1"}, {"id": 2, "name": "db2"}]}}
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.ess_get_subscription_databases.asyncio",
+            new=AsyncMock(return_value=Dummy()),
+        ):
+            result = await provider.list_databases()
+
+        assert len(result) == 2
+        assert result[0]["name"] == "db1"
+
+    @pytest.mark.asyncio
+    async def test_list_databases_pro_success(self, mock_config):
+        """Test list_databases with pro subscription type."""
+        fake_instance = type(
+            "Instance",
+            (),
+            {
+                "instance_type": "redis_cloud",
+                "redis_cloud_subscription_id": 12345,
+                "redis_cloud_database_id": None,
+                "redis_cloud_subscription_type": "pro",
+            },
+        )()
+        provider = RedisCloudToolProvider(redis_instance=fake_instance, config=mock_config)
+
+        class Dummy:
+            def to_dict(self):
+                return {"subscription": [{"databases": [{"id": 1, "name": "pro-db1"}]}]}
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.pro_get_subscription_databases.asyncio",
+            new=AsyncMock(return_value=Dummy()),
+        ):
+            result = await provider.list_databases()
+
+        assert len(result) == 1
+        assert result[0]["name"] == "pro-db1"
+
+
+class TestRedisCloudToolProviderGetSubscription:
+    """Test get_subscription method."""
+
+    @pytest.mark.asyncio
+    async def test_get_subscription_requires_subscription_id(self, mock_config):
+        """Test get_subscription raises error without subscription ID."""
+        provider = RedisCloudToolProvider(config=mock_config)
+
+        with pytest.raises(ValueError, match="subscription ID is not configured"):
+            await provider.get_subscription()
+
+    @pytest.mark.asyncio
+    async def test_get_subscription_essentials_success(self, mock_config):
+        """Test get_subscription with essentials type."""
+        fake_instance = type(
+            "Instance",
+            (),
+            {
+                "instance_type": "redis_cloud",
+                "redis_cloud_subscription_id": 12345,
+                "redis_cloud_database_id": None,
+                "redis_cloud_subscription_type": "essentials",
+            },
+        )()
+        provider = RedisCloudToolProvider(redis_instance=fake_instance, config=mock_config)
+
+        class Dummy:
+            def to_dict(self):
+                return {"id": 12345, "name": "My Subscription", "status": "active"}
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.ess_get_subscription_by_id.asyncio",
+            new=AsyncMock(return_value=Dummy()),
+        ):
+            result = await provider.get_subscription()
+
+        assert result["id"] == 12345
+        assert result["name"] == "My Subscription"
+
+    @pytest.mark.asyncio
+    async def test_get_subscription_pro_success(self, mock_config):
+        """Test get_subscription with pro type."""
+        fake_instance = type(
+            "Instance",
+            (),
+            {
+                "instance_type": "redis_cloud",
+                "redis_cloud_subscription_id": 12345,
+                "redis_cloud_database_id": None,
+                "redis_cloud_subscription_type": "pro",
+            },
+        )()
+        provider = RedisCloudToolProvider(redis_instance=fake_instance, config=mock_config)
+
+        class Dummy:
+            def to_dict(self):
+                return {"id": 12345, "name": "Pro Subscription", "status": "active"}
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.pro_get_subscription_by_id.asyncio",
+            new=AsyncMock(return_value=Dummy()),
+        ):
+            result = await provider.get_subscription()
+
+        assert result["id"] == 12345
+        assert result["name"] == "Pro Subscription"
+
+    @pytest.mark.asyncio
+    async def test_get_subscription_not_found(self, mock_config):
+        """Test get_subscription raises error when not found."""
+        fake_instance = type(
+            "Instance",
+            (),
+            {
+                "instance_type": "redis_cloud",
+                "redis_cloud_subscription_id": 99999,
+                "redis_cloud_database_id": None,
+                "redis_cloud_subscription_type": "pro",
+            },
+        )()
+        provider = RedisCloudToolProvider(redis_instance=fake_instance, config=mock_config)
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.pro_get_subscription_by_id.asyncio",
+            new=AsyncMock(return_value=None),
+        ):
+            with patch(
+                "redis_sre_agent.tools.cloud.redis_cloud.provider.ess_get_subscription_by_id.asyncio",
+                new=AsyncMock(return_value=None),
+            ):
+                with pytest.raises(ValueError, match="not found"):
+                    await provider.get_subscription()
+
+
+class TestRedisCloudToolProviderGetRegions:
+    """Test get_regions method."""
+
+    @pytest.mark.asyncio
+    async def test_get_regions_success(self, mock_config):
+        """Test get_regions returns regions list."""
+        provider = RedisCloudToolProvider(config=mock_config)
+
+        class Dummy:
+            def to_dict(self):
+                return {"regions": [{"name": "us-east-1"}, {"name": "eu-west-1"}]}
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.get_supported_regions.asyncio",
+            new=AsyncMock(return_value=Dummy()),
+        ):
+            result = await provider.get_regions()
+
+        assert len(result) == 2
+        assert result[0]["name"] == "us-east-1"
+
+    @pytest.mark.asyncio
+    async def test_get_regions_empty(self, mock_config):
+        """Test get_regions returns empty list on no data."""
+        provider = RedisCloudToolProvider(config=mock_config)
+
+        class Dummy:
+            def to_dict(self):
+                return {}
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.get_supported_regions.asyncio",
+            new=AsyncMock(return_value=Dummy()),
+        ):
+            result = await provider.get_regions()
+
+        assert result == []
