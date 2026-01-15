@@ -60,7 +60,9 @@ class TestRedisCommandToolProviderInit:
 
     def test_init_without_url_raises(self):
         """Test initialization without URL raises ValueError."""
-        with pytest.raises(ValueError, match="Either redis_instance or connection_url must be provided"):
+        with pytest.raises(
+            ValueError, match="Either redis_instance or connection_url must be provided"
+        ):
             RedisCommandToolProvider()
 
     def test_init_with_invalid_scheme_raises(self):
@@ -190,7 +192,9 @@ class TestRedisCommandToolProviderStatusUpdate:
     def test_status_update_config_get(self):
         """Test status update for CONFIG GET."""
         provider = RedisCommandToolProvider(connection_url="redis://localhost:6379")
-        result = provider.get_status_update("redis_command_abc123_config_get", {"pattern": "maxmemory*"})
+        result = provider.get_status_update(
+            "redis_command_abc123_config_get", {"pattern": "maxmemory*"}
+        )
         assert result == "I'm inspecting Redis configuration with CONFIG GET maxmemory*."
 
     def test_status_update_unknown_returns_none(self):
@@ -280,7 +284,9 @@ class TestRedisCommandToolProviderInfoMethod:
 
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.info = AsyncMock(return_value={"redis_version": "7.2.0", "used_memory": 1024})
+            mock_client.info = AsyncMock(
+                return_value={"redis_version": "7.2.0", "used_memory": 1024}
+            )
             mock_get_client.return_value = mock_client
 
             result = await provider.info()
@@ -296,7 +302,9 @@ class TestRedisCommandToolProviderInfoMethod:
 
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.info = AsyncMock(return_value={"used_memory": 1024, "used_memory_human": "1K"})
+            mock_client.info = AsyncMock(
+                return_value={"used_memory": 1024, "used_memory_human": "1K"}
+            )
             mock_get_client.return_value = mock_client
 
             result = await provider.info(section="memory")
@@ -425,7 +433,9 @@ class TestRedisCommandToolProviderConfigGet:
 
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.config_get = AsyncMock(return_value={"maxmemory": "100mb", "maxclients": "10000"})
+            mock_client.config_get = AsyncMock(
+                return_value={"maxmemory": "100mb", "maxclients": "10000"}
+            )
             mock_get_client.return_value = mock_client
 
             result = await provider.config_get("max*")
@@ -516,7 +526,9 @@ class TestRedisCommandToolProviderClusterInfo:
 
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.cluster = AsyncMock(return_value="cluster_state:ok\ncluster_slots_assigned:16384")
+            mock_client.cluster = AsyncMock(
+                return_value="cluster_state:ok\ncluster_slots_assigned:16384"
+            )
             mock_get_client.return_value = mock_client
 
             result = await provider.cluster_info()

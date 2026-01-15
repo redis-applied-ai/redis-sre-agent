@@ -807,15 +807,15 @@ async def cancel_thread(*, thread_id: str, redis_client=None) -> Dict[str, Any]:
         raise ValueError(f"Thread {thread_id} not found")
 
     # Get the latest task for this thread to add cancellation update
-    latest_task_ids = await redis_client.zrevrange(
-        RedisKeys.thread_tasks_index(thread_id), 0, 0
-    )
+    latest_task_ids = await redis_client.zrevrange(RedisKeys.thread_tasks_index(thread_id), 0, 0)
     if latest_task_ids:
         task_id = latest_task_ids[0]
         if isinstance(task_id, bytes):
             task_id = task_id.decode()
         task_manager = TaskManager(redis_client=redis_client)
-        await task_manager.add_task_update(task_id, "Task cancelled by user request", "cancellation")
+        await task_manager.add_task_update(
+            task_id, "Task cancelled by user request", "cancellation"
+        )
 
     return {"cancelled": True}
 

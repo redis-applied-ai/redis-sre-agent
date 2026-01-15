@@ -550,7 +550,6 @@ class TestUpsertThreadSearchDoc:
         assert result is False
 
 
-
 class TestListThreads:
     """Test list_threads method."""
 
@@ -678,9 +677,7 @@ class TestUpdateThreadContext:
     async def test_update_thread_context_failure(self, thread_manager):
         """Test context update failure."""
         thread_manager._redis_client.hgetall.side_effect = Exception("Redis error")
-        result = await thread_manager.update_thread_context(
-            "thread-1", {"key": "value"}
-        )
+        result = await thread_manager.update_thread_context("thread-1", {"key": "value"})
         assert result is False
 
 
@@ -912,11 +909,13 @@ class TestGetThreadEdgeCases:
     async def test_get_thread_with_complex_message(self, thread_manager):
         """Test getting thread with complex message structure."""
         thread_manager._redis_client.lrange.return_value = [
-            json.dumps({
-                "role": "assistant",
-                "content": "Test response with **markdown**",
-                "metadata": {"tool_calls": [{"name": "test_tool"}]},
-            })
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "content": "Test response with **markdown**",
+                    "metadata": {"tool_calls": [{"name": "test_tool"}]},
+                }
+            )
         ]
         thread_manager._redis_client.hgetall.side_effect = [
             {b"instance_id": b"instance-1", b"key": b'{"nested": "value"}'},  # context
@@ -969,7 +968,6 @@ class TestGetThreadEdgeCases:
         assert state is not None
         assert state.messages == []
         assert state.context == {}
-
 
 
 class TestModuleLevelHelpers:
@@ -1043,7 +1041,9 @@ class TestCreateThreadFunction:
             patch("redis_sre_agent.core.threads.ThreadManager") as mock_manager_class,
             patch(
                 "redis_sre_agent.core.threads._build_initial_context",
-                new=AsyncMock(return_value={"original_query": "test", "priority": 0, "messages": []}),
+                new=AsyncMock(
+                    return_value={"original_query": "test", "priority": 0, "messages": []}
+                ),
             ),
             patch("docket.Docket") as mock_docket,
             patch(

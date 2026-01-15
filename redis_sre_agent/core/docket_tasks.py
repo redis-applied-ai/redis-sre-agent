@@ -947,7 +947,12 @@ async def process_agent_turn(
         # Add an assistant message to the thread so the error is visible in the conversation
         await thread_manager.append_messages(
             thread_id,
-            [{"role": "assistant", "content": f"I encountered an error while processing your request: {str(e)}"}]
+            [
+                {
+                    "role": "assistant",
+                    "content": f"I encountered an error while processing your request: {str(e)}",
+                }
+            ],
         )
 
         # End root span on error

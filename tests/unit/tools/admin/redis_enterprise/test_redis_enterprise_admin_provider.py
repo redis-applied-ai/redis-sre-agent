@@ -678,7 +678,9 @@ class TestRedisEnterpriseAdminGetNode:
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(
-                side_effect=HTTPStatusError("Not Found", request=mock_request, response=mock_response)
+                side_effect=HTTPStatusError(
+                    "Not Found", request=mock_request, response=mock_response
+                )
             )
             mock_get_client.return_value = mock_client
 
@@ -702,7 +704,9 @@ class TestRedisEnterpriseAdminGetDatabase:
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(
-                side_effect=HTTPStatusError("Not Found", request=mock_request, response=mock_response)
+                side_effect=HTTPStatusError(
+                    "Not Found", request=mock_request, response=mock_response
+                )
             )
             mock_get_client.return_value = mock_client
 
@@ -769,7 +773,9 @@ class TestRedisEnterpriseAdminSSLError:
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(
-                side_effect=Exception("CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate")
+                side_effect=Exception(
+                    "CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate"
+                )
             )
             mock_get_client.return_value = mock_client
 

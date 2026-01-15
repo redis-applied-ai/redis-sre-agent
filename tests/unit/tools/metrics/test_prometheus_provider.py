@@ -225,7 +225,9 @@ class TestPrometheusToolProviderQueryMethod:
                 "_http_get_json",
                 return_value={
                     "status": "success",
-                    "data": {"result": [{"metric": {"__name__": "up"}, "value": [1700000000, "1"]}]},
+                    "data": {
+                        "result": [{"metric": {"__name__": "up"}, "value": [1700000000, "1"]}]
+                    },
                 },
             ):
                 result = await provider.query("up")

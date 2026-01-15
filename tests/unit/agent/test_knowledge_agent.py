@@ -161,7 +161,10 @@ class TestKnowledgeSystemPrompt:
         """Test that the system prompt clarifies no instance access."""
         from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
 
-        assert "NOT have access" in KNOWLEDGE_SYSTEM_PROMPT or "do not have access" in KNOWLEDGE_SYSTEM_PROMPT.lower()
+        assert (
+            "NOT have access" in KNOWLEDGE_SYSTEM_PROMPT
+            or "do not have access" in KNOWLEDGE_SYSTEM_PROMPT.lower()
+        )
 
 
 class TestKnowledgeAgentMethods:

@@ -284,7 +284,9 @@ class TestChatAgentExpandEvidenceTool:
 
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
-    def test_expand_evidence_tool_error_for_unknown_key(self, mock_create_mini_llm, mock_create_llm):
+    def test_expand_evidence_tool_error_for_unknown_key(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
         """Test that expand_evidence tool returns error for unknown key."""
         mock_llm = MagicMock()
         mock_create_llm.return_value = mock_llm

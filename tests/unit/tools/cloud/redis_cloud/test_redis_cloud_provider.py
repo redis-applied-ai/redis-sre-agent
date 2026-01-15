@@ -272,7 +272,11 @@ class TestRedisCloudToolProviderListDatabases:
 
         class Dummy:
             def to_dict(self):
-                return {"subscription": {"databases": [{"id": 1, "name": "db1"}, {"id": 2, "name": "db2"}]}}
+                return {
+                    "subscription": {
+                        "databases": [{"id": 1, "name": "db1"}, {"id": 2, "name": "db2"}]
+                    }
+                }
 
         with patch(
             "redis_sre_agent.tools.cloud.redis_cloud.provider.ess_get_subscription_databases.asyncio",

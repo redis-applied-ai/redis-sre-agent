@@ -92,7 +92,9 @@ class TestTaskManagerCreateTask:
     @pytest.mark.asyncio
     async def test_create_task_success(self, task_manager):
         """Test successful task creation."""
-        with patch.object(task_manager, "_upsert_task_search_doc", new_callable=AsyncMock) as mock_upsert:
+        with patch.object(
+            task_manager, "_upsert_task_search_doc", new_callable=AsyncMock
+        ) as mock_upsert:
             mock_upsert.return_value = True
             task_id = await task_manager.create_task(thread_id="thread-123", user_id="user-1")
 
@@ -160,7 +162,9 @@ class TestTaskManagerAddUpdate:
         """Test adding a task update."""
         with (
             patch.object(task_manager, "_upsert_task_search_doc", new_callable=AsyncMock),
-            patch.object(task_manager, "_publish_stream_update", new_callable=AsyncMock) as mock_pub,
+            patch.object(
+                task_manager, "_publish_stream_update", new_callable=AsyncMock
+            ) as mock_pub,
         ):
             mock_pub.return_value = True
             result = await task_manager.add_task_update("task-123", "Progress update")
@@ -190,7 +194,9 @@ class TestTaskManagerAddUpdate:
 
         with (
             patch.object(task_manager, "_upsert_task_search_doc", new_callable=AsyncMock),
-            patch.object(task_manager, "_publish_stream_update", new_callable=AsyncMock) as mock_pub,
+            patch.object(
+                task_manager, "_publish_stream_update", new_callable=AsyncMock
+            ) as mock_pub,
         ):
             result = await task_manager.add_task_update("task-123", "Update")
             assert result is True
@@ -387,19 +393,31 @@ class TestTaskManagerGetTaskState:
     @pytest.mark.asyncio
     async def test_get_task_state_success(self, task_manager):
         """Test getting task state."""
-        task_manager._redis.get = AsyncMock(side_effect=[
-            b"in_progress",  # status
-            json.dumps({"response": "Result"}).encode(),  # result
-            None,  # error
-        ])
-        task_manager._redis.lrange = AsyncMock(return_value=[
-            json.dumps({"message": "Processing", "update_type": "progress", "timestamp": "2024-01-01T00:00:00+00:00"}).encode()
-        ])
-        task_manager._redis.hgetall = AsyncMock(return_value={
-            b"created_at": b"2024-01-01T00:00:00+00:00",
-            b"thread_id": b"thread-123",
-            b"user_id": b"user-1",
-        })
+        task_manager._redis.get = AsyncMock(
+            side_effect=[
+                b"in_progress",  # status
+                json.dumps({"response": "Result"}).encode(),  # result
+                None,  # error
+            ]
+        )
+        task_manager._redis.lrange = AsyncMock(
+            return_value=[
+                json.dumps(
+                    {
+                        "message": "Processing",
+                        "update_type": "progress",
+                        "timestamp": "2024-01-01T00:00:00+00:00",
+                    }
+                ).encode()
+            ]
+        )
+        task_manager._redis.hgetall = AsyncMock(
+            return_value={
+                b"created_at": b"2024-01-01T00:00:00+00:00",
+                b"thread_id": b"thread-123",
+                b"user_id": b"user-1",
+            }
+        )
 
         state = await task_manager.get_task_state("task-123")
 
@@ -421,15 +439,19 @@ class TestTaskManagerGetTaskState:
     @pytest.mark.asyncio
     async def test_get_task_state_with_error(self, task_manager):
         """Test getting task state with error message."""
-        task_manager._redis.get = AsyncMock(side_effect=[
-            b"failed",  # status
-            None,  # result
-            b"Task failed: timeout",  # error
-        ])
+        task_manager._redis.get = AsyncMock(
+            side_effect=[
+                b"failed",  # status
+                None,  # result
+                b"Task failed: timeout",  # error
+            ]
+        )
         task_manager._redis.lrange = AsyncMock(return_value=[])
-        task_manager._redis.hgetall = AsyncMock(return_value={
-            b"thread_id": b"thread-123",
-        })
+        task_manager._redis.hgetall = AsyncMock(
+            return_value={
+                b"thread_id": b"thread-123",
+            }
+        )
 
         state = await task_manager.get_task_state("task-123")
 
@@ -440,15 +462,25 @@ class TestTaskManagerGetTaskState:
     @pytest.mark.asyncio
     async def test_get_task_state_invalid_update_json(self, task_manager):
         """Test getting task state with invalid update JSON."""
-        task_manager._redis.get = AsyncMock(side_effect=[
-            b"queued",
-            None,
-            None,
-        ])
-        task_manager._redis.lrange = AsyncMock(return_value=[
-            b"invalid json",
-            json.dumps({"message": "Valid", "update_type": "progress", "timestamp": "2024-01-01T00:00:00+00:00"}).encode(),
-        ])
+        task_manager._redis.get = AsyncMock(
+            side_effect=[
+                b"queued",
+                None,
+                None,
+            ]
+        )
+        task_manager._redis.lrange = AsyncMock(
+            return_value=[
+                b"invalid json",
+                json.dumps(
+                    {
+                        "message": "Valid",
+                        "update_type": "progress",
+                        "timestamp": "2024-01-01T00:00:00+00:00",
+                    }
+                ).encode(),
+            ]
+        )
         task_manager._redis.hgetall = AsyncMock(return_value={})
 
         state = await task_manager.get_task_state("task-123")
@@ -530,7 +562,9 @@ class TestGetTaskByIdFunction:
             thread_id="thread-123",
             status=TaskStatus.DONE,
             updates=[
-                TaskUpdate(message="Done", update_type="completion", timestamp="2024-01-01T00:00:00+00:00")
+                TaskUpdate(
+                    message="Done", update_type="completion", timestamp="2024-01-01T00:00:00+00:00"
+                )
             ],
             result={"response": "Complete"},
             metadata=TaskMetadata(
@@ -575,21 +609,31 @@ class TestListTasksFunction:
         mock_redis.hget = AsyncMock(return_value=b"Thread subject")
 
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(return_value=[
-            {
-                "id": "sre_tasks:task-1",
-                "status": "in_progress",
-                "subject": "Task 1",
-                "user_id": "user-1",
-                "thread_id": "thread-1",
-                "created_at": 1704067200.0,
-                "updated_at": 1704153600.0,
-            }
-        ])
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "sre_tasks:task-1",
+                    "status": "in_progress",
+                    "subject": "Task 1",
+                    "user_id": "user-1",
+                    "thread_id": "thread-1",
+                    "created_at": 1704067200.0,
+                    "updated_at": 1704153600.0,
+                }
+            ]
+        )
 
         with (
-            patch("redis_sre_agent.core.tasks.get_tasks_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "redis_sre_agent.core.tasks.get_tasks_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await list_tasks(redis_client=mock_redis)
 
@@ -607,8 +651,16 @@ class TestListTasksFunction:
         mock_index.query = AsyncMock(return_value=[])
 
         with (
-            patch("redis_sre_agent.core.tasks.get_tasks_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "redis_sre_agent.core.tasks.get_tasks_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await list_tasks(user_id="user-1", redis_client=mock_redis)
 
@@ -625,8 +677,16 @@ class TestListTasksFunction:
         mock_index.query = AsyncMock(return_value=[])
 
         with (
-            patch("redis_sre_agent.core.tasks.get_tasks_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "redis_sre_agent.core.tasks.get_tasks_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await list_tasks(show_all=True, redis_client=mock_redis)
 
@@ -638,18 +698,28 @@ class TestListTasksFunction:
         mock_redis = AsyncMock()
 
         mock_thread_manager = AsyncMock()
-        mock_thread_manager.list_threads = AsyncMock(return_value=[
-            {
-                "thread_id": "thread-1",
-                "status": "in_progress",
-                "created_at": "2024-01-01T00:00:00+00:00",
-                "subject": "Test thread",
-            }
-        ])
+        mock_thread_manager.list_threads = AsyncMock(
+            return_value=[
+                {
+                    "thread_id": "thread-1",
+                    "status": "in_progress",
+                    "created_at": "2024-01-01T00:00:00+00:00",
+                    "subject": "Test thread",
+                }
+            ]
+        )
 
         with (
-            patch("redis_sre_agent.core.tasks.get_tasks_index", new_callable=AsyncMock, side_effect=Exception("Index error")),
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "redis_sre_agent.core.tasks.get_tasks_index",
+                new_callable=AsyncMock,
+                side_effect=Exception("Index error"),
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager),
         ):
             result = await list_tasks(redis_client=mock_redis)
@@ -665,9 +735,11 @@ class TestDeleteTaskFunction:
     async def test_delete_task_success(self):
         """Test successful task deletion."""
         mock_redis = AsyncMock()
-        mock_redis.hgetall = AsyncMock(return_value={
-            b"thread_id": b"thread-123",
-        })
+        mock_redis.hgetall = AsyncMock(
+            return_value={
+                b"thread_id": b"thread-123",
+            }
+        )
         mock_redis.delete = AsyncMock(return_value=1)
         mock_redis.zrem = AsyncMock(return_value=1)
 

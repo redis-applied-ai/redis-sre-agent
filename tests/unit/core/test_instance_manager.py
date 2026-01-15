@@ -69,6 +69,7 @@ class TestMaskRedisUrl:
 
     def test_mask_url_exception_returns_placeholder(self):
         """Test exception in parsing returns generic masked placeholder."""
+
         # Create an object that will cause an exception when parsed
         class BadUrl:
             def __str__(self):
@@ -369,13 +370,18 @@ class TestGetInstances:
             "description": "Test",
             "instance_type": "oss_single",
         }
-        mock_index.query = AsyncMock(return_value=[
-            {"data": json.dumps(inst_data)}
-        ])
+        mock_index.query = AsyncMock(return_value=[{"data": json.dumps(inst_data)}])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             instances = await get_instances()
@@ -390,8 +396,15 @@ class TestGetInstances:
         mock_index.query = AsyncMock(return_value=[])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
         ):
             instances = await get_instances()
             assert instances == []
@@ -426,14 +439,23 @@ class TestQueryInstances:
             "description": "Production cache",
             "instance_type": "oss_single",
         }
-        mock_index.query = AsyncMock(side_effect=[
-            10,  # CountQuery result
-            [{"data": json.dumps(inst_data)}],  # FilterQuery result
-        ])
+        mock_index.query = AsyncMock(
+            side_effect=[
+                10,  # CountQuery result
+                [{"data": json.dumps(inst_data)}],  # FilterQuery result
+            ]
+        )
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             result = await query_instances(environment="production")
@@ -449,8 +471,15 @@ class TestQueryInstances:
         mock_index.query = AsyncMock(side_effect=[0, []])  # No results
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await query_instances(
                 environment="production",
@@ -498,7 +527,10 @@ class TestUpsertInstanceIndexDoc:
 
         with (
             patch("redis_sre_agent.core.instances.get_redis_client", return_value=mock_redis),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.encrypt_secret", side_effect=lambda x: x),
         ):
             result = await _upsert_instance_index_doc(inst)
@@ -557,15 +589,17 @@ class TestGetSessionInstances:
     async def test_get_session_instances_success(self):
         """Test getting session instances."""
         mock_redis = AsyncMock()
-        inst_data = [{
-            "id": "session-1",
-            "name": "Session Instance",
-            "connection_url": "redis://session:6379",
-            "environment": "dev",
-            "usage": "cache",
-            "description": "Session",
-            "instance_type": "oss_single",
-        }]
+        inst_data = [
+            {
+                "id": "session-1",
+                "name": "Session Instance",
+                "connection_url": "redis://session:6379",
+                "environment": "dev",
+                "usage": "cache",
+                "description": "Session",
+                "instance_type": "oss_single",
+            }
+        ]
         mock_redis.get = AsyncMock(return_value=json.dumps(inst_data).encode())
 
         with (
@@ -629,15 +663,17 @@ class TestAddSessionInstance:
     async def test_add_session_instance_duplicate(self):
         """Test adding duplicate instance is skipped."""
         mock_redis = AsyncMock()
-        existing = [{
-            "id": "session-1",
-            "name": "Existing",
-            "connection_url": "redis://existing:6379",
-            "environment": "dev",
-            "usage": "cache",
-            "description": "Existing",
-            "instance_type": "oss_single",
-        }]
+        existing = [
+            {
+                "id": "session-1",
+                "name": "Existing",
+                "connection_url": "redis://existing:6379",
+                "environment": "dev",
+                "usage": "cache",
+                "description": "Existing",
+                "instance_type": "oss_single",
+            }
+        ]
         mock_redis.get = AsyncMock(return_value=json.dumps(existing).encode())
 
         inst = RedisInstance(
@@ -726,8 +762,15 @@ class TestGetInstanceByName:
         mock_index.query = AsyncMock(return_value=[{"data": json.dumps(inst_data)}])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             inst = await get_instance_by_name("My Instance")
@@ -741,8 +784,15 @@ class TestGetInstanceByName:
         mock_index.query = AsyncMock(return_value=[])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
         ):
             inst = await get_instance_by_name("Non-existent")
             assert inst is None
@@ -775,7 +825,11 @@ class TestGetInstanceMap:
             ),
         ]
 
-        with patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=mock_instances):
+        with patch(
+            "redis_sre_agent.core.instances.get_instances",
+            new_callable=AsyncMock,
+            return_value=mock_instances,
+        ):
             inst_map = await get_instance_map()
             assert "redis-1" in inst_map
             assert "redis-2" in inst_map
@@ -798,14 +852,22 @@ class TestGetInstanceName:
             instance_type=RedisInstanceType.oss_single,
         )
 
-        with patch("redis_sre_agent.core.instances.get_instance_by_id", new_callable=AsyncMock, return_value=mock_inst):
+        with patch(
+            "redis_sre_agent.core.instances.get_instance_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_inst,
+        ):
             name = await get_instance_name("redis-1")
             assert name == "My Instance"
 
     @pytest.mark.asyncio
     async def test_get_instance_name_not_found(self):
         """Test getting name of non-existent instance."""
-        with patch("redis_sre_agent.core.instances.get_instance_by_id", new_callable=AsyncMock, return_value=None):
+        with patch(
+            "redis_sre_agent.core.instances.get_instance_by_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
             name = await get_instance_name("non-existent")
             assert name is None
 
@@ -839,8 +901,15 @@ class TestSaveInstances:
 
         with (
             patch("redis_sre_agent.core.instances.get_redis_client", return_value=mock_redis),
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.encrypt_secret", side_effect=lambda x: x),
         ):
             result = await save_instances(instances)
@@ -876,8 +945,16 @@ class TestGetAllInstances:
         ]
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=configured),
-            patch("redis_sre_agent.core.instances.get_session_instances", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=configured,
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_session_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             instances = await get_all_instances()
             assert len(instances) == 1
@@ -910,8 +987,16 @@ class TestGetAllInstances:
         ]
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=configured),
-            patch("redis_sre_agent.core.instances.get_session_instances", new_callable=AsyncMock, return_value=session),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=configured,
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_session_instances",
+                new_callable=AsyncMock,
+                return_value=session,
+            ),
         ):
             instances = await get_all_instances(thread_id="thread-123")
             assert len(instances) == 2
@@ -943,8 +1028,16 @@ class TestGetAllInstances:
         ]
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=configured),
-            patch("redis_sre_agent.core.instances.get_session_instances", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=configured,
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_session_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             instances = await get_all_instances(user_id="user-1")
             assert len(instances) == 1
@@ -958,8 +1051,16 @@ class TestCreateInstance:
     async def test_create_instance_success(self):
         """Test creating a new instance."""
         with (
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=[]),
-            patch("redis_sre_agent.core.instances.save_instances", new_callable=AsyncMock, return_value=True),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "redis_sre_agent.core.instances.save_instances",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             inst = await create_instance(
                 name="New Instance",
@@ -988,7 +1089,11 @@ class TestCreateInstance:
             )
         ]
 
-        with patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=existing):
+        with patch(
+            "redis_sre_agent.core.instances.get_instances",
+            new_callable=AsyncMock,
+            return_value=existing,
+        ):
             with pytest.raises(ValueError, match="already exists"):
                 await create_instance(
                     name="Existing",
@@ -1002,8 +1107,16 @@ class TestCreateInstance:
     async def test_create_instance_save_failure(self):
         """Test create_instance raises on save failure."""
         with (
-            patch("redis_sre_agent.core.instances.get_instances", new_callable=AsyncMock, return_value=[]),
-            patch("redis_sre_agent.core.instances.save_instances", new_callable=AsyncMock, return_value=False),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "redis_sre_agent.core.instances.save_instances",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
         ):
             with pytest.raises(ValueError, match="Failed to save"):
                 await create_instance(
@@ -1034,13 +1147,18 @@ class TestGetInstancesEdgeCases:
             "instance_type": "oss_single",
         }
         # Return bytes instead of string
-        mock_index.query = AsyncMock(return_value=[
-            {"data": json.dumps(inst_data).encode("utf-8")}
-        ])
+        mock_index.query = AsyncMock(return_value=[{"data": json.dumps(inst_data).encode("utf-8")}])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             instances = await get_instances()
@@ -1062,14 +1180,23 @@ class TestGetInstancesEdgeCases:
             "instance_type": "oss_single",
         }
         # First call (CountQuery) raises, second call (FilterQuery) succeeds
-        mock_index.query = AsyncMock(side_effect=[
-            Exception("Count failed"),
-            [{"data": json.dumps(inst_data)}],
-        ])
+        mock_index.query = AsyncMock(
+            side_effect=[
+                Exception("Count failed"),
+                [{"data": json.dumps(inst_data)}],
+            ]
+        )
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             instances = await get_instances()
@@ -1082,14 +1209,23 @@ class TestGetInstancesEdgeCases:
         mock_index.exists = AsyncMock(return_value=True)
 
         # Return invalid JSON
-        mock_index.query = AsyncMock(return_value=[
-            {"data": "not valid json"},
-            {"data": None},  # No data
-        ])
+        mock_index.query = AsyncMock(
+            return_value=[
+                {"data": "not valid json"},
+                {"data": None},  # No data
+            ]
+        )
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
         ):
             instances = await get_instances()
             assert instances == []
@@ -1112,14 +1248,23 @@ class TestQueryInstancesEdgeCases:
             "description": "Test",
             "instance_type": "oss_single",
         }
-        mock_index.query = AsyncMock(side_effect=[
-            1,  # CountQuery
-            [{"data": json.dumps(inst_data).encode("utf-8")}],  # FilterQuery with bytes
-        ])
+        mock_index.query = AsyncMock(
+            side_effect=[
+                1,  # CountQuery
+                [{"data": json.dumps(inst_data).encode("utf-8")}],  # FilterQuery with bytes
+            ]
+        )
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             result = await query_instances()
@@ -1129,14 +1274,23 @@ class TestQueryInstancesEdgeCases:
     async def test_query_instances_invalid_doc(self):
         """Test query_instances skips invalid documents."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(side_effect=[
-            1,  # CountQuery
-            [{"data": "invalid json"}],  # Invalid JSON
-        ])
+        mock_index.query = AsyncMock(
+            side_effect=[
+                1,  # CountQuery
+                [{"data": "invalid json"}],  # Invalid JSON
+            ]
+        )
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await query_instances()
             assert result.instances == []
@@ -1165,10 +1319,12 @@ class TestSaveInstancesEdgeCases:
             "description": "Stale",
             "instance_type": "oss_single",
         }
-        mock_index.query = AsyncMock(side_effect=[
-            1,  # CountQuery
-            [{"data": json.dumps(existing_data)}],  # FilterQuery returns stale doc
-        ])
+        mock_index.query = AsyncMock(
+            side_effect=[
+                1,  # CountQuery
+                [{"data": json.dumps(existing_data)}],  # FilterQuery returns stale doc
+            ]
+        )
 
         new_instances = [
             RedisInstance(
@@ -1184,8 +1340,15 @@ class TestSaveInstancesEdgeCases:
 
         with (
             patch("redis_sre_agent.core.instances.get_redis_client", return_value=mock_redis),
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.encrypt_secret", side_effect=lambda x: x),
         ):
             result = await save_instances(new_instances)
@@ -1201,15 +1364,17 @@ class TestAddSessionInstanceEdgeCases:
     async def test_add_session_instance_duplicate_url(self):
         """Test adding instance with duplicate URL is skipped."""
         mock_redis = AsyncMock()
-        existing = [{
-            "id": "session-1",
-            "name": "Existing",
-            "connection_url": "redis://same:6379",
-            "environment": "dev",
-            "usage": "cache",
-            "description": "Existing",
-            "instance_type": "oss_single",
-        }]
+        existing = [
+            {
+                "id": "session-1",
+                "name": "Existing",
+                "connection_url": "redis://same:6379",
+                "environment": "dev",
+                "usage": "cache",
+                "description": "Existing",
+                "instance_type": "oss_single",
+            }
+        ]
         mock_redis.get = AsyncMock(return_value=json.dumps(existing).encode())
 
         inst = RedisInstance(
@@ -1270,8 +1435,15 @@ class TestGetInstanceByNameEdgeCases:
         mock_index.query = AsyncMock(return_value=[{"data": json.dumps(inst_data).encode("utf-8")}])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             inst = await get_instance_by_name("My Instance")
@@ -1285,8 +1457,15 @@ class TestGetInstanceByNameEdgeCases:
         mock_index.query = AsyncMock(return_value=[{"data": None}])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
         ):
             inst = await get_instance_by_name("My Instance")
             assert inst is None
@@ -1406,9 +1585,7 @@ class TestGetBdbUidEdgeCases:
 
         mock_response = MagicMock()
         # Some versions return {"bdbs": [...]} instead of [...]
-        mock_response.json.return_value = {
-            "bdbs": [{"name": "my-db", "uid": 1, "port": 12345}]
-        }
+        mock_response.json.return_value = {"bdbs": [{"name": "my-db", "uid": 1, "port": 12345}]}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -1494,7 +1671,11 @@ class TestEnsureInstancesIndexExists:
         mock_index.exists = AsyncMock(return_value=False)
         mock_index.create = AsyncMock()
 
-        with patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index):
+        with patch(
+            "redis_sre_agent.core.instances.get_instances_index",
+            new_callable=AsyncMock,
+            return_value=mock_index,
+        ):
             await _ensure_instances_index_exists()
             mock_index.create.assert_called_once()
 
@@ -1507,7 +1688,11 @@ class TestEnsureInstancesIndexExists:
         mock_index.exists = AsyncMock(return_value=True)
         mock_index.create = AsyncMock()
 
-        with patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index):
+        with patch(
+            "redis_sre_agent.core.instances.get_instances_index",
+            new_callable=AsyncMock,
+            return_value=mock_index,
+        ):
             await _ensure_instances_index_exists()
             mock_index.create.assert_not_called()
 
@@ -1547,8 +1732,15 @@ class TestGetInstancesWithAdminPassword:
         mock_index.query = AsyncMock(return_value=[{"data": json.dumps(inst_data)}])
 
         with (
-            patch("redis_sre_agent.core.instances.get_instances_index", new_callable=AsyncMock, return_value=mock_index),
-            patch("redis_sre_agent.core.instances._ensure_instances_index_exists", new_callable=AsyncMock),
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
             patch("redis_sre_agent.core.instances.get_secret_value", side_effect=lambda x: x),
         ):
             instances = await get_instances()

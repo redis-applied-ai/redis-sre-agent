@@ -290,8 +290,6 @@ class TestThreadManagerIntegration:
 
         with patch.object(thread_manager, "_get_client", return_value=mock_redis):
             # Test update_thread_context which is an actual method
-            result = await thread_manager.update_thread_context(
-                thread_id, {"key": "value"}
-            )
+            result = await thread_manager.update_thread_context(thread_id, {"key": "value"})
             # Method should complete without error
             assert result is True or result is False  # Depends on mock setup
