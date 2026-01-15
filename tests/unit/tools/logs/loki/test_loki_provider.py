@@ -1,6 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from redis_sre_agent.tools.logs.loki.provider import (

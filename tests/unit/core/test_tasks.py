@@ -202,6 +202,7 @@ class TestSreTaskDecorator:
 
     def test_sre_task_decorator_returns_function(self):
         """Test that sre_task decorator returns the function."""
+
         # We can't easily test adding to the collection since it's global
         # and already populated. Instead, test that the decorator returns the function.
         async def test_func():
@@ -314,8 +315,14 @@ class TestProcessChatTurn:
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
-            patch("redis_sre_agent.core.docket_tasks.get_instance_by_id", new_callable=AsyncMock, return_value=mock_instance),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_instance_by_id",
+                new_callable=AsyncMock,
+                return_value=mock_instance,
+            ),
             patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
@@ -344,8 +351,14 @@ class TestProcessChatTurn:
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
-            patch("redis_sre_agent.core.docket_tasks.get_instance_by_id", new_callable=AsyncMock, return_value=None),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_instance_by_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             with pytest.raises(ValueError, match="Instance not found"):
@@ -372,8 +385,14 @@ class TestProcessChatTurn:
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
-            patch("redis_sre_agent.core.docket_tasks.get_instance_by_id", new_callable=AsyncMock, return_value=None),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_instance_by_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
@@ -401,8 +420,14 @@ class TestProcessChatTurn:
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
-            patch("redis_sre_agent.core.docket_tasks.get_instance_by_id", new_callable=AsyncMock, return_value=None),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_instance_by_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
@@ -435,8 +460,12 @@ class TestProcessKnowledgeQuery:
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
-            patch("redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
+            ),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             result = await process_knowledge_query(
@@ -465,8 +494,12 @@ class TestProcessKnowledgeQuery:
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
-            patch("redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
+            ),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             with pytest.raises(Exception, match="Knowledge error"):
@@ -663,7 +696,9 @@ class TestProcessAgentTurn:
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
             patch("opentelemetry.trace.get_tracer") as mock_tracer,
         ):
@@ -706,7 +741,9 @@ class TestProcessAgentTurn:
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
-            patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
             patch(
                 "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
@@ -723,7 +760,7 @@ class TestProcessAgentTurn:
             mock_span.set_attribute = MagicMock()
             mock_tracer.return_value.start_span.return_value = mock_span
 
-            result = await process_agent_turn(
+            _ = await process_agent_turn(
                 thread_id="thread-123",
                 message="What are Redis best practices?",
                 task_id="provided-task-123",  # Provide task_id
@@ -731,7 +768,9 @@ class TestProcessAgentTurn:
 
         # Should use provided task_id, not create a new one
         mock_task_manager.create_task.assert_not_called()
-        mock_task_manager.update_task_status.assert_any_call("provided-task-123", TaskStatus.IN_PROGRESS)
+        mock_task_manager.update_task_status.assert_any_call(
+            "provided-task-123", TaskStatus.IN_PROGRESS
+        )
 
 
 class TestRunAgentWithProgress:

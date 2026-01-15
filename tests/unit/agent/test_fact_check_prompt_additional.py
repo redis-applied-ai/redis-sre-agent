@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 from redis_sre_agent.agent.subgraphs.safety_fact_corrector import (
@@ -107,9 +106,9 @@ async def test_corrector_runs_on_risky_patterns(mock_build):
     ):
         out = await agent.process_query("redis config help", "s", "u")
 
-    assert out.startswith("EDITED"), (
-        f"Corrector should have edited the response, which was: '{out}''"
-    )
+    assert out.startswith(
+        "EDITED"
+    ), f"Corrector should have edited the response, which was: '{out}''"
     mock_build.assert_called_once()
 
 
