@@ -303,3 +303,89 @@ class TestSupportPackageContext:
         # Verify support_package_path was passed to ToolManager
         assert "support_package_path" in captured_kwargs
         assert str(captured_kwargs["support_package_path"]) == "/tmp/packages/test-package"
+
+
+class TestAgentSystemPrompt:
+    """Test the agent system prompt."""
+
+    def test_system_prompt_exists(self, mock_settings, mock_llm):
+        """Test that the system prompt is defined."""
+        from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+
+        assert SRE_SYSTEM_PROMPT is not None
+        assert len(SRE_SYSTEM_PROMPT) > 100
+
+    def test_system_prompt_mentions_redis(self, mock_settings, mock_llm):
+        """Test that the system prompt mentions Redis."""
+        from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+
+        assert "Redis" in SRE_SYSTEM_PROMPT
+
+    def test_system_prompt_mentions_sre(self, mock_settings, mock_llm):
+        """Test that the system prompt mentions SRE."""
+        from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+
+        assert "SRE" in SRE_SYSTEM_PROMPT
+
+
+class TestAgentEmitter:
+    """Test the agent emitter functionality."""
+
+    def test_agent_has_progress_emitter(self, mock_settings, mock_llm):
+        """Test that agent has _progress_emitter attribute."""
+        agent = SRELangGraphAgent()
+        assert hasattr(agent, "_progress_emitter")
+
+    def test_agent_with_custom_emitter(self, mock_settings, mock_llm):
+        """Test agent initialization with custom emitter."""
+        from redis_sre_agent.core.progress import NullEmitter
+
+        emitter = NullEmitter()
+        agent = SRELangGraphAgent(progress_emitter=emitter)
+        assert agent._progress_emitter is emitter
+
+    def test_agent_default_emitter(self, mock_settings, mock_llm):
+        """Test agent uses NullEmitter by default."""
+        from redis_sre_agent.core.progress import NullEmitter
+
+        agent = SRELangGraphAgent()
+        assert isinstance(agent._progress_emitter, NullEmitter)
+
+
+class TestAgentMiniLLM:
+    """Test the agent mini LLM functionality."""
+
+    def test_agent_has_mini_llm(self, mock_settings, mock_llm):
+        """Test that agent has mini_llm attribute."""
+        agent = SRELangGraphAgent()
+        assert hasattr(agent, "mini_llm")
+        assert agent.mini_llm is not None
+
+    def test_agent_has_llm(self, mock_settings, mock_llm):
+        """Test that agent has llm attribute."""
+        agent = SRELangGraphAgent()
+        assert hasattr(agent, "llm")
+        assert agent.llm is not None
+
+
+class TestAgentBuildWorkflow:
+    """Test the _build_workflow method."""
+
+    def test_build_workflow_returns_state_graph(self, mock_settings, mock_llm):
+        """Test that _build_workflow returns a StateGraph."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        agent = SRELangGraphAgent()
+
+        # Create mock tool manager
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_status_update.return_value = None
+
+        # Create emitter
+        emitter = NullEmitter()
+
+        # _build_workflow takes (tool_mgr, emitter) as positional args
+        workflow = agent._build_workflow(mock_tool_mgr, emitter)
+        assert workflow is not None

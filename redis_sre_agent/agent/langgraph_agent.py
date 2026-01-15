@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -315,26 +315,17 @@ class SRELangGraphAgent:
 
     def __init__(
         self,
-        progress_callback=None,
         progress_emitter: Optional[ProgressEmitter] = None,
     ):
         """Initialize the SRE LangGraph agent.
 
         Args:
-            progress_callback: Deprecated. Legacy callback for progress updates.
-                              Use progress_emitter instead.
             progress_emitter: ProgressEmitter instance for emitting status updates.
-                             If not provided but progress_callback is, wraps callback
-                             in a CallbackEmitter for backward compatibility.
         """
         self.settings = settings
-        # Support both new emitter and legacy callback
-        if progress_emitter is not None:
-            self._progress_emitter: ProgressEmitter = progress_emitter
-        elif progress_callback is not None:
-            self._progress_emitter = CallbackEmitter(progress_callback)
-        else:
-            self._progress_emitter = NullEmitter()
+        self._progress_emitter: ProgressEmitter = (
+            progress_emitter if progress_emitter is not None else NullEmitter()
+        )
         # LLM with both reasoning and function calling capabilities
         self.llm = create_llm()
         # Faster LLM for utility tasks
@@ -1406,7 +1397,6 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         user_id: str,
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
-        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
     ) -> str:
@@ -1418,7 +1408,6 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             user_id: User identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
-            progress_callback: Deprecated. Use progress_emitter instead.
             progress_emitter: ProgressEmitter for status updates during this query.
 
         Returns:
@@ -1426,11 +1415,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         """
         logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
 
-        # Set progress emitter for this query (prefer emitter over callback)
+        # Set progress emitter for this query
         if progress_emitter is not None:
             self._progress_emitter = progress_emitter
-        elif progress_callback is not None:
-            self._progress_emitter = CallbackEmitter(progress_callback)
 
         # Determine target Redis instance from context
         target_instance = None
@@ -1961,7 +1948,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         user_id: str,
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
-        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
     ) -> str:
@@ -1973,7 +1959,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             user_id: User identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
-            progress_callback: Deprecated. Use progress_emitter instead.
             conversation_history: Optional list of previous messages for context
             progress_emitter: ProgressEmitter for status updates during this query.
         """
@@ -1987,7 +1972,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 user_id,
                 max_iterations,
                 context,
-                progress_callback,
                 conversation_history,
                 progress_emitter,
             )

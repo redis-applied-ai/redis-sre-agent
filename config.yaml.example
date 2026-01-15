@@ -84,16 +84,11 @@ mcp_servers:
           {original}
 
   # GitHub MCP server for repository operations
-  # Option 1: Local Docker (requires Docker to be running)
   github:
-    command: docker
+    command: npx
     args:
-      - run
-      - -i
-      - --rm
-      - -e
-      - GITHUB_PERSONAL_ACCESS_TOKEN
-      - ghcr.io/github/github-mcp-server
+      - -y
+      - "@modelcontextprotocol/server-github"
     env:
       # Set your GitHub Personal Access Token here or via environment variable
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
@@ -119,34 +114,6 @@ mcp_servers:
         capability: repos
       get_commit:
         capability: repos
-
-  # Option 2: Remote GitHub MCP server (recommended, no Docker needed)
-  # Uncomment the following and comment out the local Docker option above:
-  # github:
-  #   url: "https://api.githubcopilot.com/mcp/"
-  #   headers:
-  #     Authorization: "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
-  #   tools:
-  #     search_code:
-  #       capability: repos
-  #     search_issues:
-  #       capability: tickets
-  #     search_pull_requests:
-  #       capability: repos
-  #     get_file_contents:
-  #       capability: repos
-  #     list_issues:
-  #       capability: tickets
-  #     list_pull_requests:
-  #       capability: repos
-  #     issue_read:
-  #       capability: tickets
-  #     pull_request_read:
-  #       capability: repos
-  #     list_commits:
-  #       capability: repos
-  #     get_commit:
-  #       capability: repos
 
 # Manually overriding tool providers configuration (fully qualified class paths).
 # Useful to disable some built-in tool providers and/or enable your own custom providers.

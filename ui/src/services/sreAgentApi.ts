@@ -229,8 +229,8 @@ class SREAgentAPI {
       const protocol = window.location.protocol;
       const hostname = window.location.hostname;
 
-      // Use the current hostname but with backend port (8000)
-      return `${protocol}//${hostname}:8000/api/v1`;
+      // Use the current hostname but with backend port (8080)
+      return `${protocol}//${hostname}:8080/api/v1`;
     }
 
     // 4. Fallback for server-side rendering or other edge cases
@@ -339,10 +339,14 @@ class SREAgentAPI {
         ? thread.context.messages
         : [];
 
-    // Derive status: if we have messages, likely completed; otherwise in_progress
-    // Note: updates/result/error_message come from latest task, not thread
-    const hasResponse = messages.some((m: any) => m.role === "assistant");
-    const status = hasResponse ? "completed" : "in_progress";
+    // Use status from API if available; fallback to deriving from messages
+    // API returns: queued, in_progress, done, failed, cancelled
+    let status = thread.status;
+    if (!status) {
+      // Fallback for old data without status field
+      const hasResponse = messages.some((m: any) => m.role === "assistant");
+      status = hasResponse ? "completed" : "in_progress";
+    }
 
     return {
       thread_id: thread.thread_id,

@@ -24,21 +24,20 @@ async def test_instance_id_from_client_updates_thread():
     # Mock get_thread to return our thread
     with patch.object(thread_manager, "get_thread", return_value=thread_state):
         with patch.object(thread_manager, "update_thread_context") as mock_update:
-            with patch.object(thread_manager, "add_thread_update"):
-                # Simulate what happens in process_agent_turn
-                instance_id_from_client = "redis-prod-123"
-                context = {"instance_id": instance_id_from_client}
+            # Simulate what happens in process_agent_turn
+            instance_id_from_client = "redis-prod-123"
+            context = {"instance_id": instance_id_from_client}
 
-                # This is what the task does
-                if context and context.get("instance_id"):
-                    await thread_manager.update_thread_context(
-                        "test-thread-123", {"instance_id": instance_id_from_client}, merge=True
-                    )
-
-                # Verify update_thread_context was called with correct params
-                mock_update.assert_called_once_with(
-                    "test-thread-123", {"instance_id": "redis-prod-123"}, merge=True
+            # This is what the task does
+            if context and context.get("instance_id"):
+                await thread_manager.update_thread_context(
+                    "test-thread-123", {"instance_id": instance_id_from_client}, merge=True
                 )
+
+            # Verify update_thread_context was called with correct params
+            mock_update.assert_called_once_with(
+                "test-thread-123", {"instance_id": "redis-prod-123"}, merge=True
+            )
 
 
 @pytest.mark.asyncio

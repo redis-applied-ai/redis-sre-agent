@@ -120,7 +120,7 @@ The fastest way to get started is to clone Redis docs locally and scrape from th
 
 ```bash
 # Download Redis docs (one-time setup)
-./scripts/setup_redis_docs_local.sh
+uv run ./scripts/setup_redis_docs_local.sh
 
 # This clones redis/docs repo and runs the scraper
 # Artifacts saved to ./artifacts/YYYY-MM-DD/

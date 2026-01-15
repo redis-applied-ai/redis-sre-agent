@@ -39,6 +39,8 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev && \
     mkdir -p /app/artifacts && \
+    # Ensure /opt/uv exists even if uv uses the system Python
+    mkdir -p /opt/uv && \
     # Attempt to build artifacts, but don't fail build if it requires runtime services
     (uv run --no-sync redis-sre-agent pipeline prepare-sources \
     --source-dir /app/source_documents \
@@ -70,6 +72,7 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
 # Install ONLY runtime system dependencies
 # We repeat the Docker/Redis install here because they are needed at runtime.
+# Node.js is required for npx-based MCP servers (e.g., GitHub MCP server).
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -80,8 +83,9 @@ RUN apt-get update && apt-get install -y \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get update \
-    && apt-get install -y docker-ce-cli \
+    && apt-get install -y docker-ce-cli nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

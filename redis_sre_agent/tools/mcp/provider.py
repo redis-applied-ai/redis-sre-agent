@@ -134,8 +134,12 @@ class MCPToolProvider(ToolProvider):
             if self._server_config.command:
                 # Stdio transport - spawn a subprocess
                 # Merge parent environment with config-specified env so that
-                # env vars like OPENAI_API_KEY are inherited by the subprocess
-                merged_env = {**os.environ, **(self._server_config.env or {})}
+                # env vars like OPENAI_API_KEY are inherited by the subprocess.
+                # Expand ${VAR} patterns in config env values (e.g., ${GITHUB_PERSONAL_ACCESS_TOKEN})
+                config_env = {}
+                for key, value in (self._server_config.env or {}).items():
+                    config_env[key] = os.path.expandvars(value)
+                merged_env = {**os.environ, **config_env}
                 server_params = StdioServerParameters(
                     command=self._server_config.command,
                     args=self._server_config.args or [],

@@ -1,15 +1,15 @@
-import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
 import {
-  Card,
-  CardHeader,
-  CardContent,
   Button,
-  Loader,
+  Card,
+  CardContent,
+  CardHeader,
   ErrorMessage,
+  Loader,
 } from "@radar/ui-kit";
-import Instances from "./Instances";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { sreAgentApi } from "../services/sreAgentApi";
+import Instances from "./Instances";
 
 interface KnowledgeSettings {
   chunk_size: number;
@@ -430,7 +430,7 @@ const Settings = () => {
                       </label>
                       <input
                         type="url"
-                        defaultValue="http://localhost:8000"
+                        defaultValue="http://localhost:8080"
                         className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
                       />
                     </div>

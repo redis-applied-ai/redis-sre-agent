@@ -10,7 +10,7 @@ or safety-evaluation chains.
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
@@ -24,7 +24,6 @@ from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.llm_helpers import create_llm, create_mini_llm
 from redis_sre_agent.core.progress import (
-    CallbackEmitter,
     NullEmitter,
     ProgressEmitter,
 )
@@ -41,32 +40,53 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent. A user is asking about a specific Redis deployment.
-You have access to the full toolset needed to inspect the deployment and answer questions about how Redis behaves in this context.
+CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.
 
-## Your Approach
-- Respond quickly and directly to the user's question
-- Use tools to gather the specific information needed
-- Don't perform exhaustive diagnostics unless asked
-- Focus on answering what was asked, not a full health assessment
+## Your Approach - ITERATIVE INVESTIGATION
 
-## Tool Usage - BATCH YOUR CALLS
-**CRITICAL: Call multiple tools in a single response whenever possible.**
+Work step by step. Don't try to gather all information at once.
 
-When you need to gather information, request ALL relevant tools at once:
-- ❌ WRONG: Call one tool, wait, call another, wait...
-- ✅ CORRECT: Call get_detailed_redis_diagnostics, get_cluster_info, and search_knowledge_base together in one turn
+1. **Make a few targeted tool calls** (2-4 max per turn)
+2. **Analyze the results** - think about what you learned
+3. **Decide what to do next** - either answer or make more targeted calls
+4. **Repeat** until you have enough information to answer
 
-Think about what information you'll need and request it all at once. This is much faster.
+This iterative approach prevents overwhelming context limits and produces better analysis.
+
+## Tool Calling Guidelines
+
+**Per turn, call at most 3-4 tools.** Analyze results before calling more.
+
+For Redis diagnostics:
+- Start with `get_detailed_redis_diagnostics` - it gives a comprehensive overview
+- Add `get_database` or `get_cluster_info` for Redis Enterprise/Cloud config details
+- Check `search_knowledge_base` if you need troubleshooting guidance
+
+For code/repo investigation:
+- **First:** One targeted search (e.g., `search_code` with specific query)
+- **Analyze:** Look at search results, identify the most relevant file
+- **Then:** Fetch that one file with `get_file_contents`
+- **Repeat:** If needed, fetch another file based on what you learned
+
+For metrics/logs:
+- Be specific with queries - broad queries return too much data
+- Fetch one metric or log query at a time
+
+## What NOT to Do
+
+- ❌ Don't call 5+ tools in parallel
+- ❌ Don't run multiple variations of the same search
+- ❌ Don't fetch multiple files at once - read one, analyze, then decide if you need more
+- ❌ Don't try to gather everything upfront
 
 ## Guidelines
-- Call tools as needed to answer the question
-- Keep responses concise and actionable
-- Cite specific data from tool results
-- If the user wants a comprehensive health check, suggest they ask for a "full triage" instead
+- Answer questions iteratively - it's OK to take multiple turns
+- Start with the most likely source of relevant info
+- Be conversational about what you're finding and what you'll check next
+- For truly exhaustive multi-topic analysis, suggest "deep triage"
 
 ## Redis Enterprise / Redis Cloud Notes
-- For managed Redis (Enterprise or Cloud), INFO output can be misleading
+- For managed Redis, INFO output can be misleading
 - Use the Admin REST API tools for accurate configuration details
 - Don't suggest CONFIG SET for managed deployments
 """
@@ -99,7 +119,6 @@ class ChatAgent:
         self,
         redis_instance: Optional[RedisInstance] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
-        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         exclude_mcp_categories: Optional[List["ToolCapability"]] = None,
         support_package_path: Optional["Path"] = None,
     ):
@@ -108,7 +127,6 @@ class ChatAgent:
         Args:
             redis_instance: Optional Redis instance for context
             progress_emitter: Emitter for progress/notification updates
-            progress_callback: DEPRECATED - use progress_emitter instead
             exclude_mcp_categories: Optional list of MCP tool capability categories to exclude.
                 Use this to filter out specific types of MCP tools. Common categories:
                 METRICS, LOGS, TICKETS, REPOS, TRACES, DIAGNOSTICS, KNOWLEDGE, UTILITIES.
@@ -121,13 +139,7 @@ class ChatAgent:
         self.exclude_mcp_categories = exclude_mcp_categories
         self.support_package_path = support_package_path
 
-        # Handle emitter (prefer progress_emitter, fall back to callback wrapper)
-        if progress_emitter is not None:
-            self._emitter = progress_emitter
-        elif progress_callback is not None:
-            self._emitter = CallbackEmitter(progress_callback)
-        else:
-            self._emitter = NullEmitter()
+        self._emitter = progress_emitter if progress_emitter is not None else NullEmitter()
 
         self.llm = create_llm()
         self.mini_llm = create_mini_llm()
@@ -367,7 +379,6 @@ class ChatAgent:
         max_iterations: int = 10,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
-        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """Process a query with quick tool access.
@@ -379,7 +390,6 @@ class ChatAgent:
             max_iterations: Maximum agent iterations (default 10)
             context: Additional context (e.g., instance_id)
             progress_emitter: Emitter for progress/notification updates
-            progress_callback: DEPRECATED - use progress_emitter instead
             conversation_history: Optional previous messages for context
 
         Returns:
@@ -388,12 +398,7 @@ class ChatAgent:
         logger.info(f"Chat agent processing query for user {user_id}")
 
         # Use provided emitter, or fall back to instance emitter
-        if progress_emitter is not None:
-            emitter = progress_emitter
-        elif progress_callback is not None:
-            emitter = CallbackEmitter(progress_callback)
-        else:
-            emitter = self._emitter
+        emitter = progress_emitter if progress_emitter is not None else self._emitter
 
         # Get cache client if tool caching is enabled
         cache_client = None

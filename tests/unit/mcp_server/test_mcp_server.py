@@ -16,6 +16,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_knowledge_query,
     redis_sre_knowledge_search,
     redis_sre_list_instances,
+    redis_sre_list_threads,
 )
 
 
@@ -40,6 +41,7 @@ class TestMCPServerSetup:
         assert "redis_sre_knowledge_search" in tool_names
         assert "redis_sre_knowledge_query" in tool_names
         assert "redis_sre_get_thread" in tool_names
+        assert "redis_sre_list_threads" in tool_names
         assert "redis_sre_get_task_status" in tool_names
         assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
@@ -617,6 +619,385 @@ class TestGetThreadTool:
 
             assert "error" in result
             assert "not found" in result["error"]
+
+
+class TestListThreadsTool:
+    """Test the redis_sre_list_threads MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_list_threads_success(self):
+        """Test successful thread listing."""
+        from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
+
+        # Mock thread summaries returned by ThreadManager.list_threads
+        mock_summaries = [
+            {
+                "thread_id": "thread-123",
+                "subject": "High memory usage",
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T01:00:00Z",
+                "user_id": "user-1",
+                "instance_id": "redis-prod-1",
+                "tags": [],
+                "priority": 0,
+            },
+            {
+                "thread_id": "thread-456",
+                "subject": "Slow queries",
+                "created_at": "2024-01-02T00:00:00Z",
+                "updated_at": "2024-01-02T02:00:00Z",
+                "user_id": "user-1",
+                "instance_id": "redis-prod-2",
+                "tags": [],
+                "priority": 0,
+            },
+        ]
+
+        # Mock Thread objects for enrichment
+        mock_thread_123 = Thread(
+            thread_id="thread-123",
+            messages=[
+                Message(role="user", content="Check memory"),
+                Message(role="assistant", content="Analyzing memory usage..."),
+            ],
+            metadata=ThreadMetadata(),
+        )
+        mock_thread_456 = Thread(
+            thread_id="thread-456",
+            messages=[
+                Message(role="user", content="Why slow?"),
+            ],
+            metadata=ThreadMetadata(),
+        )
+
+        async def mock_get_thread(thread_id):
+            if thread_id == "thread-123":
+                return mock_thread_123
+            elif thread_id == "thread-456":
+                return mock_thread_456
+            return None
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
+            mock_list.return_value = mock_summaries
+            mock_get.side_effect = mock_get_thread
+
+            result = await redis_sre_list_threads()
+
+            assert result["total"] == 2
+            assert len(result["threads"]) == 2
+            assert result["threads"][0]["thread_id"] == "thread-123"
+            assert result["threads"][0]["subject"] == "High memory usage"
+            assert result["threads"][0]["message_count"] == 2
+            assert result["threads"][1]["message_count"] == 1
+            assert result["limit"] == 50
+            assert result["offset"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_threads_with_user_filter(self):
+        """Test listing threads filtered by user_id."""
+        mock_summaries = [
+            {
+                "thread_id": "thread-123",
+                "subject": "User 1 thread",
+                "user_id": "user-1",
+                "instance_id": None,
+                "tags": [],
+                "priority": 0,
+            }
+        ]
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
+            mock_list.return_value = mock_summaries
+            mock_get.return_value = None
+
+            result = await redis_sre_list_threads(user_id="user-1")
+
+            # Verify user_id was passed to list_threads
+            mock_list.assert_called_once()
+            call_kwargs = mock_list.call_args.kwargs
+            assert call_kwargs["user_id"] == "user-1"
+
+            assert result["total"] == 1
+            assert result["threads"][0]["user_id"] == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_list_threads_with_instance_filter(self):
+        """Test listing threads filtered by instance_id."""
+        # Return threads with different instance_ids
+        mock_summaries = [
+            {
+                "thread_id": "thread-123",
+                "subject": "Prod issue",
+                "user_id": None,
+                "instance_id": "redis-prod-1",
+                "tags": [],
+                "priority": 0,
+            },
+            {
+                "thread_id": "thread-456",
+                "subject": "Staging issue",
+                "user_id": None,
+                "instance_id": "redis-staging-1",
+                "tags": [],
+                "priority": 0,
+            },
+        ]
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
+            mock_list.return_value = mock_summaries
+            mock_get.return_value = None
+
+            # Filter to only redis-prod-1
+            result = await redis_sre_list_threads(instance_id="redis-prod-1")
+
+            # Should filter in-memory to only matching instance
+            assert result["total"] == 1
+            assert result["threads"][0]["instance_id"] == "redis-prod-1"
+
+    @pytest.mark.asyncio
+    async def test_list_threads_pagination(self):
+        """Test thread listing with pagination parameters."""
+        mock_summaries = []
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+        ):
+            mock_list.return_value = mock_summaries
+
+            result = await redis_sre_list_threads(limit=10, offset=20)
+
+            # Verify pagination params passed correctly
+            mock_list.assert_called_once()
+            call_kwargs = mock_list.call_args.kwargs
+            assert call_kwargs["limit"] == 10
+            assert call_kwargs["offset"] == 20
+
+            assert result["limit"] == 10
+            assert result["offset"] == 20
+
+    @pytest.mark.asyncio
+    async def test_list_threads_limit_clamped(self):
+        """Test that limit is clamped to valid range (1-100)."""
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+        ):
+            mock_list.return_value = []
+
+            # Test with too high limit (max is 100)
+            result = await redis_sre_list_threads(limit=200)
+            call_kwargs = mock_list.call_args.kwargs
+            assert call_kwargs["limit"] == 100
+            assert result["limit"] == 100
+
+            # Test with too low limit (min is 1)
+            result = await redis_sre_list_threads(limit=0)
+            call_kwargs = mock_list.call_args.kwargs
+            assert call_kwargs["limit"] == 1
+            assert result["limit"] == 1
+
+            # Test with negative offset (clamped to 0)
+            result = await redis_sre_list_threads(offset=-5)
+            call_kwargs = mock_list.call_args.kwargs
+            assert call_kwargs["offset"] == 0
+            assert result["offset"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_threads_empty(self):
+        """Test empty thread list."""
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+        ):
+            mock_list.return_value = []
+
+            result = await redis_sre_list_threads()
+
+            assert result["total"] == 0
+            assert result["threads"] == []
+            assert result["has_more"] is False
+
+    @pytest.mark.asyncio
+    async def test_list_threads_has_more_pagination_hint(self):
+        """Test has_more is True when result count equals limit."""
+        # When we get exactly `limit` results, there may be more
+        mock_summaries = [
+            {"thread_id": f"thread-{i}", "subject": f"Thread {i}", "tags": [], "priority": 0}
+            for i in range(5)
+        ]
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
+            mock_list.return_value = mock_summaries
+            mock_get.return_value = None
+
+            result = await redis_sre_list_threads(limit=5)
+
+            assert result["has_more"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_threads_error_handling(self):
+        """Test list threads error handling."""
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+        ):
+            mock_list.side_effect = Exception("Redis connection failed")
+
+            result = await redis_sre_list_threads()
+
+            assert "error" in result
+            assert result["threads"] == []
+            assert result["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_threads_enrichment_error_fallback(self):
+        """Test that enrichment errors don't fail the entire listing."""
+        from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
+
+        mock_summaries = [
+            {
+                "thread_id": "thread-ok",
+                "subject": "Works",
+                "tags": [],
+                "priority": 0,
+            },
+            {
+                "thread_id": "thread-fail",
+                "subject": "Fails enrichment",
+                "tags": [],
+                "priority": 0,
+            },
+        ]
+
+        mock_thread_ok = Thread(
+            thread_id="thread-ok",
+            messages=[Message(role="user", content="Hi")],
+            metadata=ThreadMetadata(),
+        )
+
+        async def mock_get_thread(thread_id):
+            if thread_id == "thread-ok":
+                return mock_thread_ok
+            elif thread_id == "thread-fail":
+                raise Exception("Enrichment failed")
+            return None
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
+            mock_list.return_value = mock_summaries
+            mock_get.side_effect = mock_get_thread
+
+            result = await redis_sre_list_threads()
+
+            # Both threads should be in results
+            assert result["total"] == 2
+            # First thread enriched successfully
+            assert result["threads"][0]["message_count"] == 1
+            # Second thread fell back to 0
+            assert result["threads"][1]["message_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_threads_latest_message_truncation(self):
+        """Test that latest_message is truncated to 100 chars."""
+        from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
+
+        long_content = "A" * 200  # 200 character message
+
+        mock_summaries = [
+            {"thread_id": "thread-123", "subject": "Long message", "tags": [], "priority": 0}
+        ]
+
+        mock_thread = Thread(
+            thread_id="thread-123",
+            messages=[
+                Message(role="user", content="Hello"),
+                Message(role="assistant", content=long_content),
+            ],
+            metadata=ThreadMetadata(),
+        )
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.list_threads",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "redis_sre_agent.core.threads.ThreadManager.get_thread",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
+            mock_list.return_value = mock_summaries
+            mock_get.return_value = mock_thread
+
+            result = await redis_sre_list_threads()
+
+            # Latest message should be truncated
+            latest = result["threads"][0]["latest_message"]
+            assert len(latest) == 103  # 100 chars + "..."
+            assert latest.endswith("...")
 
 
 class TestGetTaskStatusTool:
