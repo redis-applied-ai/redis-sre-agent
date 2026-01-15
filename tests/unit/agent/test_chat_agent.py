@@ -9,10 +9,7 @@ from redis_sre_agent.agent.chat_agent import (
     get_chat_agent,
 )
 from redis_sre_agent.core.instances import RedisInstance
-from redis_sre_agent.core.progress import (
-    CallbackEmitter,
-    NullEmitter,
-)
+from redis_sre_agent.core.progress import NullEmitter
 
 
 class TestChatAgentInitialization:
@@ -72,44 +69,6 @@ class TestChatAgentInitialization:
         emitter = NullEmitter()
         agent = ChatAgent(progress_emitter=emitter)
 
-        assert agent._emitter is emitter
-
-    @patch("redis_sre_agent.agent.chat_agent.create_llm")
-    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
-    def test_agent_initializes_with_progress_callback_deprecated(
-        self, mock_create_mini_llm, mock_create_llm
-    ):
-        """Test that ChatAgent still accepts deprecated progress_callback."""
-        mock_llm = MagicMock()
-        mock_create_llm.return_value = mock_llm
-        mock_create_mini_llm.return_value = mock_llm
-
-        async def my_callback(msg, type):
-            pass
-
-        agent = ChatAgent(progress_callback=my_callback)
-
-        # Should wrap callback in CallbackEmitter
-        assert isinstance(agent._emitter, CallbackEmitter)
-
-    @patch("redis_sre_agent.agent.chat_agent.create_llm")
-    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
-    def test_progress_emitter_takes_precedence_over_callback(
-        self, mock_create_mini_llm, mock_create_llm
-    ):
-        """Test that progress_emitter takes precedence over progress_callback."""
-        mock_llm = MagicMock()
-        mock_create_llm.return_value = mock_llm
-        mock_create_mini_llm.return_value = mock_llm
-
-        emitter = NullEmitter()
-
-        async def my_callback(msg, type):
-            pass
-
-        agent = ChatAgent(progress_emitter=emitter, progress_callback=my_callback)
-
-        # Should use the emitter, not the callback
         assert agent._emitter is emitter
 
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
@@ -195,9 +154,14 @@ class TestChatAgentSystemPrompt:
     def test_system_prompt_is_concise(self):
         """Test that the system prompt is focused and concise."""
         assert "Redis SRE agent" in CHAT_SYSTEM_PROMPT
-        assert "quick" in CHAT_SYSTEM_PROMPT.lower() or "fast" in CHAT_SYSTEM_PROMPT.lower()
+        # Should mention an approach methodology (iterative, strategic, focused, etc.)
+        prompt_lower = CHAT_SYSTEM_PROMPT.lower()
+        assert any(
+            term in prompt_lower
+            for term in ["iterative", "strategic", "focused", "step by step", "targeted"]
+        )
         # Should mention full triage as alternative
-        assert "triage" in CHAT_SYSTEM_PROMPT.lower()
+        assert "triage" in prompt_lower
 
     def test_system_prompt_mentions_tools(self):
         """Test that the system prompt mentions tool usage."""
@@ -287,3 +251,150 @@ class TestChatAgentWorkflowBuild:
         )
 
         assert workflow is not None
+
+
+class TestChatAgentExpandEvidenceTool:
+    """Test the _build_expand_evidence_tool method."""
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_expand_evidence_tool_returns_full_data(self, mock_create_mini_llm, mock_create_llm):
+        """Test that expand_evidence tool returns full data for known key."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        envelopes = [
+            {"tool_key": "redis_info_1", "name": "get_redis_info", "data": {"memory": "1GB"}},
+            {"tool_key": "cluster_info_2", "name": "get_cluster_info", "data": {"nodes": 3}},
+        ]
+
+        tool_def = agent._build_expand_evidence_tool(envelopes)
+
+        # Get the function from the tool definition
+        expand_fn = tool_def["func"]
+
+        # Test retrieving known key
+        result = expand_fn("redis_info_1")
+        assert result["status"] == "success"
+        assert result["tool_key"] == "redis_info_1"
+        assert result["full_data"] == {"memory": "1GB"}
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_expand_evidence_tool_error_for_unknown_key(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        """Test that expand_evidence tool returns error for unknown key."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        envelopes = [
+            {"tool_key": "redis_info_1", "name": "get_redis_info", "data": {"memory": "1GB"}},
+        ]
+
+        tool_def = agent._build_expand_evidence_tool(envelopes)
+        expand_fn = tool_def["func"]
+
+        # Test retrieving unknown key
+        result = expand_fn("unknown_key")
+        assert result["status"] == "error"
+        assert "Unknown tool_key" in result["error"]
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_expand_evidence_tool_empty_envelopes(self, mock_create_mini_llm, mock_create_llm):
+        """Test expand_evidence tool with empty envelopes."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        tool_def = agent._build_expand_evidence_tool([])
+        expand_fn = tool_def["func"]
+
+        result = expand_fn("any_key")
+        assert result["status"] == "error"
+
+
+class TestChatAgentExcludeMcpCategories:
+    """Test exclude_mcp_categories parameter."""
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_stores_exclude_categories(self, mock_create_mini_llm, mock_create_llm):
+        """Test that agent stores exclude_mcp_categories."""
+        from redis_sre_agent.tools.models import ToolCapability
+
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        exclude = [ToolCapability.METRICS, ToolCapability.LOGS]
+        agent = ChatAgent(exclude_mcp_categories=exclude)
+
+        assert agent.exclude_mcp_categories == exclude
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_none_exclude_categories(self, mock_create_mini_llm, mock_create_llm):
+        """Test that agent handles None exclude_mcp_categories."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent(exclude_mcp_categories=None)
+
+        assert agent.exclude_mcp_categories is None
+
+
+class TestChatAgentSupportPackage:
+    """Test support_package_path parameter."""
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_stores_support_package_path(self, mock_create_mini_llm, mock_create_llm):
+        """Test that agent stores support_package_path."""
+        from pathlib import Path
+
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        path = Path("/tmp/support_package")
+        agent = ChatAgent(support_package_path=path)
+
+        assert agent.support_package_path == path
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_none_support_package_path(self, mock_create_mini_llm, mock_create_llm):
+        """Test that agent handles None support_package_path."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent(support_package_path=None)
+
+        assert agent.support_package_path is None
+
+
+class TestChatAgentEnvelopeSummaryThreshold:
+    """Test ENVELOPE_SUMMARY_THRESHOLD constant."""
+
+    def test_threshold_is_positive(self):
+        """Test that ENVELOPE_SUMMARY_THRESHOLD is a positive number."""
+        assert ChatAgent.ENVELOPE_SUMMARY_THRESHOLD > 0
+
+    def test_threshold_is_reasonable(self):
+        """Test that ENVELOPE_SUMMARY_THRESHOLD is a reasonable value."""
+        # Should be at least 100 chars to be useful
+        assert ChatAgent.ENVELOPE_SUMMARY_THRESHOLD >= 100
+        # Should not be too large (e.g., > 10000)
+        assert ChatAgent.ENVELOPE_SUMMARY_THRESHOLD <= 10000

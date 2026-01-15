@@ -1127,9 +1127,6 @@ const Triage = () => {
                   {/* Instance Selection */}
                   {instances.length > 0 && (
                     <div className="mb-3">
-                      <label className="block text-redis-sm font-medium text-foreground mb-2">
-                        Redis Instance (optional)
-                      </label>
                       <select
                         value={selectedInstanceId}
                         onChange={(e) => setSelectedInstanceId(e.target.value)}
@@ -1146,10 +1143,7 @@ const Triage = () => {
                         ))}
                       </select>
                       <p className="text-redis-xs text-redis-dusk-04 mt-1">
-                        Select a Redis instance to provide context for
-                        troubleshooting. The agent will have access to this
-                        instance's configuration and can perform targeted
-                        diagnostics.
+                        Select a Redis instance for troubleshooting.{" "}
                       </p>
                     </div>
                   )}

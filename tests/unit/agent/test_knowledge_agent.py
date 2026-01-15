@@ -107,3 +107,118 @@ class TestKnowledgeAgent:
         assert "document_hash" in params
         assert "current_chunk_index" in params
         assert "context_window" in params
+
+
+class TestKnowledgeAgentState:
+    """Test KnowledgeAgentState TypedDict."""
+
+    def test_state_has_required_fields(self):
+        """Test that KnowledgeAgentState has all required fields."""
+        from redis_sre_agent.agent.knowledge_agent import KnowledgeAgentState
+
+        state: KnowledgeAgentState = {
+            "messages": [],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+        }
+
+        assert "messages" in state
+        assert "session_id" in state
+        assert "user_id" in state
+        assert "current_tool_calls" in state
+        assert "iteration_count" in state
+        assert "max_iterations" in state
+        assert "tool_calls_executed" in state
+
+
+class TestKnowledgeSystemPrompt:
+    """Test the knowledge agent system prompt."""
+
+    def test_system_prompt_exists(self):
+        """Test that the system prompt is defined."""
+        from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
+
+        assert KNOWLEDGE_SYSTEM_PROMPT is not None
+        assert len(KNOWLEDGE_SYSTEM_PROMPT) > 100
+
+    def test_system_prompt_mentions_knowledge_base(self):
+        """Test that the system prompt mentions knowledge base."""
+        from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
+
+        assert "knowledge base" in KNOWLEDGE_SYSTEM_PROMPT.lower()
+
+    def test_system_prompt_mentions_sre(self):
+        """Test that the system prompt mentions SRE."""
+        from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
+
+        assert "SRE" in KNOWLEDGE_SYSTEM_PROMPT
+
+    def test_system_prompt_no_instance_access(self):
+        """Test that the system prompt clarifies no instance access."""
+        from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
+
+        assert (
+            "NOT have access" in KNOWLEDGE_SYSTEM_PROMPT
+            or "do not have access" in KNOWLEDGE_SYSTEM_PROMPT.lower()
+        )
+
+
+class TestKnowledgeAgentMethods:
+    """Test KnowledgeOnlyAgent methods."""
+
+    @pytest.mark.asyncio
+    async def test_agent_has_llm(self):
+        """Test that agent has LLM attribute."""
+        agent = KnowledgeOnlyAgent()
+        assert agent.llm is not None
+
+    @pytest.mark.asyncio
+    async def test_agent_has_settings(self):
+        """Test that agent has settings attribute."""
+        agent = KnowledgeOnlyAgent()
+        assert agent.settings is not None
+
+    @pytest.mark.asyncio
+    async def test_agent_has_emitter(self):
+        """Test that agent has emitter attribute."""
+        agent = KnowledgeOnlyAgent()
+        assert agent._emitter is not None
+
+    @pytest.mark.asyncio
+    async def test_agent_with_custom_emitter(self):
+        """Test agent initialization with custom emitter."""
+        from unittest.mock import MagicMock
+
+        from redis_sre_agent.core.progress import ProgressEmitter
+
+        mock_emitter = MagicMock(spec=ProgressEmitter)
+        agent = KnowledgeOnlyAgent(progress_emitter=mock_emitter)
+        assert agent._emitter is mock_emitter
+
+    @pytest.mark.asyncio
+    async def test_build_workflow_returns_state_graph(self):
+        """Test that _build_workflow returns a StateGraph."""
+        from unittest.mock import MagicMock
+
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        agent = KnowledgeOnlyAgent()
+
+        # Create mock tool manager
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+
+        # Create mock LLM with tools
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+
+        # Create emitter
+        emitter = NullEmitter()
+
+        workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
+        assert workflow is not None

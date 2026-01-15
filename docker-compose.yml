@@ -175,6 +175,9 @@ services:
         condition: service_started
       litellm:
         condition: service_healthy
+      tempo:
+        condition: service_started  # no health check configured yet
+
     volumes:
       - .env:/app/.env
       - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
@@ -216,6 +219,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for log access
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
+      - uv_cache:/root/.cache/uv  # Persist UV cache for MCP server deps
     # Run the worker directly from the project virtualenv instead of via
     # `uv run` to avoid querying /app/.venv/bin/python3 at runtime.
     command: redis-sre-agent worker
@@ -428,3 +432,4 @@ volumes:
   loki_data:
   tempo_data:
   litellm_db_data:
+  uv_cache:  # Persist UV cache for MCP server dependencies

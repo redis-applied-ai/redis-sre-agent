@@ -101,3 +101,86 @@ async def test_knowledge_provider_context_manager():
         # Should be able to create schemas
         schemas = provider.create_tool_schemas()
         assert len(schemas) == 4  # search, ingest, get_all_fragments, get_related_fragments
+
+
+class TestKnowledgeProviderProperties:
+    """Test KnowledgeBaseToolProvider properties."""
+
+    def test_requires_redis_instance_is_false(self):
+        """Test that requires_redis_instance returns False."""
+        provider = KnowledgeBaseToolProvider()
+        assert provider.requires_redis_instance is False
+
+    def test_provider_name_is_knowledge(self):
+        """Test provider_name is 'knowledge'."""
+        provider = KnowledgeBaseToolProvider()
+        assert provider.provider_name == "knowledge"
+
+    def test_redis_instance_is_none_by_default(self):
+        """Test redis_instance is None by default."""
+        provider = KnowledgeBaseToolProvider()
+        assert provider.redis_instance is None
+
+    def test_config_is_none_by_default(self):
+        """Test config is None by default."""
+        provider = KnowledgeBaseToolProvider()
+        assert provider.config is None
+
+
+class TestKnowledgeProviderGetAllFragmentsSchema:
+    """Test get_all_fragments tool schema."""
+
+    def test_get_all_fragments_schema_exists(self):
+        """Test get_all_fragments tool schema exists."""
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        fragment_schemas = [s for s in schemas if "get_all_fragments" in s.name]
+        assert len(fragment_schemas) == 1
+
+    def test_get_all_fragments_has_required_params(self):
+        """Test get_all_fragments has required parameters."""
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        schema = next(s for s in schemas if "get_all_fragments" in s.name)
+        assert "document_hash" in schema.parameters["required"]
+
+
+class TestKnowledgeProviderGetRelatedFragmentsSchema:
+    """Test get_related_fragments tool schema."""
+
+    def test_get_related_fragments_schema_exists(self):
+        """Test get_related_fragments tool schema exists."""
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        related_schemas = [s for s in schemas if "get_related_fragments" in s.name]
+        assert len(related_schemas) == 1
+
+    def test_get_related_fragments_has_required_params(self):
+        """Test get_related_fragments has required parameters."""
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        schema = next(s for s in schemas if "get_related_fragments" in s.name)
+        assert "document_hash" in schema.parameters["required"]
+        assert "chunk_index" in schema.parameters["required"]
+
+
+class TestKnowledgeProviderToolCapabilities:
+    """Test knowledge tool capabilities."""
+
+    def test_all_tools_have_knowledge_capability(self):
+        """Test all tools have KNOWLEDGE capability."""
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        for schema in schemas:
+            assert schema.capability == ToolCapability.KNOWLEDGE
+
+    def test_tool_count_is_four(self):
+        """Test there are exactly 4 tools."""
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+        assert len(schemas) == 4

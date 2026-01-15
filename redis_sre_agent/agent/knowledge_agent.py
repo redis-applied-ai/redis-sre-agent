@@ -9,7 +9,7 @@ knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus
 """
 
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -20,7 +20,6 @@ from opentelemetry import trace
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.progress import (
-    CallbackEmitter,
     NullEmitter,
     ProgressEmitter,
 )
@@ -89,23 +88,15 @@ class KnowledgeOnlyAgent:
     def __init__(
         self,
         progress_emitter: Optional[ProgressEmitter] = None,
-        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ):
         """Initialize the Knowledge-only SRE agent.
 
         Args:
             progress_emitter: Emitter for progress/notification updates
-            progress_callback: DEPRECATED - use progress_emitter instead
         """
         self.settings = settings
 
-        # Handle emitter (prefer progress_emitter, fall back to callback wrapper)
-        if progress_emitter is not None:
-            self._emitter = progress_emitter
-        elif progress_callback is not None:
-            self._emitter = CallbackEmitter(progress_callback)
-        else:
-            self._emitter = NullEmitter()
+        self._emitter = progress_emitter if progress_emitter is not None else NullEmitter()
 
         # LLM optimized for knowledge tasks
         self.llm = create_llm()
@@ -402,7 +393,6 @@ class KnowledgeOnlyAgent:
         max_iterations: int = 5,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
-        progress_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
     ) -> str:
         """
@@ -415,7 +405,6 @@ class KnowledgeOnlyAgent:
             max_iterations: Maximum number of agent iterations
             context: Additional context (currently ignored for knowledge-only agent)
             progress_emitter: Emitter for progress/notification updates
-            progress_callback: DEPRECATED - use progress_emitter instead
             conversation_history: Optional list of previous messages for context
 
         Returns:
@@ -424,12 +413,7 @@ class KnowledgeOnlyAgent:
         logger.info(f"Processing knowledge query for user {user_id}")
 
         # Use provided emitter, or fall back to instance emitter
-        if progress_emitter is not None:
-            emitter = progress_emitter
-        elif progress_callback is not None:
-            emitter = CallbackEmitter(progress_callback)
-        else:
-            emitter = self._emitter
+        emitter = progress_emitter if progress_emitter is not None else self._emitter
 
         # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:

@@ -7,9 +7,9 @@ which agent should handle them based on context and query content.
 
 import logging
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.core.llm_helpers import create_nano_llm
 
@@ -27,10 +27,33 @@ class AgentType(Enum):
     REDIS_FOCUSED = "redis_triage"  # Alias for REDIS_TRIAGE
 
 
+def _format_conversation_context(
+    conversation_history: Optional[List[BaseMessage]], max_messages: int = 4
+) -> str:
+    """Format recent conversation history for the router to understand context."""
+    if not conversation_history:
+        return ""
+
+    # Take last N messages for context
+    recent = conversation_history[-max_messages:]
+    if not recent:
+        return ""
+
+    lines = ["\n\nRecent conversation context:"]
+    for msg in recent:
+        role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+        # Truncate long messages
+        content = msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+        lines.append(f"{role}: {content}")
+
+    return "\n".join(lines)
+
+
 async def route_to_appropriate_agent(
     query: str,
     context: Optional[Dict[str, Any]] = None,
     user_preferences: Optional[Dict[str, Any]] = None,
+    conversation_history: Optional[List[BaseMessage]] = None,
 ) -> AgentType:
     """
     Route a query to the appropriate agent using a fast LLM categorization.
@@ -44,6 +67,7 @@ async def route_to_appropriate_agent(
         query: The user's query text
         context: Additional context including instance_id, priority, etc.
         user_preferences: User preferences for agent selection
+        conversation_history: Previous messages in the conversation for context
 
     Returns:
         AgentType indicating which agent should handle the query
@@ -62,11 +86,15 @@ async def route_to_appropriate_agent(
     if not has_instance:
         # Use LLM to decide if query needs instance access or is knowledge-only
         try:
-            llm = create_nano_llm(timeout=10.0, temperature=0)
+            llm = create_nano_llm(timeout=10.0)
+
+            # Include conversation context if available
+            context_str = _format_conversation_context(conversation_history)
 
             system_prompt = """You are a query categorization system for a Redis SRE agent.
 
 Categorize if this query requires access to a live Redis instance or is just seeking general knowledge.
+Consider the conversation context if provided - a follow-up like "yes" or "check that" refers to the previous discussion.
 
 1. NEEDS_INSTANCE: Queries that require access to a specific Redis instance for diagnostics, monitoring, or troubleshooting.
    Examples: "Check my Redis memory", "Why is Redis slow?", "Show me the slowlog"
@@ -76,9 +104,10 @@ Categorize if this query requires access to a live Redis instance or is just see
 
 Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
 
+            query_with_context = f"Categorize this query: {query}{context_str}"
             messages = [
                 SystemMessage(content=system_prompt),
-                HumanMessage(content=f"Categorize this query: {query}"),
+                HumanMessage(content=query_with_context),
             ]
 
             response = await llm.ainvoke(messages)
@@ -105,44 +134,59 @@ Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
 
     # 3. Use LLM to categorize triage vs chat
     try:
-        llm = create_nano_llm(timeout=10.0, temperature=0)
+        llm = create_nano_llm(timeout=10.0)
+
+        # Include conversation context if available
+        context_str = _format_conversation_context(conversation_history)
 
         system_prompt = """You are a query categorization system for a Redis SRE agent.
 
-The user has a Redis instance available. Determine what kind of agent should handle their query:
+The user has a Redis instance available. Determine what kind of agent should handle their query.
+Consider the conversation context if provided - a follow-up like "yes", "sure", or "check that" refers to the previous discussion.
 
-1. TRIAGE: Full health check, comprehensive diagnostics, or in-depth analysis.
-   Trigger words: "full health check", "triage", "comprehensive", "full analysis", "complete diagnostic", "thorough check", "audit"
-   Examples:
-   - "Run a full health check on my Redis"
-   - "I need a comprehensive triage of this instance"
-   - "Do a complete diagnostic"
-   - "Give me a thorough analysis"
+1. DEEP_TRIAGE: ONLY use this for explicit requests for deep, comprehensive, or multi-topic analysis.
+   Trigger phrases (must explicitly appear):
+   - "deep triage", "deep research", "deep analysis", "deep dive"
+   - "go deep", "dig deep", "investigate deeply"
+   - "comprehensive triage", "full triage"
+   - "exhaustive analysis", "thorough investigation"
 
-2. CHAT: Quick questions, specific lookups, or targeted queries.
-   Examples:
-   - "What do you know about this instance?"
-   - "Check the memory usage"
-   - "Show me the slowlog"
-   - "How many connections are there?"
-   - "What's the current ops/sec?"
-   - "Is replication working?"
+   Examples that REQUIRE deep triage:
+   - "Do a deep triage on my Redis"
+   - "Go deep on this issue"
+   - "I need a comprehensive triage"
+   - "Deep dive into what's happening"
 
-Respond with ONLY one word: either "TRIAGE" or "CHAT"."""
+2. CHAT: Use for ALL other queries, including:
+   - Quick questions: "What's the memory usage?"
+   - General health checks: "Check my Redis", "Is everything okay?"
+   - Specific lookups: "Show me the slowlog", "How many connections?"
+   - Status checks: "What's happening with this instance?"
+   - Troubleshooting: "Why is Redis slow?", "Help me debug this"
+   - Even broad questions like "full health check" or "check everything"
+   - Follow-up questions like "yes", "sure", "do it", "check them out"
 
+   The chat agent has ALL the same tools as deep triage - it can do a lot!
+   Only use DEEP_TRIAGE when the user explicitly asks for deep/exhaustive analysis.
+
+DEFAULT TO CHAT unless you see explicit deep/exhaustive keywords.
+
+Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
+
+        query_with_context = f"Categorize this query: {query}{context_str}"
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Categorize this query: {query}"),
+            HumanMessage(content=query_with_context),
         ]
 
         response = await llm.ainvoke(messages)
         category = response.content.strip().upper()
 
-        if "TRIAGE" in category:
-            logger.info("LLM categorized query as REDIS_TRIAGE (full health check)")
+        if "DEEP_TRIAGE" in category:
+            logger.info("LLM categorized query as REDIS_TRIAGE (deep triage requested)")
             return AgentType.REDIS_TRIAGE
         else:
-            logger.info("LLM categorized query as REDIS_CHAT (quick Q&A)")
+            logger.info("LLM categorized query as REDIS_CHAT (default agent)")
             return AgentType.REDIS_CHAT
 
     except Exception as e:

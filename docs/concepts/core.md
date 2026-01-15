@@ -87,8 +87,8 @@ The system uses **three specialized agents** selected automatically based on you
 | Agent | When Used | Tools Available | Use Case |
 |-------|-----------|-----------------|----------|
 | **Knowledge Agent** | No Redis instance linked | Knowledge base search only | General Redis questions, best practices, documentation lookup |
-| **Chat Agent** | Instance linked + quick question | All tools (Redis CLI, Prometheus, Loki, etc.) | Fast, targeted queries like "check memory usage" or "show slowlog" |
-| **Triage Agent** | Instance linked + comprehensive request | All tools + parallel research | Deep investigation with trigger words: "full health check", "triage", "comprehensive", "audit" |
+| **Chat Agent** | Instance linked (default) | All tools (Redis CLI, Prometheus, Loki, MCP servers, etc.) | Most queries: health checks, diagnostics, troubleshooting, status checks |
+| **Deep Triage Agent** | Instance linked + explicit "deep" request | All tools + parallel multi-topic research | Deep investigation with trigger phrases: "deep triage", "deep research", "go deep", "deep dive" |
 
 ### Automatic Routing
 
@@ -101,10 +101,12 @@ Query received
     │
     └── Has instance_id?
             │
-            ├── Trigger words (triage, full, comprehensive)? ──► Triage Agent
+            ├── Deep keywords (deep triage, go deep, deep dive)? ──► Deep Triage Agent
             │
-            └── Quick question? ─────────────────────────────► Chat Agent
+            └── Everything else (default) ────────────────────────► Chat Agent
 ```
+
+**Note:** The Chat Agent has access to ALL the same tools as the Deep Triage Agent. Use the Chat Agent for most queries. Only request "deep triage" when you need exhaustive multi-topic analysis.
 
 You can override routing via CLI (`--agent triage|chat|knowledge`) or API (`preferred_agent` in user preferences).
 

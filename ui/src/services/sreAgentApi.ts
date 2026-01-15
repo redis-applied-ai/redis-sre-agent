@@ -15,12 +15,12 @@ export interface TaskUpdate {
 export interface TaskStatusResponse {
   thread_id: string;
   status:
-  | "queued"
-  | "in_progress"
-  | "completed"
-  | "done"
-  | "failed"
-  | "cancelled";
+    | "queued"
+    | "in_progress"
+    | "completed"
+    | "done"
+    | "failed"
+    | "cancelled";
   // Messages are now at top level (conversation history)
   messages: Array<{
     role: string;
@@ -339,10 +339,14 @@ class SREAgentAPI {
         ? thread.context.messages
         : [];
 
-    // Derive status: if we have messages, likely completed; otherwise in_progress
-    // Note: updates/result/error_message come from latest task, not thread
-    const hasResponse = messages.some((m: any) => m.role === "assistant");
-    const status = hasResponse ? "completed" : "in_progress";
+    // Use status from API if available; fallback to deriving from messages
+    // API returns: queued, in_progress, done, failed, cancelled
+    let status = thread.status;
+    if (!status) {
+      // Fallback for old data without status field
+      const hasResponse = messages.some((m: any) => m.role === "assistant");
+      status = hasResponse ? "completed" : "in_progress";
+    }
 
     return {
       thread_id: thread.thread_id,
@@ -355,11 +359,11 @@ class SREAgentAPI {
       // Updates may come from the API if backend provides them from latest task
       updates: Array.isArray(thread.updates)
         ? thread.updates.map((u: any) => ({
-          timestamp: u.timestamp,
-          message: u.message,
-          type: u.update_type,
-          metadata: u.metadata || {},
-        }))
+            timestamp: u.timestamp,
+            message: u.message,
+            type: u.update_type,
+            metadata: u.metadata || {},
+          }))
         : [],
       result: thread.result,
       error_message: thread.error_message,
@@ -920,7 +924,7 @@ class SREAgentAPI {
       const error = await response.json();
       throw new Error(
         error.detail ||
-        `Failed to test admin API connection: ${response.statusText}`,
+          `Failed to test admin API connection: ${response.statusText}`,
       );
     }
 
