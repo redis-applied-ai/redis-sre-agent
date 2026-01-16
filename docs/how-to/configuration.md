@@ -113,6 +113,57 @@ TOOLS_PROMETHEUS_URL=http://localhost:9090
 TOOLS_LOKI_URL=http://localhost:3100
 ```
 
+### Tool caching
+
+The agent caches tool call outputs in Redis to avoid repeated calls with the same arguments. Caching is enabled by default and can be configured globally or per-tool.
+
+#### Configuration options
+
+| Setting | Environment Variable | Default | Description |
+|---------|---------------------|---------|-------------|
+| `tool_cache_enabled` | `TOOL_CACHE_ENABLED` | `true` | Enable/disable caching globally |
+| `tool_cache_default_ttl` | `TOOL_CACHE_DEFAULT_TTL` | `60` | Default TTL in seconds for tools without specific TTLs |
+| `tool_cache_ttl_overrides` | `TOOL_CACHE_TTL_OVERRIDES` | `{}` | Per-tool TTL overrides |
+
+#### Per-tool TTL overrides
+
+Override TTLs for specific tools using environment variables (JSON format):
+
+```bash
+TOOL_CACHE_TTL_OVERRIDES='{"info": 120, "slowlog": 30, "config_get": 600}'
+```
+
+Or via YAML config:
+
+```yaml
+tool_cache_ttl_overrides:
+  info: 120
+  slowlog: 30
+  config_get: 600
+```
+
+Tool name matching is partial — `"info"` matches any tool containing "info" in its name (e.g., `redis_command_abc123_info`).
+
+#### Built-in TTL defaults
+
+Some tools have sensible defaults defined in `DEFAULT_TOOL_TTLS`:
+
+| Tool | TTL (seconds) | Rationale |
+|------|---------------|-----------|
+| `info` | 60 | Redis INFO output |
+| `memory_stats` | 60 | Memory statistics |
+| `config_get` | 300 | Config rarely changes |
+| `slowlog` | 60 | Recent slow queries |
+| `client_list` | 30 | Client connections change frequently |
+| `knowledge_search` | 300 | Knowledge base content |
+| `prometheus_query` | 30 | Metrics |
+
+#### TTL resolution priority
+
+1. User-defined overrides (`tool_cache_ttl_overrides`)
+2. Built-in defaults (`DEFAULT_TOOL_TTLS`)
+3. Global default (`tool_cache_default_ttl`)
+
 ### Tool providers
 
 Providers are loaded by the `ToolManager` based on:

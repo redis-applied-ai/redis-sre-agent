@@ -187,6 +187,166 @@ class TestToolCache:
         assert result is None
         mock_redis.get.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_cache_disabled_set_returns_false(self, mock_redis, test_instance):
+        """Test that disabled cache set returns False."""
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id, enabled=False)
+
+        result = await cache.set("redis_cli_info", {}, {"data": "test"})
+
+        assert result is False
+        mock_redis.setex.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_get_handles_exception(self, mock_redis, test_instance):
+        """Test cache get handles Redis exceptions gracefully."""
+        mock_redis.get.side_effect = Exception("Redis connection error")
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        result = await cache.get("redis_cli_info", {})
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_cache_set_handles_exception(self, mock_redis, test_instance):
+        """Test cache set handles Redis exceptions gracefully."""
+        mock_redis.setex.side_effect = Exception("Redis connection error")
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        result = await cache.set("redis_cli_info", {}, {"data": "test"})
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_handles_exception(self, mock_redis, test_instance):
+        """Test cache clear handles Redis exceptions gracefully."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            raise Exception("Redis connection error")
+
+        mock_redis.scan_iter = mock_scan_iter
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        deleted = await cache.clear()
+
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_no_keys(self, mock_redis, test_instance):
+        """Test cache clear with no keys to delete."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            return
+            yield  # Make it an async generator that yields nothing
+
+        mock_redis.scan_iter = mock_scan_iter
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        deleted = await cache.clear()
+
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_all(self, mock_redis, test_instance):
+        """Test clearing cache for all instances."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            for key in [
+                b"sre_cache:tool:instance-1:tool1:hash1",
+                b"sre_cache:tool:instance-2:tool2:hash2",
+            ]:
+                yield key
+
+        mock_redis.scan_iter = mock_scan_iter
+        mock_redis.delete.return_value = 2
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        deleted = await cache.clear_all()
+
+        assert deleted == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_all_no_keys(self, mock_redis, test_instance):
+        """Test clear_all with no keys to delete."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            return
+            yield  # Make it an async generator that yields nothing
+
+        mock_redis.scan_iter = mock_scan_iter
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        deleted = await cache.clear_all()
+
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_all_handles_exception(self, mock_redis, test_instance):
+        """Test clear_all handles Redis exceptions gracefully."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            raise Exception("Redis connection error")
+
+        mock_redis.scan_iter = mock_scan_iter
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        deleted = await cache.clear_all()
+
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_handles_exception(self, mock_redis, test_instance):
+        """Test stats handles Redis exceptions gracefully."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            raise Exception("Redis connection error")
+
+        mock_redis.scan_iter = mock_scan_iter
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        stats = await cache.stats()
+
+        assert stats["cached_keys"] == 0
+        assert "error" in stats
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_all(self, mock_redis, test_instance):
+        """Test getting stats for all instances."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            for key in [
+                b"sre_cache:tool:instance-1:tool1:hash1",
+                b"sre_cache:tool:instance-2:tool2:hash2",
+                b"sre_cache:tool:instance-1:tool3:hash3",
+            ]:
+                yield key
+
+        mock_redis.scan_iter = mock_scan_iter
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        stats = await cache.stats_all()
+
+        assert stats["total_keys"] == 3
+        assert len(stats["instances"]) == 2
+        assert "instance-1" in stats["instances"]
+        assert "instance-2" in stats["instances"]
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_all_handles_exception(self, mock_redis, test_instance):
+        """Test stats_all handles Redis exceptions gracefully."""
+
+        async def mock_scan_iter(*args, **kwargs):
+            raise Exception("Redis connection error")
+
+        mock_redis.scan_iter = mock_scan_iter
+        cache = ToolCache(redis_client=mock_redis, instance_id=test_instance.id)
+
+        stats = await cache.stats_all()
+
+        assert stats["total_keys"] == 0
+        assert stats["instances"] == []
+        assert "error" in stats
+
 
 class TestToolManagerWithCache:
     """Test ToolManager integration with shared cache."""

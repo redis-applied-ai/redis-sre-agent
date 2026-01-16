@@ -141,4 +141,4 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances \
 
 ## Summary
 
-You now have a running version of the Redis SRE agent. You can ask it questions about Redis in the UI or via the API, and experiment with different configurations and settings.
+You now have a running version of the Redis SRE agent. You can ask it questions about Redis via the CLI, UI, or API, and experiment with different configurations and settings.
