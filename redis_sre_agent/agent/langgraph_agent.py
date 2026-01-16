@@ -1825,6 +1825,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             redis_instance=target_instance,
             support_package_path=support_package_path,
             cache_client=cache_client,
+            cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()

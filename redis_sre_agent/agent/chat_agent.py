@@ -412,6 +412,7 @@ class ChatAgent:
             exclude_mcp_categories=self.exclude_mcp_categories,
             support_package_path=self.support_package_path,
             cache_client=cache_client,
+            cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
             logger.info(f"Chat agent loaded {len(tools)} tools")
