@@ -53,6 +53,7 @@ class TestRedisCommandToolProviderInit:
     def test_init_with_redis_instance_secret_url(self):
         """Test initialization with RedisInstance having SecretStr URL."""
         instance = MagicMock(spec=RedisInstance)
+        instance.id = "test-instance-id"
         instance.connection_url = SecretStr("redis://secret:pass@localhost:6379")
 
         provider = RedisCommandToolProvider(redis_instance=instance)
