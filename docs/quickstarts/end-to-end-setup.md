@@ -139,6 +139,67 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances \
   }' | jq
 ```
 
+## Querying the Agent
+
+You can query the agent via CLI, UI, or API. Here are CLI examples:
+
+### Knowledge queries (no instance required)
+
+Ask general Redis questions without specifying an instance:
+
+```bash
+# General Redis knowledge
+uv run redis-sre-agent query "What are Redis eviction policies?"
+
+# Explicitly use the knowledge agent
+uv run redis-sre-agent query --agent knowledge "How do I configure Redis persistence?"
+```
+
+### Instance-specific queries
+
+First, list available instances to get the instance ID:
+
+```bash
+uv run redis-sre-agent instance list
+```
+
+Then query with the instance ID:
+
+```bash
+# Quick diagnostic (chat agent)
+uv run redis-sre-agent query -r <instance-id> "What's the current memory usage?"
+
+# Full health check (triage agent)
+uv run redis-sre-agent query -r <instance-id> --agent triage "Run a full health check"
+
+# Investigate slow queries
+uv run redis-sre-agent query -r <instance-id> "Are there any slow queries?"
+```
+
+### Multi-turn conversations
+
+Continue a conversation using the thread ID returned from a previous query:
+
+```bash
+# Start a conversation
+uv run redis-sre-agent query -r <instance-id> "What's the memory usage?"
+# Output includes: Thread ID: abc123...
+
+# Continue the conversation
+uv run redis-sre-agent query -r <instance-id> -t abc123 "What about CPU?"
+```
+
+### Agent selection
+
+The agent is auto-selected based on your query, or specify explicitly:
+
+| Agent | Use case | Instance required |
+|-------|----------|-------------------|
+| `knowledge` | General Redis questions, best practices | No |
+| `chat` | Quick instance diagnostics | Yes |
+| `triage` | Full health checks, deep analysis | Yes |
+| `auto` | Let the router decide (default) | Depends on query |
+
 ## Summary
 
 You now have a running version of the Redis SRE agent. You can ask it questions about Redis via the CLI, UI, or API, and experiment with different configurations and settings.
