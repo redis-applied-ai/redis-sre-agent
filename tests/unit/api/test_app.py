@@ -78,63 +78,94 @@ class TestLifespan:
     async def test_lifespan_startup_success(self):
         """Test successful startup."""
         from redis_sre_agent.api.app import app, lifespan
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
+
+        # Reset singleton to avoid interference from other tests
+        MCPConnectionPool.reset_instance()
 
         with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
             with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
-                mock_init.return_value = {"redis": "connected"}
-                mock_register.return_value = None
+                with patch.object(MCPConnectionPool, "start") as mock_pool_start:
+                    with patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown:
+                        mock_init.return_value = {"redis": "connected"}
+                        mock_register.return_value = None
+                        mock_pool_start.return_value = {}
+                        mock_pool_shutdown.return_value = None
 
-                async with lifespan(app):
-                    # During startup
-                    pass
+                        async with lifespan(app):
+                            # During startup
+                            pass
 
-                # Verify startup was called
-                mock_init.assert_called_once()
-                mock_register.assert_called_once()
+                        # Verify startup was called
+                        mock_init.assert_called_once()
+                        mock_register.assert_called_once()
+                        mock_pool_start.assert_called_once()
+                        mock_pool_shutdown.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_lifespan_startup_redis_error(self):
         """Test startup with Redis initialization error."""
         from redis_sre_agent.api.app import app, get_app_startup_state, lifespan
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
+
+        MCPConnectionPool.reset_instance()
 
         with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
-            mock_init.side_effect = Exception("Redis connection failed")
+            with patch.object(MCPConnectionPool, "start") as mock_pool_start:
+                with patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown:
+                    mock_init.side_effect = Exception("Redis connection failed")
+                    mock_pool_start.return_value = {}
+                    mock_pool_shutdown.return_value = None
 
-            async with lifespan(app):
-                # Should not raise, but store error
-                state = get_app_startup_state()
-                assert "error" in state
+                    async with lifespan(app):
+                        # Should not raise, but store error
+                        state = get_app_startup_state()
+                        assert "error" in state
 
     @pytest.mark.asyncio
     async def test_lifespan_startup_task_registration_error(self):
         """Test startup with task registration error."""
         from redis_sre_agent.api.app import app, lifespan
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
+
+        MCPConnectionPool.reset_instance()
 
         with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
             with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
-                mock_init.return_value = {"redis": "connected"}
-                mock_register.side_effect = Exception("Task registration failed")
+                with patch.object(MCPConnectionPool, "start") as mock_pool_start:
+                    with patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown:
+                        mock_init.return_value = {"redis": "connected"}
+                        mock_register.side_effect = Exception("Task registration failed")
+                        mock_pool_start.return_value = {}
+                        mock_pool_shutdown.return_value = None
 
-                async with lifespan(app):
-                    # Should not raise, just log warning
-                    pass
+                        async with lifespan(app):
+                            # Should not raise, just log warning
+                            pass
 
-                mock_init.assert_called_once()
-                mock_register.assert_called_once()
+                        mock_init.assert_called_once()
+                        mock_register.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_lifespan_shutdown_error(self):
         """Test shutdown with cleanup error."""
         from redis_sre_agent.api.app import app, lifespan
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
+
+        MCPConnectionPool.reset_instance()
 
         with patch("redis_sre_agent.api.app.initialize_redis") as mock_init:
             with patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register:
-                mock_init.return_value = {"redis": "connected"}
-                mock_register.return_value = None
+                with patch.object(MCPConnectionPool, "start") as mock_pool_start:
+                    with patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown:
+                        mock_init.return_value = {"redis": "connected"}
+                        mock_register.return_value = None
+                        mock_pool_start.return_value = {}
+                        mock_pool_shutdown.return_value = None
 
-                async with lifespan(app):
-                    # Should not raise during shutdown
-                    pass
+                        async with lifespan(app):
+                            # Should not raise during shutdown
+                            pass
 
 
 class TestMiddleware:

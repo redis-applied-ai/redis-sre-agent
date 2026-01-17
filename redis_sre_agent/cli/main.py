@@ -6,6 +6,7 @@ import click
 
 # Map command names to their module:attribute for lazy import
 _COMMANDS = {
+    "cache": "redis_sre_agent.cli.cache:cache",
     "thread": "redis_sre_agent.cli.threads:thread",
     "schedule": "redis_sre_agent.cli.schedules:schedule",
     "instance": "redis_sre_agent.cli.instance:instance",

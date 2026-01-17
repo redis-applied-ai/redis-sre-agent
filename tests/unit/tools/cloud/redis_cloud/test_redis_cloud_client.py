@@ -16,6 +16,7 @@ async def test_list_databases_parses_subscription_wrapper():
         "Instance",
         (),
         {
+            "id": "test-instance-id",
             "instance_type": "redis_cloud",
             "redis_cloud_subscription_id": 999,
             "redis_cloud_subscription_type": "pro",

@@ -6,6 +6,9 @@ Generated from the Click command tree.
 ### Commands
 
 
+- cache — Manage tool output cache.
+- cache clear — Clear cached tool outputs.
+- cache stats — Show cache statistics.
 - thread — Thread management commands.
 - thread backfill — Backfill the threads FT.SEARCH index from existing thread data.
 - thread backfill-empty-subjects — Set subject for threads where subject is empty/placeholder.

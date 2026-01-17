@@ -9,6 +9,9 @@ Key environment variables and pointers. For step-by-step setup, see: how-to/conf
 - `TOOLS_PROMETHEUS_URL`, `TOOLS_LOKI_URL`: Provider endpoints
 - `REDIS_URL`: Agent storage Redis URL (for local/dev)
 - `SRE_AGENT_CONFIG`: Path to YAML config file (optional)
+- `TOOL_CACHE_ENABLED`: Enable/disable tool caching (default: `true`)
+- `TOOL_CACHE_DEFAULT_TTL`: Default cache TTL in seconds (default: `60`)
+- `TOOL_CACHE_TTL_OVERRIDES`: Per-tool TTL overrides as JSON (e.g., `'{"info": 120}'`)
 
 ### YAML Configuration
 

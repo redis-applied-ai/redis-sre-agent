@@ -152,7 +152,13 @@ class ToolProvider(ABC):
         self.redis_instance = redis_instance
         self.config = config
         self.instance_config: Optional[BaseModel] = None
-        self._instance_hash = hex(id(self))[2:8]
+        # Use stable hash based on instance ID (for caching) or fallback to memory address
+        if redis_instance is not None:
+            import hashlib
+
+            self._instance_hash = hashlib.sha256(redis_instance.id.encode()).hexdigest()[:6]
+        else:
+            self._instance_hash = hex(id(self))[2:8]
         # Attempt to load instance-scoped extension config eagerly
         try:
             self.instance_config = self._load_instance_extension_config()

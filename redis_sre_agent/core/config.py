@@ -195,7 +195,7 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: SecretStr = Field(
-        default="redis://localhost:7843/0", description="Redis connection URL"
+        default=SecretStr("redis://localhost:7843/0"), description="Redis connection URL"
     )
     redis_password: Optional[SecretStr] = Field(default=None, description="Redis password")
 
@@ -256,6 +256,22 @@ class Settings(BaseSettings):
         default=100, description="LangGraph recursion limit for complex workflows"
     )
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
+
+    # Tool Caching
+    tool_cache_enabled: bool = Field(
+        default=True,
+        description="Enable Redis-backed caching of tool outputs across runs",
+    )
+    tool_cache_default_ttl: int = Field(
+        default=60,
+        description="Default TTL in seconds for cached tool outputs",
+    )
+    tool_cache_ttl_overrides: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-tool TTL overrides in seconds. Keys are matched against tool names. "
+        "Example: {'info': 120, 'slowlog': 30}. "
+        "Set via env var as JSON: TOOL_CACHE_TTL_OVERRIDES='{\"info\": 120}'",
+    )
 
     # LLM Retry Configuration
     llm_max_retries: int = Field(default=3, description="Maximum retries for LLM calls")

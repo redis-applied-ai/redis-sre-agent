@@ -14,7 +14,13 @@ from typing import Any, Callable, Dict, List, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -32,6 +38,7 @@ from ..core.instances import (
 )
 from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import NullEmitter, ProgressEmitter
+from ..core.redis import get_redis_client
 from ..tools.manager import ToolManager
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
@@ -1000,7 +1007,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 # 4) Build envelopes by pairing pending calls with returned ToolMessages
                 try:
-                    from .helpers import build_result_envelope  # local import to avoid cycles
+                    from .helpers import (
+                        build_result_envelope,  # local import to avoid cycles
+                    )
 
                     new_tool_messages = [
                         m for m in new_messages[len(messages) :] if isinstance(m, ToolMessage)
@@ -1115,9 +1124,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     TopicsList
                 )  # return TopicsList
                 instance_ctx = {
-                    "instance_type": target_instance.instance_type
-                    if target_instance
-                    else "support_package",
+                    "instance_type": (
+                        target_instance.instance_type if target_instance else "support_package"
+                    ),
                     "name": target_instance.name if target_instance else "support_package_analysis",
                 }
                 preface = (
@@ -1175,9 +1184,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 rec_tasks = []
                 instance_ctx = {
-                    "instance_type": target_instance.instance_type
-                    if target_instance
-                    else "support_package",
+                    "instance_type": (
+                        target_instance.instance_type if target_instance else "support_package"
+                    ),
                     "name": target_instance.name if target_instance else "support_package_analysis",
                 }
                 # Build knowledge-only adapters locally (mini model)
@@ -1261,12 +1270,12 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
                 try:
                     instance_ctx_local = {
-                        "instance_type": target_instance.instance_type
-                        if target_instance
-                        else "support_package",
-                        "name": target_instance.name
-                        if target_instance
-                        else "support_package_analysis",
+                        "instance_type": (
+                            target_instance.instance_type if target_instance else "support_package"
+                        ),
+                        "name": (
+                            target_instance.name if target_instance else "support_package_analysis"
+                        ),
                     }
                     composed_markdown = await self._compose_final_markdown(
                         initial_assessment_lines=[initial_writeup] if initial_writeup else [],
@@ -1805,10 +1814,18 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             support_package_path = Path(pkg_path) if isinstance(pkg_path, str) else pkg_path
             logger.info(f"Processing query with support package: {support_package_path}")
 
+        # Get cache client if tool caching is enabled
+        cache_client = None
+        if settings.tool_cache_enabled and target_instance:
+            cache_client = get_redis_client()
+            logger.debug(f"Tool caching enabled for instance {target_instance.id}")
+
         # Create ToolManager for this query with the target instance
         async with ToolManager(
             redis_instance=target_instance,
             support_package_path=support_package_path,
+            cache_client=cache_client,
+            cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()

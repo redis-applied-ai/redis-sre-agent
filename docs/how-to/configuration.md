@@ -113,6 +113,62 @@ TOOLS_PROMETHEUS_URL=http://localhost:9090
 TOOLS_LOKI_URL=http://localhost:3100
 ```
 
+### Tool caching
+
+The agent caches tool call outputs in Redis to avoid repeated calls with the same arguments. Caching is enabled by default and can be configured globally or per-tool.
+
+#### Configuration options
+
+| Setting | Environment Variable | Default | Description |
+|---------|---------------------|---------|-------------|
+| `tool_cache_enabled` | `TOOL_CACHE_ENABLED` | `true` | Enable/disable caching globally |
+| `tool_cache_default_ttl` | `TOOL_CACHE_DEFAULT_TTL` | `60` | Default TTL in seconds for tools without specific TTLs |
+| `tool_cache_ttl_overrides` | `TOOL_CACHE_TTL_OVERRIDES` | `{}` | Per-tool TTL overrides |
+
+#### Per-tool TTL overrides
+
+Override cache TTLs for specific tools by mapping tool name patterns to TTL values in seconds.
+
+**Environment variable (JSON format):**
+
+```bash
+# Maps tool name patterns to TTL in seconds
+# "info" -> 120 seconds, "slowlog" -> 30 seconds, "config_get" -> 600 seconds
+TOOL_CACHE_TTL_OVERRIDES='{"info": 120, "slowlog": 30, "config_get": 600}'
+```
+
+**YAML config:**
+
+```yaml
+# Maps tool name patterns to TTL in seconds
+tool_cache_ttl_overrides:
+  info: 120        # Cache INFO results for 2 minutes
+  slowlog: 30      # Cache slowlog for 30 seconds
+  config_get: 600  # Cache config for 10 minutes (rarely changes)
+```
+
+**Partial matching:** Tool names are matched using substring search. For example, `"info"` matches any tool containing "info" in its name, such as `redis_command_abc123_info` or `cluster_info`. This is necessary because tool names include instance-specific hashes (e.g., `redis_command_abc123_info`) that vary per Redis instance.
+
+#### Built-in TTL defaults
+
+Some tools have sensible defaults defined in `DEFAULT_TOOL_TTLS`:
+
+| Tool | TTL (seconds) | Rationale |
+|------|---------------|-----------|
+| `info` | 60 | Redis INFO output |
+| `memory_stats` | 60 | Memory statistics |
+| `config_get` | 300 | Config rarely changes |
+| `slowlog` | 60 | Recent slow queries |
+| `client_list` | 30 | Client connections change frequently |
+| `knowledge_search` | 300 | Knowledge base content |
+| `prometheus_query` | 30 | Metrics |
+
+#### TTL resolution priority
+
+1. User-defined overrides (`tool_cache_ttl_overrides`)
+2. Built-in defaults (`DEFAULT_TOOL_TTLS`)
+3. Global default (`tool_cache_default_ttl`)
+
 ### Tool providers
 
 Providers are loaded by the `ToolManager` based on:

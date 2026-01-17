@@ -60,6 +60,7 @@ class MCPToolProvider(ToolProvider):
         server_name: str,
         server_config: MCPServerConfig,
         redis_instance: Optional["RedisInstance"] = None,
+        use_pool: bool = True,
     ):
         """Initialize the MCP tool provider.
 
@@ -67,6 +68,7 @@ class MCPToolProvider(ToolProvider):
             server_name: Name of the MCP server (used in tool naming)
             server_config: Configuration for the MCP server
             redis_instance: Optional Redis instance (not typically used by MCP)
+            use_pool: If True, use pooled connection when available (default: True)
         """
         super().__init__(redis_instance=redis_instance)
         self._server_name = server_name
@@ -75,6 +77,8 @@ class MCPToolProvider(ToolProvider):
         self._exit_stack: Optional[AsyncExitStack] = None
         self._mcp_tools: List[mcp_types.Tool] = []
         self._tool_cache: List[Tool] = []
+        self._use_pool = use_pool
+        self._using_pooled_connection = False
 
     @property
     def provider_name(self) -> str:
@@ -93,12 +97,33 @@ class MCPToolProvider(ToolProvider):
     async def _connect(self) -> None:
         """Connect to the MCP server and discover tools.
 
-        This method initializes the MCP client based on the transport type
-        (stdio command or HTTP URL) and fetches the available tools.
+        This method first tries to use a pooled connection if available.
+        Falls back to creating a new connection if pool is empty or disabled.
         """
+        # Try to use pooled connection first
+        if self._use_pool:
+            try:
+                from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
+
+                pool = MCPConnectionPool.get_instance()
+                pooled_conn = pool.get_connection(self._server_name)
+                if pooled_conn:
+                    self._session = pooled_conn.session
+                    self._mcp_tools = pooled_conn.tools
+                    self._tool_cache = []
+                    self._using_pooled_connection = True
+                    logger.info(
+                        f"Using pooled connection for MCP server '{self._server_name}' "
+                        f"({len(self._mcp_tools)} tools)"
+                    )
+                    return
+            except Exception as e:
+                logger.debug(f"Pool not available for '{self._server_name}': {e}")
+
+        # Fall back to creating a new connection
         try:
             logger.info(
-                f"Connecting to MCP server '{self._server_name}' "
+                f"Creating new connection to MCP server '{self._server_name}' "
                 f"(command={self._server_config.command}, url={self._server_config.url})"
             )
 
@@ -183,7 +208,18 @@ class MCPToolProvider(ToolProvider):
             raise
 
     async def _disconnect(self) -> None:
-        """Disconnect from the MCP server."""
+        """Disconnect from the MCP server.
+
+        If using a pooled connection, just clears local references without
+        closing the shared session. Only closes connections we own.
+        """
+        if self._using_pooled_connection:
+            # Don't close pooled connections - they're managed by the pool
+            logger.debug(f"Releasing pooled connection for '{self._server_name}'")
+            self._session = None
+            self._using_pooled_connection = False
+            return
+
         try:
             if self._exit_stack:
                 logger.info(f"Disconnecting from MCP server '{self._server_name}'")

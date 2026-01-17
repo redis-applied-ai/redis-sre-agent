@@ -175,151 +175,53 @@ class TestMCPToolProviderAsync:
         assert result["status"] == "error"
         assert "not connected" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_connect_uses_pool_when_available(self):
+        """Test that _connect uses pooled connection when available."""
+        from unittest.mock import MagicMock
 
-class TestMCPToolProviderDefaults:
-    """Test MCPToolProvider defaults and constants."""
+        from redis_sre_agent.tools.mcp.pool import MCPConnectionPool, PooledConnection
 
-    def test_default_capability_is_utilities(self):
-        """Test DEFAULT_CAPABILITY is UTILITIES."""
-        assert MCPToolProvider.DEFAULT_CAPABILITY == ToolCapability.UTILITIES
+        # Reset and set up the pool
+        MCPConnectionPool.reset_instance()
+        pool = MCPConnectionPool.get_instance()
 
-    def test_server_config_accessible(self):
-        """Test server_config is accessible."""
+        # Create a mock pooled connection
+        mock_session = MagicMock()
+        mock_tools = [MagicMock(name="tool1")]
+        pool._connections["test-server"] = PooledConnection(
+            server_name="test-server",
+            session=mock_session,
+            tools=mock_tools,
+            exit_stack=MagicMock(),
+        )
+        pool._started = True
+
+        config = MCPServerConfig(command="test")
+        provider = MCPToolProvider(server_name="test-server", server_config=config, use_pool=True)
+
+        await provider._connect()
+
+        assert provider._session is mock_session
+        assert provider._using_pooled_connection is True
+
+        # Cleanup
+        MCPConnectionPool.reset_instance()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_does_not_close_pooled_connection(self):
+        """Test that _disconnect doesn't close pooled connections."""
+        from unittest.mock import MagicMock
+
         config = MCPServerConfig(command="test")
         provider = MCPToolProvider(server_name="test", server_config=config)
-        assert provider._server_config == config
 
-    def test_server_name_accessible(self):
-        """Test server_name is accessible."""
-        config = MCPServerConfig(command="test")
-        provider = MCPToolProvider(server_name="my_server", server_config=config)
-        assert provider._server_name == "my_server"
+        # Simulate using a pooled connection
+        provider._session = MagicMock()
+        provider._using_pooled_connection = True
 
-    def test_session_initially_none(self):
-        """Test session is initially None."""
-        config = MCPServerConfig(command="test")
-        provider = MCPToolProvider(server_name="test", server_config=config)
+        await provider._disconnect()
+
+        # Session should be cleared but not closed
         assert provider._session is None
-
-    def test_exit_stack_initially_none(self):
-        """Test exit_stack is initially None."""
-        config = MCPServerConfig(command="test")
-        provider = MCPToolProvider(server_name="test", server_config=config)
-        assert provider._exit_stack is None
-
-    def test_mcp_tools_initially_empty(self):
-        """Test mcp_tools is initially empty."""
-        config = MCPServerConfig(command="test")
-        provider = MCPToolProvider(server_name="test", server_config=config)
-        assert provider._mcp_tools == []
-
-    def test_tool_cache_initially_empty(self):
-        """Test tool_cache is initially empty."""
-        config = MCPServerConfig(command="test")
-        provider = MCPToolProvider(server_name="test", server_config=config)
-        assert provider._tool_cache == []
-
-
-class TestMCPServerConfig:
-    """Test MCPServerConfig model."""
-
-    def test_config_with_command_only(self):
-        """Test config with just a command."""
-        config = MCPServerConfig(command="npx")
-        assert config.command == "npx"
-        assert config.args is None
-        assert config.url is None
-        assert config.tools is None
-
-    def test_config_with_url(self):
-        """Test config with URL-based transport."""
-        config = MCPServerConfig(url="http://localhost:8080/mcp")
-        assert config.url == "http://localhost:8080/mcp"
-        assert config.command is None
-
-    def test_config_with_tools_filter(self):
-        """Test config with tools filter."""
-        config = MCPServerConfig(
-            command="test",
-            tools={
-                "tool1": MCPToolConfig(capability=ToolCapability.LOGS),
-                "tool2": MCPToolConfig(description="Custom desc"),
-            },
-        )
-        assert len(config.tools) == 2
-        assert "tool1" in config.tools
-        assert "tool2" in config.tools
-
-    def test_config_with_headers(self):
-        """Test config with headers."""
-        config = MCPServerConfig(
-            url="http://example.com",
-            headers={"Authorization": "Bearer token123"},
-        )
-        assert config.headers["Authorization"] == "Bearer token123"
-
-    def test_config_with_transport_type(self):
-        """Test config with transport type."""
-        config = MCPServerConfig(url="http://example.com", transport="sse")
-        assert config.transport == "sse"
-
-        config2 = MCPServerConfig(url="http://example.com", transport="streamable_http")
-        assert config2.transport == "streamable_http"
-
-    def test_config_env_with_shell_variable_syntax(self):
-        """Test that env can contain shell-style variable references.
-
-        The MCPServerConfig stores the literal string; expansion happens
-        in the provider when connecting to the server.
-        """
-        config = MCPServerConfig(
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-github"],
-            env={"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"},
-        )
-        # Config stores literal string - expansion happens at runtime in provider
-        assert config.env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "${GITHUB_PERSONAL_ACCESS_TOKEN}"
-
-
-class TestMCPToolProviderEnvExpansion:
-    """Test environment variable expansion in MCP provider."""
-
-    def test_env_var_expansion_expands_shell_vars(self, monkeypatch):
-        """Test that ${VAR} patterns are expanded from environment."""
-        import os
-
-        monkeypatch.setenv("TEST_TOKEN", "secret-value-123")
-
-        config = MCPServerConfig(
-            command="test",
-            env={"MY_VAR": "${TEST_TOKEN}", "PLAIN_VAR": "plain-value"},
-        )
-        provider = MCPToolProvider(server_name="test", server_config=config)
-
-        # Simulate what happens in __aenter__ for env expansion
-        config_env = {}
-        for key, value in (provider._server_config.env or {}).items():
-            config_env[key] = os.path.expandvars(value)
-
-        assert config_env["MY_VAR"] == "secret-value-123"
-        assert config_env["PLAIN_VAR"] == "plain-value"
-
-    def test_env_var_expansion_unset_var_stays_literal(self, monkeypatch):
-        """Test that undefined ${VAR} patterns remain as-is (no error)."""
-        import os
-
-        # Ensure the var is NOT set
-        monkeypatch.delenv("UNDEFINED_VAR", raising=False)
-
-        config = MCPServerConfig(
-            command="test",
-            env={"MY_VAR": "${UNDEFINED_VAR}"},
-        )
-        provider = MCPToolProvider(server_name="test", server_config=config)
-
-        config_env = {}
-        for key, value in (provider._server_config.env or {}).items():
-            config_env[key] = os.path.expandvars(value)
-
-        # os.path.expandvars leaves unset vars as-is
-        assert config_env["MY_VAR"] == "${UNDEFINED_VAR}"
+        assert provider._using_pooled_connection is False

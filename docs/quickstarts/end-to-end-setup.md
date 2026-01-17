@@ -1,39 +1,45 @@
-# Getting started with the SRE agent
+# Getting Started with the SRE Agent
 
 ## Prerequisites
+
 - Docker
-- Docker compose
+- Docker Compose
 - OpenAI API key
 - Python >= 3.12
 - uv package manager
 
-## Env
+## Environment Setup
 
-Copy the example env
+Copy the example environment file:
+
 ```bash
 cp .env.example .env
 ```
 
-Update the env to include your openai key
+Update the `.env` file to include your OpenAI key:
+
 ```bash
 OPENAI_API_KEY=your_key
 ```
 
-Generate a master key
+Generate a master key:
+
 ```bash
 python -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
 ```
 
-Update the env to include the master key
+Update the `.env` file to include the master key:
+
 ```bash
 REDIS_SRE_MASTER_KEY=your_key
 ```
 
-Note: The env example will set the default models. If you are using newer models confirm that they are available in the litellm config: /monitoring/litellm/config.yaml.
+**Note:** The example environment file sets default models. If you are using newer models, confirm that they are available in the LiteLLM config at `/monitoring/litellm/config.yaml`.
 
-## Docker compose
+## Docker Compose
 
-Start the following services using docker compose
+Start the following services using Docker Compose:
+
 ```bash
 docker compose up -d \
   redis redis-demo \
@@ -42,22 +48,23 @@ docker compose up -d \
   loki promtail
 ```
 
-A breakdown of what each of these services are:
+Here's what each service does:
 
-- redis: the redis instance used by the sre-agent and sre-worker.
-- redis-demo: the redis instance that the sre-agent will monitor.
-- sre-agent: the sre agent api
-- sre-worker: the sre agent worker
-- prometheus: prometheus instance
-- grafana: grafana instance
-- loki: loki instance
-- promtail: promtail instance
+- **redis**: The Redis instance used by the sre-agent and sre-worker
+- **redis-demo**: The Redis instance that the sre-agent will monitor
+- **sre-agent**: The SRE agent API
+- **sre-worker**: The SRE agent worker
+- **prometheus**: Prometheus instance for metrics
+- **grafana**: Grafana instance for dashboards
+- **loki**: Loki instance for log aggregation
+- **promtail**: Promtail instance for log collection
 
-**Note**: there are **two** redis instances. One is used by the application itself and the other is the redis instance that the sre-agent will monitor.
+**Note:** There are **two** Redis instances. One is used by the application itself, and the other is the Redis instance that the sre-agent will monitor.
 
-### Status checks
+### Status Checks
 
 #### API
+
 ```bash
 # Root health (fast)
 # Use port 8080 for Docker Compose, port 8000 for local uvicorn
@@ -70,7 +77,8 @@ curl -fsS http://localhost:8080/api/v1/health | jq
 curl -fsS http://localhost:8080/api/v1/metrics | head -n 20
 ```
 
-#### Docker ps
+#### Docker
+
 ```bash
 docker ps
 ```
@@ -79,11 +87,12 @@ docker ps
 
 #### Redis
 
-Use redis insight or redis_cli to confirm that both redis instances are up and running. By default the internal sre redis should be available at redis://localhost:7843 and the redis-demo at redis://localhost:7844. The internal instance 7843 will have docket workers and some additional keys related to the sre-agent. The redis-demo instance will be empty.
+Use Redis Insight or `redis-cli` to confirm that both Redis instances are running. By default, the internal SRE Redis is available at `redis://localhost:7843` and the redis-demo at `redis://localhost:7844`. The internal instance (port 7843) will have Docket workers and additional keys related to the sre-agent. The redis-demo instance will be empty.
 
-## Populating the knowledge base and running the UI
+## Populating the Knowledge Base and Running the UI
 
-Populate the index locally (this will take a second to do the embeddings)
+Populate the index locally (this may take a moment to generate embeddings):
+
 ```bash
 uv run ./scripts/setup_redis_docs_local.sh
 
@@ -92,28 +101,31 @@ uv run redis-sre-agent pipeline ingest
 
 ![scrape](./resources/scrape.png)
 
-Now check the index to make sure documents were loaded.
+Check the index to verify that documents were loaded:
 
 ![data](./resources/data-proc.png)
 
-### Run the sre-ui
+### Run the SRE UI
+
 ```bash
 docker compose up -d sre-ui
 ```
 
-The ui should be available at http://localhost:3002 and look something like the following.
+The UI should be available at http://localhost:3002 and look something like this:
 
 ![ui](./resources/ui.png)
 
-Note: if you see connection issue open the dev console and check that connection are attempting to be made to the correct ports. If you see that it is attempting to connect at the wrong port update ui/.env to include the correct port. For example:
+**Note:** If you see connection issues, open the browser developer console and check that connections are being made to the correct ports. If the UI is attempting to connect to the wrong port, update `ui/.env` to include the correct port:
+
 ```bash
-# in ui/.env not root level .env
+# In ui/.env, not the root-level .env
 VITE_API_URL=http://localhost:8080/api/v1
 ```
 
-## Adding an instance
+## Adding an Instance
 
-Create the instance the agent will triage, then verify a connection.
+Create the instance that the agent will triage:
+
 ```bash
 # Create instance
 curl -fsS -X POST http://localhost:8080/api/v1/instances \
@@ -127,7 +139,67 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances \
   }' | jq
 ```
 
+## Querying the Agent
 
-# Review
+You can query the agent via CLI, UI, or API. Here are CLI examples:
 
-Now you should have a basic running version of the redis sre agent! You can try asking it questions about redis in the UI or via the API. You can also try running the agent with different configurations and settings.
+### Knowledge queries (no instance required)
+
+Ask general Redis questions without specifying an instance:
+
+```bash
+# General Redis knowledge
+uv run redis-sre-agent query "What are Redis eviction policies?"
+
+# Explicitly use the knowledge agent
+uv run redis-sre-agent query --agent knowledge "How do I configure Redis persistence?"
+```
+
+### Instance-specific queries
+
+First, list available instances to get the instance ID:
+
+```bash
+uv run redis-sre-agent instance list
+```
+
+Then query with the instance ID:
+
+```bash
+# Quick diagnostic (chat agent)
+uv run redis-sre-agent query -r <instance-id> "What's the current memory usage?"
+
+# Full health check (triage agent)
+uv run redis-sre-agent query -r <instance-id> --agent triage "Run a full health check"
+
+# Investigate slow queries
+uv run redis-sre-agent query -r <instance-id> "Are there any slow queries?"
+```
+
+### Multi-turn conversations
+
+Continue a conversation using the thread ID returned from a previous query:
+
+```bash
+# Start a conversation
+uv run redis-sre-agent query -r <instance-id> "What's the memory usage?"
+# Output includes: Thread ID: abc123...
+
+# Continue the conversation
+uv run redis-sre-agent query -r <instance-id> -t abc123 "What about CPU?"
+```
+
+### Agent selection
+
+The agent is auto-selected based on your query, or specify explicitly:
+
+| Agent | Use case | Instance required |
+|-------|----------|-------------------|
+| `knowledge` | General Redis questions, best practices | No |
+| `chat` | Quick instance diagnostics | Yes |
+| `triage` | Full health checks, deep analysis | Yes |
+| `auto` | Let the router decide (default) | Depends on query |
+
+## Summary
+
+You now have a running version of the Redis SRE agent. You can ask it questions about Redis via the CLI, UI, or API, and experiment with different configurations and settings.
