@@ -127,22 +127,27 @@ The agent caches tool call outputs in Redis to avoid repeated calls with the sam
 
 #### Per-tool TTL overrides
 
-Override TTLs for specific tools using environment variables (JSON format):
+Override cache TTLs for specific tools by mapping tool name patterns to TTL values in seconds.
+
+**Environment variable (JSON format):**
 
 ```bash
+# Maps tool name patterns to TTL in seconds
+# "info" -> 120 seconds, "slowlog" -> 30 seconds, "config_get" -> 600 seconds
 TOOL_CACHE_TTL_OVERRIDES='{"info": 120, "slowlog": 30, "config_get": 600}'
 ```
 
-Or via YAML config:
+**YAML config:**
 
 ```yaml
+# Maps tool name patterns to TTL in seconds
 tool_cache_ttl_overrides:
-  info: 120
-  slowlog: 30
-  config_get: 600
+  info: 120        # Cache INFO results for 2 minutes
+  slowlog: 30      # Cache slowlog for 30 seconds
+  config_get: 600  # Cache config for 10 minutes (rarely changes)
 ```
 
-Tool name matching is partial — `"info"` matches any tool containing "info" in its name (e.g., `redis_command_abc123_info`).
+**Partial matching:** Tool names are matched using substring search. For example, `"info"` matches any tool containing "info" in its name, such as `redis_command_abc123_info` or `cluster_info`. This is necessary because tool names include instance-specific hashes (e.g., `redis_command_abc123_info`) that vary per Redis instance.
 
 #### Built-in TTL defaults
 
