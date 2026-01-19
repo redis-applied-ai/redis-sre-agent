@@ -345,7 +345,7 @@ class Settings(BaseSettings):
                     "agent-memory",
                     "mcp",
                 ],
-                "env": {"REDIS_URL": "redis://localhost:6399"},
+                "env": {"REDIS_URL": "${REDIS_URL}"},
                 # Only include specific tools, with context-aware descriptions.
                 # Use {original} to include the tool's original description.
                 "tools": {

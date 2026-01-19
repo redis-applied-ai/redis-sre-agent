@@ -124,35 +124,60 @@ VITE_API_URL=http://localhost:8080/api/v1
 
 ## Adding an Instance
 
-Create the instance that the agent will triage:
+Create the instance that the agent will triage. You can use the CLI (inside Docker) or the API:
+
+### Using the CLI (recommended)
 
 ```bash
-# Create instance
+# Run the CLI command inside the sre-agent container
+docker compose exec sre-agent redis-sre-agent instance create \
+  --name local-dev \
+  --connection-url "redis://redis-demo:6379/0" \
+  --environment development \
+  --usage cache \
+  --description "Primary Redis"
+```
+
+### Using the API
+
+```bash
+# Create instance via API
 curl -fsS -X POST http://localhost:8080/api/v1/instances \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "local-dev",
     "connection_url": "redis://redis-demo:6379/0",
-    "environment": "dev",
+    "environment": "development",
     "usage": "cache",
     "description": "Primary Redis"
   }' | jq
 ```
 
+**Note:** The `environment` field must be one of: `development`, `staging`, `production`, or `test`.
+
+### Using the UI
+
+Navigate to http://localhost:3002 and use the Instances page to add a new instance.
+
 ## Querying the Agent
 
-You can query the agent via CLI, UI, or API. Here are CLI examples:
+You can query the agent via CLI, UI, or API.
+
+**Note:** When using Docker Compose, CLI commands should be run inside the container to access Docker-internal hostnames like `redis-demo`. Use `docker compose exec` as shown below. Alternatively, for local development with `uv run`, update instance connection URLs to use `localhost` ports.
 
 ### Knowledge queries (no instance required)
 
 Ask general Redis questions without specifying an instance:
 
 ```bash
-# General Redis knowledge
+# Via Docker (recommended with Docker Compose)
+docker compose exec sre-agent redis-sre-agent query "What are Redis eviction policies?"
+
+# Via local uv (requires local Python environment)
 uv run redis-sre-agent query "What are Redis eviction policies?"
 
 # Explicitly use the knowledge agent
-uv run redis-sre-agent query --agent knowledge "How do I configure Redis persistence?"
+docker compose exec sre-agent redis-sre-agent query --agent knowledge "How do I configure Redis persistence?"
 ```
 
 ### Instance-specific queries
@@ -160,20 +185,20 @@ uv run redis-sre-agent query --agent knowledge "How do I configure Redis persist
 First, list available instances to get the instance ID:
 
 ```bash
-uv run redis-sre-agent instance list
+docker compose exec sre-agent redis-sre-agent instance list
 ```
 
 Then query with the instance ID:
 
 ```bash
 # Quick diagnostic (chat agent)
-uv run redis-sre-agent query -r <instance-id> "What's the current memory usage?"
+docker compose exec sre-agent redis-sre-agent query -r <instance-id> "What's the current memory usage?"
 
 # Full health check (triage agent)
-uv run redis-sre-agent query -r <instance-id> --agent triage "Run a full health check"
+docker compose exec sre-agent redis-sre-agent query -r <instance-id> --agent triage "Run a full health check"
 
 # Investigate slow queries
-uv run redis-sre-agent query -r <instance-id> "Are there any slow queries?"
+docker compose exec sre-agent redis-sre-agent query -r <instance-id> "Are there any slow queries?"
 ```
 
 ### Multi-turn conversations
@@ -182,11 +207,11 @@ Continue a conversation using the thread ID returned from a previous query:
 
 ```bash
 # Start a conversation
-uv run redis-sre-agent query -r <instance-id> "What's the memory usage?"
+docker compose exec sre-agent redis-sre-agent query -r <instance-id> "What's the memory usage?"
 # Output includes: Thread ID: abc123...
 
 # Continue the conversation
-uv run redis-sre-agent query -r <instance-id> -t abc123 "What about CPU?"
+docker compose exec sre-agent redis-sre-agent query -r <instance-id> -t abc123 "What about CPU?"
 ```
 
 ### Agent selection
