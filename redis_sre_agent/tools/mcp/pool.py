@@ -115,7 +115,12 @@ class MCPConnectionPool:
 
         try:
             if config.command:
-                merged_env = {**os.environ, **(config.env or {})}
+                # Expand environment variable references like ${REDIS_URL} in env values
+                expanded_env = {
+                    k: os.path.expandvars(v) if isinstance(v, str) else v
+                    for k, v in (config.env or {}).items()
+                }
+                merged_env = {**os.environ, **expanded_env}
                 server_params = StdioServerParameters(
                     command=config.command,
                     args=config.args or [],
