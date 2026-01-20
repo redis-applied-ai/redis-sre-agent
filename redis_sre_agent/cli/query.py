@@ -249,4 +249,12 @@ def query(
     try:
         loop.run_until_complete(_query())
     finally:
+        # Cancel all pending tasks to avoid "Task was destroyed but it is pending" errors
+        # This is needed because MCP client uses async generators that may not complete cleanly
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        # Wait for all tasks to complete their cancellation
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         loop.close()
