@@ -38,7 +38,9 @@ mcp_servers:
       - agent-memory
       - mcp
     env:
-      REDIS_URL: redis://localhost:6399
+      # Uses ${REDIS_URL} to inherit from parent environment.
+      # Override here if the memory server should use a different Redis instance.
+      REDIS_URL: ${REDIS_URL}
     tools:
       get_current_datetime:
         description: |

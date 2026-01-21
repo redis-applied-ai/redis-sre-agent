@@ -5,6 +5,7 @@ Use AI to answer Redis questions and triage live issues. Run one‑off checks or
 This is an early release with built-in support for Prometheus, Loki, Redis CLI diagnostics, and host telemetry. More integrations coming for popular observability and cloud platforms. The tool system is fully extensible - write your own providers to integrate with any system.
 
 ## Get started
+- End-to-End Setup: [quickstarts/end-to-end-setup.md](quickstarts/end-to-end-setup.md)
 - Local Development: [quickstarts/local.md](quickstarts/local.md)
 - VM Deployment (Redis Enterprise): [quickstarts/vm-deployment.md](quickstarts/vm-deployment.md)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 import click
@@ -18,6 +19,8 @@ from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import get_instance_by_id
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.threads import ThreadManager
+
+logger = logging.getLogger(__name__)
 
 
 @click.command()
@@ -216,4 +219,42 @@ def query(
             # Force-close MCP pool to avoid cross-task cleanup errors on exit
             await mcp_pool.shutdown(force=True)
 
-    asyncio.run(_query())
+    def _suppress_shutdown_errors(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        """Custom exception handler to suppress expected shutdown errors.
+
+        The MCP SDK uses anyio/asyncio async generators which can raise
+        RuntimeError("Attempted to exit cancel scope in a different task")
+        during process shutdown. This is cosmetic and doesn't affect functionality.
+        """
+        exception = context.get("exception")
+
+        # Suppress known MCP shutdown errors
+        if isinstance(exception, RuntimeError):
+            err_msg = str(exception)
+            if "different task" in err_msg or "cancel scope" in err_msg:
+                logger.debug(f"Suppressed expected shutdown error: {err_msg}")
+                return
+
+        # Also suppress CancelledError during shutdown
+        if isinstance(exception, asyncio.CancelledError):
+            logger.debug("Suppressed CancelledError during shutdown")
+            return
+
+        # For other errors, use the default handler
+        loop.default_exception_handler(context)
+
+    # Install custom exception handler and run
+    loop = asyncio.new_event_loop()
+    loop.set_exception_handler(_suppress_shutdown_errors)
+    try:
+        loop.run_until_complete(_query())
+    finally:
+        # Cancel all pending tasks to avoid "Task was destroyed but it is pending" errors
+        # This is needed because MCP client uses async generators that may not complete cleanly
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        # Wait for all tasks to complete their cancellation
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.close()
