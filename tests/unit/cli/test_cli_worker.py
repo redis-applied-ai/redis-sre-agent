@@ -9,9 +9,6 @@ from click.testing import CliRunner
 
 from redis_sre_agent.cli.worker import (
     _validate_worker_process,
-    start,
-    status,
-    stop,
     worker,
 )
 
