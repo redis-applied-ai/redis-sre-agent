@@ -173,27 +173,27 @@ def status(verbose: bool):
     try:
         import redis
 
-        r = redis.Redis.from_url(redis_url)
-        r.ping()
-        click.echo("✓ Redis: Connected")
+        with redis.Redis.from_url(redis_url) as r:
+            r.ping()
+            click.echo("✓ Redis: Connected")
 
-        # Check for active workers by looking at Docket's worker registry
-        async def get_workers():
-            async with Docket(name="sre_docket", url=redis_url) as d:
-                return await d.workers()
+            # Check for active workers by looking at Docket's worker registry
+            async def get_workers():
+                async with Docket(name="sre_docket", url=redis_url) as d:
+                    return await d.workers()
 
-        workers = asyncio.run(get_workers())
+            workers = asyncio.run(get_workers())
 
-        if workers:
-            click.echo(f"✓ Workers: {len(workers)} active")
-            for w in workers:
-                click.echo(f"  │  Worker name: {w.name}")
-                click.echo(f"  │  Registered tasks: {len(w.tasks)}")
-                if verbose:
-                    for task in w.tasks:
-                        click.echo(f"  │   └─ Task name: {task}")
-        else:
-            click.echo("✗ Workers: No active workers found")
+            if workers:
+                click.echo(f"✓ Workers: {len(workers)} active")
+                for w in workers:
+                    click.echo(f"  │  Worker name: {w.name}")
+                    click.echo(f"  │  Registered tasks: {len(w.tasks)}")
+                    if verbose:
+                        for task in w.tasks:
+                            click.echo(f"  │   └─ Task name: {task}")
+            else:
+                click.echo("✗ Workers: No active workers found")
 
     except Exception as e:
         click.echo(f"✗ Redis: Failed to connect ({e})")
@@ -217,43 +217,43 @@ def stop():
     try:
         import redis
 
-        r = redis.Redis.from_url(redis_url)
-        r.ping()
+        with redis.Redis.from_url(redis_url) as r:
+            r.ping()
 
-        async def get_workers():
-            async with Docket(name="sre_docket", url=redis_url) as d:
-                return await d.workers()
+            async def get_workers():
+                async with Docket(name="sre_docket", url=redis_url) as d:
+                    return await d.workers()
 
-        workers = asyncio.run(get_workers())
+            workers = asyncio.run(get_workers())
 
-        if not workers:
-            click.echo("✗ No workers are currently running")
-            return
+            if not workers:
+                click.echo("✗ No workers are currently running")
+                return
 
-        # Stop each worker by sending SIGTERM
-        for w in workers:
-            # Worker name format: HOSTNAME#PID (e.g., "HQM60FP16H-machine#41405")
-            try:
-                pid = int(w.name.split("#")[-1])
-            except ValueError:
-                click.echo(f"⚠ Could not parse PID from worker name: {w.name}")
-                continue
+            # Stop each worker by sending SIGTERM
+            for w in workers:
+                # Worker name format: HOSTNAME#PID (e.g., "HQM60FP16H-machine#41405")
+                try:
+                    pid = int(w.name.split("#")[-1])
+                except ValueError:
+                    click.echo(f"⚠ Could not parse PID from worker name: {w.name}")
+                    continue
 
-            # Security: Validate that the PID belongs to a legitimate worker process
-            # This prevents arbitrary process termination via crafted worker names
-            is_valid, reason = _validate_worker_process(pid, w.name)
-            if not is_valid:
-                click.echo(f"⚠ Skipping worker {w.name}: {reason}")
-                continue
+                # Security: Validate that the PID belongs to a legitimate worker process
+                # This prevents arbitrary process termination via crafted worker names
+                is_valid, reason = _validate_worker_process(pid, w.name)
+                if not is_valid:
+                    click.echo(f"⚠ Skipping worker {w.name}: {reason}")
+                    continue
 
-            try:
-                click.echo(f"Stopping worker {w.name} (PID {pid})...")
-                os.kill(pid, signal.SIGTERM)
-                click.echo(f"✓ Sent SIGTERM to worker (PID {pid})")
-            except ProcessLookupError:
-                click.echo(f"⚠ Process {pid} not found (worker may have already stopped)")
-            except PermissionError:
-                click.echo(f"✗ Permission denied to stop process {pid}")
+                try:
+                    click.echo(f"Stopping worker {w.name} (PID {pid})...")
+                    os.kill(pid, signal.SIGTERM)
+                    click.echo(f"✓ Sent SIGTERM to worker (PID {pid})")
+                except ProcessLookupError:
+                    click.echo(f"⚠ Process {pid} not found (worker may have already stopped)")
+                except PermissionError:
+                    click.echo(f"✗ Permission denied to stop process {pid}")
 
     except Exception as e:
         click.echo(f"✗ Error: {e}", err=True)
