@@ -5,14 +5,68 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import socket
 import sys
 
 import click
+import psutil
 from docket import Docket, Worker
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import register_sre_tasks
 from redis_sre_agent.observability.tracing import setup_tracing
+
+
+def _validate_worker_process(pid: int, worker_name: str) -> tuple[bool, str]:
+    """Validate that a PID belongs to a legitimate worker process.
+
+    Security check to prevent arbitrary process termination via crafted worker names.
+
+    Args:
+        pid: The process ID to validate.
+        worker_name: The full worker name from Docket (format: HOSTNAME#PID).
+
+    Returns:
+        Tuple of (is_valid, reason_message).
+    """
+    # Check 1: Verify the hostname prefix matches this machine
+    # Worker name format: HOSTNAME#PID
+    if "#" not in worker_name:
+        return False, "Invalid worker name format (missing '#' separator)"
+
+    hostname_prefix = worker_name.rsplit("#", 1)[0]
+    current_hostname = socket.gethostname()
+
+    if hostname_prefix != current_hostname:
+        return False, f"Worker hostname '{hostname_prefix}' does not match this machine '{current_hostname}'"
+
+    # Check 2: Verify the process exists and is a Python process
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return False, "Process does not exist"
+    except psutil.AccessDenied:
+        return False, "Cannot access process information (permission denied)"
+
+    # Check 3: Verify the process is a Python interpreter
+    try:
+        proc_name = proc.name().lower()
+        if "python" not in proc_name:
+            return False, f"Process is not a Python process (found: {proc_name})"
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False, "Cannot verify process name"
+
+    # Check 4: Verify the command line contains worker-related identifiers
+    try:
+        cmdline = " ".join(proc.cmdline()).lower()
+        # Look for indicators that this is our worker process
+        worker_indicators = ["docket", "redis-sre-agent", "redis_sre_agent", "worker"]
+        if not any(indicator in cmdline for indicator in worker_indicators):
+            return False, "Process command line does not match expected worker pattern"
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False, "Cannot verify process command line"
+
+    return True, "Process validated as legitimate worker"
 
 
 @click.group()
@@ -181,11 +235,21 @@ def stop():
             # Worker name format: HOSTNAME#PID (e.g., "HQM60FP16H-machine#41405")
             try:
                 pid = int(w.name.split("#")[-1])
+            except ValueError:
+                click.echo(f"⚠ Could not parse PID from worker name: {w.name}")
+                continue
+
+            # Security: Validate that the PID belongs to a legitimate worker process
+            # This prevents arbitrary process termination via crafted worker names
+            is_valid, reason = _validate_worker_process(pid, w.name)
+            if not is_valid:
+                click.echo(f"⚠ Skipping worker {w.name}: {reason}")
+                continue
+
+            try:
                 click.echo(f"Stopping worker {w.name} (PID {pid})...")
                 os.kill(pid, signal.SIGTERM)
                 click.echo(f"✓ Sent SIGTERM to worker (PID {pid})")
-            except ValueError:
-                click.echo(f"⚠ Could not parse PID from worker name: {w.name}")
             except ProcessLookupError:
                 click.echo(f"⚠ Process {pid} not found (worker may have already stopped)")
             except PermissionError:
