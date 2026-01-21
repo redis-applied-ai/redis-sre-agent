@@ -38,7 +38,10 @@ def _validate_worker_process(pid: int, worker_name: str) -> tuple[bool, str]:
     current_hostname = socket.gethostname()
 
     if hostname_prefix != current_hostname:
-        return False, f"Worker hostname '{hostname_prefix}' does not match this machine '{current_hostname}'"
+        return (
+            False,
+            f"Worker hostname '{hostname_prefix}' does not match this machine '{current_hostname}'",
+        )
 
     # Check 2: Verify the process exists and is a Python process
     try:
