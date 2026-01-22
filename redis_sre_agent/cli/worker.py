@@ -235,7 +235,7 @@ def stop():
         for w in workers:
             # Worker name format: HOSTNAME#PID (e.g., "HQM60FP16H-machine#41405")
             try:
-                pid = int(w.name.rsplit("#", 1)[0])
+                pid = int(w.name.rsplit("#", 1)[1])
             except ValueError:
                 click.echo(f"⚠ Could not parse PID from worker name: {w.name}")
                 continue
