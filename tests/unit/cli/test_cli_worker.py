@@ -93,6 +93,148 @@ class TestWorkerStatusCommand:
             # Should fail without Redis URL
             assert result.exit_code != 0 or "Redis URL not configured" in result.output
 
+    def test_status_redis_connected_with_workers(self, cli_runner):
+        """Test status shows connected and worker count."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "myhost#1234"
+        mock_worker.tasks = ["task1", "task2"]
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["status"])
+
+            assert result.exit_code == 0
+            assert "Redis: Connected" in result.output
+            assert "Workers: 1 active" in result.output
+            assert "Worker name: myhost#1234" in result.output
+            assert "Registered tasks: 2" in result.output
+
+    def test_status_redis_connected_no_workers(self, cli_runner):
+        """Test status shows no active workers when none running."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[]),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["status"])
+
+            assert result.exit_code == 0
+            assert "Redis: Connected" in result.output
+            assert "No active workers found" in result.output
+
+    def test_status_verbose_shows_task_names(self, cli_runner):
+        """Test status verbose mode shows task names."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "myhost#1234"
+        mock_worker.tasks = ["sre_task_one", "sre_task_two", "health_check"]
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["status", "--verbose"])
+
+            assert result.exit_code == 0
+            assert "sre_task_one" in result.output
+            assert "sre_task_two" in result.output
+            assert "health_check" in result.output
+
+    def test_status_non_verbose_hides_task_names(self, cli_runner):
+        """Test status non-verbose mode does not show task names."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "myhost#1234"
+        mock_worker.tasks = ["sre_task_one", "sre_task_two"]
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["status"])
+
+            assert result.exit_code == 0
+            # Task count is shown, but not individual task names
+            assert "Registered tasks: 2" in result.output
+            assert "Task name:" not in result.output
+
+    def test_status_multiple_workers(self, cli_runner):
+        """Test status shows multiple workers correctly."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker1 = MagicMock()
+        mock_worker1.name = "host1#1111"
+        mock_worker1.tasks = ["task1"]
+        mock_worker2 = MagicMock()
+        mock_worker2.name = "host2#2222"
+        mock_worker2.tasks = ["task1", "task2", "task3"]
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch(
+                "redis_sre_agent.cli.worker.asyncio.run",
+                return_value=[mock_worker1, mock_worker2],
+            ),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["status"])
+
+            assert result.exit_code == 0
+            assert "Workers: 2 active" in result.output
+            assert "host1#1111" in result.output
+            assert "host2#2222" in result.output
+
+    def test_status_redis_connection_error(self, cli_runner):
+        """Test status handles Redis connection errors."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch(
+                "redis.Redis.from_url",
+                side_effect=Exception("Connection refused"),
+            ),
+        ):
+            result = cli_runner.invoke(worker, ["status"])
+
+            assert result.exit_code != 0
+            assert "Failed to connect" in result.output
+            assert "Connection refused" in result.output
+            assert "Worker cannot run without Redis" in result.output
+
 
 class TestWorkerStopCommand:
     """Tests for the worker stop subcommand."""
@@ -117,6 +259,170 @@ class TestWorkerStopCommand:
 
             # Should fail without Redis URL
             assert result.exit_code != 0 or "Redis URL not configured" in result.output
+
+    def test_stop_no_workers_running(self, cli_runner):
+        """Test stop when no workers are running."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[]),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["stop"])
+
+            assert result.exit_code == 0
+            assert "No workers are currently running" in result.output
+
+    def test_stop_pid_parsing_failure(self, cli_runner):
+        """Test stop when worker name has invalid PID format."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "hostname#not-a-number"
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["stop"])
+
+            assert result.exit_code == 0
+            assert "Could not parse PID from worker name" in result.output
+
+    def test_stop_validation_failure_skips_worker(self, cli_runner):
+        """Test stop skips worker when validation fails."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "other-host#1234"
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+            patch(
+                "redis_sre_agent.cli.worker._validate_worker_process",
+                return_value=(False, "hostname mismatch"),
+            ),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["stop"])
+
+            assert result.exit_code == 0
+            assert "Skipping worker" in result.output
+            assert "hostname mismatch" in result.output
+
+    def test_stop_successful_sigterm(self, cli_runner):
+        """Test stop successfully sends SIGTERM to worker."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "myhost#1234"
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+            patch(
+                "redis_sre_agent.cli.worker._validate_worker_process",
+                return_value=(True, "validated"),
+            ),
+            patch("redis_sre_agent.cli.worker.os.kill") as mock_kill,
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["stop"])
+
+            assert result.exit_code == 0
+            mock_kill.assert_called_once_with(1234, 15)  # signal.SIGTERM = 15
+            assert "Stopping worker" in result.output
+            assert "Sent SIGTERM" in result.output
+
+    def test_stop_process_not_found(self, cli_runner):
+        """Test stop handles ProcessLookupError gracefully."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "myhost#1234"
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+            patch(
+                "redis_sre_agent.cli.worker._validate_worker_process",
+                return_value=(True, "validated"),
+            ),
+            patch("redis_sre_agent.cli.worker.os.kill", side_effect=ProcessLookupError),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["stop"])
+
+            assert result.exit_code == 0
+            assert "not found" in result.output
+            assert "may have already stopped" in result.output
+
+    def test_stop_permission_denied(self, cli_runner):
+        """Test stop handles PermissionError gracefully."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        mock_redis = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.name = "myhost#1234"
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis.Redis.from_url") as mock_from_url,
+            patch("redis_sre_agent.cli.worker.asyncio.run", return_value=[mock_worker]),
+            patch(
+                "redis_sre_agent.cli.worker._validate_worker_process",
+                return_value=(True, "validated"),
+            ),
+            patch("redis_sre_agent.cli.worker.os.kill", side_effect=PermissionError),
+        ):
+            mock_from_url.return_value.__enter__.return_value = mock_redis
+
+            result = cli_runner.invoke(worker, ["stop"])
+
+            assert result.exit_code == 0
+            assert "Permission denied" in result.output
+
+    def test_stop_redis_connection_error(self, cli_runner):
+        """Test stop handles Redis connection errors."""
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch(
+                "redis.Redis.from_url",
+                side_effect=Exception("Connection refused"),
+            ),
+        ):
+            result = cli_runner.invoke(worker, ["stop"])
+
+            assert result.exit_code != 0
+            assert "Connection refused" in result.output
 
 
 class TestValidateWorkerProcess:
