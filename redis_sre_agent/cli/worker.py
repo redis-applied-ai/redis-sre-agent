@@ -17,6 +17,37 @@ from redis_sre_agent.core.docket_tasks import register_sre_tasks
 from redis_sre_agent.observability.tracing import setup_tracing
 
 
+def _get_active_workers() -> list:
+    """Get list of active Docket workers.
+
+    Validates Redis configuration, connects to Redis, and retrieves
+    the list of active workers from Docket.
+
+    Returns:
+        List of active Worker objects.
+
+    Raises:
+        SystemExit: If Redis URL is not configured.
+        Exception: If Redis connection or worker retrieval fails.
+    """
+    if not settings.redis_url or not settings.redis_url.get_secret_value():
+        click.echo("✗ Redis URL not configured")
+        sys.exit(1)
+
+    redis_url = settings.redis_url.get_secret_value()
+
+    import redis
+
+    with redis.Redis.from_url(redis_url) as r:
+        r.ping()
+
+        async def fetch_workers():
+            async with Docket(name="sre_docket", url=redis_url) as d:
+                return await d.workers()
+
+        return asyncio.run(fetch_workers())
+
+
 def _validate_worker_process(pid: int, worker_name: str) -> tuple[bool, str]:
     """Validate that a PID belongs to a legitimate worker process.
 
@@ -63,7 +94,7 @@ def _validate_worker_process(pid: int, worker_name: str) -> tuple[bool, str]:
     try:
         cmdline = " ".join(proc.cmdline()).lower()
         # Look for indicators that this is our worker process
-        worker_indicators = ["docket", "redis-sre-agent", "redis_sre_agent", "worker"]
+        worker_indicators = ["docket", "redis-sre-agent", "redis_sre_agent"]
         if not any(indicator in cmdline for indicator in worker_indicators):
             return False, "Process command line does not match expected worker pattern"
     except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -166,37 +197,20 @@ def status(verbose: bool):
     """Check the status of the Docket worker."""
     click.echo("Checking worker status...")
 
-    # Check Redis connection (required for worker)
-    if not settings.redis_url or not settings.redis_url.get_secret_value():
-        click.echo("✗ Redis URL not configured")
-        sys.exit(1)
-
-    redis_url = settings.redis_url.get_secret_value()
-
     try:
-        import redis
+        workers = _get_active_workers()
+        click.echo("✓ Redis: Connected")
 
-        with redis.Redis.from_url(redis_url) as r:
-            r.ping()
-            click.echo("✓ Redis: Connected")
-
-            # Check for active workers by looking at Docket's worker registry
-            async def get_workers():
-                async with Docket(name="sre_docket", url=redis_url) as d:
-                    return await d.workers()
-
-            workers = asyncio.run(get_workers())
-
-            if workers:
-                click.echo(f"✓ Workers: {len(workers)} active")
-                for w in workers:
-                    click.echo(f"  │  Worker name: {w.name}")
-                    click.echo(f"  │  Registered tasks: {len(w.tasks)}")
-                    if verbose:
-                        for task in w.tasks:
-                            click.echo(f"  │   └─ Task name: {task}")
-            else:
-                click.echo("✗ Workers: No active workers found")
+        if workers:
+            click.echo(f"✓ Workers: {len(workers)} active")
+            for w in workers:
+                click.echo(f"  │  Worker name: {w.name}")
+                click.echo(f"  │  Registered tasks: {len(w.tasks)}")
+                if verbose:
+                    for task in w.tasks:
+                        click.echo(f"  │   └─ Task name: {task}")
+        else:
+            click.echo("✗ Workers: No active workers found")
 
     except Exception as e:
         click.echo(f"✗ Redis: Failed to connect ({e})")
@@ -210,53 +224,37 @@ def stop():
 
     Workers are stopped by sending SIGTERM to the process (graceful shutdown).
     """
-    # Check Redis connection
-    if not settings.redis_url or not settings.redis_url.get_secret_value():
-        click.echo("✗ Redis URL not configured")
-        sys.exit(1)
-
-    redis_url = settings.redis_url.get_secret_value()
-
     try:
-        import redis
+        workers = _get_active_workers()
 
-        with redis.Redis.from_url(redis_url) as r:
-            r.ping()
+        if not workers:
+            click.echo("✗ No workers are currently running")
+            return
 
-            async def get_workers():
-                async with Docket(name="sre_docket", url=redis_url) as d:
-                    return await d.workers()
+        # Stop each worker by sending SIGTERM
+        for w in workers:
+            # Worker name format: HOSTNAME#PID (e.g., "HQM60FP16H-machine#41405")
+            try:
+                pid = int(w.name.split("#")[-1])
+            except ValueError:
+                click.echo(f"⚠ Could not parse PID from worker name: {w.name}")
+                continue
 
-            workers = asyncio.run(get_workers())
+            # Security: Validate that the PID belongs to a legitimate worker process
+            # This prevents arbitrary process termination via crafted worker names
+            is_valid, reason = _validate_worker_process(pid, w.name)
+            if not is_valid:
+                click.echo(f"⚠ Skipping worker {w.name}: {reason}")
+                continue
 
-            if not workers:
-                click.echo("✗ No workers are currently running")
-                return
-
-            # Stop each worker by sending SIGTERM
-            for w in workers:
-                # Worker name format: HOSTNAME#PID (e.g., "HQM60FP16H-machine#41405")
-                try:
-                    pid = int(w.name.split("#")[-1])
-                except ValueError:
-                    click.echo(f"⚠ Could not parse PID from worker name: {w.name}")
-                    continue
-
-                # Security: Validate that the PID belongs to a legitimate worker process
-                # This prevents arbitrary process termination via crafted worker names
-                is_valid, reason = _validate_worker_process(pid, w.name)
-                if not is_valid:
-                    click.echo(f"⚠ Skipping worker {w.name}: {reason}")
-                    continue
-
-                try:
-                    click.echo(f"Stopping worker {w.name} (PID {pid})...")
-                    os.kill(pid, signal.SIGTERM)
-                    click.echo(f"✓ Sent SIGTERM to worker (PID {pid})")
-                except ProcessLookupError:
-                    click.echo(f"⚠ Process {pid} not found (worker may have already stopped)")
-                except PermissionError:
-                    click.echo(f"✗ Permission denied to stop process {pid}")
+            try:
+                click.echo(f"Stopping worker {w.name} (PID {pid})...")
+                os.kill(pid, signal.SIGTERM)
+                click.echo(f"✓ Sent SIGTERM to worker (PID {pid})")
+            except ProcessLookupError:
+                click.echo(f"⚠ Process {pid} not found (worker may have already stopped)")
+            except PermissionError:
+                click.echo(f"✗ Permission denied to stop process {pid}")
 
     except Exception as e:
         click.echo(f"✗ Error: {e}", err=True)
