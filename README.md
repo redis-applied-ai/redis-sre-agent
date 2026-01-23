@@ -75,3 +75,7 @@ For details on adding integrations and custom providers, see [Tool Providers](do
 
 🚧 **Under Development** - Core infrastructure and basic agent workflow in progress.
 Built with FastAPI, LangGraph, RedisVL, and Docket for reliable SRE automation.
+
+## License
+
+This software is governed by your choice of: (a) the Redis Source Available License v2 (RSALv2); or (b) the Server Side Public License v1 (SSPLv1); or (c) the GNU Affero General Public License v3 (AGPLv3). See [LICENSE.txt](LICENSE.txt) for details.
