@@ -58,7 +58,10 @@ Generated from the Click command tree.
 - runbook evaluate — Evaluate existing runbooks in the source documents directory.
 - runbook generate — Generate a new Redis SRE runbook for the specified topic.
 - query — Execute an agent query.
-- worker — Start the background worker.
+- worker — Manage the Docket worker.
+- worker start — Start the background worker.
+- worker status — Check the status of the Docket worker.
+- worker stop — Stop the Docket worker.
 - mcp — MCP server commands - expose agent capabilities via Model Context Protocol.
 - mcp list-tools — List available MCP tools.
 - mcp serve — Start the MCP server.
