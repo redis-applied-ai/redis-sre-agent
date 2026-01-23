@@ -7,8 +7,7 @@ name = "redis-sre-agent"
 version = "0.3.0"
 description = "A LangGraph-based Redis SRE Agent for infrastructure monitoring and incident response"
 readme = "README.md"
-license = "RSALv2 OR SSPLv1 OR AGPL-3.0-or-later"
-license-files = ["LICENSE.txt"]
+license = {file = "LICENSE.txt"}
 requires-python = ">=3.12"
 dependencies = [
     # FastAPI and web framework
