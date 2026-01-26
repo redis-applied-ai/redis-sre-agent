@@ -1,0 +1,141 @@
+# Dockerfile.airgap - Air-gapped deployment image for Redis SRE Agent
+#
+# This Dockerfile creates a self-contained image suitable for air-gapped
+# environments (banks, government, etc.) where:
+# - No internet access is available at runtime
+# - Images must be pulled from internal registries (Artifactory, etc.)
+# - All dependencies must be pre-bundled
+#
+# Key differences from standard Dockerfile:
+# - Pre-downloads HuggingFace embedding model (no runtime downloads)
+# - Bundles MCP server dependencies (no npx -y at runtime)
+# - Removes network-dependent build steps
+# - Ships with pre-built knowledge base artifacts
+#
+# Usage:
+#   # Build the image
+#   docker build -f Dockerfile.airgap -t redis-sre-agent:airgap .
+#
+#   # Export for transfer to air-gapped environment
+#   docker save redis-sre-agent:airgap | gzip > redis-sre-agent-airgap.tar.gz
+#
+#   # Load in air-gapped environment
+#   docker load < redis-sre-agent-airgap.tar.gz
+#
+# Configuration for air-gapped deployment:
+#   EMBEDDING_PROVIDER=local
+#   EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+#   VECTOR_DIM=384
+
+# =============================================================================
+# STAGE 1: Builder
+# =============================================================================
+FROM python:3.12-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+WORKDIR /app
+
+# Set uv environment variables for optimization
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+
+# Install build dependencies (no network-fetching scripts)
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies
+COPY pyproject.toml uv.lock ./
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+
+# Copy application code
+COPY . .
+
+# Install the project and prepare artifacts
+# agent-memory-server is included as a regular dependency in pyproject.toml
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev && \
+    mkdir -p /app/artifacts && \
+    # Prepare source documents if available
+    (uv run --no-sync redis-sre-agent pipeline prepare-sources \
+    --source-dir /app/source_documents \
+    --prepare-only \
+    --artifacts-path /app/artifacts || \
+    echo "Warning: Could not prepare source documents at build time")
+
+# =============================================================================
+# STAGE 2: Model Download
+# Pre-download HuggingFace models so they're bundled in the image
+# =============================================================================
+FROM python:3.12-slim AS model-downloader
+
+RUN pip install --no-cache-dir sentence-transformers requests
+
+# Download the default air-gap embedding model
+# This caches the model in /root/.cache/huggingface
+ENV HF_HOME=/models/huggingface
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
+# Also download a larger model option
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('sentence-transformers/all-mpnet-base-v2')"
+
+# =============================================================================
+# STAGE 3: Runtime
+# =============================================================================
+FROM python:3.12-slim
+
+COPY --from=builder /bin/uv /bin/uv
+
+WORKDIR /app
+
+# Install minimal runtime dependencies (no network-fetching scripts)
+# Note: We skip Docker CLI and Node.js since MCP servers using npx won't work
+# in air-gapped environments anyway. Users should disable MCP or use HTTP-based servers.
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    ca-certificates \
+    redis-tools \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create application user
+RUN useradd --create-home --shell /bin/bash app
+
+# Copy application from builder
+COPY --from=builder --chown=app:app /app /app
+
+# Copy pre-downloaded HuggingFace models
+COPY --from=model-downloader /models /models
+ENV HF_HOME=/models/huggingface
+# Disable HuggingFace Hub network access (use only cached models)
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+
+# Add virtual environment to PATH
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Install entrypoint script
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER app
+
+# Default to local embeddings for air-gapped deployment
+ENV EMBEDDING_PROVIDER=local
+ENV EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ENV VECTOR_DIM=384
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+CMD ["uvicorn", "redis_sre_agent.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

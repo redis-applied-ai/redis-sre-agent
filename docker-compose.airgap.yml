@@ -1,0 +1,104 @@
+# docker-compose.airgap.yml - Minimal compose for air-gapped deployments
+#
+# This compose file is designed for air-gapped environments where:
+# - Redis is provided externally (customer's Redis Enterprise, etc.)
+# - LLM is accessed via internal proxy (OpenAI-compatible API)
+# - Monitoring tools (Prometheus, Loki) are internal infrastructure
+# - No internet access is available
+#
+# Usage:
+#   # Copy .env.airgap.example to .env and configure
+#   cp .env.airgap.example .env
+#
+#   # Start services
+#   docker-compose -f docker-compose.airgap.yml up -d
+#
+# For Podman:
+#   podman-compose -f docker-compose.airgap.yml up -d
+
+services:
+  # SRE Agent API
+  sre-agent:
+    image: ${SRE_AGENT_IMAGE:-redis-sre-agent:airgap}
+    ports:
+      - "${API_PORT:-8080}:8000"
+    environment:
+      # Redis connection (customer provides)
+      - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+
+      # LLM configuration (customer provides internal endpoint)
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-4}
+      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-4}
+
+      # Embedding configuration (local by default for air-gap)
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - VECTOR_DIM=${VECTOR_DIM:-384}
+
+      # Optional: Monitoring integration (internal URLs)
+      - TOOLS_PROMETHEUS_URL=${TOOLS_PROMETHEUS_URL:-}
+      - TOOLS_LOKI_URL=${TOOLS_LOKI_URL:-}
+
+      # Disable MCP servers that require network access
+      # Users can re-enable specific servers via config.yaml mount
+
+      # Skip knowledge base auto-init (use pre-built artifacts)
+      - SKIP_KNOWLEDGE_INIT=${SKIP_KNOWLEDGE_INIT:-false}
+
+      # Master key for API authentication
+      - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY:-}
+    volumes:
+      # Mount config for customization
+      - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml:ro
+      # Mount pre-built artifacts if available
+      - ${ARTIFACTS_PATH:-./artifacts}:/app/artifacts:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # SRE Agent Background Worker
+  sre-worker:
+    image: ${SRE_AGENT_IMAGE:-redis-sre-agent:airgap}
+    command: redis-sre-agent worker start
+    environment:
+      # Same configuration as sre-agent
+      - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-4}
+      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-4}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - VECTOR_DIM=${VECTOR_DIM:-384}
+      - TOOLS_PROMETHEUS_URL=${TOOLS_PROMETHEUS_URL:-}
+      - TOOLS_LOKI_URL=${TOOLS_LOKI_URL:-}
+      - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY:-}
+    volumes:
+      - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml:ro
+      - ${ARTIFACTS_PATH:-./artifacts}:/app/artifacts:ro
+    restart: unless-stopped
+    depends_on:
+      sre-agent:
+        condition: service_healthy
+
+  # Optional: SRE Agent UI
+  # Uncomment if you have the UI image available
+  # sre-ui:
+  #   image: ${SRE_UI_IMAGE:-redis-sre-agent-ui:airgap}
+  #   ports:
+  #     - "${UI_PORT:-3002}:80"
+  #   environment:
+  #     - VITE_API_URL=http://sre-agent:8000
+  #   depends_on:
+  #     sre-agent:
+  #       condition: service_healthy

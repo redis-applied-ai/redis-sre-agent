@@ -1,14 +1,17 @@
 """Redis connection management - no caching to avoid event loop issues."""
 
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from redis.asyncio import Redis
 from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
 from redisvl.index.index import AsyncSearchIndex
-from redisvl.utils.vectorize import OpenAITextVectorizer
+from redisvl.utils.vectorize import HFTextVectorizer, OpenAITextVectorizer
 
 from redis_sre_agent.core.config import settings
+
+# Type alias for vectorizers
+Vectorizer = Union[OpenAITextVectorizer, HFTextVectorizer]
 
 logger = logging.getLogger(__name__)
 
@@ -215,10 +218,15 @@ def get_redis_client(url: Optional[str] = None) -> Redis:
     )
 
 
-def get_vectorizer() -> OpenAITextVectorizer:
-    """Get OpenAI vectorizer with Redis-backed embeddings cache.
+def get_vectorizer() -> Vectorizer:
+    """Get vectorizer with Redis-backed embeddings cache.
 
-    Returns the native vectorizer; callers should use aembed/aembed_many.
+    Returns either an OpenAI or HuggingFace vectorizer based on settings.embedding_provider.
+    Callers should use aembed/aembed_many for async operations.
+
+    Providers:
+        - 'openai': Uses OpenAI API (requires OPENAI_API_KEY and network access)
+        - 'local': Uses HuggingFace sentence-transformers (no API needed, air-gap compatible)
 
     The embeddings cache uses a stable key namespace ("sre_embeddings_cache")
     so that embeddings are shared across vectorizer instances. Cache keys
@@ -239,13 +247,36 @@ def get_vectorizer() -> OpenAITextVectorizer:
         redis_url=redis_url,
         ttl=settings.embeddings_cache_ttl,
     )
-    logger.debug(f"Vectorizer created with embeddings cache (ttl={settings.embeddings_cache_ttl}s)")
 
-    return OpenAITextVectorizer(
-        model=settings.embedding_model,
-        cache=cache,
-        api_config={"api_key": settings.openai_api_key},
-    )
+    provider = settings.embedding_provider.lower()
+
+    if provider == "local":
+        # Use HuggingFace sentence-transformers (air-gap compatible)
+        logger.info(
+            f"Using local HuggingFace vectorizer with model: {settings.embedding_model}"
+        )
+        return HFTextVectorizer(
+            model=settings.embedding_model,
+            cache=cache,
+        )
+    elif provider == "openai":
+        # Use OpenAI API (default)
+        logger.debug(
+            f"Vectorizer created with embeddings cache (ttl={settings.embeddings_cache_ttl}s)"
+        )
+        return OpenAITextVectorizer(
+            model=settings.embedding_model,
+            cache=cache,
+            api_config={
+                "api_key": settings.openai_api_key,
+                **({"base_url": settings.openai_base_url} if settings.openai_base_url else {}),
+            },
+        )
+    else:
+        raise ValueError(
+            f"Unknown embedding_provider: '{provider}'. "
+            "Supported values: 'openai', 'local'"
+        )
 
 
 async def get_knowledge_index() -> AsyncSearchIndex:
