@@ -29,13 +29,33 @@ The air-gapped deployment uses:
 | Prometheus | Metrics server | For `prometheus_query_metrics` tool |
 | Loki | Log aggregation | For `loki_query_logs` tool |
 
-## Building the Air-Gap Bundle
+## Getting the Air-Gap Image
 
-On a machine with internet access, run the build script. This script:
+### Option 1: Mirror from Docker Hub (Recommended)
 
-1. **Builds the Docker image** from `Dockerfile.airgap` with pre-bundled HuggingFace models
-2. **Exports the image** to a portable tarball
-3. **Creates a complete bundle** with all configuration files
+The air-gap image is published to Docker Hub. Mirror it to your internal
+registry (Artifactory, Harbor, etc.):
+
+```bash
+# On a machine with internet access
+docker pull redis/redis-sre-agent:airgap
+
+# Tag for your internal registry
+docker tag redis/redis-sre-agent:airgap your-artifactory.internal.com/redis-sre-agent:airgap
+
+# Push to internal registry
+docker push your-artifactory.internal.com/redis-sre-agent:airgap
+```
+
+Then in your air-gapped environment, pull from your internal registry:
+
+```bash
+docker pull your-artifactory.internal.com/redis-sre-agent:airgap
+```
+
+### Option 2: Build from Source
+
+If you cannot use the published image, build it yourself:
 
 ```bash
 # Clone the repository
@@ -44,17 +64,24 @@ cd redis-sre-agent
 
 # Build the air-gap bundle (builds Docker image + creates bundle)
 ./scripts/build-airgap.sh --output ./airgap-bundle
-
-# Bundle contents:
-# - redis-sre-agent-airgap.tar.gz (Docker image ~4GB with models)
-# - docker-compose.airgap.yml
-# - .env.example
-# - config.yaml
-# - artifacts/ (pre-built knowledge base, if source_documents exist)
-# - README.md (quick start guide)
 ```
 
-### Build Options
+The build script:
+
+1. **Builds the Docker image** from `Dockerfile.airgap` with pre-bundled HuggingFace models
+2. **Exports the image** to a portable tarball
+3. **Creates a complete bundle** with configuration files
+
+Bundle contents:
+
+- `redis-sre-agent-airgap.tar.gz` (Docker image ~4GB with models)
+- `docker-compose.airgap.yml`
+- `.env.example`
+- `config.yaml`
+- `artifacts/` (pre-built knowledge base, if source_documents exist)
+- `README.md` (quick start guide)
+
+#### Build Options
 
 ```bash
 # Custom image tag
@@ -69,24 +96,39 @@ cd redis-sre-agent
 
 ## Deployment
 
-### 1. Transfer Bundle
+### 1. Get the Image
 
-Transfer the `airgap-bundle/` directory to your air-gapped environment.
-
-### 2. Load Docker Image
+**If using mirrored image (Option 1):**
 
 ```bash
-# Load the image
+# Pull from your internal registry
+docker pull your-artifactory.internal.com/redis-sre-agent:airgap
+
+# Or for Podman
+podman pull your-artifactory.internal.com/redis-sre-agent:airgap
+```
+
+**If using build bundle (Option 2):**
+
+```bash
+# Transfer airgap-bundle/ to air-gapped environment, then:
 docker load < redis-sre-agent-airgap.tar.gz
 
 # Verify
 docker images | grep redis-sre-agent
 ```
 
-For Podman:
+### 2. Get Configuration Files
+
+If you mirrored the image, download the configuration files separately:
+
 ```bash
-podman load < redis-sre-agent-airgap.tar.gz
+# From the repository (on internet-connected machine)
+curl -O https://raw.githubusercontent.com/redis-applied-ai/redis-sre-agent/main/docker-compose.airgap.yml
+curl -O https://raw.githubusercontent.com/redis-applied-ai/redis-sre-agent/main/.env.airgap.example
 ```
+
+If you used the build script, these are already in your bundle.
 
 ### 3. Configure Environment
 
