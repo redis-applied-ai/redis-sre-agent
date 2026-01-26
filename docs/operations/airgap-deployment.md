@@ -31,22 +31,27 @@ The air-gapped deployment uses:
 
 ## Building the Air-Gap Bundle
 
-On a machine with internet access:
+On a machine with internet access, run the build script. This script:
+
+1. **Builds the Docker image** from `Dockerfile.airgap` with pre-bundled HuggingFace models
+2. **Exports the image** to a portable tarball
+3. **Creates a complete bundle** with all configuration files
 
 ```bash
 # Clone the repository
 git clone https://github.com/redis-applied-ai/redis-sre-agent.git
 cd redis-sre-agent
 
-# Build the air-gap bundle
+# Build the air-gap bundle (builds Docker image + creates bundle)
 ./scripts/build-airgap.sh --output ./airgap-bundle
 
 # Bundle contents:
-# - redis-sre-agent-airgap.tar.gz (Docker image ~2GB)
+# - redis-sre-agent-airgap.tar.gz (Docker image ~4GB with models)
 # - docker-compose.airgap.yml
 # - .env.example
 # - config.yaml
-# - artifacts/ (pre-built knowledge base)
+# - artifacts/ (pre-built knowledge base, if source_documents exist)
+# - README.md (quick start guide)
 ```
 
 ### Build Options
