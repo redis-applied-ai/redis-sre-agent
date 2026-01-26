@@ -252,9 +252,7 @@ def get_vectorizer() -> Vectorizer:
 
     if provider == "local":
         # Use HuggingFace sentence-transformers (air-gap compatible)
-        logger.info(
-            f"Using local HuggingFace vectorizer with model: {settings.embedding_model}"
-        )
+        logger.info(f"Using local HuggingFace vectorizer with model: {settings.embedding_model}")
         return HFTextVectorizer(
             model=settings.embedding_model,
             cache=cache,
@@ -274,8 +272,7 @@ def get_vectorizer() -> Vectorizer:
         )
     else:
         raise ValueError(
-            f"Unknown embedding_provider: '{provider}'. "
-            "Supported values: 'openai', 'local'"
+            f"Unknown embedding_provider: '{provider}'. Supported values: 'openai', 'local'"
         )
 
 
