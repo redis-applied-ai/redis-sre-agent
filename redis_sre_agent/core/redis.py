@@ -279,9 +279,7 @@ def get_vectorizer(config: Optional[Settings] = None) -> Vectorizer:
         )
     elif provider == "openai":
         # Use OpenAI API (default)
-        logger.debug(
-            f"Vectorizer created with embeddings cache (ttl={cfg.embeddings_cache_ttl}s)"
-        )
+        logger.debug(f"Vectorizer created with embeddings cache (ttl={cfg.embeddings_cache_ttl}s)")
         return OpenAITextVectorizer(
             model=cfg.embedding_model,
             cache=cache,
