@@ -96,9 +96,7 @@ def _load_factory_from_config() -> None:
         factory = getattr(module, func_name)
 
         if not callable(factory):
-            raise ValueError(
-                f"LLM_FACTORY '{llm_factory_path}' is not callable"
-            )
+            raise ValueError(f"LLM_FACTORY '{llm_factory_path}' is not callable")
 
         _llm_factory = factory
         logger.info(f"Loaded custom LLM factory from {llm_factory_path}")
