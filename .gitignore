@@ -32,6 +32,7 @@ MANIFEST
 .env.test
 .env.production
 !.env.example
+!.env.airgap.example
 
 # Virtual environments
 .venv

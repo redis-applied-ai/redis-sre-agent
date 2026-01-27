@@ -98,6 +98,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Pre-install MCP servers globally for faster startup (no npx download needed)
+RUN npm install -g @modelcontextprotocol/server-github
+
 # Create the application user and docker group before copying app files so we
 # can set ownership in a single COPY layer instead of a separate chown layer.
 RUN useradd --create-home --shell /bin/bash app && \

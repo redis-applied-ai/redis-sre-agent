@@ -213,11 +213,30 @@ class Settings(BaseSettings):
         default="gpt-5-nano", description="OpenAI model for very simple classification/triage"
     )
 
-    # Vector Search
-    embedding_model: str = Field(
-        default="text-embedding-3-small", description="OpenAI embedding model"
+    # Vector Search / Embeddings
+    embedding_provider: str = Field(
+        default="openai",
+        description=(
+            "Embedding provider: 'openai' for OpenAI API (requires OPENAI_API_KEY), "
+            "'local' for local HuggingFace sentence-transformers (no API needed, air-gap compatible)"
+        ),
     )
-    vector_dim: int = Field(default=1536, description="Vector dimensions")
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description=(
+            "Embedding model name. For 'openai' provider: 'text-embedding-3-small', "
+            "'text-embedding-3-large', etc. For 'local' provider: any sentence-transformers "
+            "model like 'sentence-transformers/all-MiniLM-L6-v2' (384 dims) or "
+            "'sentence-transformers/all-mpnet-base-v2' (768 dims)"
+        ),
+    )
+    vector_dim: int = Field(
+        default=1536,
+        description=(
+            "Vector dimensions. Must match the embedding model: "
+            "OpenAI text-embedding-3-small=1536, all-MiniLM-L6-v2=384, all-mpnet-base-v2=768"
+        ),
+    )
     embeddings_cache_ttl: Optional[int] = Field(
         default=86400 * 7,  # 7 days
         description="TTL in seconds for cached embeddings. None means no expiration.",
