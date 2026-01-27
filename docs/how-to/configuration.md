@@ -192,6 +192,95 @@ export TOOL_PROVIDERS='[
 - Use `RedisInstance.extension_data` and `extension_secrets` to pass namespaced config to providers.
 - See the [Tool Providers guide](tool-providers.md) for details.
 
+### Custom LLM providers
+
+By default, the agent uses OpenAI models via `ChatOpenAI`. You can replace this with any LangChain-compatible chat model (Anthropic, Azure OpenAI, Bedrock, Vertex AI, etc.) by configuring a custom factory function.
+
+#### Configuration via environment variable
+
+Set `LLM_FACTORY` to a dot-path import string pointing to your factory function:
+
+```bash
+LLM_FACTORY=mypackage.llm.anthropic_factory
+```
+
+Or in `config.yaml`:
+
+```yaml
+llm_factory: mypackage.llm.anthropic_factory
+```
+
+The factory is automatically loaded on first LLM creation—no code changes required.
+
+#### Writing a factory function
+
+Create a factory function that returns a LangChain `BaseChatModel`:
+
+```python
+# mypackage/llm.py
+from langchain_anthropic import ChatAnthropic
+
+def anthropic_factory(tier: str, model: str | None, timeout: float | None, **kwargs):
+    """Custom factory for Anthropic Claude models."""
+    models = {
+        "main": "claude-sonnet-4-20250514",
+        "mini": "claude-sonnet-4-20250514",
+        "nano": "claude-3-5-haiku-20241022",
+    }
+    return ChatAnthropic(
+        model=model or models.get(tier, "claude-sonnet-4-20250514"),
+        timeout=timeout or 180.0,
+        **kwargs
+    )
+```
+
+#### Factory function signature
+
+Your factory receives these arguments:
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `tier` | `str` | One of `"main"`, `"mini"`, or `"nano"` indicating intended use |
+| `model` | `str \| None` | Model name override, or `None` to use tier default |
+| `timeout` | `float \| None` | Timeout override, or `None` to use default |
+| `**kwargs` | | Additional arguments passed through from caller |
+
+The factory must return a LangChain `BaseChatModel` instance.
+
+#### Model tiers
+
+The agent uses three tiers of models for different tasks:
+
+| Tier | Default Model | Used For |
+|------|---------------|----------|
+| `main` | `gpt-4o` | Primary agent reasoning, complex analysis |
+| `mini` | `gpt-4o-mini` | Knowledge search, utility tasks |
+| `nano` | `gpt-4o-mini` | Simple classification, triage |
+
+Configure default models via environment variables:
+
+```bash
+OPENAI_MODEL=gpt-4o
+OPENAI_MODEL_MINI=gpt-4o-mini
+OPENAI_MODEL_NANO=gpt-4o-mini
+```
+
+#### Programmatic registration (advanced)
+
+For advanced use cases, you can register a factory programmatically using `set_llm_factory()`. This overrides any `LLM_FACTORY` configuration:
+
+```python
+from redis_sre_agent.core.llm_helpers import set_llm_factory
+
+set_llm_factory(my_custom_factory)
+```
+
+To reset to the default OpenAI factory:
+
+```python
+set_llm_factory(None)
+```
+
 ### Advanced: Encryption of secrets
 
 Secrets (e.g., connection URLs, admin passwords) are encrypted at rest using envelope encryption. See the advanced guide:
