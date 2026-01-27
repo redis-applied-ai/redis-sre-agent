@@ -108,6 +108,19 @@ jobs:
     if: ${{ github.event.inputs.build_airgap == 'true' }}
 
     steps:
+      # Free disk space FIRST before anything else
+      # The air-gap image is ~4GB and needs significant space for multi-arch builds
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -115,8 +128,16 @@ jobs:
         run: |
           echo "Before cleanup:" && df -h
           rm -rf htmlcov site eval_reports artifacts artifacts_tmp_for_test _tmp_artifacts redis-docs/build \
-                 ui/node_modules ui/ui-kit
+                 ui/node_modules ui/ui-kit redis-docs source_documents
           echo "After cleanup:" && df -h
+
+      - name: Additional disk cleanup
+        run: |
+          # Remove more unnecessary files for air-gap build
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo rm -rf /usr/local/share/boost /usr/lib/jvm /usr/share/swift
+          sudo apt-get clean
+          df -h
 
       - name: Set up QEMU (for cross-arch builds)
         uses: docker/setup-qemu-action@v3
@@ -156,17 +177,6 @@ jobs:
             type=raw,value=${{ github.event.inputs.tag }}-airgap
             type=raw,value=airgap,enable=${{ github.event.inputs.push_latest }}
 
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
       - name: Build and push air-gap Docker image
         uses: docker/build-push-action@v5
         with:
@@ -175,8 +185,9 @@ jobs:
           push: true
           tags: ${{ steps.meta-airgap.outputs.tags }}
           labels: ${{ steps.meta-airgap.outputs.labels }}
+          # Only import cache, don't export - air-gap image is too large (~5GB with models)
+          # and cache export runs out of disk space on GitHub runners
           cache-from: type=registry,ref=redislabs/redis-sre-agent:buildcache-airgap
-          cache-to: type=registry,ref=redislabs/redis-sre-agent:buildcache-airgap,mode=max
           platforms: linux/amd64,linux/arm64
 
       - name: Air-gap image digest
