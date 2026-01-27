@@ -281,6 +281,70 @@ To reset to the default OpenAI factory:
 set_llm_factory(None)
 ```
 
+### Embedding models
+
+The agent uses embeddings for the knowledge base vector search. You can configure the embedding provider and model to match your deployment requirements.
+
+#### Configuration options
+
+| Setting | Environment Variable | Default | Description |
+|---------|---------------------|---------|-------------|
+| `embedding_provider` | `EMBEDDING_PROVIDER` | `openai` | Provider: `openai` or `local` |
+| `embedding_model` | `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name (provider-specific) |
+| `vector_dim` | `VECTOR_DIM` | `1536` | Vector dimensions (must match model) |
+| `embeddings_cache_ttl` | `EMBEDDINGS_CACHE_TTL` | `604800` (7 days) | Cache TTL in seconds |
+
+#### OpenAI embeddings (default)
+
+Uses OpenAI's embedding API. Requires `OPENAI_API_KEY`.
+
+```bash
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+VECTOR_DIM=1536
+```
+
+Available OpenAI models:
+
+| Model | Dimensions | Notes |
+|-------|------------|-------|
+| `text-embedding-3-small` | 1536 | Default, good balance of quality and cost |
+| `text-embedding-3-large` | 3072 | Higher quality, more expensive |
+
+#### Local embeddings (air-gap compatible)
+
+Uses HuggingFace sentence-transformers models locally. No API key required—ideal for air-gapped environments.
+
+```bash
+EMBEDDING_PROVIDER=local
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+VECTOR_DIM=384
+```
+
+Available local models:
+
+| Model | Dimensions | Notes |
+|-------|------------|-------|
+| `sentence-transformers/all-MiniLM-L6-v2` | 384 | Fast, lightweight |
+| `sentence-transformers/all-mpnet-base-v2` | 768 | Better quality, larger |
+
+!!! warning "Vector dimensions must match"
+    The `VECTOR_DIM` setting must match the output dimensions of your chosen model. Mismatched dimensions will cause indexing and search failures.
+
+#### Switching providers
+
+When switching embedding providers, you must re-ingest the knowledge base since embeddings are not compatible across providers:
+
+```bash
+# Update configuration
+export EMBEDDING_PROVIDER=local
+export EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+export VECTOR_DIM=384
+
+# Re-ingest knowledge base
+redis-sre-agent pipeline ingest --force
+```
+
 ### Advanced: Encryption of secrets
 
 Secrets (e.g., connection URLs, admin passwords) are encrypted at rest using envelope encryption. See the advanced guide:
