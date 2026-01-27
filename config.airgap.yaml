@@ -1,0 +1,97 @@
+# Redis SRE Agent Configuration - Air-Gapped Deployment
+#
+# This configuration is designed for air-gapped environments where:
+# - No internet access is available
+# - MCP servers are pre-installed in the image (no runtime downloads)
+#
+# Copy this file to config.yaml in your deployment directory.
+
+# MCP (Model Context Protocol) servers configuration
+# Only servers that work without internet access are enabled
+mcp_servers:
+  # Memory server for long-term agent memory
+  # Pre-installed in the air-gap image via uv tool install
+  redis-memory-server:
+    command: agent-memory
+    args:
+      - mcp
+    env:
+      REDIS_URL: ${REDIS_URL}
+    tools:
+      get_current_datetime:
+        description: |
+          Get the current date and time. Use this when you need to
+          record timestamps for Redis instance events or incidents.
+
+          {original}
+      create_long_term_memories:
+        description: |
+          Save long-term memories about Redis instances. Use this to
+          record: past incidents and their resolutions, configuration
+          changes, performance baselines, known issues, maintenance
+          history, and lessons learned. Always include the instance_id
+          in the memory text for future retrieval.
+
+          {original}
+      search_long_term_memory:
+        description: |
+          Search saved memories about Redis instances. ALWAYS use this
+          before troubleshooting a Redis instance to recall past issues,
+          solutions, and context. Search by instance_id, error patterns,
+          or symptoms.
+
+          {original}
+      get_long_term_memory:
+        description: |
+          Retrieve a specific memory by ID. Use this to get full details
+          of a memory found via search.
+
+          {original}
+      edit_long_term_memory:
+        description: |
+          Update an existing memory. Use this to add new information to
+          a past incident record, update resolution status, or correct
+          outdated information.
+
+          {original}
+      delete_long_term_memories:
+        description: |
+          Delete memories that are no longer relevant. Use sparingly -
+          prefer editing to add context rather than deleting.
+
+          {original}
+
+  # GitHub MCP server for repository operations
+  # Pre-installed in the air-gap image via npm install -g
+  # Requires GITHUB_PERSONAL_ACCESS_TOKEN to be set
+  github:
+    command: mcp-server-github
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    tools:
+      search_code:
+        capability: repos
+      search_issues:
+        capability: tickets
+      search_pull_requests:
+        capability: repos
+      get_file_contents:
+        capability: repos
+      list_issues:
+        capability: tickets
+      list_pull_requests:
+        capability: repos
+      issue_read:
+        capability: tickets
+      pull_request_read:
+        capability: repos
+      list_commits:
+        capability: repos
+      get_commit:
+        capability: repos
+
+# To add custom HTTP-based MCP servers pointing to internal endpoints:
+# mcp_servers:
+#   internal-tools:
+#     url: http://your-internal-mcp-server:8080
+#     transport: streamable_http
