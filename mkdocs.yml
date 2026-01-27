@@ -55,6 +55,8 @@ nav:
   - Concepts:
       - Overview: concepts/core.md
   - Operations:
+      - Docker Deployment: operations/docker-deployment.md
+      - Air-Gap Deployment: operations/airgap-deployment.md
       - Observability & Health: operations/observability.md
       - Gotchas & Rough Spots: operations/gotchas.md
   - Reference:
