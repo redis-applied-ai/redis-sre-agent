@@ -1,7 +1,5 @@
 """OpenAI integration tests with live API calls."""
 
-import os
-from unittest.mock import patch
 
 import pytest
 
@@ -199,7 +197,6 @@ class TestOpenAIErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_api_key_handling(self, test_settings):
         """Test handling of invalid OpenAI API key."""
-        from pydantic import SecretStr
 
         from redis_sre_agent.core.config import Settings
 

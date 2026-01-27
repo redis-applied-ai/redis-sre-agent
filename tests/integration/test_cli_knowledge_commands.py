@@ -15,7 +15,6 @@ import pytest
 from click.testing import CliRunner
 
 from redis_sre_agent.cli.main import main as cli_main
-from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_knowledge_index
 

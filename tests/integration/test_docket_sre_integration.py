@@ -1,7 +1,6 @@
 """Docket integration tests for SRE tasks with real Redis."""
 
 import asyncio
-import os
 from unittest.mock import patch
 
 import pytest

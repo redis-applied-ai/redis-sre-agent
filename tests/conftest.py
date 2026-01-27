@@ -10,7 +10,6 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from redis.asyncio import Redis as AsyncRedis
 from testcontainers.compose import DockerCompose
 
 if TYPE_CHECKING:
