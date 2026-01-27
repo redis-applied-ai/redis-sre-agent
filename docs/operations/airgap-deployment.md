@@ -207,28 +207,28 @@ VECTOR_DIM=768
 
 ### MCP Servers
 
-The air-gap `config.yaml` includes only MCP servers that work without internet:
+The air-gap image includes pre-installed MCP servers that work without internet:
 
 | Server | Status | Notes |
 |--------|--------|-------|
-| `redis-memory-server` | ✅ Enabled | Pre-installed, uses Redis for storage |
-| `github` | ❌ Disabled | Requires `npx` and internet access |
+| `redis-memory-server` | ✅ Enabled | Pre-installed via `uv tool install`, uses Redis for storage |
+| `github` | ✅ Enabled | Pre-installed via `npm install -g`, requires `GITHUB_PERSONAL_ACCESS_TOKEN` |
 
-MCP servers that use `npx` (like GitHub MCP) won't work in air-gapped
-environments because they download packages at runtime.
+Both servers are pre-installed in the image so they don't need to download
+anything at runtime. The GitHub MCP server uses `mcp-server-github` (the
+globally installed binary) instead of `npx`.
+
+!!! note "GitHub Token Required"
+    The GitHub MCP server requires `GITHUB_PERSONAL_ACCESS_TOKEN` to be set.
+    If you don't need GitHub integration, you can remove the `github` section
+    from `config.yaml`.
 
 **To add HTTP-based MCP servers** pointing to internal endpoints:
 
 ```yaml
 # config.yaml
 mcp_servers:
-  # Pre-installed memory server (enabled by default)
-  redis-memory-server:
-    command: agent-memory
-    args:
-      - mcp
-    env:
-      REDIS_URL: ${REDIS_URL}
+  # ... existing servers ...
 
   # Add your internal MCP servers here
   internal-tools:

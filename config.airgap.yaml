@@ -2,8 +2,7 @@
 #
 # This configuration is designed for air-gapped environments where:
 # - No internet access is available
-# - MCP servers using npx (like GitHub) are disabled
-# - Only pre-installed MCP servers are enabled
+# - MCP servers are pre-installed in the image (no runtime downloads)
 #
 # Copy this file to config.yaml in your deployment directory.
 
@@ -62,12 +61,34 @@ mcp_servers:
 
           {original}
 
-  # GitHub MCP server - DISABLED for air-gap (requires npx/internet)
-  # Uncomment and configure if you have an internal GitHub Enterprise
-  # with HTTP-based MCP server available
-  # github:
-  #   url: http://your-internal-github-mcp:8080
-  #   transport: streamable_http
+  # GitHub MCP server for repository operations
+  # Pre-installed in the air-gap image via npm install -g
+  # Requires GITHUB_PERSONAL_ACCESS_TOKEN to be set
+  github:
+    command: mcp-server-github
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    tools:
+      search_code:
+        capability: repos
+      search_issues:
+        capability: tickets
+      search_pull_requests:
+        capability: repos
+      get_file_contents:
+        capability: repos
+      list_issues:
+        capability: tickets
+      list_pull_requests:
+        capability: repos
+      issue_read:
+        capability: tickets
+      pull_request_read:
+        capability: repos
+      list_commits:
+        capability: repos
+      get_commit:
+        capability: repos
 
 # To add custom HTTP-based MCP servers pointing to internal endpoints:
 # mcp_servers:
