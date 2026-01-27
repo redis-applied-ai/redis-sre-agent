@@ -19,7 +19,7 @@ Example:
     set_llm_factory(my_factory)
 """
 
-from typing import Callable, Optional, Protocol
+from typing import Optional, Protocol
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
