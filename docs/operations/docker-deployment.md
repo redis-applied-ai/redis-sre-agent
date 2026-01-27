@@ -192,13 +192,24 @@ For production deployments:
 5. **Configure TLS** for all external endpoints
 6. **Set resource limits** on containers
 
+### Docker Hub Images
+
+Pre-built images are available on Docker Hub:
+
+| Tag | Description |
+|-----|-------------|
+| `redislabs/redis-sre-agent:latest` | Latest standard image |
+| `redislabs/redis-sre-agent:airgap` | Air-gap image with bundled models |
+| `redislabs/redis-sre-agent:v1.0.0` | Versioned release (example) |
+| `redislabs/redis-sre-agent:v1.0.0-airgap` | Versioned air-gap release |
+
 Example production overrides:
 
 ```yaml
 # docker-compose.prod.yml
 services:
   sre-agent:
-    image: ghcr.io/redis-applied-ai/redis-sre-agent:latest
+    image: redislabs/redis-sre-agent:latest
     volumes: []  # Remove dev mounts
     deploy:
       resources:

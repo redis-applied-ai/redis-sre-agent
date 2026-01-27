@@ -38,10 +38,10 @@ registry (Artifactory, Harbor, etc.):
 
 ```bash
 # On a machine with internet access
-docker pull redis/redis-sre-agent:airgap
+docker pull redislabs/redis-sre-agent:airgap
 
 # Tag for your internal registry
-docker tag redis/redis-sre-agent:airgap your-artifactory.internal.com/redis-sre-agent:airgap
+docker tag redislabs/redis-sre-agent:airgap your-artifactory.internal.com/redis-sre-agent:airgap
 
 # Push to internal registry
 docker push your-artifactory.internal.com/redis-sre-agent:airgap
@@ -52,6 +52,14 @@ Then in your air-gapped environment, pull from your internal registry:
 ```bash
 docker pull your-artifactory.internal.com/redis-sre-agent:airgap
 ```
+
+**Available tags:**
+
+| Tag | Description |
+|-----|-------------|
+| `airgap` | Latest air-gap image with bundled HuggingFace models |
+| `v1.0.0-airgap` | Versioned air-gap image (example) |
+| `latest` | Standard image (requires internet for model downloads) |
 
 ### Option 2: Build from Source
 
