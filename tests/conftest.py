@@ -3,7 +3,7 @@ Test configuration and fixtures for Redis SRE Agent.
 """
 
 import os
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -12,6 +12,9 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis as AsyncRedis
 from testcontainers.compose import DockerCompose
+
+if TYPE_CHECKING:
+    from redis_sre_agent.core.config import Settings
 
 
 # Apply critical patches at session level BEFORE any app imports
@@ -296,114 +299,159 @@ def worker_id(request):
     return workerinput.get("workerid", "master")
 
 
+class RedisContainerInfo:
+    """Container for Redis test infrastructure components.
+
+    This class holds the Docker Compose instance, Redis URL, and test Settings
+    object for integration tests. Using dependency injection via the test_settings
+    fixture avoids modifying environment variables or reloading modules.
+    """
+
+    def __init__(self, compose: DockerCompose, url: str, settings: "Settings"):
+        self.compose = compose
+        self.url = url
+        self.settings = settings
+
+    def get_service_host_and_port(self, service: str, port: int):
+        """Delegate to compose for backwards compatibility."""
+        return self.compose.get_service_host_and_port(service, port)
+
+
 @pytest.fixture(scope="session")
 def redis_container(worker_id):
     """
-    If using xdist, create a unique Compose project for each xdist worker by
-    setting COMPOSE_PROJECT_NAME. That prevents collisions on container/volume
-    names.
+    Start a Redis container for integration tests.
 
     Uses docker-compose.integration.yml which only includes Redis service
     (no app services that need building).
+
+    This fixture uses dependency injection instead of modifying environment
+    variables. It creates a test Settings object configured with the container's
+    Redis URL, which can be passed to functions via the `config` parameter.
+
+    Returns:
+        RedisContainerInfo with compose, url, and settings for dependency injection.
     """
-    # Set the Compose project name so containers do not clash across workers
-    os.environ["COMPOSE_PROJECT_NAME"] = f"redis_test_{worker_id}"
-    os.environ.setdefault("REDIS_IMAGE", "redis/redis-stack-server:latest")
+    import asyncio
+    from pathlib import Path
+
+    from pydantic import SecretStr
+
+    from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.redis import create_indices
+
+    # Docker Compose environment variables - these only affect docker-compose,
+    # not application code. We still need to set these for container isolation.
+    compose_env = {
+        "COMPOSE_PROJECT_NAME": f"redis_test_{worker_id}",
+        "REDIS_IMAGE": os.environ.get("REDIS_IMAGE", "redis/redis-stack-server:latest"),
+    }
+
+    # Save old values for cleanup
+    old_compose_env = {key: os.environ.get(key) for key in compose_env}
+
+    # Set compose-specific env vars (only affects docker-compose process)
+    for key, value in compose_env.items():
+        os.environ[key] = value
 
     compose = DockerCompose(
         context="./",
         compose_file_name="docker-compose.integration.yml",
         pull=True,
     )
-    compose.start()
 
-    # Get the Redis URL and set it in environment
-    host, port = compose.get_service_host_and_port("redis", 6379)
-    url = f"redis://{host}:{port}"
+    try:
+        compose.start()
 
-    # Set REDIS_URL environment variable so get_redis_client() uses testcontainers
-    old_redis_url = os.environ.get("REDIS_URL")
-    os.environ["REDIS_URL"] = url
+        # Get the Redis URL from the container
+        host, port = compose.get_service_host_and_port("redis", 6379)
+        url = f"redis://{host}:{port}"
 
-    # Reload settings to pick up the new REDIS_URL
-    import redis_sre_agent.core.config as config_module
-    from redis_sre_agent.core.config import Settings
+        # Create a test Settings object with the container's Redis URL.
+        # This uses dependency injection instead of modifying os.environ["REDIS_URL"]
+        # or reloading modules. Functions in redis_sre_agent.core.redis now accept
+        # an optional `config` parameter for this purpose.
+        test_settings = Settings(
+            redis_url=SecretStr(url),
+            # Other settings are inherited from environment/defaults
+        )
 
-    config_module.settings = Settings()
+        # Create indices using dependency injection (no module reload needed!)
+        asyncio.run(create_indices(config=test_settings))
 
-    # Also clear any Redis connection pools that might be cached
-    # Force reload of modules to pick up new settings
-    import importlib
+        # Ingest knowledge base artifacts if available
+        artifacts_path = Path("./artifacts")
+        if artifacts_path.exists():
+            # Find the most recent batch
+            batch_dirs = sorted([d for d in artifacts_path.iterdir() if d.is_dir()], reverse=True)
+            if batch_dirs:
+                latest_batch = batch_dirs[0].name
+                try:
+                    from redis_sre_agent.pipelines.ingestion.processor import IngestionPipeline
+                    from redis_sre_agent.pipelines.scraper.base import ArtifactStorage
 
-    from redis_sre_agent.core import docket_tasks as tasks_module
-    from redis_sre_agent.core import knowledge_helpers as knowledge_helpers_module
-    from redis_sre_agent.core import redis as redis_module
-    from redis_sre_agent.tools.knowledge import knowledge_base as knowledge_base_module
+                    storage = ArtifactStorage(str(artifacts_path))
+                    pipeline = IngestionPipeline(storage)
+                    # Note: IngestionPipeline doesn't yet support config injection.
+                    # For now, we skip ingestion in tests or it uses global settings.
+                    # TODO: Add config parameter to IngestionPipeline for full DI support.
+                    asyncio.run(pipeline.ingest_batch(latest_batch))
+                    print(f"✅ Ingested knowledge base batch: {latest_batch}")
+                except Exception as e:
+                    print(f"⚠️  Failed to ingest knowledge base: {e}")
+                    # Don't fail the fixture - tests can skip if knowledge base is needed
 
-    # Reload core modules that cache the Settings object and functions
-    importlib.reload(redis_module)
-    importlib.reload(tasks_module)
-    # Also reload dependent modules that imported functions from core.redis at import time
-    importlib.reload(knowledge_helpers_module)
-    importlib.reload(knowledge_base_module)
+        # Return container info with settings for dependency injection
+        yield RedisContainerInfo(compose=compose, url=url, settings=test_settings)
 
-    # Create indices in the test Redis container
-    import asyncio
-    from pathlib import Path
+    finally:
+        # Restore compose env vars
+        for key, old_value in old_compose_env.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
 
-    from redis_sre_agent.core.redis import create_indices
-    from redis_sre_agent.pipelines.ingestion.processor import IngestionPipeline
-    from redis_sre_agent.pipelines.scraper.base import ArtifactStorage
-
-    asyncio.run(create_indices())
-
-    # Ingest knowledge base artifacts if available
-    artifacts_path = Path("./artifacts")
-    if artifacts_path.exists():
-        # Find the most recent batch
-        batch_dirs = sorted([d for d in artifacts_path.iterdir() if d.is_dir()], reverse=True)
-        if batch_dirs:
-            latest_batch = batch_dirs[0].name
-            try:
-                storage = ArtifactStorage(str(artifacts_path))
-                pipeline = IngestionPipeline(storage)
-                asyncio.run(pipeline.ingest_batch(latest_batch))
-                print(f"✅ Ingested knowledge base batch: {latest_batch}")
-            except Exception as e:
-                print(f"⚠️  Failed to ingest knowledge base: {e}")
-                # Don't fail the fixture - tests can skip if knowledge base is needed
-
-    yield compose
-
-    # Restore original REDIS_URL
-    if old_redis_url:
-        os.environ["REDIS_URL"] = old_redis_url
-    else:
-        os.environ.pop("REDIS_URL", None)
-
-    compose.stop()
+        compose.stop()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def use_redis_testcontainer(redis_container):
-    """Ensure a Testcontainers-provided Redis is running and REDIS_URL is set for all tests."""
-    # No-op: depending on redis_container starts it and sets REDIS_URL
-    yield
+@pytest.fixture(scope="session")
+def test_settings(redis_container):
+    """Get the test Settings object configured for the Redis container.
+
+    This fixture provides a Settings object with the correct Redis URL for
+    the test container. Pass this to functions that accept a `config` parameter
+    to use the test Redis instance without modifying environment variables.
+
+    Example:
+        async def test_something(test_settings):
+            client = get_redis_client(config=test_settings)
+            status = await initialize_redis(config=test_settings)
+    """
+    return redis_container.settings
 
 
 @pytest.fixture(scope="session")
 def redis_url(redis_container):
     """
-    Use the `DockerCompose` fixture to get host/port of the 'redis' service
-    on container port 6379 (mapped to an ephemeral port on the host).
+    Get the Redis URL for the test container.
+
+    Use this when you need just the URL string. For full dependency injection,
+    prefer using the `test_settings` fixture instead.
     """
-    host, port = redis_container.get_service_host_and_port("redis", 6379)
-    return f"redis://{host}:{port}"
+    return redis_container.url
 
 
 @pytest_asyncio.fixture()
-async def async_redis_client(redis_url):
-    client = AsyncRedis.from_url(redis_url, decode_responses=False)
+async def async_redis_client(test_settings):
+    """Async Redis client connected to the test container.
+
+    Uses dependency injection via test_settings instead of relying on
+    environment variables.
+    """
+    from redis_sre_agent.core.redis import get_redis_client
+
+    client = get_redis_client(config=test_settings)
 
     # Flush database to ensure clean state for this test
     await client.flushdb()

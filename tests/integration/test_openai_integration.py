@@ -23,241 +23,173 @@ class TestOpenAIIntegration:
     These tests require:
     - OPENAI_API_KEY environment variable
     - OPENAI_INTEGRATION_TESTS=true to run
-    - Redis container (provided by redis_container fixture)
+    - Redis container (provided by test_settings fixture)
     """
 
     @pytest.mark.asyncio
-    async def test_real_embedding_generation(self, redis_container):
+    async def test_real_embedding_generation(self, test_settings):
         """Test real embedding generation with OpenAI API."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        # Get real vectorizer using dependency injection (will make OpenAI API call)
+        vectorizer = get_vectorizer(config=test_settings)
 
-        # Clear global state to ensure fresh instances
-        from redis_sre_agent.core import redis
+        # Test embedding generation
+        test_texts = [
+            "Redis memory usage is high",
+            "Service health check failed",
+            "CPU utilization exceeded threshold",
+        ]
 
-        redis._vectorizer = None
-        redis._redis_client = None
-        redis._document_index = None
+        embeddings = await vectorizer.embed_many(test_texts)
 
-        try:
-            # Get real vectorizer (will make OpenAI API call)
-            vectorizer = get_vectorizer()
+        # Validate embeddings
+        assert len(embeddings) == 3
+        for embedding in embeddings:
+            assert isinstance(embedding, list)
+            assert len(embedding) == 1536  # text-embedding-3-small dimension
+            assert all(isinstance(val, float) for val in embedding)
 
-            # Test embedding generation
-            test_texts = [
-                "Redis memory usage is high",
-                "Service health check failed",
-                "CPU utilization exceeded threshold",
-            ]
-
-            embeddings = await vectorizer.embed_many(test_texts)
-
-            # Validate embeddings
-            assert len(embeddings) == 3
-            for embedding in embeddings:
-                assert isinstance(embedding, list)
-                assert len(embedding) == 1536  # text-embedding-3-small dimension
-                assert all(isinstance(val, float) for val in embedding)
-
-            # Test that different texts produce different embeddings
-            assert embeddings[0] != embeddings[1] != embeddings[2]
-
-        finally:
-            pass
+        # Test that different texts produce different embeddings
+        assert embeddings[0] != embeddings[1] != embeddings[2]
 
     @pytest.mark.asyncio
-    async def test_real_vector_index_creation_and_search(self, redis_container):
+    async def test_real_vector_index_creation_and_search(self, test_settings):
         """Test creating vector indices and searching with real embeddings."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        # Create indices with real Redis using dependency injection
+        indices_created = await create_indices(config=test_settings)
+        assert indices_created is True
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        # Get real components using dependency injection
+        get_vectorizer(config=test_settings)
+        index = await get_knowledge_index(config=test_settings)
 
-        redis._vectorizer = None
-        redis._redis_client = None
-        redis._document_index = None
-
-        try:
-            # Create indices with real Redis
-            indices_created = await create_indices()
-            assert indices_created is True
-
-            # Get real components
-            get_vectorizer()
-            index = get_knowledge_index()
-
-            # Verify index exists
-            index_exists = await index.exists()
-            assert index_exists is True
-
-        finally:
-            pass
+        # Verify index exists
+        index_exists = await index.exists()
+        assert index_exists is True
 
     @pytest.mark.asyncio
-    async def test_real_document_ingestion_workflow(self, redis_container):
+    async def test_real_document_ingestion_workflow(self, test_settings):
         """Test complete document ingestion with real embeddings."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        # Ensure indices exist using dependency injection
+        await create_indices(config=test_settings)
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        # Test document ingestion with real embeddings
+        result = await ingest_sre_document(
+            title="Redis High Memory Alert",
+            content="When Redis memory usage exceeds 80%, check for memory leaks, large keys, and consider implementing eviction policies. Common causes include unoptimized data structures and lack of TTL settings.",
+            source="test_integration_runbook.md",
+            category="monitoring",
+            severity="warning",
+        )
 
-        redis._vectorizer = None
-        redis._redis_client = None
-        redis._document_index = None
+        # Validate ingestion result
+        assert result["status"] == "ingested"
+        assert result["title"] == "Redis High Memory Alert"
+        assert result["source"] == "test_integration_runbook.md"
+        assert result["category"] == "monitoring"
+        assert "document_id" in result
+        assert "task_id" in result
 
-        try:
-            # Ensure indices exist
-            await create_indices()
+        # Test searching for the ingested document
+        search_result = await search_knowledge_base(
+            query="Redis memory usage high", category="monitoring", limit=3
+        )
 
-            # Test document ingestion with real embeddings
-            result = await ingest_sre_document(
-                title="Redis High Memory Alert",
-                content="When Redis memory usage exceeds 80%, check for memory leaks, large keys, and consider implementing eviction policies. Common causes include unoptimized data structures and lack of TTL settings.",
-                source="test_integration_runbook.md",
-                category="monitoring",
-                severity="warning",
-            )
+        # Validate search results
+        assert search_result["query"] == "Redis memory usage high"
+        assert search_result["category"] == "monitoring"
+        assert search_result["results_count"] >= 0  # May be 0 if vector similarity is low
 
-            # Validate ingestion result
-            assert result["status"] == "ingested"
-            assert result["title"] == "Redis High Memory Alert"
-            assert result["source"] == "test_integration_runbook.md"
-            assert result["category"] == "monitoring"
-            assert "document_id" in result
-            assert "task_id" in result
-
-            # Test searching for the ingested document
-            search_result = await search_knowledge_base(
-                query="Redis memory usage high", category="monitoring", limit=3
-            )
-
-            # Validate search results
-            assert search_result["query"] == "Redis memory usage high"
-            assert search_result["category"] == "monitoring"
-            assert search_result["results_count"] >= 0  # May be 0 if vector similarity is low
-
-            # If we found results, validate their structure
-            if search_result["results_count"] > 0:
-                result_item = search_result["results"][0]
-                assert "title" in result_item
-                assert "content" in result_item
-                assert "source" in result_item
-                assert "score" in result_item
-                assert isinstance(result_item["score"], (int, float))
-
-        finally:
-            pass
+        # If we found results, validate their structure
+        if search_result["results_count"] > 0:
+            result_item = search_result["results"][0]
+            assert "title" in result_item
+            assert "content" in result_item
+            assert "source" in result_item
+            assert "score" in result_item
+            assert isinstance(result_item["score"], (int, float))
 
     @pytest.mark.asyncio
-    async def test_semantic_search_quality(self, redis_container):
+    async def test_semantic_search_quality(self, test_settings):
         """Test semantic search quality with multiple related documents."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        # Ensure indices exist using dependency injection
+        await create_indices(config=test_settings)
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        # Ingest multiple related documents
+        test_documents = [
+            {
+                "title": "Redis Memory Management",
+                "content": "Redis memory optimization techniques including eviction policies, memory analysis, and key compression strategies.",
+                "category": "optimization",
+            },
+            {
+                "title": "CPU Performance Monitoring",
+                "content": "Monitor CPU utilization across services, set up alerts for high CPU usage, and identify performance bottlenecks.",
+                "category": "monitoring",
+            },
+            {
+                "title": "Network Latency Issues",
+                "content": "Diagnose network latency problems, check connection pools, and optimize network configuration.",
+                "category": "networking",
+            },
+            {
+                "title": "Redis Connection Pool Tuning",
+                "content": "Configure Redis connection pools for optimal performance, including timeout settings and pool sizing.",
+                "category": "optimization",
+            },
+        ]
 
-        redis._vectorizer = None
-        redis._redis_client = None
-        redis._document_index = None
-
-        try:
-            # Ensure indices exist
-            await create_indices()
-
-            # Ingest multiple related documents
-            test_documents = [
-                {
-                    "title": "Redis Memory Management",
-                    "content": "Redis memory optimization techniques including eviction policies, memory analysis, and key compression strategies.",
-                    "category": "optimization",
-                },
-                {
-                    "title": "CPU Performance Monitoring",
-                    "content": "Monitor CPU utilization across services, set up alerts for high CPU usage, and identify performance bottlenecks.",
-                    "category": "monitoring",
-                },
-                {
-                    "title": "Network Latency Issues",
-                    "content": "Diagnose network latency problems, check connection pools, and optimize network configuration.",
-                    "category": "networking",
-                },
-                {
-                    "title": "Redis Connection Pool Tuning",
-                    "content": "Configure Redis connection pools for optimal performance, including timeout settings and pool sizing.",
-                    "category": "optimization",
-                },
-            ]
-
-            # Ingest all documents
-            for i, doc in enumerate(test_documents):
-                await ingest_sre_document(
-                    title=doc["title"],
-                    content=doc["content"],
-                    source=f"test_semantic_{i}.md",
-                    category=doc["category"],
-                    severity="info",
-                )
-
-            # Test semantic search - should find Redis-related documents for Redis query
-            redis_search = await search_knowledge_base(query="Redis performance issues", limit=5)
-
-            # Test category filtering
-            optimization_search = await search_knowledge_base(
-                query="performance optimization", category="optimization", limit=3
+        # Ingest all documents
+        for i, doc in enumerate(test_documents):
+            await ingest_sre_document(
+                title=doc["title"],
+                content=doc["content"],
+                source=f"test_semantic_{i}.md",
+                category=doc["category"],
+                severity="info",
             )
 
-            # Validate that searches return results
-            assert redis_search["results_count"] >= 0
-            assert optimization_search["results_count"] >= 0
+        # Test semantic search - should find Redis-related documents for Redis query
+        redis_search = await search_knowledge_base(query="Redis performance issues", limit=5)
 
-            # If we have results, they should have reasonable scores
-            if redis_search["results_count"] > 0:
-                for result in redis_search["results"]:
-                    # Scores should be reasonable (typically 0.0 to 1.0)
-                    assert 0.0 <= result["score"] <= 1.0
+        # Test category filtering
+        optimization_search = await search_knowledge_base(
+            query="performance optimization", category="optimization", limit=3
+        )
 
-            if optimization_search["results_count"] > 0:
-                for result in optimization_search["results"]:
-                    assert result["source"].startswith("test_semantic_")
-                    assert 0.0 <= result["score"] <= 1.0
+        # Validate that searches return results
+        assert redis_search["results_count"] >= 0
+        assert optimization_search["results_count"] >= 0
 
-        finally:
-            pass
+        # If we have results, they should have reasonable scores
+        if redis_search["results_count"] > 0:
+            for result in redis_search["results"]:
+                # Scores should be reasonable (typically 0.0 to 1.0)
+                assert 0.0 <= result["score"] <= 1.0
+
+        if optimization_search["results_count"] > 0:
+            for result in optimization_search["results"]:
+                assert result["source"].startswith("test_semantic_")
+                assert 0.0 <= result["score"] <= 1.0
 
     @pytest.mark.asyncio
-    async def test_embedding_consistency(self, redis_container):
+    async def test_embedding_consistency(self, test_settings):
         """Test that identical texts produce identical embeddings."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        vectorizer = get_vectorizer(config=test_settings)
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        test_text = "Redis cluster requires careful memory management"
 
-        redis._vectorizer = None
+        # Generate embeddings multiple times
+        embedding1 = await vectorizer.embed_many([test_text])
+        embedding2 = await vectorizer.embed_many([test_text])
 
-        try:
-            vectorizer = get_vectorizer()
+        # Should be identical (OpenAI embeddings are deterministic)
+        assert embedding1[0] == embedding2[0]
 
-            test_text = "Redis cluster requires careful memory management"
+        # Test different texts produce different embeddings
+        different_text = "CPU monitoring shows high utilization"
+        embedding3 = await vectorizer.embed_many([different_text])
 
-            # Generate embeddings multiple times
-            embedding1 = await vectorizer.embed_many([test_text])
-            embedding2 = await vectorizer.embed_many([test_text])
-
-            # Should be identical (OpenAI embeddings are deterministic)
-            assert embedding1[0] == embedding2[0]
-
-            # Test different texts produce different embeddings
-            different_text = "CPU monitoring shows high utilization"
-            embedding3 = await vectorizer.embed_many([different_text])
-
-            assert embedding1[0] != embedding3[0]
-
-        finally:
-            pass
+        assert embedding1[0] != embedding3[0]
 
 
 @pytest.mark.openai_integration
@@ -265,61 +197,46 @@ class TestOpenAIErrorHandling:
     """Test error handling with OpenAI API."""
 
     @pytest.mark.asyncio
-    async def test_invalid_api_key_handling(self, redis_container):
+    async def test_invalid_api_key_handling(self, test_settings):
         """Test handling of invalid OpenAI API key."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        from pydantic import SecretStr
 
-        # Test with invalid API key
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "invalid-key"}):
-            from redis_sre_agent.core import redis
+        from redis_sre_agent.core.config import Settings
 
-            redis._vectorizer = None  # Force re-creation
+        # Create settings with invalid API key using dependency injection
+        invalid_settings = Settings(
+            redis_url=test_settings.redis_url,
+            openai_api_key="invalid-key",
+        )
 
-            try:
-                vectorizer = get_vectorizer()
+        vectorizer = get_vectorizer(config=invalid_settings)
 
-                # This should raise an authentication error
-                with pytest.raises(Exception) as exc_info:
-                    await vectorizer.embed_many(["test text"])
+        # This should raise an authentication error
+        with pytest.raises(Exception) as exc_info:
+            await vectorizer.embed_many(["test text"])
 
-                # Should be an authentication-related error
-                error_str = str(exc_info.value).lower()
-                assert any(
-                    keyword in error_str
-                    for keyword in ["authentication", "api", "key", "unauthorized", "401"]
-                )
-
-            finally:
-                redis._vectorizer = None
+        # Should be an authentication-related error
+        error_str = str(exc_info.value).lower()
+        assert any(
+            keyword in error_str
+            for keyword in ["authentication", "api", "key", "unauthorized", "401"]
+        )
 
     @pytest.mark.asyncio
-    async def test_rate_limit_behavior(self, redis_container):
+    async def test_rate_limit_behavior(self, test_settings):
         """Test behavior under potential rate limits."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        vectorizer = get_vectorizer(config=test_settings)
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        # Generate multiple embeddings in succession
+        # This tests rate limit handling (though we shouldn't hit limits in normal testing)
+        test_texts = [f"Test document {i} for rate limit testing" for i in range(5)]
 
-        redis._vectorizer = None
+        embeddings = await vectorizer.embed_many(test_texts)
 
-        try:
-            vectorizer = get_vectorizer()
-
-            # Generate multiple embeddings in succession
-            # This tests rate limit handling (though we shouldn't hit limits in normal testing)
-            test_texts = [f"Test document {i} for rate limit testing" for i in range(5)]
-
-            embeddings = await vectorizer.embed_many(test_texts)
-
-            # Should succeed and return correct number of embeddings
-            assert len(embeddings) == 5
-            for embedding in embeddings:
-                assert len(embedding) == 1536
-
-        finally:
-            pass
+        # Should succeed and return correct number of embeddings
+        assert len(embeddings) == 5
+        for embedding in embeddings:
+            assert len(embedding) == 1536
 
 
 @pytest.mark.openai_integration
@@ -327,119 +244,105 @@ class TestRealWorkflowIntegration:
     """Test complete workflows with real OpenAI integration."""
 
     @pytest.mark.asyncio
-    async def test_complete_sre_knowledge_workflow(self, redis_container):
+    async def test_complete_sre_knowledge_workflow(self, test_settings):
         """Test complete SRE knowledge management workflow."""
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
+        # 1. Set up infrastructure using dependency injection
+        indices_created = await create_indices(config=test_settings)
+        assert indices_created is True
 
-        # Clear global state
-        from redis_sre_agent.core import redis
+        # 2. Ingest SRE knowledge base
+        sre_documents = [
+            {
+                "title": "Redis Cluster Monitoring Best Practices",
+                "content": "Monitor Redis cluster health using redis-cli, check node status, memory usage, and replication lag. Set up alerts for node failures and memory thresholds.",
+                "category": "monitoring",
+                "severity": "info",
+            },
+            {
+                "title": "High CPU Incident Response",
+                "content": "When CPU usage exceeds 90%, identify top processes using htop, check for infinite loops, restart problematic services, and scale horizontally if needed.",
+                "category": "incident",
+                "severity": "critical",
+            },
+            {
+                "title": "Database Connection Pool Exhaustion",
+                "content": "Diagnose connection pool exhaustion by checking active connections, increase pool size, optimize query performance, and implement connection retry logic.",
+                "category": "database",
+                "severity": "warning",
+            },
+        ]
 
-        redis._vectorizer = None
-        redis._redis_client = None
-        redis._document_index = None
-
-        try:
-            # 1. Set up infrastructure
-            indices_created = await create_indices()
-            assert indices_created is True
-
-            # 2. Ingest SRE knowledge base
-            sre_documents = [
-                {
-                    "title": "Redis Cluster Monitoring Best Practices",
-                    "content": "Monitor Redis cluster health using redis-cli, check node status, memory usage, and replication lag. Set up alerts for node failures and memory thresholds.",
-                    "category": "monitoring",
-                    "severity": "info",
-                },
-                {
-                    "title": "High CPU Incident Response",
-                    "content": "When CPU usage exceeds 90%, identify top processes using htop, check for infinite loops, restart problematic services, and scale horizontally if needed.",
-                    "category": "incident",
-                    "severity": "critical",
-                },
-                {
-                    "title": "Database Connection Pool Exhaustion",
-                    "content": "Diagnose connection pool exhaustion by checking active connections, increase pool size, optimize query performance, and implement connection retry logic.",
-                    "category": "database",
-                    "severity": "warning",
-                },
-            ]
-
-            ingestion_results = []
-            for doc in sre_documents:
-                result = await ingest_sre_document(
-                    title=doc["title"],
-                    content=doc["content"],
-                    source=f"sre_runbook_{doc['category']}.md",
-                    category=doc["category"],
-                    severity=doc["severity"],
-                )
-                ingestion_results.append(result)
-
-            # Validate all ingestions succeeded
-            assert len(ingestion_results) == 3
-            for result in ingestion_results:
-                assert result["status"] == "ingested"
-
-            # 3. Test various search scenarios
-            search_scenarios = [
-                {
-                    "query": "Redis cluster is down",
-                    "expected_category": "monitoring",
-                    "description": "Should find Redis monitoring docs",
-                },
-                {
-                    "query": "Server CPU usage is very high",
-                    "expected_category": "incident",
-                    "description": "Should find CPU incident response",
-                },
-                {
-                    "query": "Database connection errors",
-                    "expected_category": "database",
-                    "description": "Should find database connection docs",
-                },
-                {
-                    "query": "System performance issues",
-                    "expected_category": None,  # Could match multiple categories
-                    "description": "Should find relevant performance docs",
-                },
-            ]
-
-            for scenario in search_scenarios:
-                search_result = await search_knowledge_base(query=scenario["query"], limit=3)
-
-                print(f"\n🔍 Search: '{scenario['query']}'")
-                print(f"   Results: {search_result['results_count']}")
-
-                # Should return some results for these SRE-relevant queries
-                assert search_result["results_count"] >= 0
-
-                if search_result["results_count"] > 0:
-                    top_result = search_result["results"][0]
-                    print(f"   Top result: {top_result['title']} (score: {top_result['score']})")
-
-                    # Validate result structure
-                    assert "title" in top_result
-                    assert "content" in top_result
-                    assert "source" in top_result
-                    assert "score" in top_result
-
-                    # Score should be reasonable
-                    assert 0.0 <= top_result["score"] <= 1.0
-
-            # 4. Test category filtering
-            monitoring_results = await search_knowledge_base(
-                query="system monitoring", category="monitoring", limit=2
+        ingestion_results = []
+        for doc in sre_documents:
+            result = await ingest_sre_document(
+                title=doc["title"],
+                content=doc["content"],
+                source=f"sre_runbook_{doc['category']}.md",
+                category=doc["category"],
+                severity=doc["severity"],
             )
+            ingestion_results.append(result)
 
-            # Should work without errors
-            assert monitoring_results["category"] == "monitoring"
+        # Validate all ingestions succeeded
+        assert len(ingestion_results) == 3
+        for result in ingestion_results:
+            assert result["status"] == "ingested"
 
-            print("\n✅ Complete SRE workflow test passed!")
-            print(f"   - Ingested {len(sre_documents)} documents")
-            print(f"   - Tested {len(search_scenarios)} search scenarios")
-            print("   - Verified category filtering")
+        # 3. Test various search scenarios
+        search_scenarios = [
+            {
+                "query": "Redis cluster is down",
+                "expected_category": "monitoring",
+                "description": "Should find Redis monitoring docs",
+            },
+            {
+                "query": "Server CPU usage is very high",
+                "expected_category": "incident",
+                "description": "Should find CPU incident response",
+            },
+            {
+                "query": "Database connection errors",
+                "expected_category": "database",
+                "description": "Should find database connection docs",
+            },
+            {
+                "query": "System performance issues",
+                "expected_category": None,  # Could match multiple categories
+                "description": "Should find relevant performance docs",
+            },
+        ]
 
-        finally:
-            pass
+        for scenario in search_scenarios:
+            search_result = await search_knowledge_base(query=scenario["query"], limit=3)
+
+            print(f"\n🔍 Search: '{scenario['query']}'")
+            print(f"   Results: {search_result['results_count']}")
+
+            # Should return some results for these SRE-relevant queries
+            assert search_result["results_count"] >= 0
+
+            if search_result["results_count"] > 0:
+                top_result = search_result["results"][0]
+                print(f"   Top result: {top_result['title']} (score: {top_result['score']})")
+
+                # Validate result structure
+                assert "title" in top_result
+                assert "content" in top_result
+                assert "source" in top_result
+                assert "score" in top_result
+
+                # Score should be reasonable
+                assert 0.0 <= top_result["score"] <= 1.0
+
+        # 4. Test category filtering
+        monitoring_results = await search_knowledge_base(
+            query="system monitoring", category="monitoring", limit=2
+        )
+
+        # Should work without errors
+        assert monitoring_results["category"] == "monitoring"
+
+        print("\n✅ Complete SRE workflow test passed!")
+        print(f"   - Ingested {len(sre_documents)} documents")
+        print(f"   - Tested {len(search_scenarios)} search scenarios")
+        print("   - Verified category filtering")

@@ -21,23 +21,23 @@ from redis_sre_agent.core.redis import create_indices
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
-async def _ensure_ready() -> bool:
+async def _ensure_ready(test_settings) -> bool:
     """Return True if environment appears ready for real embedding-backed search."""
     # Must have OpenAI API key for embeddings
     if not os.getenv("OPENAI_API_KEY"):
         print("❌ OPENAI_API_KEY not set; skipping ingestion + retrieval assertions.")
         return False
-    # Create indices if needed
-    await create_indices()
+    # Create indices if needed using dependency injection
+    await create_indices(config=test_settings)
     return True
 
 
 @pytest.mark.asyncio
 @pytest.mark.integration
 @pytest.mark.slow
-async def test_admin_api_bdbs_retrieval(redis_container):
+async def test_admin_api_bdbs_retrieval(test_settings):
     """Ingest the Admin API bdbs page and verify retrieval for a targeted query."""
-    if not await _ensure_ready():
+    if not await _ensure_ready(test_settings):
         return
 
     # Read Admin API bdbs page content
@@ -85,9 +85,9 @@ async def test_admin_api_bdbs_retrieval(redis_container):
 @pytest.mark.asyncio
 @pytest.mark.integration
 @pytest.mark.slow
-async def test_rladmin_retrieval(redis_container):
+async def test_rladmin_retrieval(test_settings):
     """Ingest a couple rladmin command pages and verify retrieval for two queries."""
-    if not await _ensure_ready():
+    if not await _ensure_ready(test_settings):
         return
 
     # Read rladmin docs
@@ -165,9 +165,9 @@ async def test_rladmin_retrieval(redis_container):
 @pytest.mark.asyncio
 @pytest.mark.integration
 @pytest.mark.slow
-async def test_retrieval_metrics_for_targeted_cases(redis_container):
+async def test_retrieval_metrics_for_targeted_cases(test_settings):
     """Run IR metrics evaluation on a small set of targeted queries (structure checks)."""
-    if not await _ensure_ready():
+    if not await _ensure_ready(test_settings):
         return
 
     from redis_sre_agent.evaluation.retrieval_eval import (

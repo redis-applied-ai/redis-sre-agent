@@ -1,7 +1,7 @@
 """Integration test for thread deletion and Redis data layout.
 
 This test exercises the new Threads API against a real Redis instance
-(provided by the testcontainers-backed redis_container fixture).
+(provided by the testcontainers-backed test_settings fixture).
 It creates a thread via the HTTP API, attempts to delete it, and inspects
 thread-related keys (including the search-index hash) before and after
 deletion.
@@ -16,18 +16,14 @@ from redis_sre_agent.core.redis import SRE_THREADS_INDEX
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_thread_delete_integration(async_redis_client, redis_container):
+async def test_thread_delete_integration(async_redis_client, test_settings):
     """Create a thread via API, delete it, and inspect Redis keys.
 
     This exercises the real delete path and asserts that it cleans up both
     the per-thread keys and the hash document backing the threads search
     index.
     """
-    if not redis_container:
-        pytest.skip("Integration tests not enabled")
-
-    # Import the real FastAPI app only after redis_container has configured
-    # REDIS_URL and created indices in the test Redis.
+    # Import the real FastAPI app - test_settings provides configuration
     from redis_sre_agent.api.app import app
 
     # ------------------------------------------------------------------

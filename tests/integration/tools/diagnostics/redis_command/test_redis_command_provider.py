@@ -194,7 +194,7 @@ async def test_provider_requires_connection_url_or_instance():
 
 
 @pytest.mark.asyncio
-async def test_sample_keys(redis_url, redis_container):
+async def test_sample_keys(redis_url):
     """Test sampling keys from the keyspace."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         # First, populate some test keys
@@ -260,7 +260,7 @@ async def test_search_index_info(redis_url):
 
 
 @pytest.mark.asyncio
-async def test_sample_keys_count_limit(redis_url, redis_container):
+async def test_sample_keys_count_limit(redis_url):
     """Test that sample_keys respects the count limit."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
@@ -283,7 +283,7 @@ async def test_sample_keys_count_limit(redis_url, redis_container):
 
 
 @pytest.mark.asyncio
-async def test_sample_keys_type_distribution(redis_url, redis_container):
+async def test_sample_keys_type_distribution(redis_url):
     """Test that type distribution is calculated correctly."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
@@ -316,7 +316,7 @@ async def test_sample_keys_type_distribution(redis_url, redis_container):
 
 
 @pytest.mark.asyncio
-async def test_resolve_tool_call_sample_keys(redis_url, redis_container):
+async def test_resolve_tool_call_sample_keys(redis_url):
     """Test that tools() wires sample_keys to the provider method."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
@@ -375,7 +375,7 @@ async def test_resolve_tool_call_search_index_info(redis_url):
 
 
 @pytest.mark.asyncio
-async def test_sample_keys_default_parameters(redis_url, redis_container):
+async def test_sample_keys_default_parameters(redis_url):
     """Test sample_keys with default parameters."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()
@@ -396,7 +396,7 @@ async def test_sample_keys_default_parameters(redis_url, redis_container):
 
 
 @pytest.mark.asyncio
-async def test_sample_keys_with_bytes_keys(redis_url, redis_container):
+async def test_sample_keys_with_bytes_keys(redis_url):
     """Test that sample_keys handles byte-encoded keys properly."""
     async with RedisCommandToolProvider(connection_url=redis_url) as provider:
         client = provider.get_client()

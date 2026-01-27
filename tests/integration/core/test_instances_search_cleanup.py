@@ -22,13 +22,15 @@ from redis_sre_agent.core.redis import SRE_INSTANCES_INDEX, get_redis_client
 
 
 @pytest.mark.asyncio
-async def test_save_and_get_instances_via_search_enumeration(async_redis_client, monkeypatch):
+async def test_save_and_get_instances_via_search_enumeration(
+    async_redis_client, test_settings, monkeypatch
+):
     # Ensure a master key is set for encryption/decryption
     mk = base64.b64encode(os.urandom(32)).decode("ascii")
     monkeypatch.setenv("REDIS_SRE_MASTER_KEY", mk)
 
-    # Use clean DB from async_redis_client fixture
-    client = get_redis_client()
+    # Use clean DB from async_redis_client fixture with dependency injection
+    client = get_redis_client(config=test_settings)
 
     inst1 = RedisInstance(
         id=f"it-{uuid.uuid4().hex[:8]}",

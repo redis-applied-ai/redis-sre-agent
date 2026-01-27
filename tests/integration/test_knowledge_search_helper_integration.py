@@ -46,12 +46,9 @@ class MockVectorizer:
 @pytest.mark.integration
 class TestKnowledgeSearchHelper:
     @pytest.mark.asyncio
-    async def test_distance_threshold_filters_results(self, redis_container, async_redis_client):
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
-
+    async def test_distance_threshold_filters_results(self, test_settings, async_redis_client):
         # Ensure indices exist and DB is clean (async_redis_client fixture flushes)
-        await create_indices()
+        await create_indices(config=test_settings)
 
         # Prepare deterministic vectors: doc A ~ query, doc B far away
         doc_a_content = "Doc A content about Redis memory tuning"
@@ -96,11 +93,8 @@ class TestKnowledgeSearchHelper:
         assert 0.0 <= top["score"] <= 0.05  # near-perfect match under cosine distance
 
     @pytest.mark.asyncio
-    async def test_without_threshold_returns_more(self, redis_container, async_redis_client):
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
-
-        await create_indices()
+    async def test_without_threshold_returns_more(self, test_settings, async_redis_client):
+        await create_indices(config=test_settings)
 
         # Prepare vectors and ingest again
         doc_a_content = "Doc A content about Redis memory tuning"
@@ -145,11 +139,8 @@ class TestKnowledgeSearchHelper:
         assert scores[1] >= 0.5
 
     @pytest.mark.asyncio
-    async def test_category_fallback_on_no_results(self, redis_container, async_redis_client):
-        if not redis_container:
-            pytest.skip("Integration tests not enabled")
-
-        await create_indices()
+    async def test_category_fallback_on_no_results(self, test_settings, async_redis_client):
+        await create_indices(config=test_settings)
 
         doc_a_content = "Doc A content about Redis memory tuning"
         doc_a_vec = _vec(0)
