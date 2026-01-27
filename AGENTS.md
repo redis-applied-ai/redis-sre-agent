@@ -1,17 +1,18 @@
 # Redis SRE Agent - Agents File
 
 ## Project Overview
-This is a production-ready Redis Site Reliability Engineering (SRE) agent built with LangGraph, FastAPI, and comprehensive monitoring tools. The agent provides automated Redis health monitoring, issue detection, and conversational troubleshooting.
+A production-ready Redis Site Reliability Engineering (SRE) agent built with LangGraph, FastAPI, and comprehensive monitoring tools. Provides automated Redis health monitoring, issue detection, and conversational troubleshooting.
 
 ## Architecture Components
-- **LangGraph Agent**: Multi-turn conversation with 4 specialized SRE tools
+- **LangGraph Agent**: Multi-turn conversation with specialized SRE tools
 - **FastAPI API**: Production endpoints for agent interaction
-- **Redis Monitoring**: 8-category diagnostic analysis system
-- **Prometheus Integration**: Time series metrics and alerting
+- **Background Worker**: Docket-based async task execution
+- **Redis Monitoring**: Multi-category diagnostic analysis system
+- **Prometheus/Loki Integration**: Metrics and log aggregation
 - **Vector Knowledge Base**: SRE runbook search and retrieval
 - **Docker Stack**: Complete monitoring environment with Grafana dashboards
 
-## Development Commands
+## Quick Reference
 
 ### Environment Setup
 ```bash
@@ -21,67 +22,45 @@ uv run redis-sre-agent --help
 
 ### Testing
 ```bash
-# Run all tests
-uv run pytest
-
-# Run with Redis integration tests
-uv run pytest -m "not integration"  # Skip integration tests
-uv run pytest -m integration        # Run integration tests only
-
-# Test with coverage
-uv run pytest --cov=redis_sre_agent --cov-report=html
+make test                # Unit tests only
+make test-integration    # Integration tests only
+make test-all           # Full suite
+uv run pytest --cov=redis_sre_agent --cov-report=html  # With coverage
 ```
 
-### Docker Environment
+### Docker Stack
 ```bash
-# Start full monitoring stack
-docker-compose up -d
-
-# View logs
-docker-compose logs -f sre-agent
-docker-compose logs -f redis
-
-# Access services
-# - SRE Agent API: http://localhost:8000
-# - Prometheus: http://localhost:9090
-# - Grafana: http://localhost:3000 (admin/admin)
-# - Redis: localhost:6379
+make local-services      # Start full stack
+make local-services-down # Stop stack
+make local-services-logs # Tail logs
 ```
 
-### Development Workflow
-1. Make code changes
-2. Run tests: `uv run pytest`
-3. Test integration: `docker-compose up --build`
-4. Commit changes
-5. Create PR
+### Access Points (Docker)
+| Service | URL |
+|---------|-----|
+| SRE Agent API | http://localhost:8080 |
+| SRE Agent UI | http://localhost:3002 |
+| Grafana | http://localhost:3001 (admin/admin) |
+| Prometheus | http://localhost:9090 |
+| Redis (agent) | redis://localhost:7843 |
+| Redis (demo) | redis://localhost:7844 |
 
 ## Key File Locations
-- Agent core: `redis_sre_agent/agent/langgraph_agent.py`
-- Redis tools: `redis_sre_agent/tools/redis_diagnostics.py`
+- Agent core: `redis_sre_agent/agent/`
+- Redis tools: `redis_sre_agent/tools/`
 - API endpoints: `redis_sre_agent/api/app.py`
-- Configuration: `redis_sre_agent/config.py`
+- CLI: `redis_sre_agent/cli/`
+- Configuration: `redis_sre_agent/core/config.py`
 - Docker config: `docker-compose.yml`
-- Redis config: `monitoring/redis.conf`
-- **Source documents**: `source_documents/runbooks/` - SRE runbooks and troubleshooting guides
-
-## Testing Scenarios
-The agent handles various Redis issues:
-- Memory pressure and eviction policies
-- Connection limit problems
-- Performance degradation
-- Configuration issues
-- Slow query analysis
-- Client connection problems
+- Source documents: `source_documents/`
 
 ## Environment Variables
-See `.env.example` for required configuration:
-- `OPENAI_API_KEY`: Required for agent functionality
-- `REDIS_URL`: Redis connection string
-- `PROMETHEUS_URL`: Metrics endpoint
-- `GRAFANA_URL`: Dashboard access
+See `.env.example` for full configuration. Key variables:
+- `OPENAI_API_KEY`: Required for LLM functionality
+- `REDIS_URL`: Redis connection string (default: redis://localhost:7843/0)
+- `LITELLM_MASTER_KEY`: Auth key for LiteLLM proxy (Docker only)
 
 ## Knowledge Base
-
-- **Data sources**: redis.io/kb articles, local redis-docs clone, and `source_documents/` (user-provided)
-- **Pipeline**: Two-phase process - `pipeline scrape` creates artifacts, `pipeline ingest` indexes into Redis
-- **Index**: `sre_knowledge` in Redis (call `create_indices()` if missing)
+- **Data sources**: redis.io/kb articles, local redis-docs clone, `source_documents/`
+- **Pipeline**: `pipeline scrape` creates artifacts, `pipeline ingest` indexes into Redis
+- **Sync docs**: `make redis-docs-sync` to clone/update redis/docs

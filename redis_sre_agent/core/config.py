@@ -302,6 +302,17 @@ class Settings(BaseSettings):
     # LLM Request Timeout (seconds)
     llm_timeout: float = Field(default=180.0, description="HTTP timeout for LLM requests (seconds)")
 
+    # Custom LLM Factory
+    llm_factory: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dot-path to a custom LLM factory function. The function must accept "
+            "(tier: str, model: str | None, timeout: float | None, **kwargs) and return "
+            "a LangChain BaseChatModel. Example: 'mypackage.llm.anthropic_factory'. "
+            "If not set, uses the default ChatOpenAI factory."
+        ),
+    )
+
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")
     grafana_url: Optional[str] = Field(default=None, description="Grafana server URL")
