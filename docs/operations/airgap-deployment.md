@@ -207,17 +207,40 @@ VECTOR_DIM=768
 
 ### MCP Servers
 
-MCP servers that use `npx` (like GitHub MCP) won't work in air-gapped
-environments. The default `config.yaml` disables all MCP servers.
+The air-gap `config.yaml` includes only MCP servers that work without internet:
 
-To enable HTTP-based MCP servers pointing to internal endpoints:
+| Server | Status | Notes |
+|--------|--------|-------|
+| `redis-memory-server` | ✅ Enabled | Pre-installed, uses Redis for storage |
+| `github` | ❌ Disabled | Requires `npx` and internet access |
+
+MCP servers that use `npx` (like GitHub MCP) won't work in air-gapped
+environments because they download packages at runtime.
+
+**To add HTTP-based MCP servers** pointing to internal endpoints:
 
 ```yaml
 # config.yaml
 mcp_servers:
-  internal-memory:
+  # Pre-installed memory server (enabled by default)
+  redis-memory-server:
+    command: agent-memory
+    args:
+      - mcp
+    env:
+      REDIS_URL: ${REDIS_URL}
+
+  # Add your internal MCP servers here
+  internal-tools:
     url: http://your-internal-mcp-server:8080
     transport: streamable_http
+```
+
+**To disable all MCP servers** (minimal deployment):
+
+```yaml
+# config.yaml
+mcp_servers: {}
 ```
 
 ## Troubleshooting

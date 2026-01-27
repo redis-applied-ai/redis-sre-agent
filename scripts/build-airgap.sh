@@ -110,21 +110,7 @@ fi
 log "Copying configuration templates..."
 cp docker-compose.airgap.yml "$OUTPUT_DIR/"
 cp .env.airgap.example "$OUTPUT_DIR/.env.example"
-
-# Create minimal config.yaml for air-gap (no MCP servers)
-cat > "$OUTPUT_DIR/config.yaml" << 'EOF'
-# config.yaml - Air-gapped deployment configuration
-#
-# MCP servers are disabled by default for air-gapped environments.
-# Enable only HTTP-based MCP servers that can reach internal endpoints.
-
-mcp_servers: {}
-
-# Uncomment to enable specific tool providers
-# tool_providers:
-#   - redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider
-#   - redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider
-EOF
+cp config.airgap.yaml "$OUTPUT_DIR/config.yaml"
 
 success "Configuration templates copied"
 

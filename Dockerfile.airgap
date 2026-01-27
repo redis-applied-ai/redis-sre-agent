@@ -57,10 +57,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY . .
 
 # Install the project and prepare artifacts
-# agent-memory-server is included as a regular dependency in pyproject.toml
+# Set UV_TOOL_DIR so uv tool installs go to a predictable location we can copy
+ENV UV_TOOL_DIR=/opt/uv/tools
+ENV UV_TOOL_BIN_DIR=/opt/uv/tools/bin
+
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev && \
     mkdir -p /app/artifacts && \
+    # Ensure /opt/uv exists
+    mkdir -p /opt/uv && \
+    # Pre-install agent-memory-server for MCP memory functionality
+    uv tool install agent-memory-server && \
     # Prepare source documents if available
     (uv run --no-sync redis-sre-agent pipeline prepare-sources \
     --source-dir /app/source_documents \
@@ -93,7 +100,15 @@ FROM python:3.12-slim
 
 COPY --from=builder /bin/uv /bin/uv
 
+# Copy uv's managed Python and tools from builder
+COPY --from=builder /opt/uv /opt/uv
+
 WORKDIR /app
+
+# Set uv environment variables for tools
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+ENV UV_TOOL_DIR=/opt/uv/tools
+ENV UV_TOOL_BIN_DIR=/opt/uv/tools/bin
 
 # Install minimal runtime dependencies (no network-fetching scripts)
 # Note: We skip Docker CLI and Node.js since MCP servers using npx won't work
@@ -119,8 +134,9 @@ ENV HF_HOME=/models/huggingface
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
 
-# Add virtual environment to PATH
-ENV PATH="/app/.venv/bin:$PATH"
+# Add virtual environment and uv tools to PATH
+# Includes pre-installed tools like agent-memory-server
+ENV PATH="/app/.venv/bin:/opt/uv/tools/bin:$PATH"
 
 # Install entrypoint script
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
