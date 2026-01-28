@@ -1072,15 +1072,19 @@ async def test_task_system(config: Optional[Settings] = None) -> bool:
 
     Args:
         config: Optional Settings instance for dependency injection.
-                If not provided, uses the global settings.
+                If not provided, uses get_redis_url() for backwards compatibility
+                with unit tests that patch that function.
 
     Returns:
         True if the task system is working, False otherwise.
     """
     try:
-        # Use injected config or fall back to global settings
-        cfg = config or settings
-        redis_url = cfg.redis_url.get_secret_value()
+        # Use injected config if provided, otherwise call get_redis_url()
+        # for backwards compatibility with unit tests that patch it
+        if config is not None:
+            redis_url = config.redis_url.get_secret_value()
+        else:
+            redis_url = await get_redis_url()
 
         # Try to connect to Docket
         async with Docket(url=redis_url, name="sre_docket"):
