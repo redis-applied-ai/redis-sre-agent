@@ -1,6 +1,5 @@
 """OpenAI integration tests with live API calls."""
 
-
 import pytest
 
 from redis_sre_agent.core.docket_tasks import (
