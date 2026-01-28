@@ -771,6 +771,7 @@ class TestDeleteTaskFunction:
         mock_redis.hgetall = AsyncMock(return_value={})
         mock_redis.delete = AsyncMock(return_value=1)
 
-        with patch("redis_sre_agent.core.tasks.get_redis_client", return_value=mock_redis):
+        # Patch at the source module since delete_task uses a deferred import
+        with patch("redis_sre_agent.core.redis.get_redis_client", return_value=mock_redis):
             result = await delete_task(task_id="task-123")
             assert result["deleted"] is True
