@@ -19,7 +19,17 @@ if TYPE_CHECKING:
 # Apply critical patches at session level BEFORE any app imports
 @pytest.fixture(scope="session", autouse=True)
 def mock_redis_infrastructure():
-    """Mock Redis infrastructure functions to prevent connection attempts during test collection."""
+    """Mock Redis infrastructure functions to prevent connection attempts during test collection.
+
+    This fixture mocks:
+    - initialize_redis: Prevents Redis connection during app startup
+    - register_sre_tasks: Prevents Docket task registration
+    - get_redis_url: Returns a dummy URL for unit tests
+    - Docket: Prevents actual Docket connections in unit tests
+
+    Integration tests that need real Redis should use the test_settings fixture,
+    which provides dependency injection without relying on these mocks.
+    """
 
     async def mock_initialize():
         return {"redis": True, "indices": True}
@@ -27,8 +37,14 @@ def mock_redis_infrastructure():
     async def mock_register():
         pass
 
-    async def mock_cleanup():
-        pass
+    async def mock_get_redis_url():
+        return "redis://localhost:6379/0"
+
+    # Create a mock Docket that works as an async context manager
+    mock_docket_instance = AsyncMock()
+    mock_docket_instance.__aenter__ = AsyncMock(return_value=mock_docket_instance)
+    mock_docket_instance.__aexit__ = AsyncMock(return_value=None)
+    mock_docket_instance.add = Mock(return_value=AsyncMock())
 
     with (
         patch(
@@ -36,6 +52,12 @@ def mock_redis_infrastructure():
             side_effect=mock_initialize,
         ),
         patch("redis_sre_agent.core.docket_tasks.register_sre_tasks", side_effect=mock_register),
+        patch(
+            "redis_sre_agent.core.docket_tasks.get_redis_url",
+            side_effect=mock_get_redis_url,
+        ),
+        patch("redis_sre_agent.api.tasks.get_redis_url", side_effect=mock_get_redis_url),
+        patch("redis_sre_agent.api.tasks.Docket", return_value=mock_docket_instance),
     ):
         yield
 
