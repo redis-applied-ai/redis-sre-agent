@@ -139,9 +139,8 @@ class TestTaskIntegration:
         """Test task system connectivity with real Redis."""
         from redis_sre_agent.core.docket_tasks import register_sre_tasks, test_task_system
 
-        # Test basic connectivity - note: test_task_system uses global settings
-        # TODO: Add config parameter to test_task_system for full dependency injection support
-        result = await test_task_system()
+        # Test basic connectivity using dependency injection
+        result = await test_task_system(config=test_settings)
         assert result is True
 
         # Test task registration (should not fail)

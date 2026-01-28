@@ -39,8 +39,8 @@ class TestDocketSREIntegration:
     @pytest.mark.asyncio
     async def test_docket_sre_task_registration(self, test_settings):
         """Test SRE task registration with real Docket/Redis."""
-        # Test task system connectivity
-        system_ok = await test_task_system()
+        # Test task system connectivity using dependency injection
+        system_ok = await test_task_system(config=test_settings)
         assert system_ok is True
 
         # Test task registration
