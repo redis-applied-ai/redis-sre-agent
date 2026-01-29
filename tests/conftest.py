@@ -58,6 +58,7 @@ def mock_redis_infrastructure():
         ),
         patch("redis_sre_agent.api.tasks.get_redis_url", side_effect=mock_get_redis_url),
         patch("redis_sre_agent.api.tasks.Docket", return_value=mock_docket_instance),
+        patch("docket.Docket", return_value=mock_docket_instance),
     ):
         yield
 
