@@ -1,8 +1,8 @@
 #!/bin/bash
 # Docker entrypoint script for Redis SRE Agent
 # Handles knowledge base initialization on first startup
-
-set -e
+# Note: We intentionally do NOT use 'set -e' here because knowledge base
+# initialization is optional and should not prevent the application from starting.
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -62,18 +62,26 @@ init_knowledge_base() {
         return 0
     fi
 
-    # Find the most recent batch
-    local latest_batch=$(ls -1 /app/artifacts | sort -r | head -1)
+    # Find the most recent batch that has a manifest (date-formatted directories only: YYYY-MM-DD)
+    local latest_batch=""
+    for batch in $(ls -1 /app/artifacts | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort -r); do
+        if [ -f "/app/artifacts/$batch/batch_manifest.json" ]; then
+            latest_batch="$batch"
+            break
+        fi
+    done
+
     if [ -z "$latest_batch" ]; then
-        warning "No batch directories found in artifacts"
+        warning "No batch directories with manifests found in artifacts"
+        warning "Run 'redis-sre-agent pipeline prepare-sources' to create artifacts"
         return 0
     fi
 
     log "Found pre-built batch: $latest_batch"
     log "Ingesting into knowledge base..."
 
-    # Run ingestion
-    if uv run redis-sre-agent pipeline ingest \
+    # Run ingestion using the installed CLI directly (no 'uv run' to avoid network checks in air-gap)
+    if redis-sre-agent pipeline ingest \
         --batch-date "$latest_batch" \
         --artifacts-path /app/artifacts; then
         success "Knowledge base initialized successfully"

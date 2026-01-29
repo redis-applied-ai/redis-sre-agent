@@ -402,7 +402,7 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
             click.echo(f"❌ Source directory does not exist: {source_path}")
             return
 
-        # Set batch date and storage
+        # Set batch date and storage (don't create dirs yet - will be created on save)
         storage = ArtifactStorage(artifacts_path)
         if batch_date:
             try:
@@ -410,12 +410,7 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
                 # Override the storage's current_date and batch path
                 storage.current_date = batch_date
                 storage.current_batch_path = storage.base_path / batch_date
-                storage.current_batch_path.mkdir(parents=True, exist_ok=True)
-                # Create category subdirectories
-                from ..pipelines.scraper.base import DocumentCategory
-
-                for category in DocumentCategory:
-                    (storage.current_batch_path / category.value).mkdir(exist_ok=True)
+                storage._dirs_created = False  # Reset so dirs are created on first save
                 batch_date_to_use = batch_date
             except ValueError:
                 click.echo(f"❌ Invalid batch date format: {batch_date}. Use YYYY-MM-DD")

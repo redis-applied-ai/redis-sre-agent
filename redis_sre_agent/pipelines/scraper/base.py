@@ -108,20 +108,35 @@ class ScrapedDocument:
 class ArtifactStorage:
     """Manages artifact storage with dated folders."""
 
-    def __init__(self, base_path: Union[str, Path]):
+    def __init__(self, base_path: Union[str, Path], create_dirs: bool = False):
+        """Initialize artifact storage.
+
+        Args:
+            base_path: Base path for artifact storage.
+            create_dirs: If True, create batch directory structure immediately.
+                        If False (default), directories are created lazily when
+                        documents are saved. This prevents empty batch directories.
+        """
         self.base_path = Path(base_path)
         self.current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self.current_batch_path = self.base_path / self.current_date
+        self._dirs_created = False
 
-        # Create directories
+        if create_dirs:
+            self._ensure_dirs()
+
+    def _ensure_dirs(self) -> None:
+        """Create batch directory structure if not already created."""
+        if self._dirs_created:
+            return
         self.current_batch_path.mkdir(parents=True, exist_ok=True)
-
-        # Create category subdirectories
         for category in DocumentCategory:
             (self.current_batch_path / category.value).mkdir(exist_ok=True)
+        self._dirs_created = True
 
     def save_document(self, document: ScrapedDocument) -> Path:
         """Save document to appropriate category folder."""
+        self._ensure_dirs()  # Create dirs on first save
         category_path = self.current_batch_path / document.category.value
 
         # Create filename from title and hash

@@ -222,7 +222,7 @@ services:
       - uv_cache:/root/.cache/uv  # Persist UV cache for MCP server deps
     # Run the worker directly from the project virtualenv instead of via
     # `uv run` to avoid querying /app/.venv/bin/python3 at runtime.
-    command: redis-sre-agent worker
+    command: redis-sre-agent worker start
     # Disable healthcheck for worker (it doesn't run a web server)
     healthcheck:
       disable: true

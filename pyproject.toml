@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "redis-sre-agent"
-version = "0.2.4"
+version = "0.2.5"
 description = "A LangGraph-based Redis SRE Agent for infrastructure monitoring and incident response"
 readme = "README.md"
 license = {file = "LICENSE.txt"}
