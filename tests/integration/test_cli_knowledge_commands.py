@@ -15,21 +15,20 @@ import pytest
 from click.testing import CliRunner
 
 from redis_sre_agent.cli.main import main as cli_main
-from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_knowledge_index
 
 
 @pytest.mark.integration
-def test_knowledge_fragments_cli_lists_all_chunks(redis_container):
+def test_knowledge_fragments_cli_lists_all_chunks(test_settings):
     """Verify `knowledge fragments` lists all fragments for a document (JSON mode)."""
 
     runner = CliRunner()
 
     # Prepare sample fragments directly in the knowledge index (no OpenAI calls)
     async def _prepare() -> Dict[str, str]:
-        index = await get_knowledge_index()
-        vec = array("f", [0.0] * settings.vector_dim).tobytes()
+        index = await get_knowledge_index(config=test_settings)
+        vec = array("f", [0.0] * test_settings.vector_dim).tobytes()
 
         doc_hash = "dochash-abc123"
         chunks: List[Dict] = [
@@ -84,15 +83,15 @@ def test_knowledge_fragments_cli_lists_all_chunks(redis_container):
 
 
 @pytest.mark.integration
-def test_knowledge_related_cli_returns_context_window(redis_container):
+def test_knowledge_related_cli_returns_context_window(test_settings):
     """Verify `knowledge related` returns a window around the target chunk."""
 
     runner = CliRunner()
 
     async def _prepare() -> Dict[str, str]:
-        index = await get_knowledge_index()
+        index = await get_knowledge_index(config=test_settings)
         doc_hash = "dochash-xyz789"
-        vec = array("f", [0.0] * settings.vector_dim).tobytes()
+        vec = array("f", [0.0] * test_settings.vector_dim).tobytes()
 
         chunks: List[Dict] = [
             {

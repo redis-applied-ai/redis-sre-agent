@@ -47,10 +47,10 @@ class TestTasksAPI:
             patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
         ):
             resp = client.post("/api/v1/tasks", json={"message": "help"})
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["task_id"] == "t1"
-        assert data["thread_id"] == "th1"
+            assert resp.status_code == 202
+            data = resp.json()
+            assert data["task_id"] == "t1"
+            assert data["thread_id"] == "th1"
 
     def test_get_task_success(self, client):
         """GET /api/v1/tasks/{task_id} returns 200 with state."""

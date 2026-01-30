@@ -8,7 +8,7 @@ from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
 from redisvl.index.index import AsyncSearchIndex
 from redisvl.utils.vectorize import HFTextVectorizer, OpenAITextVectorizer
 
-from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.config import Settings, settings
 
 # Type alias for vectorizers
 Vectorizer = Union[OpenAITextVectorizer, HFTextVectorizer]
@@ -207,10 +207,24 @@ SRE_INSTANCES_SCHEMA = {
 }
 
 
-def get_redis_client(url: Optional[str] = None) -> Redis:
-    """Get Redis client (creates fresh client to avoid event loop issues)."""
-    redis_url = url or settings.redis_url.get_secret_value()
-    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+def get_redis_client(
+    url: Optional[str] = None,
+    config: Optional[Settings] = None,
+) -> Redis:
+    """Get Redis client (creates fresh client to avoid event loop issues).
+
+    Args:
+        url: Optional Redis URL. If provided, takes precedence over config.
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        Async Redis client instance.
+    """
+    cfg = config or settings
+    redis_url = url or cfg.redis_url.get_secret_value()
+    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     return Redis.from_url(
         url=redis_url,
         password=redis_password,
@@ -218,11 +232,16 @@ def get_redis_client(url: Optional[str] = None) -> Redis:
     )
 
 
-def get_vectorizer() -> Vectorizer:
+def get_vectorizer(config: Optional[Settings] = None) -> Vectorizer:
     """Get vectorizer with Redis-backed embeddings cache.
 
     Returns either an OpenAI or HuggingFace vectorizer based on settings.embedding_provider.
     Callers should use aembed/aembed_many for async operations.
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
 
     Providers:
         - 'openai': Uses OpenAI API (requires OPENAI_API_KEY and network access)
@@ -234,9 +253,10 @@ def get_vectorizer() -> Vectorizer:
 
     TTL is configurable via settings.embeddings_cache_ttl (default: 7 days).
     """
+    cfg = config or settings
     # Build Redis URL with password if needed (ensure cache can auth)
-    redis_url = settings.redis_url.get_secret_value()
-    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     if redis_password and "@" not in redis_url:
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
@@ -245,29 +265,27 @@ def get_vectorizer() -> Vectorizer:
     cache = EmbeddingsCache(
         name="sre_embeddings_cache",
         redis_url=redis_url,
-        ttl=settings.embeddings_cache_ttl,
+        ttl=cfg.embeddings_cache_ttl,
     )
 
-    provider = settings.embedding_provider.lower()
+    provider = cfg.embedding_provider.lower()
 
     if provider == "local":
         # Use HuggingFace sentence-transformers (air-gap compatible)
-        logger.info(f"Using local HuggingFace vectorizer with model: {settings.embedding_model}")
+        logger.info(f"Using local HuggingFace vectorizer with model: {cfg.embedding_model}")
         return HFTextVectorizer(
-            model=settings.embedding_model,
+            model=cfg.embedding_model,
             cache=cache,
         )
     elif provider == "openai":
         # Use OpenAI API (default)
-        logger.debug(
-            f"Vectorizer created with embeddings cache (ttl={settings.embeddings_cache_ttl}s)"
-        )
+        logger.debug(f"Vectorizer created with embeddings cache (ttl={cfg.embeddings_cache_ttl}s)")
         return OpenAITextVectorizer(
-            model=settings.embedding_model,
+            model=cfg.embedding_model,
             cache=cache,
             api_config={
-                "api_key": settings.openai_api_key,
-                **({"base_url": settings.openai_base_url} if settings.openai_base_url else {}),
+                "api_key": cfg.openai_api_key,
+                **({"base_url": cfg.openai_base_url} if cfg.openai_base_url else {}),
             },
         )
     else:
@@ -276,13 +294,23 @@ def get_vectorizer() -> Vectorizer:
         )
 
 
-async def get_knowledge_index() -> AsyncSearchIndex:
-    """Get SRE knowledge base index (creates fresh to avoid event loop issues)."""
+async def get_knowledge_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE knowledge base index (creates fresh to avoid event loop issues).
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        AsyncSearchIndex for the knowledge base.
+    """
     from redisvl.schema import IndexSchema
 
+    cfg = config or settings
     # Build Redis URL with password if needed
-    redis_url = settings.redis_url.get_secret_value()
-    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     if redis_password and "@" not in redis_url:
         # Insert password into URL: redis://localhost -> redis://:password@localhost
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
@@ -299,12 +327,22 @@ async def get_knowledge_index() -> AsyncSearchIndex:
     return index
 
 
-async def get_tasks_index() -> AsyncSearchIndex:
-    """Get SRE tasks index (async)."""
+async def get_tasks_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE tasks index (async).
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        AsyncSearchIndex for tasks.
+    """
     from redisvl.schema import IndexSchema
 
-    redis_url = settings.redis_url.get_secret_value()
-    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    cfg = config or settings
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     if redis_password and "@" not in redis_url:
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
@@ -314,13 +352,23 @@ async def get_tasks_index() -> AsyncSearchIndex:
     return index
 
 
-async def get_instances_index() -> AsyncSearchIndex:
-    """Get SRE instances index (async)."""
+async def get_instances_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE instances index (async).
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        AsyncSearchIndex for instances.
+    """
     from redisvl.schema import IndexSchema
 
+    cfg = config or settings
     # Build Redis URL with password if needed
-    redis_url = settings.redis_url.get_secret_value()
-    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     if redis_password and "@" not in redis_url:
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
@@ -330,13 +378,23 @@ async def get_instances_index() -> AsyncSearchIndex:
     return index
 
 
-async def get_threads_index() -> AsyncSearchIndex:
-    """Get SRE threads/tasks index (async)."""
+async def get_threads_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE threads/tasks index (async).
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        AsyncSearchIndex for threads.
+    """
     from redisvl.schema import IndexSchema
 
+    cfg = config or settings
     # Build Redis URL with password if needed
-    redis_url = settings.redis_url.get_secret_value()
-    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     if redis_password and "@" not in redis_url:
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
@@ -346,13 +404,23 @@ async def get_threads_index() -> AsyncSearchIndex:
     return index
 
 
-async def get_schedules_index() -> AsyncSearchIndex:
-    """Get SRE schedules index singleton."""
+async def get_schedules_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE schedules index.
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        AsyncSearchIndex for schedules.
+    """
     from redisvl.schema import IndexSchema
 
+    cfg = config or settings
     # Build Redis URL with password if needed
-    redis_url = settings.redis_url.get_secret_value()
-    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     if redis_password and "@" not in redis_url:
         # Insert password into URL: redis://localhost -> redis://:password@localhost
         redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
@@ -369,17 +437,23 @@ async def get_schedules_index() -> AsyncSearchIndex:
     return index
 
 
-async def test_redis_connection(url: Optional[str] = None) -> bool:
+async def test_redis_connection(
+    url: Optional[str] = None,
+    config: Optional[Settings] = None,
+) -> bool:
     """Test Redis connection health.
 
     Args:
-        url: Optional Redis URL to test. If not provided, uses default from settings.
+        url: Optional Redis URL to test. If provided, takes precedence over config.
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
 
     Returns:
         True if connection successful, False otherwise.
     """
     try:
-        client = get_redis_client(url=url)
+        client = get_redis_client(url=url, config=config)
         await client.ping()
         await client.aclose()
         return True
@@ -388,10 +462,19 @@ async def test_redis_connection(url: Optional[str] = None) -> bool:
         return False
 
 
-async def test_vector_search() -> bool:
-    """Test vector search index availability."""
+async def test_vector_search(config: Optional[Settings] = None) -> bool:
+    """Test vector search index availability.
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        True if vector search index exists, False otherwise.
+    """
     try:
-        index = await get_knowledge_index()
+        index = await get_knowledge_index(config=config)
         exists = await index.exists()
         return exists
     except Exception as e:
@@ -399,11 +482,20 @@ async def test_vector_search() -> bool:
         return False
 
 
-async def create_indices() -> bool:
-    """Create vector search indices if they don't exist."""
+async def create_indices(config: Optional[Settings] = None) -> bool:
+    """Create vector search indices if they don't exist.
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        True if all indices were created successfully, False otherwise.
+    """
     try:
         # Create knowledge index
-        knowledge_index = await get_knowledge_index()
+        knowledge_index = await get_knowledge_index(config=config)
         knowledge_exists = await knowledge_index.exists()
 
         if not knowledge_exists:
@@ -413,7 +505,7 @@ async def create_indices() -> bool:
             logger.debug(f"Vector index already exists: {SRE_KNOWLEDGE_INDEX}")
 
         # Create schedules index
-        schedules_index = await get_schedules_index()
+        schedules_index = await get_schedules_index(config=config)
         schedules_exists = await schedules_index.exists()
 
         if not schedules_exists:
@@ -423,7 +515,7 @@ async def create_indices() -> bool:
             logger.debug(f"Schedules index already exists: {SRE_SCHEDULES_INDEX}")
 
         # Create threads index
-        threads_index = await get_threads_index()
+        threads_index = await get_threads_index(config=config)
         threads_exists = await threads_index.exists()
         if not threads_exists:
             await threads_index.create()
@@ -432,7 +524,7 @@ async def create_indices() -> bool:
             logger.debug(f"Threads index already exists: {SRE_THREADS_INDEX}")
 
         # Create tasks index
-        tasks_index = await get_tasks_index()
+        tasks_index = await get_tasks_index(config=config)
         tasks_exists = await tasks_index.exists()
         if not tasks_exists:
             await tasks_index.create()
@@ -441,7 +533,7 @@ async def create_indices() -> bool:
             logger.debug(f"Tasks index already exists: {SRE_TASKS_INDEX}")
 
         # Create instances index
-        instances_index = await get_instances_index()
+        instances_index = await get_instances_index(config=config)
         instances_exists = await instances_index.exists()
         if not instances_exists:
             await instances_index.create()
@@ -455,7 +547,10 @@ async def create_indices() -> bool:
         return False
 
 
-async def recreate_indices(index_name: str | None = None) -> dict:
+async def recreate_indices(
+    index_name: str | None = None,
+    config: Optional[Settings] = None,
+) -> dict:
     """Drop and recreate RediSearch indices.
 
     This is useful when the schema has changed (e.g., new fields added).
@@ -463,6 +558,9 @@ async def recreate_indices(index_name: str | None = None) -> dict:
     Args:
         index_name: Specific index to recreate ('knowledge', 'schedules', 'threads',
                    'tasks', 'instances'), or None to recreate all.
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
 
     Returns:
         Dictionary with success status and details for each index.
@@ -483,7 +581,7 @@ async def recreate_indices(index_name: str | None = None) -> dict:
             continue
 
         try:
-            idx = await get_fn()
+            idx = await get_fn(config=config)
 
             # Drop index if it exists
             if await idx.exists():
@@ -507,20 +605,30 @@ async def recreate_indices(index_name: str | None = None) -> dict:
     return result
 
 
-async def initialize_redis() -> dict:
-    """Initialize Redis infrastructure and return status."""
+async def initialize_redis(config: Optional[Settings] = None) -> dict:
+    """Initialize Redis infrastructure and return status.
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        Dictionary with status of each infrastructure component.
+    """
+    cfg = config or settings
     status = {}
 
     # Test basic Redis connection
-    redis_ok = await test_redis_connection()
+    redis_ok = await test_redis_connection(config=cfg)
     status["redis_connection"] = "available" if redis_ok else "unavailable"
 
     # Test vectorizer (skip when no OpenAI key configured)
     try:
-        if not settings.openai_api_key:
+        if not cfg.openai_api_key:
             status["vectorizer"] = "skipped"
         else:
-            vectorizer = get_vectorizer()
+            vectorizer = get_vectorizer(config=cfg)
             status["vectorizer"] = "available" if vectorizer else "unavailable"
     except Exception as e:
         logger.error(f"Vectorizer initialization failed: {e}")
@@ -528,21 +636,21 @@ async def initialize_redis() -> dict:
 
     # Create indices if Redis is available
     if redis_ok:
-        indices_created = await create_indices()
+        indices_created = await create_indices(config=cfg)
         status["indices_created"] = "available" if indices_created else "unavailable"
     else:
         status["indices_created"] = "unavailable"
 
     # Initialize Docket infrastructure if Redis is available
     if redis_ok:
-        docket_ok = await initialize_docket()
+        docket_ok = await initialize_docket(config=cfg)
         status["docket_infrastructure"] = "available" if docket_ok else "unavailable"
     else:
         status["docket_infrastructure"] = "unavailable"
 
     # Test vector search index after creation (only if Redis is available)
     if redis_ok:
-        vector_ok = await test_vector_search()
+        vector_ok = await test_vector_search(config=cfg)
         status["vector_search"] = "available" if vector_ok else "unavailable"
     else:
         status["vector_search"] = "unavailable"
@@ -550,14 +658,24 @@ async def initialize_redis() -> dict:
     return status
 
 
-async def initialize_docket() -> bool:
-    """Initialize Docket task queue infrastructure."""
+async def initialize_docket(config: Optional[Settings] = None) -> bool:
+    """Initialize Docket task queue infrastructure.
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        True if Docket infrastructure initialized successfully, False otherwise.
+    """
+    cfg = config or settings
     try:
         # Import Docket here to avoid circular imports
         from docket import Docket
 
         # Test Docket connection and ensure infrastructure is ready
-        async with Docket(url=settings.redis_url.get_secret_value(), name="sre_docket") as docket:
+        async with Docket(url=cfg.redis_url.get_secret_value(), name="sre_docket") as docket:
             # Test basic Docket functionality by checking for workers
             # This will create necessary Redis structures if they don't exist
             await docket.workers()

@@ -15,7 +15,7 @@ from redis_sre_agent.agent.langgraph_agent import (
     _extract_instance_details_from_message,
 )
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
-from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.config import Settings, settings
 from redis_sre_agent.core.instances import create_instance, get_instance_by_id
 from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
@@ -1067,11 +1067,27 @@ async def run_agent_with_progress(
         raise
 
 
-async def test_task_system() -> bool:
-    """Test if the task system is working."""
+async def test_task_system(config: Optional[Settings] = None) -> bool:
+    """Test if the task system is working.
+
+    Args:
+        config: Optional Settings instance for dependency injection.
+                If not provided, uses get_redis_url() for backwards compatibility
+                with unit tests that patch that function.
+
+    Returns:
+        True if the task system is working, False otherwise.
+    """
     try:
+        # Use injected config if provided, otherwise call get_redis_url()
+        # for backwards compatibility with unit tests that patch it
+        if config is not None:
+            redis_url = config.redis_url.get_secret_value()
+        else:
+            redis_url = await get_redis_url()
+
         # Try to connect to Docket
-        async with Docket(url=await get_redis_url(), name="sre_docket"):
+        async with Docket(url=redis_url, name="sre_docket"):
             # Simple connectivity test
             return True
     except Exception as e:
