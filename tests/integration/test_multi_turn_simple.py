@@ -86,11 +86,13 @@ async def evaluate_agent_response(scenario: Dict[str, Any]) -> Dict[str, Any]:
         agent = SRELangGraphAgent()
 
         # Get agent response
-        response = await agent._process_query(
+        agent_response = await agent._process_query(
             query=scenario["user_query"],
             session_id=f"test_{scenario['scenario_id']}",
             user_id="evaluator",
         )
+        # Extract response text from AgentResponse
+        response = agent_response.response
 
         # Analyze response content for tool usage evidence
         tool_evidence = analyze_tool_evidence(response, scenario["expected_tools"])

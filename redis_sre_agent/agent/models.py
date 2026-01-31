@@ -79,3 +79,13 @@ class CorrectionResult(BaseModel):
     edits_applied: List[str] = Field(
         default_factory=list, description="Short bullet list of edits/cautions applied"
     )
+
+
+class AgentResponse(BaseModel):
+    """Response from an agent including the answer and any knowledge search results used."""
+
+    response: str = Field(..., description="The agent's response text")
+    search_results: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Knowledge base search results used to generate the response",
+    )

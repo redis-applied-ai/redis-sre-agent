@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from .helpers import build_result_envelope
+from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -225,6 +226,31 @@ class ChatAgent:
             },
         }
 
+    def _extract_knowledge_search_results(
+        self, envelopes: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Extract knowledge base search results from tool envelopes.
+
+        Looks for envelopes from knowledge.kb.search or similar tools and
+        extracts the search results for citation tracking.
+
+        Args:
+            envelopes: List of ResultEnvelope dicts from tool executions
+
+        Returns:
+            List of search result dicts suitable for QAManager.record_qa_from_search
+        """
+        all_results = []
+        for env in envelopes:
+            tool_key = env.get("tool_key", "")
+            # Match knowledge base search tools
+            if "knowledge" in tool_key.lower() and "search" in env.get("name", "").lower():
+                data = env.get("data", {})
+                results = data.get("results", [])
+                if results:
+                    all_results.extend(results)
+        return all_results
+
     def _build_workflow(
         self,
         tool_mgr: ToolManager,
@@ -380,7 +406,7 @@ class ChatAgent:
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
-    ) -> str:
+    ) -> AgentResponse:
         """Process a query with quick tool access.
 
         Args:
@@ -393,7 +419,7 @@ class ChatAgent:
             conversation_history: Optional previous messages for context
 
         Returns:
-            Agent's response as a string
+            AgentResponse with response text and any knowledge search results used
         """
         logger.info(f"Chat agent processing query for user {user_id}")
 
@@ -473,18 +499,30 @@ User Query: {query}"""
 
                 final_state = await app.ainvoke(initial_state, config=thread_config)
 
+                # Extract knowledge search results from envelopes for citation tracking
+                search_results = self._extract_knowledge_search_results(
+                    final_state.get("signals_envelopes", [])
+                )
+
                 messages = final_state.get("messages", [])
                 if messages:
                     last_message = messages[-1]
                     if isinstance(last_message, AIMessage):
-                        return last_message.content
-                    return str(last_message.content)
+                        return AgentResponse(
+                            response=last_message.content, search_results=search_results
+                        )
+                    return AgentResponse(
+                        response=str(last_message.content), search_results=search_results
+                    )
 
-                return "I couldn't process that query. Please try rephrasing."
+                return AgentResponse(
+                    response="I couldn't process that query. Please try rephrasing.",
+                    search_results=[],
+                )
 
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")
-                return f"Error processing query: {e}"
+                return AgentResponse(response=f"Error processing query: {e}", search_results=[])
 
 
 # Singleton cache keyed by instance name

@@ -42,6 +42,7 @@ from ..core.redis import get_redis_client
 from ..tools.manager import ToolManager
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
+from .models import AgentResponse
 from .prompts import SRE_SYSTEM_PROMPT
 from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
 
@@ -645,6 +646,32 @@ JSON payload of analyses artifacts:
         # Sort by original index to preserve order
         summarized.sort(key=lambda x: x[0])
         return [env for _, env in summarized]
+
+    def _extract_knowledge_search_results(
+        self, envelopes: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Extract knowledge base search results from tool envelopes.
+
+        Looks for envelopes from knowledge search tools and extracts the
+        search results for citation tracking.
+
+        Args:
+            envelopes: List of ResultEnvelope dicts from tool executions
+
+        Returns:
+            List of search result dicts suitable for QAManager.record_qa_from_search
+        """
+        all_results = []
+        for env in envelopes:
+            tool_key = env.get("tool_key", "")
+            name = env.get("name", "")
+            # Match knowledge base search tools
+            if "knowledge" in tool_key.lower() and "search" in name.lower():
+                data = env.get("data", {})
+                results = data.get("results", [])
+                if results:
+                    all_results.extend(results)
+        return all_results
 
     def _build_expand_evidence_tool(
         self,
@@ -1407,7 +1434,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
-    ) -> str:
+    ) -> AgentResponse:
         """Process a single SRE query through the LangGraph workflow.
 
         Args:
@@ -1419,7 +1446,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             progress_emitter: ProgressEmitter for status updates during this query.
 
         Returns:
-            Agent's response as a string
+            AgentResponse with response text and search results for citation tracking
         """
         logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
 
@@ -1676,6 +1703,7 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
             "current_tool_calls": [],
             "iteration_count": 0,
             "max_iterations": max_iterations,
+            "instance_context": None,
             "signals_envelopes": [],
         }
 
@@ -1729,14 +1757,8 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
             )
 
             # Return early with helpful message asking for admin credentials
-            class AgentResponseStr(str):
-                def get(self, key: str, default: Any = None):
-                    if key == "content":
-                        return str(self)
-                    return default
-
-            return AgentResponseStr(
-                f"""I've detected that **{target_instance.name}** is a Redis Enterprise instance, but I'm missing the admin API credentials needed for full diagnostics.
+            return AgentResponse(
+                response=f"""I've detected that **{target_instance.name}** is a Redis Enterprise instance, but I'm missing the admin API credentials needed for full diagnostics.
 
 To enable Redis Enterprise cluster monitoring and diagnostics, please provide:
 
@@ -1756,7 +1778,8 @@ You can update the instance configuration through the UI or API, and I'll be abl
 - ✅ View shard distribution and replication status
 - ✅ Access Redis Enterprise-specific metrics
 
-For now, I can still perform basic Redis diagnostics using the database connection URL, but cluster-level insights will be limited."""
+For now, I can still perform basic Redis diagnostics using the database connection URL, but cluster-level insights will be limited.""",
+                search_results=[],
             )
 
         # Validate Redis Cloud instances have required API credentials
@@ -1776,14 +1799,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             )
 
             # Return early with helpful message asking for API credentials
-            class AgentResponseStr(str):
-                def get(self, key: str, default: Any = None):
-                    if key == "content":
-                        return str(self)
-                    return default
-
-            return AgentResponseStr(
-                f"""I've detected that **{target_instance.name}** is a Redis Cloud instance, but I'm missing the Redis Cloud Management API credentials needed for full cloud resource management.
+            return AgentResponse(
+                response=f"""I've detected that **{target_instance.name}** is a Redis Cloud instance, but I'm missing the Redis Cloud Management API credentials needed for full cloud resource management.
 
 To enable Redis Cloud Management API tools, please set these environment variables:
 
@@ -1804,7 +1821,8 @@ Once configured, I'll be able to:
 - ✅ Manage users and access control
 - ✅ View cloud account details
 
-For now, I can still perform basic Redis diagnostics using the database connection URL, but cloud management features will be limited."""
+For now, I can still perform basic Redis diagnostics using the database connection URL, but cloud management features will be limited.""",
+                search_results=[],
             )
 
         # Extract support package path from context if provided
@@ -1857,6 +1875,11 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 # Run the workflow with isolated memory
                 final_state = await self.app.ainvoke(initial_state, config=thread_config)
 
+                # Extract knowledge search results for citation tracking
+                search_results = self._extract_knowledge_search_results(
+                    final_state.get("signals_envelopes", [])
+                )
+
                 # Extract the final response
                 messages = final_state["messages"]
                 if messages and isinstance(messages[-1], AIMessage):
@@ -1864,10 +1887,13 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     logger.info(
                         f"SRE agent completed processing with {final_state['iteration_count']} iterations"
                     )
-                    return response_content
+                    return AgentResponse(response=response_content, search_results=search_results)
                 else:
                     logger.warning("No valid response generated by SRE agent")
-                    return "I apologize, but I couldn't generate a proper response. Please try rephrasing your question."
+                    return AgentResponse(
+                        response="I apologize, but I couldn't generate a proper response. Please try rephrasing your question.",
+                        search_results=[],
+                    )
 
             except Exception as e:
                 logger.error(f"Error processing SRE query: {str(e)}")
@@ -1878,7 +1904,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 logger.error(f"Traceback: {traceback.format_exc()}")
 
                 error_msg = str(e) if str(e) else f"{type(e).__name__}: {e.args}"
-                return f"I encountered an error while processing your request: {error_msg}. Please try again."
+                return AgentResponse(
+                    response=f"I encountered an error while processing your request: {error_msg}. Please try again.",
+                    search_results=[],
+                )
 
     async def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
         """Get conversation history for a session.
@@ -1959,7 +1988,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
-    ) -> str:
+    ) -> AgentResponse:
         """Process a query once, then attach Safety and Fact-Checking notes.
 
         Args:
@@ -1970,12 +1999,15 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             context: Additional context including instance_id if specified
             conversation_history: Optional list of previous messages for context
             progress_emitter: ProgressEmitter for status updates during this query.
+
+        Returns:
+            AgentResponse with response text and search results for citation tracking
         """
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
         try:
-            # Produce the primary response
-            response = await self._process_query(
+            # Produce the primary response (returns AgentResponse)
+            agent_response = await self._process_query(
                 query,
                 session_id,
                 user_id,
@@ -1984,18 +2016,21 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 conversation_history,
                 progress_emitter,
             )
+            response_text = agent_response.response
 
             # Skip correction if this message isn't about Redis
             try:
-                if not (self._is_redis_scoped(query) or self._is_redis_scoped(response)):
+                if not (self._is_redis_scoped(query) or self._is_redis_scoped(response_text)):
                     logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
-                    return response
+                    return agent_response
             except Exception:
                 pass
 
             # Heuristic gate: only run when risky patterns/URLs present
-            if not (self._should_run_safety_fact(response) or self._should_run_safety_fact(query)):
-                return response
+            if not (
+                self._should_run_safety_fact(response_text) or self._should_run_safety_fact(query)
+            ):
+                return agent_response
 
             # Build a small, bounded corrector with knowledge + utilities tools only
             # Use always-on providers (knowledge, utilities)
@@ -2073,7 +2108,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 initial_state = {
                     "messages": [sys, human],
                     "budget": min(2, int(self.settings.max_tool_calls_per_stage or 2)),
-                    "response_text": response,
+                    "response_text": response_text,
                     "instance": instance_ctx,
                 }
 
@@ -2081,7 +2116,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 result = (corr_state or {}).get("result") or {}
                 edited = str(result.get("edited_response") or "")
                 # Replace the original response with the corrected text; do not append audit notes by default
-                if edited.strip() and edited.strip() != str(response).strip():
+                if edited.strip() and edited.strip() != response_text.strip():
                     # Sanitize any accidental prompt echo sections
                     try:
                         import re as _re
@@ -2097,9 +2132,13 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                         )
                     except Exception:
                         edited_sanitized = edited
-                    return edited_sanitized
+                    # Return corrected response with original search results
+                    return AgentResponse(
+                        response=edited_sanitized,
+                        search_results=agent_response.search_results,
+                    )
                 # If no change, just return original
-                return response
+                return agent_response
         finally:
             # Clear LLM memo cache for this run
             try:

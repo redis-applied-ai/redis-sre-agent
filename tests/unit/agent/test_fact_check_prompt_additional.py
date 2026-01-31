@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
+from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.agent.subgraphs.safety_fact_corrector import (
     CorrectorState,
     build_safety_fact_corrector,
@@ -100,14 +101,13 @@ async def test_corrector_runs_on_risky_patterns(mock_build):
     mock_build.return_value = mock_corrector
 
     agent = SRELangGraphAgent()
-    # Skip heavy workflow: patch process_query to return risky text
-    with patch.object(
-        agent, "_process_query", new=AsyncMock(return_value="Use CONFIG SET to change policy")
-    ):
+    # Skip heavy workflow: patch _process_query to return AgentResponse with risky text
+    mock_response = AgentResponse(response="Use CONFIG SET to change policy", search_results=[])
+    with patch.object(agent, "_process_query", new=AsyncMock(return_value=mock_response)):
         out = await agent.process_query("redis config help", "s", "u")
 
-    assert out.startswith("EDITED"), (
-        f"Corrector should have edited the response, which was: '{out}''"
+    assert out.response.startswith("EDITED"), (
+        f"Corrector should have edited the response, which was: '{out.response}''"
     )
     mock_build.assert_called_once()
 
@@ -116,10 +116,11 @@ async def test_corrector_runs_on_risky_patterns(mock_build):
 @patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_skips_out_of_scope(mock_build):
     agent = SRELangGraphAgent()
-    with patch.object(agent, "_process_query", new=AsyncMock(return_value="hello world")):
+    mock_response = AgentResponse(response="hello world", search_results=[])
+    with patch.object(agent, "_process_query", new=AsyncMock(return_value=mock_response)):
         out = await agent.process_query("just chatting", "s", "u")
     # Out of Redis scope -> returns original, corrector not run
-    assert out == "hello world"
+    assert out.response == "hello world"
     mock_build.assert_not_called()
 
 
@@ -134,10 +135,11 @@ async def test_corrector_no_change_returns_original(mock_build):
     mock_build.return_value = mock_corrector
 
     agent = SRELangGraphAgent()
-    with patch.object(agent, "_process_query", new=AsyncMock(return_value="ORIG")):
+    mock_response = AgentResponse(response="ORIG", search_results=[])
+    with patch.object(agent, "_process_query", new=AsyncMock(return_value=mock_response)):
         out = await agent.process_query("redis config", "s", "u")
 
-    assert out == "ORIG"
+    assert out.response == "ORIG"
 
 
 @pytest.mark.asyncio
@@ -150,9 +152,8 @@ async def test_corrector_gates_by_url(mock_build):
     mock_build.return_value = mock_corrector
 
     agent = SRELangGraphAgent()
-    with patch.object(
-        agent, "_process_query", new=AsyncMock(return_value="See https://redis.io/docs")
-    ):
+    mock_response = AgentResponse(response="See https://redis.io/docs", search_results=[])
+    with patch.object(agent, "_process_query", new=AsyncMock(return_value=mock_response)):
         out = await agent.process_query("redis", "s", "u")
-    assert out.startswith("E")
+    assert out.response.startswith("E")
     mock_build.assert_called_once()

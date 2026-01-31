@@ -163,12 +163,14 @@ class StructuredToolEvaluator:
 
         try:
             # Get agent response with enhanced prompt
-            response = await self.agent._process_query(
+            agent_response = await self.agent._process_query(
                 query=scenario["user_query"],
                 session_id=f"structured_eval_{scenario['scenario_id']}",
                 user_id="evaluator",
                 max_iterations=20,  # Increased for complex structured analysis
             )
+            # Extract response text from AgentResponse
+            response = agent_response.response
 
             # Parse structured investigation summary
             investigation_summary = self._parse_investigation_summary(response)
