@@ -29,12 +29,8 @@ class Citation(BaseModel):
     )
     title: str = Field(description="Title of the cited document")
     source: str = Field(description="Source URL or path of the document")
-    content_preview: Optional[str] = Field(
-        default=None, description="Preview of the cited content"
-    )
-    score: Optional[float] = Field(
-        default=None, description="Relevance score from vector search"
-    )
+    content_preview: Optional[str] = Field(default=None, description="Preview of the cited content")
+    score: Optional[float] = Field(default=None, description="Relevance score from vector search")
 
 
 class Feedback(BaseModel):
@@ -63,16 +59,10 @@ class QuestionAnswer(BaseModel):
     citations: List[Citation] = Field(
         default_factory=list, description="List of citations used in the answer"
     )
-    feedback: Optional[Feedback] = Field(
-        default=None, description="User feedback on this Q&A"
-    )
+    feedback: Optional[Feedback] = Field(default=None, description="User feedback on this Q&A")
     user_id: Optional[str] = Field(default=None, description="User who asked the question")
-    thread_id: Optional[str] = Field(
-        default=None, description="Thread ID where this Q&A occurred"
-    )
-    task_id: Optional[str] = Field(
-        default=None, description="Task ID associated with this Q&A"
-    )
+    thread_id: Optional[str] = Field(default=None, description="Thread ID where this Q&A occurred")
+    task_id: Optional[str] = Field(default=None, description="Task ID associated with this Q&A")
     question_vector: Optional[bytes] = Field(
         default=None, description="Embedding vector for the question (for semantic search)"
     )
@@ -109,9 +99,7 @@ class QAManager:
     Stores data as hash with indexed fields + 'data' field for full JSON.
     """
 
-    def __init__(
-        self, redis_url: Optional[str] = None, redis_client: Optional[Redis] = None
-    ):
+    def __init__(self, redis_url: Optional[str] = None, redis_client: Optional[Redis] = None):
         self._redis_url = redis_url
         self._redis_client = redis_client
         self._index_ensured = False
@@ -227,9 +215,7 @@ class QAManager:
         Returns:
             The recorded QuestionAnswer object with citations
         """
-        citations = self.citations_from_search_results(
-            search_results, max_preview_length
-        )
+        citations = self.citations_from_search_results(search_results, max_preview_length)
         return await self.record_qa(
             question=question,
             answer=answer,

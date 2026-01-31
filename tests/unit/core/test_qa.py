@@ -354,9 +354,7 @@ class TestQAManager:
         """Test listing Q&A records for a thread."""
         import json
 
-        qa_manager._redis_client.smembers = AsyncMock(
-            return_value={b"qa-1", b"qa-2"}
-        )
+        qa_manager._redis_client.smembers = AsyncMock(return_value={b"qa-1", b"qa-2"})
         qa1 = QuestionAnswer(id="qa-1", question="Q1", answer="A1")
         qa2 = QuestionAnswer(id="qa-2", question="Q2", answer="A2")
         qa1_dict = qa1.model_dump(mode="json", exclude={"question_vector", "answer_vector"})
@@ -533,9 +531,7 @@ class TestQAManagerFromSearchResults:
             },
         ]
 
-        citations = qa_manager.citations_from_search_results(
-            search_results, max_preview_length=100
-        )
+        citations = qa_manager.citations_from_search_results(search_results, max_preview_length=100)
 
         assert len(citations[0].content_preview) <= 103  # 100 + "..."
 
