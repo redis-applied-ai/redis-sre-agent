@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
+from redis_sre_agent.agent.models import AgentResponse
 
 
 @pytest.mark.asyncio
@@ -27,9 +28,10 @@ async def test_corrector_called_once_for_multiple_rladmin(mock_build):
         "Then again: rladmin list databases\n"
         "Finally check: rladmin get database stats"
     )
-    with patch.object(agent, "_process_query", new=AsyncMock(return_value=multi)):
+    mock_response = AgentResponse(response=multi, search_results=[])
+    with patch.object(agent, "_process_query", new=AsyncMock(return_value=mock_response)):
         out = await agent.process_query("help", "s", "u")
-    assert out.startswith("E")
+    assert out.response.startswith("E")
     mock_build.assert_called_once()
 
 
@@ -37,7 +39,8 @@ async def test_corrector_called_once_for_multiple_rladmin(mock_build):
 @patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_not_called_without_triggers(mock_build):
     agent = SRELangGraphAgent()
-    with patch.object(agent, "process_query", new=AsyncMock(return_value="no cli here")):
+    mock_response = AgentResponse(response="no cli here", search_results=[])
+    with patch.object(agent, "_process_query", new=AsyncMock(return_value=mock_response)):
         out = await agent.process_query("help", "s", "u")
-    assert out == "no cli here"
+    assert out.response == "no cli here"
     mock_build.assert_not_called()

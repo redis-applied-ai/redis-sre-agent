@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.core.docket_tasks import (
     SRE_TASK_COLLECTION,
     get_redis_url,
@@ -738,7 +739,8 @@ class TestProcessAgentTurn:
         mock_task_manager.set_task_error = AsyncMock()
 
         mock_knowledge_agent = AsyncMock()
-        mock_knowledge_agent.process_query = AsyncMock(return_value="Knowledge response")
+        mock_response = AgentResponse(response="Knowledge response", search_results=[])
+        mock_knowledge_agent.process_query = AsyncMock(return_value=mock_response)
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
@@ -829,7 +831,8 @@ class TestRunAgentWithProgress:
         }
 
         mock_agent = MagicMock()
-        mock_agent.process_query = AsyncMock(return_value="Agent response")
+        mock_response = AgentResponse(response="Agent response", search_results=[])
+        mock_agent.process_query = AsyncMock(return_value=mock_response)
 
         with patch(
             "redis_sre_agent.agent.langgraph_agent.SRELangGraphAgent",
