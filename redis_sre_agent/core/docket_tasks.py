@@ -133,6 +133,58 @@ async def ingest_sre_document(
 
 
 @sre_task
+async def embed_qa_record(
+    qa_id: str,
+    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """
+    Generate embeddings for a Q&A record out-of-band.
+
+    This Docket task fetches the Q&A record, generates embeddings for the
+    question and answer using the configured vectorizer, and updates the
+    record with the vectors. This allows Q&A recording to remain fast
+    while embeddings are computed asynchronously.
+
+    Args:
+        qa_id: The ID of the QuestionAnswer record to embed
+        retry: Retry configuration
+
+    Returns:
+        Dictionary with status and qa_id
+    """
+    from redis_sre_agent.core.qa import QAManager
+    from redis_sre_agent.core.redis import get_vectorizer
+
+    try:
+        # Get the Q&A record
+        qa_manager = QAManager()
+        qa = await qa_manager.get_qa(qa_id)
+
+        if qa is None:
+            logger.warning(f"Q&A record {qa_id} not found for embedding")
+            return {"status": "error", "error": f"Q&A record {qa_id} not found", "qa_id": qa_id}
+
+        # Generate embeddings
+        vectorizer = get_vectorizer()
+        question_vector = await vectorizer.aembed(qa.question, as_buffer=True)
+        answer_vector = await vectorizer.aembed(qa.answer, as_buffer=True)
+
+        # Update the record with vectors
+        await qa_manager.update_vectors(
+            qa_id=qa_id,
+            question_vector=question_vector,
+            answer_vector=answer_vector,
+        )
+
+        logger.info(f"Embedded Q&A record {qa_id}")
+        return {"status": "success", "qa_id": qa_id}
+
+    except Exception as e:
+        logger.error(f"Q&A embedding failed for {qa_id} (attempt {retry.attempt}): {e}")
+        raise
+
+
+@sre_task
 async def process_chat_turn(
     query: str,
     task_id: str,
