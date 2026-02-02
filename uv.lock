@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -3803,7 +3803,7 @@ wheels = [
 
 [[package]]
 name = "redis-sre-agent"
-version = "0.2.3"
+version = "0.2.5"
 source = { editable = "." }
 dependencies = [
     { name = "agent-memory-server" },
