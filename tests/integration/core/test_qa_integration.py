@@ -6,10 +6,46 @@ It creates Q&A records with citations, retrieves them, and verifies
 the data is stored correctly in Redis.
 """
 
+from typing import List
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from redis_sre_agent.core.qa import Citation, QAManager
 from redis_sre_agent.core.redis import SRE_QA_INDEX
+
+VECTOR_DIM = 1536
+
+
+def _vec(first_one_index: int) -> List[float]:
+    """Create a deterministic unit vector with a 1.0 at the given index."""
+    v = [0.0] * VECTOR_DIM
+    v[first_one_index] = 1.0
+    return v
+
+
+class MockVectorizer:
+    """Mock vectorizer that returns deterministic vectors for testing."""
+
+    def __init__(self, query_vec: List[float], content_map: dict):
+        self.query_vec = query_vec
+        self.content_map = content_map
+
+    def embed(self, text: str, as_buffer: bool = False) -> bytes | List[float]:
+        vec = self.content_map.get(text, self.query_vec)
+        if as_buffer:
+            import struct
+
+            return struct.pack(f"{len(vec)}f", *vec)
+        return vec
+
+    async def aembed(self, text: str, as_buffer: bool = False) -> bytes | List[float]:
+        return self.embed(text, as_buffer)
+
+    async def aembed_many(
+        self, texts: List[str], as_buffer: bool = False
+    ) -> List[bytes | List[float]]:
+        return [self.embed(t, as_buffer) for t in texts]
 
 
 @pytest.mark.integration
@@ -143,3 +179,146 @@ async def test_qa_update_vectors(async_redis_client, redis_container):
 
     # Cleanup
     await qa_manager.delete_qa(qa.id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_complete_cycle_ingest_search_qa_citations(
+    async_redis_client, redis_container, test_settings
+):
+    """Test complete cycle: ingest docs → search → record Q&A → verify citations.
+
+    This test proves that:
+    1. Documents are ingested into the knowledge base
+    2. Search returns those documents with proper metadata
+    3. Q&A recording captures citations from search results
+    4. Retrieved Q&A has citations matching the original ingested documents
+    """
+    if not redis_container:
+        pytest.skip("Integration tests not enabled")
+
+    from redis_sre_agent.core.keys import RedisKeys
+    from redis_sre_agent.core.knowledge_helpers import (
+        ingest_sre_document_helper,
+        search_knowledge_base_helper,
+    )
+    from redis_sre_agent.core.redis import create_indices
+
+    # Clean up existing knowledge index data to avoid interference
+    keys = await async_redis_client.keys("sre_knowledge:*")
+    if keys:
+        await async_redis_client.delete(*keys)
+
+    # Drop and recreate indices for clean state
+    try:
+        await async_redis_client.ft("sre_knowledge_idx").dropindex(delete_documents=True)
+    except Exception:
+        pass  # Index might not exist
+
+    # Create indices
+    await create_indices(config=test_settings)
+
+    # Prepare deterministic vectors for controlled search results
+    doc1_content = "Redis memory optimization involves setting maxmemory and eviction policies"
+    doc2_content = "Redis persistence uses RDB snapshots and AOF for durability"
+    doc1_vec = _vec(0)
+    doc2_vec = _vec(1)
+    query_vec = doc1_vec[:]  # Query matches doc1 exactly
+
+    mock_vectorizer = MockVectorizer(
+        query_vec, {doc1_content: doc1_vec, doc2_content: doc2_vec}
+    )
+
+    # Create a test knowledge index connected to the testcontainer Redis
+    from redis_sre_agent.core.redis import get_knowledge_index
+
+    test_knowledge_index = await get_knowledge_index(config=test_settings)
+
+    with (
+        patch(
+            "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+            return_value=mock_vectorizer,
+        ),
+        patch(
+            "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+            return_value=test_knowledge_index,
+        ),
+    ):
+        # 1. Ingest documents into knowledge base
+        ingest1 = await ingest_sre_document_helper(
+            title="Redis Memory Guide",
+            content=doc1_content,
+            source="memory-guide.md",
+            category="optimization",
+            severity="info",
+        )
+        ingest2 = await ingest_sre_document_helper(
+            title="Redis Persistence Guide",
+            content=doc2_content,
+            source="persistence-guide.md",
+            category="optimization",
+            severity="info",
+        )
+
+        assert ingest1["status"] == "ingested"
+        assert ingest2["status"] == "ingested"
+        doc1_id = ingest1["document_id"]
+        doc2_id = ingest2["document_id"]
+
+        # 2. Search knowledge base - should return doc1 (matches query vector)
+        search_result = await search_knowledge_base_helper(
+            query="How do I optimize Redis memory?",
+            category="optimization",
+            limit=5,
+            distance_threshold=0.5,  # Allow some distance
+            version=None,  # Disable version filter for test documents
+        )
+
+        assert "results" in search_result
+        results = search_result["results"]
+        assert len(results) >= 1, "Expected at least one search result"
+
+        # Verify search result has expected fields for citation conversion
+        first_result = results[0]
+        assert "id" in first_result
+        assert "title" in first_result
+        assert "content" in first_result
+        assert "source" in first_result
+        assert "score" in first_result
+
+        # 3. Record Q&A with citations from search results
+        qa_manager = QAManager(redis_client=async_redis_client)
+        qa = await qa_manager.record_qa_from_search(
+            question="How do I optimize Redis memory?",
+            answer="To optimize Redis memory, configure maxmemory and eviction policies.",
+            search_results=results,
+            user_id="test-user",
+            thread_id="test-thread-cycle",
+            task_id="test-task-cycle",
+        )
+
+        assert qa.id is not None
+        assert len(qa.citations) >= 1, "Expected at least one citation"
+
+        # 4. Retrieve Q&A and verify citations match ingested documents
+        retrieved = await qa_manager.get_qa(qa.id)
+        assert retrieved is not None
+        assert len(retrieved.citations) >= 1
+
+        # Verify citation data matches the ingested document
+        # The citation.document_id contains the full Redis key (sre_knowledge:{id})
+        # or just the id, depending on what RedisVL returns
+        citation = retrieved.citations[0]
+        expected_key = RedisKeys.knowledge_document(doc1_id)
+        assert citation.document_id in (doc1_id, expected_key), (
+            f"Citation document_id {citation.document_id} should match "
+            f"ingested doc {doc1_id} or key {expected_key}"
+        )
+        assert citation.title == "Redis Memory Guide"
+        assert citation.source == "memory-guide.md"
+        assert citation.content_preview is not None
+        assert "memory" in citation.content_preview.lower()
+        assert citation.score is not None
+
+        # 5. Cleanup
+        await qa_manager.delete_qa(qa.id)
