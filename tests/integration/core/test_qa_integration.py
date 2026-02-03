@@ -7,7 +7,7 @@ the data is stored correctly in Redis.
 """
 
 from typing import List
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -263,7 +263,7 @@ async def test_complete_cycle_ingest_search_qa_citations(
         assert ingest1["status"] == "ingested"
         assert ingest2["status"] == "ingested"
         doc1_id = ingest1["document_id"]
-        doc2_id = ingest2["document_id"]
+        _doc2_id = ingest2["document_id"]  # noqa: F841 - kept for completeness
 
         # 2. Search knowledge base - should return doc1 (matches query vector)
         search_result = await search_knowledge_base_helper(
