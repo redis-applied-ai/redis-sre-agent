@@ -225,9 +225,7 @@ async def test_complete_cycle_ingest_search_qa_citations(
     doc2_vec = _vec(1)
     query_vec = doc1_vec[:]  # Query matches doc1 exactly
 
-    mock_vectorizer = MockVectorizer(
-        query_vec, {doc1_content: doc1_vec, doc2_content: doc2_vec}
-    )
+    mock_vectorizer = MockVectorizer(query_vec, {doc1_content: doc1_vec, doc2_content: doc2_vec})
 
     # Create a test knowledge index connected to the testcontainer Redis
     from redis_sre_agent.core.redis import get_knowledge_index
