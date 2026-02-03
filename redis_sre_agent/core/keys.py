@@ -143,30 +143,6 @@ class RedisKeys:
         return f"sre:stream:task:{thread_id}"
 
     # ============================================================================
-    # Q&A recording keys
-    # ============================================================================
-
-    @staticmethod
-    def qa_record(qa_id: str) -> str:
-        """Key for a Q&A record."""
-        return f"sre:qa:{qa_id}"
-
-    @staticmethod
-    def qa_by_thread(thread_id: str) -> str:
-        """Key for Q&A records index by thread (set of Q&A IDs)."""
-        return f"sre:thread:{thread_id}:qa"
-
-    @staticmethod
-    def qa_by_user(user_id: str) -> str:
-        """Key for Q&A records index by user (set of Q&A IDs)."""
-        return f"sre:user:{user_id}:qa"
-
-    @staticmethod
-    def qa_by_task(task_id: str) -> str:
-        """Key for Q&A records index by task (set of Q&A IDs)."""
-        return f"sre:task:{task_id}:qa"
-
-    # ============================================================================
     # Helper methods
     # ============================================================================
 

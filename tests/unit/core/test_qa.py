@@ -167,38 +167,6 @@ class TestQuestionAnswerModel:
         assert len(qa2.citations) == 1
 
 
-class TestRedisKeysForQA:
-    """Test Redis key patterns for Q&A records."""
-
-    def test_qa_record_key(self):
-        """Test Q&A record key generation."""
-        from redis_sre_agent.core.keys import RedisKeys
-
-        key = RedisKeys.qa_record("qa-123")
-        assert key == "sre:qa:qa-123"
-
-    def test_qa_by_thread_key(self):
-        """Test Q&A by thread index key generation."""
-        from redis_sre_agent.core.keys import RedisKeys
-
-        key = RedisKeys.qa_by_thread("thread-456")
-        assert key == "sre:thread:thread-456:qa"
-
-    def test_qa_by_user_key(self):
-        """Test Q&A by user index key generation."""
-        from redis_sre_agent.core.keys import RedisKeys
-
-        key = RedisKeys.qa_by_user("user-789")
-        assert key == "sre:user:user-789:qa"
-
-    def test_qa_by_task_key(self):
-        """Test Q&A by task index key generation."""
-        from redis_sre_agent.core.keys import RedisKeys
-
-        key = RedisKeys.qa_by_task("task-101")
-        assert key == "sre:task:task-101:qa"
-
-
 class TestQAManager:
     """Test QAManager class for recording Q&A pairs with citations."""
 
@@ -280,8 +248,8 @@ class TestQAManager:
         assert result.thread_id == "thread-456"
         assert result.task_id == "task-789"
 
-        # Verify indices were updated
-        qa_manager._redis_client.sadd.assert_called()
+        # Verify hash was stored with context fields
+        qa_manager._redis_client.hset.assert_called()
 
     @pytest.mark.asyncio
     async def test_record_feedback(self, qa_manager, mock_redis_client):
@@ -351,62 +319,48 @@ class TestQAManager:
 
     @pytest.mark.asyncio
     async def test_list_qa_by_thread(self, qa_manager):
-        """Test listing Q&A records for a thread."""
+        """Test listing Q&A records for a thread via search index."""
         import json
 
-        qa_manager._redis_client.smembers = AsyncMock(return_value={b"qa-1", b"qa-2"})
-        qa1 = QuestionAnswer(id="qa-1", question="Q1", answer="A1")
-        qa2 = QuestionAnswer(id="qa-2", question="Q2", answer="A2")
+        qa1 = QuestionAnswer(id="qa-1", question="Q1", answer="A1", thread_id="thread-123")
+        qa2 = QuestionAnswer(id="qa-2", question="Q2", answer="A2", thread_id="thread-123")
         qa1_dict = qa1.model_dump(mode="json", exclude={"question_vector", "answer_vector"})
         qa2_dict = qa2.model_dump(mode="json", exclude={"question_vector", "answer_vector"})
 
-        # Mock getting individual QA records via hgetall
-        async def mock_hgetall(key):
-            key_str = key.decode() if isinstance(key, bytes) else key
-            if "qa-1" in key_str:
-                return {b"data": json.dumps(qa1_dict).encode()}
-            elif "qa-2" in key_str:
-                return {b"data": json.dumps(qa2_dict).encode()}
-            return {}
+        # Mock the search index
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {"data": json.dumps(qa1_dict)},
+                {"data": json.dumps(qa2_dict)},
+            ]
+        )
 
-        qa_manager._redis_client.hgetall = mock_hgetall
-
-        results = await qa_manager.list_qa_by_thread("thread-123")
-        assert len(results) == 2
+        with patch("redis_sre_agent.core.redis.get_qa_index", return_value=mock_index):
+            results = await qa_manager.list_qa_by_thread("thread-123")
+            assert len(results) == 2
 
     @pytest.mark.asyncio
     async def test_list_qa_by_user(self, qa_manager):
-        """Test listing Q&A records for a user."""
+        """Test listing Q&A records for a user via search index."""
         import json
 
-        qa_manager._redis_client.smembers = AsyncMock(return_value={b"qa-1"})
-        qa1 = QuestionAnswer(id="qa-1", question="Q1", answer="A1")
+        qa1 = QuestionAnswer(id="qa-1", question="Q1", answer="A1", user_id="user-123")
         qa1_dict = qa1.model_dump(mode="json", exclude={"question_vector", "answer_vector"})
-        qa_manager._redis_client.hgetall = AsyncMock(
-            return_value={b"data": json.dumps(qa1_dict).encode()}
-        )
 
-        results = await qa_manager.list_qa_by_user("user-123")
-        assert len(results) == 1
-        assert results[0].question == "Q1"
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[{"data": json.dumps(qa1_dict)}])
+
+        with patch("redis_sre_agent.core.redis.get_qa_index", return_value=mock_index):
+            results = await qa_manager.list_qa_by_user("user-123")
+            assert len(results) == 1
+            assert results[0].question == "Q1"
 
     @pytest.mark.asyncio
     async def test_delete_qa(self, qa_manager):
         """Test deleting a Q&A record."""
-        import json
-
-        existing_qa = QuestionAnswer(
-            id="qa-to-delete",
-            question="Test",
-            answer="Answer",
-            user_id="user-1",
-            thread_id="thread-1",
-            task_id="task-1",
-        )
-        qa_dict = existing_qa.model_dump(mode="json", exclude={"question_vector", "answer_vector"})
-        qa_manager._redis_client.hgetall = AsyncMock(
-            return_value={b"data": json.dumps(qa_dict).encode()}
-        )
+        # Mock exists to return True (record exists)
+        qa_manager._redis_client.exists = AsyncMock(return_value=1)
 
         result = await qa_manager.delete_qa("qa-to-delete")
         assert result is True
@@ -415,26 +369,27 @@ class TestQAManager:
     @pytest.mark.asyncio
     async def test_delete_qa_not_found(self, qa_manager):
         """Test deleting a Q&A record that doesn't exist."""
-        qa_manager._redis_client.hgetall = AsyncMock(return_value={})
+        # Mock exists to return False (record not found)
+        qa_manager._redis_client.exists = AsyncMock(return_value=0)
 
         result = await qa_manager.delete_qa("nonexistent")
         assert result is False
 
     @pytest.mark.asyncio
     async def test_list_qa_by_task(self, qa_manager):
-        """Test listing Q&A records for a task."""
+        """Test listing Q&A records for a task via search index."""
         import json
 
-        qa_manager._redis_client.smembers = AsyncMock(return_value={b"qa-1"})
-        qa1 = QuestionAnswer(id="qa-1", question="Q1", answer="A1")
+        qa1 = QuestionAnswer(id="qa-1", question="Q1", answer="A1", task_id="task-123")
         qa1_dict = qa1.model_dump(mode="json", exclude={"question_vector", "answer_vector"})
-        qa_manager._redis_client.hgetall = AsyncMock(
-            return_value={b"data": json.dumps(qa1_dict).encode()}
-        )
 
-        results = await qa_manager.list_qa_by_task("task-123")
-        assert len(results) == 1
-        assert results[0].question == "Q1"
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[{"data": json.dumps(qa1_dict)}])
+
+        with patch("redis_sre_agent.core.redis.get_qa_index", return_value=mock_index):
+            results = await qa_manager.list_qa_by_task("task-123")
+            assert len(results) == 1
+            assert results[0].question == "Q1"
 
 
 class TestQAManagerLazyInit:

@@ -14,8 +14,6 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from ulid import ULID
 
-from redis_sre_agent.core.keys import RedisKeys
-
 logger = logging.getLogger(__name__)
 
 
@@ -258,14 +256,6 @@ class QAManager:
 
         await client.hset(key, mapping=mapping)
 
-        # Update set indices for lookups by thread/user/task
-        if qa.user_id:
-            await client.sadd(RedisKeys.qa_by_user(qa.user_id), qa.id)
-        if qa.thread_id:
-            await client.sadd(RedisKeys.qa_by_thread(qa.thread_id), qa.id)
-        if qa.task_id:
-            await client.sadd(RedisKeys.qa_by_task(qa.task_id), qa.id)
-
         logger.info(f"Recorded Q&A {qa.id} with {len(qa.citations)} citations")
 
     async def record_feedback(
@@ -369,7 +359,7 @@ class QAManager:
         Returns:
             List of QuestionAnswer objects
         """
-        return await self._list_qa_by_index(RedisKeys.qa_by_thread(thread_id))
+        return await self._search_qa_by_tag("thread_id", thread_id)
 
     async def list_qa_by_user(self, user_id: str) -> List[QuestionAnswer]:
         """List all Q&A records for a user.
@@ -380,7 +370,7 @@ class QAManager:
         Returns:
             List of QuestionAnswer objects
         """
-        return await self._list_qa_by_index(RedisKeys.qa_by_user(user_id))
+        return await self._search_qa_by_tag("user_id", user_id)
 
     async def list_qa_by_task(self, task_id: str) -> List[QuestionAnswer]:
         """List all Q&A records for a task.
@@ -391,22 +381,45 @@ class QAManager:
         Returns:
             List of QuestionAnswer objects
         """
-        return await self._list_qa_by_index(RedisKeys.qa_by_task(task_id))
+        return await self._search_qa_by_tag("task_id", task_id)
 
-    async def _list_qa_by_index(self, index_key: str) -> List[QuestionAnswer]:
-        """List Q&A records from an index set."""
-        client = await self._get_client()
-        qa_ids = await client.smembers(index_key)
+    async def _search_qa_by_tag(self, field: str, value: str) -> List[QuestionAnswer]:
+        """Search Q&A records by a TAG field using RedisVL index."""
+        from redisvl.query import FilterQuery
+        from redisvl.query.filter import Tag
 
-        results = []
-        for qa_id in qa_ids:
-            if isinstance(qa_id, bytes):
-                qa_id = qa_id.decode()
-            qa = await self.get_qa(qa_id)
-            if qa:
-                results.append(qa)
+        from redis_sre_agent.core.redis import get_qa_index
 
-        return results
+        await self._ensure_index_exists()
+
+        try:
+            index = await get_qa_index()
+            filter_expr = Tag(field) == value
+            query = FilterQuery(filter_expression=filter_expr, return_fields=["data"])
+            raw_results = await index.query(query)
+
+            results = []
+            for result in raw_results:
+                data_raw = result.get("data")
+                if data_raw:
+                    qa = await self._parse_qa_from_data(data_raw)
+                    if qa:
+                        results.append(qa)
+            return results
+        except Exception as e:
+            logger.warning(f"Search by {field}={value} failed: {e}")
+            return []
+
+    async def _parse_qa_from_data(self, data_raw: Any) -> Optional[QuestionAnswer]:
+        """Parse Q&A from raw data field."""
+        try:
+            if isinstance(data_raw, bytes):
+                data_raw = data_raw.decode()
+            data = json.loads(data_raw)
+            return QuestionAnswer.model_validate(data)
+        except Exception as e:
+            logger.warning(f"Failed to parse Q&A data: {e}")
+            return None
 
     async def delete_qa(self, qa_id: str) -> bool:
         """Delete a Q&A record.
@@ -422,21 +435,13 @@ class QAManager:
         client = await self._get_client()
         key = f"{SRE_QA_INDEX}:{qa_id}"
 
-        # Get Q&A to find indices to clean up
-        qa = await self.get_qa(qa_id)
-        if not qa:
+        # Check if record exists
+        exists = await client.exists(key)
+        if not exists:
             return False
 
-        # Delete the record
+        # Delete the record (index automatically removes it)
         await client.delete(key)
-
-        # Clean up set indices
-        if qa.user_id:
-            await client.srem(RedisKeys.qa_by_user(qa.user_id), qa_id)
-        if qa.thread_id:
-            await client.srem(RedisKeys.qa_by_thread(qa.thread_id), qa_id)
-        if qa.task_id:
-            await client.srem(RedisKeys.qa_by_task(qa.task_id), qa_id)
 
         logger.info(f"Deleted Q&A {qa_id}")
         return True
