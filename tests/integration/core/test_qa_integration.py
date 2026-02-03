@@ -227,20 +227,10 @@ async def test_complete_cycle_ingest_search_qa_citations(
 
     mock_vectorizer = MockVectorizer(query_vec, {doc1_content: doc1_vec, doc2_content: doc2_vec})
 
-    # Create a test knowledge index connected to the testcontainer Redis
-    from redis_sre_agent.core.redis import get_knowledge_index
-
-    test_knowledge_index = await get_knowledge_index(config=test_settings)
-
-    with (
-        patch(
-            "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
-            return_value=mock_vectorizer,
-        ),
-        patch(
-            "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
-            return_value=test_knowledge_index,
-        ),
+    # Use config parameter for dependency injection (no patching get_knowledge_index)
+    with patch(
+        "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+        return_value=mock_vectorizer,
     ):
         # 1. Ingest documents into knowledge base
         ingest1 = await ingest_sre_document_helper(
@@ -249,6 +239,7 @@ async def test_complete_cycle_ingest_search_qa_citations(
             source="memory-guide.md",
             category="optimization",
             severity="info",
+            config=test_settings,
         )
         ingest2 = await ingest_sre_document_helper(
             title="Redis Persistence Guide",
@@ -256,6 +247,7 @@ async def test_complete_cycle_ingest_search_qa_citations(
             source="persistence-guide.md",
             category="optimization",
             severity="info",
+            config=test_settings,
         )
 
         assert ingest1["status"] == "ingested"
@@ -270,6 +262,7 @@ async def test_complete_cycle_ingest_search_qa_citations(
             limit=5,
             distance_threshold=0.5,  # Allow some distance
             version=None,  # Disable version filter for test documents
+            config=test_settings,
         )
 
         assert "results" in search_result
