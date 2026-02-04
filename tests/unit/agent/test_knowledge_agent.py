@@ -1,6 +1,9 @@
 """Tests for the knowledge-only agent."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+from langchain_core.messages import AIMessage, ToolMessage
 
 from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
 from redis_sre_agent.core.knowledge_helpers import (
@@ -222,3 +225,187 @@ class TestKnowledgeAgentMethods:
 
         workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
         assert workflow is not None
+
+
+class TestSafeToolNodeErrorHandling:
+    """Test that safe_tool_node reports errors to LLM instead of user."""
+
+    @pytest.mark.asyncio
+    async def test_tool_execution_error_returns_tool_message(self):
+        """Test that tool execution errors are returned as ToolMessages, not AIMessages.
+
+        This ensures the LLM can decide how to handle and communicate errors,
+        rather than showing raw errors directly to users.
+        """
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        agent = KnowledgeOnlyAgent()
+
+        # Create a mock tool manager that raises an exception
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_status_update.return_value = None
+        mock_tool_mgr.execute_tool_calls = AsyncMock(
+            side_effect=Exception("Redis connection failed")
+        )
+
+        # Create mock LLM with tools
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+
+        # Create emitter
+        emitter = NullEmitter()
+
+        # Build the workflow to get access to the internal safe_tool_node
+        workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
+
+        # Create a state with a message that has tool_calls
+        tool_call_id = "test-tool-call-123"
+        ai_message_with_tool_calls = AIMessage(
+            content="",
+            tool_calls=[
+                {"id": tool_call_id, "name": "knowledge_search", "args": {"query": "test"}}
+            ],
+        )
+
+        state = {
+            "messages": [ai_message_with_tool_calls],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+        }
+
+        # Get the tools node from the compiled workflow and invoke it
+        # We need to test the node directly, so we'll extract it from the workflow nodes
+        compiled = workflow.compile()
+
+        # Invoke the tools node with our test state
+        # The workflow has a "tools" node that wraps safe_tool_node
+        result = await compiled.nodes["tools"].ainvoke(state)
+
+        # Verify the result contains ToolMessage(s) not AIMessage
+        messages = result["messages"]
+        assert len(messages) > 1, "Should have original message plus error response"
+
+        # The last message(s) should be ToolMessage, not AIMessage
+        error_messages = messages[1:]  # Skip the original AI message with tool_calls
+        for msg in error_messages:
+            assert isinstance(msg, ToolMessage), f"Expected ToolMessage, got {type(msg).__name__}"
+            assert msg.tool_call_id == tool_call_id
+
+            # Verify the error content has structured information for the LLM
+            import json
+
+            error_data = json.loads(msg.content)
+            assert error_data["status"] == "error"
+            assert "error_type" in error_data
+            assert "error_message" in error_data
+            assert "Redis connection failed" in error_data["error_message"]
+            assert "suggestion" in error_data
+
+    @pytest.mark.asyncio
+    async def test_tool_error_includes_helpful_suggestion(self):
+        """Test that error messages include suggestions for the LLM."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        agent = KnowledgeOnlyAgent()
+
+        # Create a mock tool manager that raises an exception
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_status_update.return_value = None
+        mock_tool_mgr.execute_tool_calls = AsyncMock(side_effect=ValueError("Invalid query"))
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        emitter = NullEmitter()
+
+        workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
+
+        ai_message_with_tool_calls = AIMessage(
+            content="",
+            tool_calls=[{"id": "tc-1", "name": "knowledge_search", "args": {"query": ""}}],
+        )
+
+        state = {
+            "messages": [ai_message_with_tool_calls],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+        }
+
+        compiled = workflow.compile()
+        result = await compiled.nodes["tools"].ainvoke(state)
+
+        error_message = result["messages"][-1]
+        assert isinstance(error_message, ToolMessage)
+
+        import json
+
+        error_data = json.loads(error_message.content)
+        assert error_data["error_type"] == "ValueError"
+        assert "retry" in error_data["suggestion"].lower()
+        assert "alternative" in error_data["suggestion"].lower()
+
+    @pytest.mark.asyncio
+    async def test_multiple_tool_calls_all_get_error_messages(self):
+        """Test that when multiple tool calls fail, each gets a ToolMessage."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        agent = KnowledgeOnlyAgent()
+
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_status_update.return_value = None
+        mock_tool_mgr.execute_tool_calls = AsyncMock(
+            side_effect=ConnectionError("Network unavailable")
+        )
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        emitter = NullEmitter()
+
+        workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
+
+        # Create message with multiple tool calls
+        ai_message_with_tool_calls = AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "tc-1", "name": "knowledge_search", "args": {"query": "test1"}},
+                {"id": "tc-2", "name": "knowledge_search", "args": {"query": "test2"}},
+                {"id": "tc-3", "name": "knowledge_ingest", "args": {"title": "doc"}},
+            ],
+        )
+
+        state = {
+            "messages": [ai_message_with_tool_calls],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+        }
+
+        compiled = workflow.compile()
+        result = await compiled.nodes["tools"].ainvoke(state)
+
+        # Should have original message + 3 ToolMessages (one per tool call)
+        messages = result["messages"]
+        assert len(messages) == 4, f"Expected 4 messages, got {len(messages)}"
+
+        tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+        assert len(tool_messages) == 3, "Each tool call should get its own error message"
+
+        # Verify each tool call ID is represented
+        tool_call_ids = {m.tool_call_id for m in tool_messages}
+        assert tool_call_ids == {"tc-1", "tc-2", "tc-3"}

@@ -22,6 +22,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     search_knowledge_base_helper,
 )
 from redis_sre_agent.core.progress import TaskEmitter
+from redis_sre_agent.core.qa import QAManager
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
@@ -129,6 +130,58 @@ async def ingest_sre_document(
         )
     except Exception as e:
         logger.error(f"Document ingestion failed (attempt {retry.attempt}): {e}")
+        raise
+
+
+@sre_task
+async def embed_qa_record(
+    qa_id: str,
+    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """
+    Generate embeddings for a Q&A record out-of-band.
+
+    This Docket task fetches the Q&A record, generates embeddings for the
+    question and answer using the configured vectorizer, and updates the
+    record with the vectors. This allows Q&A recording to remain fast
+    while embeddings are computed asynchronously.
+
+    Args:
+        qa_id: The ID of the QuestionAnswer record to embed
+        retry: Retry configuration
+
+    Returns:
+        Dictionary with status and qa_id
+    """
+    from redis_sre_agent.core.qa import QAManager
+    from redis_sre_agent.core.redis import get_vectorizer
+
+    try:
+        # Get the Q&A record
+        qa_manager = QAManager()
+        qa = await qa_manager.get_qa(qa_id)
+
+        if qa is None:
+            logger.warning(f"Q&A record {qa_id} not found for embedding")
+            return {"status": "error", "error": f"Q&A record {qa_id} not found", "qa_id": qa_id}
+
+        # Generate embeddings
+        vectorizer = get_vectorizer()
+        question_vector = await vectorizer.aembed(qa.question, as_buffer=True)
+        answer_vector = await vectorizer.aembed(qa.answer, as_buffer=True)
+
+        # Update the record with vectors
+        await qa_manager.update_vectors(
+            qa_id=qa_id,
+            question_vector=question_vector,
+            answer_vector=answer_vector,
+        )
+
+        logger.info(f"Embedded Q&A record {qa_id}")
+        return {"status": "success", "qa_id": qa_id}
+
+    except Exception as e:
+        logger.error(f"Q&A embedding failed for {qa_id} (attempt {retry.attempt}): {e}")
         raise
 
 
@@ -745,7 +798,7 @@ async def process_agent_turn(
             if not isinstance(_k_max_iters, int) or _k_max_iters <= 0:
                 _k_max_iters = min(int(settings.max_iterations or 10), 8)
 
-            response_text = await agent.process_query(
+            knowledge_agent_response = await agent.process_query(
                 query=message,
                 user_id=thread.metadata.user_id or "unknown",
                 session_id=thread.metadata.session_id or thread_id,
@@ -755,8 +808,10 @@ async def process_agent_turn(
                 conversation_history=lc_history if lc_history else None,
             )
 
+            # knowledge_agent_response is an AgentResponse with .response and .search_results
             agent_response = {
-                "response": response_text,
+                "response": knowledge_agent_response.response,
+                "search_results": knowledge_agent_response.search_results,
                 "metadata": {"agent_type": "knowledge_only"},
             }
         elif agent_type == AgentType.REDIS_CHAT:
@@ -776,7 +831,7 @@ async def process_agent_turn(
             # Chat agent uses a reasonable iteration cap for quick responses
             _chat_max_iters = min(int(settings.max_iterations or 15), 10)
 
-            response_text = await agent.process_query(
+            chat_agent_response = await agent.process_query(
                 query=message,
                 user_id=thread.metadata.user_id or "unknown",
                 session_id=thread.metadata.session_id or thread_id,
@@ -786,8 +841,10 @@ async def process_agent_turn(
                 conversation_history=lc_history if lc_history else None,
             )
 
+            # chat_agent_response is an AgentResponse with .response and .search_results
             agent_response = {
-                "response": response_text,
+                "response": chat_agent_response.response,
+                "search_results": chat_agent_response.search_results,
                 "metadata": {"agent_type": "redis_chat"},
             }
         else:
@@ -796,11 +853,29 @@ async def process_agent_turn(
                 agent, conversation_state, progress_emitter, thread
             )
 
+        # Record Q&A with citation tracking (non-blocking, best effort)
+        response_text = agent_response.get("response", "")
+        search_results = agent_response.get("search_results", [])
+        if response_text and search_results:
+            try:
+                qa_manager = QAManager()
+                await qa_manager.record_qa_from_search(
+                    question=message,
+                    answer=response_text,
+                    search_results=search_results,
+                    thread_id=thread_id,
+                    task_id=task_id,
+                    user_id=thread.metadata.user_id,
+                )
+                logger.info(f"Recorded Q&A with {len(search_results)} citations for task {task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to record Q&A with citations: {e}")
+
         # Add agent response to conversation
         conversation_state["messages"].append(
             {
                 "role": "assistant",
-                "content": agent_response.get("response", ""),
+                "content": response_text,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "metadata": agent_response.get("metadata", {}),
             }
@@ -1034,7 +1109,7 @@ async def run_agent_with_progress(
 
         # Pass conversation history to the agent
         # MemorySaver is created fresh each time, so we need to provide history
-        response = await progress_agent.process_query(
+        agent_response = await progress_agent.process_query(
             query=latest_user_message,
             session_id=thread_id,
             user_id=thread_state.metadata.user_id if thread_state else "system",
@@ -1046,15 +1121,12 @@ async def run_agent_with_progress(
             else None,  # Exclude the latest message (it's added in process_query)
         )
 
-        # Create a mock final state for compatibility
-
         await progress_emitter.emit("Agent workflow completed", "agent_complete")
 
-        # The response is already the final agent response
-        agent_response = response
-
+        # agent_response is an AgentResponse with .response and .search_results
         return {
-            "response": agent_response,
+            "response": agent_response.response,
+            "search_results": agent_response.search_results,
             "metadata": {
                 "iterations": 1,  # Since we're using process_query directly
                 "tool_calls": 0,  # Placeholder - could be enhanced to track tool calls

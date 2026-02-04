@@ -13,6 +13,7 @@ import pytest
 
 from redis_sre_agent.agent import langgraph_agent
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
+from redis_sre_agent.agent.models import AgentResponse
 
 
 class TestRladminCorrector:
@@ -28,11 +29,10 @@ class TestRladminCorrector:
         mock_build.return_value = mock_corrector
 
         agent = SRELangGraphAgent()
-        with patch.object(
-            agent, "_process_query", new=AsyncMock(return_value="Use rladmin list databases")
-        ):
+        mock_response = AgentResponse(response="Use rladmin list databases", search_results=[])
+        with patch.object(agent, "_process_query", new=AsyncMock(return_value=mock_response)):
             out = await agent.process_query("help", "s", "u")
-        assert out.startswith("E")
+        assert out.response.startswith("E")
         mock_build.assert_called_once()
 
     def test_module_source_contains_rladmin_guidance_snippet(self):

@@ -25,6 +25,8 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.tools.manager import ToolManager
 
+from .models import AgentResponse
+
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
@@ -76,6 +78,8 @@ class KnowledgeAgentState(TypedDict):
     iteration_count: int
     max_iterations: int
     tool_calls_executed: int
+    # Accumulated search results for citation tracking
+    knowledge_search_results: List[Dict[str, Any]]
 
 
 class KnowledgeOnlyAgent:
@@ -263,6 +267,9 @@ class KnowledgeOnlyAgent:
                 state["tool_calls_executed"] = prev_exec + len(tool_results or [])
 
                 tool_messages = []
+                # Get existing search results to accumulate
+                accumulated_results = list(state.get("knowledge_search_results") or [])
+
                 for tool_call, result in zip(last_message.tool_calls, tool_results):
                     # Record knowledge sources when a knowledge search tool returns results
                     try:
@@ -270,6 +277,8 @@ class KnowledgeOnlyAgent:
                         if tool_name.startswith("knowledge_") and "search" in tool_name:
                             if isinstance(result, dict):
                                 res_list = result.get("results") or []
+                                # Store full search results for citation tracking
+                                accumulated_results.extend(res_list)
                                 fragments = []
                                 for doc in res_list:
                                     if isinstance(doc, dict):
@@ -308,17 +317,41 @@ class KnowledgeOnlyAgent:
                     )
 
                 state["messages"] = messages + tool_messages
+                state["knowledge_search_results"] = accumulated_results
                 return state
 
             except Exception as e:
                 logger.error(f"Tool execution failed: {e}")
-                # Add an AI message explaining the error
-                error_message = AIMessage(
-                    content=f"I encountered an error while searching the knowledge base: {str(e)}. "
-                    "This may be because Redis is not available. Please ensure Redis is running, "
-                    "or ask me a general question that doesn't require knowledge base access."
-                )
-                state["messages"] = messages + [error_message]
+                # Return error as ToolMessage so the LLM can decide how to handle it
+                # This allows the LLM to retry, explain the error, or take alternative actions
+                from langchain_core.messages import ToolMessage
+
+                error_payload = {
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "suggestion": "You may retry with different parameters, explain the error to the user, "
+                    "or try an alternative approach.",
+                }
+                try:
+                    import json as _json
+
+                    error_content = _json.dumps(error_payload)
+                except Exception:
+                    error_content = str(error_payload)
+
+                # Create ToolMessage for each pending tool call so the LLM receives error feedback
+                tool_messages = []
+                for tool_call in last_message.tool_calls:
+                    tool_messages.append(
+                        ToolMessage(
+                            content=error_content,
+                            tool_call_id=tool_call["id"],
+                        )
+                    )
+
+                state["messages"] = messages + tool_messages
+                # Clear current_tool_calls to keep state consistent with other error/success paths
                 state["current_tool_calls"] = []
                 return state
 
@@ -394,7 +427,7 @@ class KnowledgeOnlyAgent:
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
-    ) -> str:
+    ) -> AgentResponse:
         """
         Process a knowledge-only query.
 
@@ -446,6 +479,7 @@ class KnowledgeOnlyAgent:
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
                 "tool_calls_executed": 0,
+                "knowledge_search_results": [],
             }
 
             # Create MemorySaver for this query
@@ -468,6 +502,9 @@ class KnowledgeOnlyAgent:
                 # Run the workflow (with recursion limit to match settings)
                 final_state = await app.ainvoke(initial_state, config=thread_config)
 
+                # Extract knowledge search results for citation tracking
+                search_results = final_state.get("knowledge_search_results", [])
+
                 # Extract the final response
                 messages = final_state.get("messages", [])
 
@@ -486,7 +523,7 @@ class KnowledgeOnlyAgent:
                 )
 
                 logger.info(f"Knowledge query completed for user {user_id}")
-                return response
+                return AgentResponse(response=response, search_results=search_results)
 
             except Exception as e:
                 logger.error(f"Knowledge agent processing failed: {e}")
@@ -494,7 +531,7 @@ class KnowledgeOnlyAgent:
 
                 await emitter.emit(f"Knowledge agent encountered an error: {str(e)}", "agent_error")
 
-                return error_response
+                return AgentResponse(response=error_response, search_results=[])
 
 
 # Singleton instance for reuse

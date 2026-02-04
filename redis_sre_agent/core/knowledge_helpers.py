@@ -15,6 +15,7 @@ from opentelemetry import trace
 from redisvl.query import HybridQuery, VectorQuery, VectorRangeQuery
 from ulid import ULID
 
+from redis_sre_agent.core.config import Settings
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_knowledge_index, get_vectorizer
 
@@ -30,6 +31,7 @@ async def search_knowledge_base_helper(
     distance_threshold: Optional[float] = 0.8,
     hybrid_search: bool = False,
     version: Optional[str] = "latest",
+    config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base.
 
@@ -52,12 +54,13 @@ async def search_knowledge_base_helper(
         hybrid_search: Whether to use hybrid search (vector + full-text)
         version: Version filter - "latest" (default), specific version like "7.8",
                  or None to return all versions
+        config: Optional Settings for dependency injection (testing)
 
     Returns:
         Dictionary with search results including task_id, query, results, etc.
     """
     logger.info(f"Searching SRE knowledge: '{query}' (version={version}, offset={offset})")
-    index = await get_knowledge_index()
+    index = await get_knowledge_index(config=config)
     return_fields = [
         "id",
         "document_hash",
@@ -200,6 +203,7 @@ async def ingest_sre_document_helper(
     category: str = "general",
     severity: str = "info",
     product_labels: Optional[List[str]] = None,
+    config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Ingest a document into the SRE knowledge base (core implementation).
 
@@ -212,6 +216,8 @@ async def ingest_sre_document_helper(
         source: Source system or file
         category: Document category (incident, runbook, monitoring, etc.)
         severity: Severity level (info, warning, critical)
+        product_labels: Optional list of product labels
+        config: Optional Settings for dependency injection (testing)
 
     Returns:
         Dictionary with ingestion result including task_id, document_id, status, etc.
@@ -219,7 +225,7 @@ async def ingest_sre_document_helper(
     logger.info(f"Ingesting SRE document: {title} from {source}")
 
     # Get components
-    index = await get_knowledge_index()
+    index = await get_knowledge_index(config=config)
     vectorizer = get_vectorizer()
 
     # Create document embedding (as_buffer=True for Redis storage)

@@ -26,6 +26,8 @@ SRE_THREADS_INDEX = "sre_threads"
 SRE_TASKS_INDEX = "sre_tasks"
 # Instances index
 SRE_INSTANCES_INDEX = "sre_instances"
+# Q&A index
+SRE_QA_INDEX = "sre_qa"
 
 
 # Schema definitions
@@ -206,6 +208,43 @@ SRE_INSTANCES_SCHEMA = {
     ],
 }
 
+SRE_QA_SCHEMA = {
+    "index": {
+        "name": SRE_QA_INDEX,
+        "prefix": f"{SRE_QA_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "question", "type": "text"},
+        {"name": "answer", "type": "text"},
+        {"name": "user_id", "type": "tag"},
+        {"name": "thread_id", "type": "tag"},
+        {"name": "task_id", "type": "tag"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "updated_at", "type": "numeric"},
+        {
+            "name": "question_vector",
+            "type": "vector",
+            "attrs": {
+                "dims": settings.vector_dim,
+                "distance_metric": "cosine",
+                "algorithm": "flat",
+                "datatype": "float32",
+            },
+        },
+        {
+            "name": "answer_vector",
+            "type": "vector",
+            "attrs": {
+                "dims": settings.vector_dim,
+                "distance_metric": "cosine",
+                "algorithm": "flat",
+                "datatype": "float32",
+            },
+        },
+    ],
+}
+
 
 def get_redis_client(
     url: Optional[str] = None,
@@ -378,6 +417,22 @@ async def get_threads_index(config: Optional[Settings] = None) -> AsyncSearchInd
 
     redis_client = Redis.from_url(redis_url, decode_responses=False)
     schema = IndexSchema.from_dict(SRE_THREADS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
+async def get_qa_index() -> AsyncSearchIndex:
+    """Get Q&A index for vector search on questions and answers."""
+    from redisvl.schema import IndexSchema
+
+    # Build Redis URL with password if needed
+    redis_url = settings.redis_url.get_secret_value()
+    redis_password = settings.redis_password.get_secret_value() if settings.redis_password else None
+    if redis_password and "@" not in redis_url:
+        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_QA_SCHEMA)
     index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
     return index
 
