@@ -4,6 +4,8 @@ import importlib
 
 import click
 
+from redis_sre_agent import __version__
+
 # Map command names to their module:attribute for lazy import
 _COMMANDS = {
     "cache": "redis_sre_agent.cli.cache:cache",
@@ -21,6 +23,15 @@ _COMMANDS = {
     "support-package": "redis_sre_agent.cli.support_package:support_package",
 }
 
+# Built-in commands that don't need lazy loading
+_BUILTIN_COMMANDS = {"version"}
+
+
+@click.command()
+def version():
+    """Show the Redis SRE Agent version."""
+    click.echo(f"redis-sre-agent {__version__}")
+
 
 class LazyGroup(click.MultiCommand):
     """
@@ -31,10 +42,14 @@ class LazyGroup(click.MultiCommand):
     """
 
     def list_commands(self, ctx):
-        # Keep stable ordering for help output
-        return list(_COMMANDS.keys())
+        # Keep stable ordering for help output, include built-in commands
+        return list(_COMMANDS.keys()) + list(_BUILTIN_COMMANDS)
 
     def get_command(self, ctx, name):
+        # Handle built-in commands
+        if name == "version":
+            return version
+
         target = _COMMANDS.get(name)
         if not target:
             return None

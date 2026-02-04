@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
+from redis_sre_agent import __version__
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
 from redis_sre_agent.api.knowledge import router as knowledge_router
@@ -140,7 +141,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="An AI-powered SRE agent for Redis infrastructure management and troubleshooting",
-    version="0.1.0",
+    version=__version__,
     lifespan=lifespan,
     debug=settings.debug,
 )

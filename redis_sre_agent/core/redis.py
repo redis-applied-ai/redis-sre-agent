@@ -263,10 +263,8 @@ def get_redis_client(
     """
     cfg = config or settings
     redis_url = url or cfg.redis_url.get_secret_value()
-    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
     return Redis.from_url(
         url=redis_url,
-        password=redis_password,
         decode_responses=False,  # Keep as bytes for RedisVL compatibility
     )
 
@@ -293,11 +291,7 @@ def get_vectorizer(config: Optional[Settings] = None) -> Vectorizer:
     TTL is configurable via settings.embeddings_cache_ttl (default: 7 days).
     """
     cfg = config or settings
-    # Build Redis URL with password if needed (ensure cache can auth)
     redis_url = cfg.redis_url.get_secret_value()
-    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
-    if redis_password and "@" not in redis_url:
-        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     # Name the cache to keep a stable key namespace
     # TTL prevents stale embeddings if model changes
@@ -347,12 +341,7 @@ async def get_knowledge_index(config: Optional[Settings] = None) -> AsyncSearchI
     from redisvl.schema import IndexSchema
 
     cfg = config or settings
-    # Build Redis URL with password if needed
     redis_url = cfg.redis_url.get_secret_value()
-    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
-    if redis_password and "@" not in redis_url:
-        # Insert password into URL: redis://localhost -> redis://:password@localhost
-        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     # Create Redis client once and pass to index
     redis_client = Redis.from_url(redis_url, decode_responses=False)
@@ -381,9 +370,6 @@ async def get_tasks_index(config: Optional[Settings] = None) -> AsyncSearchIndex
 
     cfg = config or settings
     redis_url = cfg.redis_url.get_secret_value()
-    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
-    if redis_password and "@" not in redis_url:
-        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     redis_client = Redis.from_url(redis_url, decode_responses=False)
     schema = IndexSchema.from_dict(SRE_TASKS_SCHEMA)
@@ -405,11 +391,7 @@ async def get_instances_index(config: Optional[Settings] = None) -> AsyncSearchI
     from redisvl.schema import IndexSchema
 
     cfg = config or settings
-    # Build Redis URL with password if needed
     redis_url = cfg.redis_url.get_secret_value()
-    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
-    if redis_password and "@" not in redis_url:
-        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     redis_client = Redis.from_url(redis_url, decode_responses=False)
     schema = IndexSchema.from_dict(SRE_INSTANCES_SCHEMA)
@@ -431,11 +413,7 @@ async def get_threads_index(config: Optional[Settings] = None) -> AsyncSearchInd
     from redisvl.schema import IndexSchema
 
     cfg = config or settings
-    # Build Redis URL with password if needed
     redis_url = cfg.redis_url.get_secret_value()
-    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
-    if redis_password and "@" not in redis_url:
-        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     redis_client = Redis.from_url(redis_url, decode_responses=False)
     schema = IndexSchema.from_dict(SRE_THREADS_SCHEMA)
@@ -473,12 +451,7 @@ async def get_schedules_index(config: Optional[Settings] = None) -> AsyncSearchI
     from redisvl.schema import IndexSchema
 
     cfg = config or settings
-    # Build Redis URL with password if needed
     redis_url = cfg.redis_url.get_secret_value()
-    redis_password = cfg.redis_password.get_secret_value() if cfg.redis_password else None
-    if redis_password and "@" not in redis_url:
-        # Insert password into URL: redis://localhost -> redis://:password@localhost
-        redis_url = redis_url.replace("redis://", f"redis://:{redis_password}@")
 
     # Create Redis client once and pass to index
     redis_client = Redis.from_url(redis_url, decode_responses=False)

@@ -27,6 +27,7 @@ check_knowledge_base() {
     log "Checking knowledge base status..."
 
     # Check if Redis is available
+    # Credentials should be included in REDIS_URL: redis://user:pass@host:port/db
     if ! redis-cli -u "${REDIS_URL:-redis://localhost:6379/0}" ping >/dev/null 2>&1; then
         warning "Redis not available yet, skipping knowledge base check"
         return 1

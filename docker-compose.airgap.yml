@@ -24,8 +24,8 @@ services:
       - "${API_PORT:-8080}:8000"
     environment:
       # Redis connection (customer provides)
+      # Include credentials in URL: redis://user:pass@host:port/db
       - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
 
       # LLM configuration (customer provides internal endpoint)
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
@@ -71,7 +71,6 @@ services:
     environment:
       # Same configuration as sre-agent
       - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}

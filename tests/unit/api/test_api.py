@@ -72,7 +72,7 @@ class TestHealthEndpoints:
 
         # Check metadata
         assert "timestamp" in data
-        assert data["version"] == "0.1.0"
+        assert "version" in data  # Version is dynamic from package metadata
         assert "settings" in data
 
     def test_detailed_health_some_components_unhealthy(self, test_client):
@@ -290,7 +290,7 @@ class TestAppConfiguration:
         """Test FastAPI app metadata."""
         assert app_with_mocks.title == "Redis SRE Agent Test"
         assert "Redis infrastructure management" in app_with_mocks.description
-        assert app_with_mocks.version == "0.1.0"
+        assert app_with_mocks.version  # Version is dynamic from package metadata
 
     def test_app_routes_registered(self, app_with_mocks):
         """Test that expected routes are registered."""

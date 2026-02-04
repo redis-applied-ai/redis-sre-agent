@@ -58,7 +58,7 @@ services:
 
   # Redis Exporter for Redis demo metrics
   redis-exporter:
-    image: oliver006/redis_exporter:latest
+    image: oliver006/redis_exporter:v1.80.2
     ports:
       - "9121:9121"
     environment:
@@ -73,7 +73,7 @@ services:
 
   # Redis Exporter for Agent operational Redis metrics
   redis-exporter-agent:
-    image: oliver006/redis_exporter:latest
+    image: oliver006/redis_exporter:v1.80.2
     ports:
       - "9122:9121"
     environment:
@@ -87,7 +87,7 @@ services:
 
   # Pushgateway for demo metrics (Prometheus pulls from here; demos can push)
   pushgateway:
-    image: prom/pushgateway:latest
+    image: prom/pushgateway:v1.11.2
     ports:
       - "9091:9091"
     networks:
@@ -95,7 +95,7 @@ services:
 
   # Prometheus - Metrics collection
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.5.1
     ports:
       - "9090:9090"
     volumes:
@@ -113,7 +113,7 @@ services:
 
   # Grafana - Metrics visualization
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.3.2
     ports:
       - "3001:3000"
     environment:
@@ -131,7 +131,7 @@ services:
 
   # Node Exporter - System metrics
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.10.2
     ports:
       - "9100:9100"
     volumes:
@@ -233,7 +233,7 @@ services:
   # This runs the GitHub MCP server behind an SSE/HTTP proxy so the sre-worker
   # can connect to it without needing Docker-in-Docker permissions.
   github-mcp:
-    image: ghcr.io/sparfenyuk/mcp-proxy:latest
+    image: ghcr.io/sparfenyuk/mcp-proxy:v0.11.0
     ports:
       - "8082:8082"
     environment:
@@ -343,7 +343,7 @@ services:
   #   LITELLM_MASTER_KEY=sk-1234                # Proxy auth key, used by clients
   #
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: ghcr.io/berriai/litellm:v1.81.0-stable
     ports:
       - "4000:4000"
     environment:

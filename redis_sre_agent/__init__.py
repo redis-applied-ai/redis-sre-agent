@@ -1,3 +1,8 @@
 """Redis SRE Agent - LangGraph-based infrastructure monitoring and incident response."""
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("redis-sre-agent")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"  # Fallback for development without install

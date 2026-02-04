@@ -38,10 +38,10 @@ class TestAppInitialization:
         assert app.debug == settings.debug
 
     def test_app_version(self):
-        """Test app version."""
+        """Test app version is set from package metadata."""
         from redis_sre_agent.api.app import app
 
-        assert app.version == "0.1.0"
+        assert app.version  # Version is dynamic from package metadata
 
 
 class TestGetAppStartupState:
