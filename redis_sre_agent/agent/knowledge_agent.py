@@ -341,6 +341,8 @@ class KnowledgeOnlyAgent:
                     )
 
                 state["messages"] = messages + tool_messages
+                # Clear current_tool_calls to keep state consistent with other error/success paths
+                state["current_tool_calls"] = []
                 return state
 
         def should_continue(state: KnowledgeAgentState) -> str:
