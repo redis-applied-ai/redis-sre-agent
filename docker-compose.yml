@@ -373,7 +373,7 @@ services:
 
   # Tempo - Traces backend (OTLP receiver + query)
   tempo:
-    image: grafana/tempo:v2.10.0
+    image: grafana/tempo:latest
     user: "0:0"  # run as root to create/write under mounted volume
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     ports:
