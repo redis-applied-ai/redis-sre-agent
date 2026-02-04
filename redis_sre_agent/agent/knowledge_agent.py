@@ -322,13 +322,36 @@ class KnowledgeOnlyAgent:
 
             except Exception as e:
                 logger.error(f"Tool execution failed: {e}")
-                # Add an AI message explaining the error
-                error_message = AIMessage(
-                    content=f"I encountered an error while searching the knowledge base: {str(e)}. "
-                    "This may be because Redis is not available. Please ensure Redis is running, "
-                    "or ask me a general question that doesn't require knowledge base access."
-                )
-                state["messages"] = messages + [error_message]
+                # Return error as ToolMessage so the LLM can decide how to handle it
+                # This allows the LLM to retry, explain the error, or take alternative actions
+                from langchain_core.messages import ToolMessage
+
+                error_payload = {
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "suggestion": "You may retry with different parameters, explain the error to the user, "
+                    "or try an alternative approach.",
+                }
+                try:
+                    import json as _json
+
+                    error_content = _json.dumps(error_payload)
+                except Exception:
+                    error_content = str(error_payload)
+
+                # Create ToolMessage for each pending tool call so the LLM receives error feedback
+                tool_messages = []
+                for tool_call in last_message.tool_calls:
+                    tool_messages.append(
+                        ToolMessage(
+                            content=error_content,
+                            tool_call_id=tool_call["id"],
+                        )
+                    )
+
+                state["messages"] = messages + tool_messages
+                # Clear current_tool_calls to keep state consistent with other error/success paths
                 state["current_tool_calls"] = []
                 return state
 
