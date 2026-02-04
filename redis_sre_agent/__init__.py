@@ -1,6 +1,6 @@
 """Redis SRE Agent - LangGraph-based infrastructure monitoring and incident response."""
 
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("redis-sre-agent")

@@ -74,5 +74,6 @@ Generated from the Click command tree.
 - support-package info — Get information about a support package.
 - support-package list — List uploaded support packages.
 - support-package upload — Upload a support package.
+- version — Show the Redis SRE Agent version.
 
 See How-to guides for examples.
