@@ -148,6 +148,11 @@ Edit `.env` with your internal URLs:
 
 ```bash
 # Required: Redis connection
+# Include credentials in URL if authentication is required:
+#   redis://user:password@host:port/db
+#   redis://:password@host:port/db  (no username)
+#   rediss://user:password@host:port/db  (TLS)
+# URL-encode special characters in password: @ -> %40, : -> %3A
 REDIS_URL=redis://your-internal-redis:6379/0
 
 # Required: LLM proxy
@@ -183,6 +188,27 @@ If you included pre-built artifacts:
 docker-compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent pipeline ingest --artifacts-path /app/artifacts
 ```
+
+### 6. Verify Deployment
+
+Test that the knowledge base and vector search are working:
+
+```bash
+# Check version
+docker-compose -f docker-compose.airgap.yml exec sre-agent \
+  redis-sre-agent version
+
+# Test vector search (does not require LLM)
+docker-compose -f docker-compose.airgap.yml exec sre-agent \
+  redis-sre-agent knowledge search "redis memory management"
+```
+
+You should see search results from the knowledge base. This confirms:
+
+- Redis connection is working
+- Vector index was created
+- Local embeddings are functioning
+- Knowledge base was ingested successfully
 
 ## Configuration Reference
 

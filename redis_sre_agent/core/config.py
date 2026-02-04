@@ -195,9 +195,9 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: SecretStr = Field(
-        default=SecretStr("redis://localhost:7843/0"), description="Redis connection URL"
+        default=SecretStr("redis://localhost:7843/0"),
+        description="Redis connection URL. Include credentials in URL: redis://user:pass@host:port/db",
     )
-    redis_password: Optional[SecretStr] = Field(default=None, description="Redis password")
 
     # OpenAI (optional at import time to allow CLI/docs to load without secrets)
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
