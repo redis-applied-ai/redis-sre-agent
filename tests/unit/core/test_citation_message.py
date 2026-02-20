@@ -109,8 +109,8 @@ class TestFormatCitationMessage:
         assert format_citation_message([]) == ""
         assert format_citation_message(None) == ""
 
-    def test_truncates_long_hashes_in_display(self):
-        """Test that very long hashes are truncated for readability."""
+    def test_handles_long_hashes(self):
+        """Test that very long hashes are handled correctly."""
         results = [
             {
                 "title": "Long Hash Doc",
@@ -121,5 +121,5 @@ class TestFormatCitationMessage:
         ]
         message = format_citation_message(results)
 
-        # Full hash should still be in the tool hint section
-        assert "a" * 64 in message or "a" * 12 in message  # Either full or truncated
+        # Hash should be present in the message
+        assert "a" * 64 in message
