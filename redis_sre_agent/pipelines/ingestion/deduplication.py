@@ -50,21 +50,8 @@ class DocumentDeduplicator:
             except Exception as e:
                 logger.debug(f"scan_iter current pattern failed for {document_hash}: {e}")
 
-            # Legacy key format (pre-deduplicator)
-            try:
-                legacy_pattern = f"{RedisKeys.PREFIX_KNOWLEDGE}:{document_hash}_*"
-                async for key in redis_client.scan_iter(match=legacy_pattern):
-                    if isinstance(key, bytes):
-                        key = key.decode("utf-8")
-                    existing_keys.append(key)
-            except Exception as e:
-                logger.debug(f"scan_iter legacy pattern failed for {document_hash}: {e}")
-
-            # De-duplicate any overlaps just in case
-            unique_keys = list(dict.fromkeys(existing_keys))
-
-            logger.debug(f"Found {len(unique_keys)} existing chunks for document {document_hash}")
-            return unique_keys
+            logger.debug(f"Found {len(existing_keys)} existing chunks for document {document_hash}")
+            return existing_keys
 
         except Exception as e:
             logger.error(f"Failed to find existing chunks for {document_hash}: {e}")

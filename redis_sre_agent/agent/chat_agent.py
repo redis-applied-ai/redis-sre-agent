@@ -228,35 +228,6 @@ class ChatAgent:
             },
         }
 
-    def _extract_knowledge_search_results(
-        self, envelopes: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Extract knowledge base search results from tool envelopes.
-
-        NOTE: This method is deprecated for citation tracking. Knowledge search
-        results are now extracted BEFORE envelope summarization in tool_node
-        and stored in the knowledge_search_results state key.
-
-        This method remains for backward compatibility but will return empty
-        results for summarized envelopes.
-
-        Args:
-            envelopes: List of ResultEnvelope dicts from tool executions
-
-        Returns:
-            List of search result dicts (empty for summarized envelopes)
-        """
-        all_results = []
-        for env in envelopes:
-            tool_key = env.get("tool_key", "")
-            name = env.get("name", "")
-            if "knowledge" in tool_key.lower() and "search" in name.lower():
-                data = env.get("data", {})
-                results = data.get("results", [])
-                if results:
-                    all_results.extend(results)
-        return all_results
-
     def _build_workflow(
         self,
         tool_mgr: ToolManager,
