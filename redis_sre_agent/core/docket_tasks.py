@@ -15,6 +15,10 @@ from redis_sre_agent.agent.langgraph_agent import (
     _extract_instance_details_from_message,
 )
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
+from redis_sre_agent.core.citation_message import (
+    format_citation_message,
+    should_include_citations,
+)
 from redis_sre_agent.core.config import Settings, settings
 from redis_sre_agent.core.instances import create_instance, get_instance_by_id
 from redis_sre_agent.core.knowledge_helpers import (
@@ -262,21 +266,23 @@ async def process_chat_turn(
             progress_emitter=emitter,
         )
 
-        # Store result on task
+        # Store result on task (convert AgentResponse to dict for JSON serialization)
         result = {
-            "response": response,
+            "response": response.model_dump() if hasattr(response, "model_dump") else response,
             "instance_id": instance_id,
         }
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
         # Add response to thread as assistant message
+        # response is an AgentResponse; extract the text for thread content
+        response_text = response.response if hasattr(response, "response") else str(response)
         await thread_manager.append_messages(
             thread_id,
             [
                 {
                     "role": "assistant",
-                    "content": response,
+                    "content": response_text,
                     "metadata": {"task_id": task_id, "agent": "chat"},
                 }
             ],
@@ -339,20 +345,22 @@ async def process_knowledge_query(
             progress_emitter=emitter,
         )
 
-        # Store result on task
+        # Store result on task (convert AgentResponse to dict for JSON serialization)
         result = {
-            "response": response,
+            "response": response.model_dump() if hasattr(response, "model_dump") else response,
         }
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
         # Add response to thread as assistant message
+        # response is an AgentResponse; extract the text for thread content
+        response_text = response.response if hasattr(response, "response") else str(response)
         await thread_manager.append_messages(
             thread_id,
             [
                 {
                     "role": "assistant",
-                    "content": response,
+                    "content": response_text,
                     "metadata": {"task_id": task_id, "agent": "knowledge"},
                 }
             ],
@@ -881,13 +889,25 @@ async def process_agent_turn(
             }
         )
 
+        # Add citation system message if there are search results
+        # This allows the LLM to see which sources were used and retrieve more info
+        if should_include_citations(search_results):
+            citation_msg = format_citation_message(search_results)
+            conversation_state["messages"].append(
+                {
+                    "role": "system",
+                    "content": citation_msg,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
         # Update thread context with new conversation state
-        # Only save user/assistant messages - tool messages are internal to LangGraph
+        # Only save user/assistant/system messages - tool messages are internal to LangGraph
         # and shouldn't be persisted across turns
         clean_messages = [
             msg
             for msg in conversation_state["messages"]
-            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
+            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant", "system"]
         ]
 
         # Persist agent reflections/status updates for this turn as chat messages

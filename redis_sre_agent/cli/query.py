@@ -15,6 +15,10 @@ from redis_sre_agent.agent.chat_agent import get_chat_agent
 from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
+from redis_sre_agent.core.citation_message import (
+    format_citation_message,
+    should_include_citations,
+)
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import get_instance_by_id
 from redis_sre_agent.core.redis import get_redis_client
@@ -185,7 +189,7 @@ def query(
                 context["support_package_path"] = str(support_package_path)
 
             # Run the agent
-            response = await selected_agent.process_query(
+            agent_response = await selected_agent.process_query(
                 query,
                 session_id="cli",
                 user_id="cli_user",
@@ -194,17 +198,26 @@ def query(
                 conversation_history=conversation_history if conversation_history else None,
             )
 
+            # Extract response text and search results from AgentResponse
+            response_text = agent_response.response
+            search_results = agent_response.search_results
+
+            # Build messages list
+            messages_to_save = [
+                {"role": "user", "content": query},
+                {"role": "assistant", "content": response_text},
+            ]
+
+            # Add citation system message if there are search results
+            if should_include_citations(search_results):
+                citation_msg = format_citation_message(search_results)
+                messages_to_save.append({"role": "system", "content": citation_msg})
+
             # Save messages to thread
-            await thread_manager.append_messages(
-                active_thread_id,
-                [
-                    {"role": "user", "content": query},
-                    {"role": "assistant", "content": str(response)},
-                ],
-            )
+            await thread_manager.append_messages(active_thread_id, messages_to_save)
 
             console.print("\n[bold green]✅ Response:[/bold green]\n")
-            console.print(Markdown(str(response)))
+            console.print(Markdown(response_text))
 
             # Show thread ID for follow-up queries
             console.print("\n[dim]💡 To continue this conversation:[/dim]")

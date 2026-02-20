@@ -442,6 +442,67 @@ class TestProcessChatTurn:
 
         mock_task_manager.set_task_error.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_process_chat_turn_agent_response_serialization(self):
+        """Regression test: AgentResponse must be serialized to dict for JSON storage.
+
+        Previously, AgentResponse (a Pydantic model) was stored directly in the result dict,
+        causing 'Object of type AgentResponse is not JSON serializable' errors when
+        set_task_result called json.dumps().
+        """
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+
+        # Return an actual AgentResponse object (not a string)
+        agent_response = AgentResponse(
+            response="Test response text",
+            search_results=[{"id": "doc-1", "content": "Some content"}],
+        )
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        mock_instance = MagicMock()
+        mock_instance.id = "inst-1"
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_instance_by_id",
+                new_callable=AsyncMock,
+                return_value=mock_instance,
+            ),
+            patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            result = await process_chat_turn(
+                query="What is Redis?",
+                task_id="task-123",
+                thread_id="thread-456",
+                instance_id="inst-1",
+                user_id="user-1",
+            )
+
+        # Verify the response is a dict (model_dump'd), not an AgentResponse
+        assert isinstance(result["response"], dict)
+        assert result["response"]["response"] == "Test response text"
+        assert result["response"]["search_results"] == [{"id": "doc-1", "content": "Some content"}]
+
+        # Verify thread message content is a string, not an AgentResponse
+        mock_thread_manager.append_messages.assert_called_once()
+        call_args = mock_thread_manager.append_messages.call_args
+        messages = call_args[0][1]
+        assert len(messages) == 1
+        assert messages[0]["content"] == "Test response text"
+        assert isinstance(messages[0]["content"], str)
+
 
 class TestProcessKnowledgeQuery:
     """Test process_knowledge_query task."""
@@ -512,6 +573,62 @@ class TestProcessKnowledgeQuery:
                 )
 
         mock_task_manager.set_task_error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_agent_response_serialization(self):
+        """Regression test: AgentResponse must be serialized to dict for JSON storage.
+
+        Previously, AgentResponse (a Pydantic model) was stored directly in the result dict,
+        causing 'Object of type AgentResponse is not JSON serializable' errors when
+        set_task_result called json.dumps().
+        """
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+
+        # Return an actual AgentResponse object (not a string)
+        agent_response = AgentResponse(
+            response="Knowledge response text",
+            search_results=[{"id": "kb-1", "title": "Redis Best Practices"}],
+        )
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            result = await process_knowledge_query(
+                query="What are Redis best practices?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        # Verify the response is a dict (model_dump'd), not an AgentResponse
+        assert isinstance(result["response"], dict)
+        assert result["response"]["response"] == "Knowledge response text"
+        assert result["response"]["search_results"] == [
+            {"id": "kb-1", "title": "Redis Best Practices"}
+        ]
+
+        # Verify thread message content is a string, not an AgentResponse
+        mock_thread_manager.append_messages.assert_called_once()
+        call_args = mock_thread_manager.append_messages.call_args
+        messages = call_args[0][1]
+        assert len(messages) == 1
+        assert messages[0]["content"] == "Knowledge response text"
+        assert isinstance(messages[0]["content"], str)
 
 
 class TestSchedulerTask:
