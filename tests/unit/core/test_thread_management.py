@@ -345,7 +345,7 @@ class TestProcessAgentTurn:
             mock_manager.get_thread.return_value = test_thread
 
             # Execute the task
-            result = await process_agent_turn(thread_id="test_thread", message="Test message")
+            await process_agent_turn(thread_id="test_thread", message="Test message")
 
             # Verify that _save_thread_state was called
             mock_manager._save_thread_state.assert_called()
@@ -425,7 +425,7 @@ class TestProcessAgentTurn:
             mock_manager.get_thread.return_value = test_thread
 
             # Execute the task
-            result = await process_agent_turn(thread_id="test_thread", message="Test message")
+            await process_agent_turn(thread_id="test_thread", message="Test message")
 
             # Verify that _save_thread_state was called
             mock_manager._save_thread_state.assert_called()
