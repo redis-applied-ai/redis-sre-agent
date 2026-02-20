@@ -3,8 +3,6 @@
 Tests written first for the feature that appends citation messages to threads.
 """
 
-import pytest
-
 from redis_sre_agent.core.citation_message import (
     format_citation_message,
     should_include_citations,
