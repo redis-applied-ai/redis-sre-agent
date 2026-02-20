@@ -45,7 +45,9 @@ def test_query_without_instance_uses_knowledge_agent(mock_thread_manager, mock_r
     runner = CliRunner()
 
     mock_agent = MagicMock()
-    mock_agent.process_query = AsyncMock(return_value=AgentResponse(response="ok", search_results=[]))
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
 
     with (
         patch(
@@ -85,7 +87,9 @@ def test_query_with_instance_uses_sre_agent_and_passes_instance_context(
     instance = DummyInstance("redis-prod-123", "Haink Production")
 
     mock_sre_agent = MagicMock()
-    mock_sre_agent.process_query = AsyncMock(return_value=AgentResponse(response="ok", search_results=[]))
+    mock_sre_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
 
     from redis_sre_agent.agent.router import AgentType
 
@@ -143,7 +147,9 @@ def test_query_with_unknown_instance_exits_with_error_and_skips_agents(
     runner = CliRunner()
 
     mock_agent = MagicMock()
-    mock_agent.process_query = AsyncMock(return_value=AgentResponse(response="ok", search_results=[]))
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
 
     missing_id = "nonexistent-instance-id"
 
@@ -186,7 +192,9 @@ def test_query_with_agent_triage_forces_triage_agent(mock_thread_manager, mock_r
     runner = CliRunner()
 
     mock_agent = MagicMock()
-    mock_agent.process_query = AsyncMock(return_value=AgentResponse(response="triage result", search_results=[]))
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="triage result", search_results=[])
+    )
 
     with (
         patch("redis_sre_agent.cli.query.get_sre_agent", return_value=mock_agent) as mock_get_sre,
@@ -217,7 +225,9 @@ def test_query_with_agent_knowledge_forces_knowledge_agent(mock_thread_manager, 
     runner = CliRunner()
 
     mock_agent = MagicMock()
-    mock_agent.process_query = AsyncMock(return_value=AgentResponse(response="knowledge result", search_results=[]))
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="knowledge result", search_results=[])
+    )
 
     with (
         patch(
@@ -261,7 +271,9 @@ def test_query_with_agent_chat_forces_chat_agent(mock_thread_manager, mock_redis
     instance = DummyInstance()
 
     mock_agent = MagicMock()
-    mock_agent.process_query = AsyncMock(return_value=AgentResponse(response="chat result", search_results=[]))
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="chat result", search_results=[])
+    )
 
     with (
         patch("redis_sre_agent.cli.query.get_chat_agent", return_value=mock_agent) as mock_get_chat,
@@ -298,7 +310,9 @@ def test_query_with_agent_auto_uses_router(mock_thread_manager, mock_redis_clien
     from redis_sre_agent.agent.router import AgentType
 
     mock_agent = MagicMock()
-    mock_agent.process_query = AsyncMock(return_value=AgentResponse(response="routed result", search_results=[]))
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="routed result", search_results=[])
+    )
 
     with (
         patch(
@@ -332,7 +346,9 @@ def test_query_agent_option_is_case_insensitive(mock_thread_manager, mock_redis_
     runner = CliRunner()
 
     mock_agent = MagicMock()
-    mock_agent.process_query = AsyncMock(return_value=AgentResponse(response="result", search_results=[]))
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="result", search_results=[])
+    )
 
     with (
         patch("redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent),
