@@ -29,6 +29,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.0",
+    "python-ulid>=3.0.0",
     # HTTP and async
     "aiohttp>=3.8.0",
     "httpx>=0.25.0",
