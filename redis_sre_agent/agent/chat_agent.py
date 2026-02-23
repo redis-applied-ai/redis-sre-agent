@@ -491,26 +491,35 @@ User Query: {query}"""
 
                 # Use knowledge_search_results directly (extracted before envelope summarization)
                 search_results = final_state.get("knowledge_search_results", [])
+                # Get tool envelopes for decision tracing
+                tool_envelopes = final_state.get("signals_envelopes", [])
 
                 messages = final_state.get("messages", [])
                 if messages:
                     last_message = messages[-1]
                     if isinstance(last_message, AIMessage):
                         return AgentResponse(
-                            response=last_message.content, search_results=search_results
+                            response=last_message.content,
+                            search_results=search_results,
+                            tool_envelopes=tool_envelopes,
                         )
                     return AgentResponse(
-                        response=str(last_message.content), search_results=search_results
+                        response=str(last_message.content),
+                        search_results=search_results,
+                        tool_envelopes=tool_envelopes,
                     )
 
                 return AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                     search_results=[],
+                    tool_envelopes=[],
                 )
 
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")
-                return AgentResponse(response=f"Error processing query: {e}", search_results=[])
+                return AgentResponse(
+                    response=f"Error processing query: {e}", search_results=[], tool_envelopes=[]
+                )
 
 
 # Singleton cache keyed by instance name

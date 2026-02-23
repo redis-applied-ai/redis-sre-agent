@@ -123,6 +123,11 @@ class RedisKeys:
         return f"sre:task:{task_id}:metadata"
 
     @staticmethod
+    def task_decision_trace(task_id: str) -> str:
+        """Key for task decision trace (tool calls + citations)."""
+        return f"sre:task:{task_id}:decision_trace"
+
+    @staticmethod
     def thread_tasks_index(thread_id: str) -> str:
         """Sorted set of task_ids for a thread (score=timestamp)."""
         return f"sre:thread:{thread_id}:tasks"

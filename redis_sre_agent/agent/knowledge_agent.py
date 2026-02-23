@@ -523,7 +523,10 @@ class KnowledgeOnlyAgent:
                 )
 
                 logger.info(f"Knowledge query completed for user {user_id}")
-                return AgentResponse(response=response, search_results=search_results)
+                # Knowledge agent doesn't track tool envelopes separately (search results are captured directly)
+                return AgentResponse(
+                    response=response, search_results=search_results, tool_envelopes=[]
+                )
 
             except Exception as e:
                 logger.error(f"Knowledge agent processing failed: {e}")
@@ -531,7 +534,9 @@ class KnowledgeOnlyAgent:
 
                 await emitter.emit(f"Knowledge agent encountered an error: {str(e)}", "agent_error")
 
-                return AgentResponse(response=error_response, search_results=[])
+                return AgentResponse(
+                    response=error_response, search_results=[], tool_envelopes=[]
+                )
 
 
 # Singleton instance for reuse
