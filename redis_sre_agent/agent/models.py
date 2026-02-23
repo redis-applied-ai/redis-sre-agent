@@ -89,3 +89,53 @@ class AgentResponse(BaseModel):
         default_factory=list,
         description="Knowledge base search results used to generate the response",
     )
+    tool_envelopes: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Tool execution envelopes for decision tracing",
+    )
+
+
+class ToolCallTrace(BaseModel):
+    """Record of a single tool call for decision tracing."""
+
+    tool_key: str = Field(..., description="Fully-qualified tool name")
+    name: Optional[str] = Field(None, description="Short operation name")
+    args: Dict[str, Any] = Field(default_factory=dict, description="Arguments passed to tool")
+    status: str = Field("success", description="'success' or 'error'")
+    timestamp: Optional[str] = Field(None, description="ISO timestamp of execution")
+    duration_ms: Optional[int] = Field(None, description="Execution duration in milliseconds")
+
+
+class CitationTrace(BaseModel):
+    """Record of a knowledge source citation."""
+
+    document_id: Optional[str] = Field(None, description="Document ID")
+    document_hash: Optional[str] = Field(None, description="Document content hash")
+    chunk_index: Optional[int] = Field(None, description="Chunk index within document")
+    title: Optional[str] = Field(None, description="Document title")
+    source: Optional[str] = Field(None, description="Source URL or path")
+    content_preview: Optional[str] = Field(None, description="Preview of content")
+    score: Optional[float] = Field(None, description="Relevance score")
+
+
+class DecisionTrace(BaseModel):
+    """Complete trace of an agent's decision process for a single task/answer.
+
+    This captures tool calls and knowledge citations without consuming LLM context,
+    enabling:
+    - CLI inspection via `task trace <task_id>`
+    - Correlation with OTel traces via otel_trace_id
+    - Audit trails for compliance
+    """
+
+    task_id: str = Field(..., description="Task ID this trace belongs to")
+    tool_calls: List[ToolCallTrace] = Field(
+        default_factory=list, description="Tool executions during this task"
+    )
+    citations: List[CitationTrace] = Field(
+        default_factory=list, description="Knowledge sources used"
+    )
+    otel_trace_id: Optional[str] = Field(
+        None, description="OpenTelemetry trace ID for correlation with Tempo"
+    )
+    created_at: Optional[str] = Field(None, description="ISO timestamp when trace was created")

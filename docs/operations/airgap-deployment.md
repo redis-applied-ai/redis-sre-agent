@@ -82,12 +82,16 @@ The build script:
 
 Bundle contents:
 
-- `redis-sre-agent-airgap.tar.gz` (Docker image ~4GB with models)
+- `redis-sre-agent-airgap.tar.gz` (Docker image ~4GB with models and KB artifacts)
 - `docker-compose.airgap.yml`
 - `.env.example`
 - `config.yaml`
-- `artifacts/` (pre-built knowledge base, if source_documents exist)
 - `README.md` (quick start guide)
+
+!!! note "Pre-built Knowledge Base"
+    The airgap image includes pre-scraped Redis documentation and SRE runbooks in
+    `/app/artifacts`. You only need to run the **ingest** command after deployment
+    to index them into Redis.
 
 #### Build Options
 
@@ -182,12 +186,27 @@ podman-compose -f docker-compose.airgap.yml up -d
 
 ### 5. Initialize Knowledge Base
 
-If you included pre-built artifacts:
+The airgap image includes pre-scraped artifacts in `/app/artifacts`. You only need to
+**ingest** them into Redis:
 
 ```bash
 docker-compose -f docker-compose.airgap.yml exec sre-agent \
-  redis-sre-agent pipeline ingest --artifacts-path /app/artifacts
+  redis-sre-agent pipeline ingest
 ```
+
+This generates embeddings using the local model and indexes the content into Redis vector search.
+
+!!! tip "Adding Custom Documents"
+    To add your own documents, place markdown files in a mounted volume and run:
+    ```bash
+    # Prepare your custom docs
+    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+      redis-sre-agent pipeline prepare-sources --source-dir /your/docs
+
+    # Re-ingest to include them
+    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+      redis-sre-agent pipeline ingest
+    ```
 
 ### 6. Verify Deployment
 
@@ -209,6 +228,200 @@ You should see search results from the knowledge base. This confirms:
 - Vector index was created
 - Local embeddings are functioning
 - Knowledge base was ingested successfully
+
+## Kubernetes Deployment
+
+For Kubernetes deployments, you'll configure environment variables via ConfigMaps and Secrets
+instead of a `.env` file.
+
+!!! warning "Container User Permissions"
+    The agent container must run as user `app:app` (UID 1000) to write to `/app/artifacts`
+    and `/app/source_documents`. If you're using a restrictive `securityContext`, ensure
+    the container runs as this user or mount writable volumes for these paths.
+
+### Example Kubernetes Manifests
+
+**ConfigMap for non-sensitive configuration:**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sre-agent-config
+data:
+  EMBEDDING_PROVIDER: "local"
+  EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+  VECTOR_DIM: "384"
+  OPENAI_MODEL: "gpt-4"
+  OPENAI_MODEL_MINI: "gpt-4"
+  OPENAI_MODEL_NANO: "gpt-4"
+```
+
+**Secret for sensitive values:**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sre-agent-secrets
+type: Opaque
+stringData:
+  REDIS_URL: "redis://user:password@redis-host:6379/0"
+  OPENAI_BASE_URL: "https://your-llm-proxy.internal.com/v1"
+  OPENAI_API_KEY: "your-internal-api-key"
+  REDIS_SRE_MASTER_KEY: "your-master-key"
+```
+
+**Deployment:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sre-agent
+  template:
+    metadata:
+      labels:
+        app: sre-agent
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: sre-agent
+          image: your-registry.internal.com/redis-sre-agent:airgap
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: sre-agent-config
+            - secretRef:
+                name: sre-agent-secrets
+          volumeMounts:
+            - name: artifacts
+              mountPath: /app/artifacts
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: artifacts
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: sre-agent-app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-agent
+spec:
+  selector:
+    app: sre-agent
+  ports:
+    - port: 8000
+      targetPort: 8000
+```
+
+**Worker Deployment:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-agent-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sre-agent-worker
+  template:
+    metadata:
+      labels:
+        app: sre-agent-worker
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: worker
+          image: your-registry.internal.com/redis-sre-agent:airgap
+          command: ["redis-sre-agent", "worker", "start"]
+          envFrom:
+            - configMapRef:
+                name: sre-agent-config
+            - secretRef:
+                name: sre-agent-secrets
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+      volumes:
+        - name: config
+          configMap:
+            name: sre-agent-app-config
+```
+
+### Initializing Knowledge Base in Kubernetes
+
+Run a one-time Job to ingest the pre-scraped artifacts into Redis:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sre-agent-init-kb
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: init
+          image: your-registry.internal.com/redis-sre-agent:airgap
+          command: ["redis-sre-agent", "pipeline", "ingest"]
+          envFrom:
+            - configMapRef:
+                name: sre-agent-config
+            - secretRef:
+                name: sre-agent-secrets
+      restartPolicy: Never
+  backoffLimit: 2
+```
 
 ## Configuration Reference
 

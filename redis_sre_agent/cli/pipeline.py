@@ -26,7 +26,12 @@ def pipeline():
     is_flag=True,
     help="Only include latest Redis docs (skip versioned docs like 7.x) for redis_docs and redis_docs_local",
 )
-def scrape(artifacts_path: str, scrapers: str, latest_only: bool):
+@click.option(
+    "--docs-path",
+    default="./redis-docs",
+    help="Path to local redis/docs clone (for redis_docs_local scraper)",
+)
+def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
     """Run the scraping pipeline to collect SRE documents."""
     click.echo("🔍 Starting scraping pipeline...")
 
@@ -38,9 +43,9 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool):
         # Configure scrapers to honor latest-only when requested
         config = {
             "redis_docs": {"latest_only": latest_only},
-            "redis_docs_local": {"latest_only": latest_only},
+            "redis_docs_local": {"latest_only": latest_only, "docs_repo_path": docs_path},
         }
-        orchestrator = PipelineOrchestrator(artifacts_path, config)
+        orchestrator = PipelineOrchestrator(artifacts_path, config, scrapers=scraper_list)
         try:
             results = await orchestrator.run_scraping_pipeline(scraper_list)
 
@@ -117,7 +122,12 @@ def ingest(batch_date: str, artifacts_path: str, latest_only: bool):
     is_flag=True,
     help="Only include latest Redis docs (skip versioned docs like 7.x) for both scraping and ingestion",
 )
-def full(artifacts_path: str, scrapers: str, latest_only: bool):
+@click.option(
+    "--docs-path",
+    default="./redis-docs",
+    help="Path to local redis/docs clone (for redis_docs_local scraper)",
+)
+def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
     """Run the complete pipeline: scraping + ingestion."""
     click.echo("🚀 Starting full pipeline (scraping + ingestion)...")
 
@@ -129,10 +139,10 @@ def full(artifacts_path: str, scrapers: str, latest_only: bool):
         # Configure scrapers and ingestion to honor latest-only when requested
         config = {
             "redis_docs": {"latest_only": latest_only},
-            "redis_docs_local": {"latest_only": latest_only},
+            "redis_docs_local": {"latest_only": latest_only, "docs_repo_path": docs_path},
             "ingestion": {"latest_only": latest_only},
         }
-        orchestrator = PipelineOrchestrator(artifacts_path, config)
+        orchestrator = PipelineOrchestrator(artifacts_path, config, scrapers=scraper_list)
         try:
             results = await orchestrator.run_full_pipeline(scraper_list)
 
@@ -302,7 +312,8 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
     async def run_runbook_operations():
         from ..pipelines.orchestrator import PipelineOrchestrator
 
-        orchestrator = PipelineOrchestrator(artifacts_path)
+        # Only instantiate the runbook_generator scraper
+        orchestrator = PipelineOrchestrator(artifacts_path, scrapers=["runbook_generator"])
         generator = orchestrator.scrapers["runbook_generator"]
 
         if list_urls:

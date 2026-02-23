@@ -298,8 +298,8 @@ Contact team lead for persistent memory issues
 
         mock_openai.chat.completions.create = AsyncMock(return_value=mock_response)
 
-        # Update the generator's OpenAI client
-        generator.openai_client = mock_openai
+        # Update the generator's OpenAI client (private attribute since openai_client is a lazy property)
+        generator._openai_client = mock_openai
 
         result = await generator._generate_standardized_runbook(
             "Raw content about Redis memory", "https://example.com"
@@ -329,7 +329,7 @@ Contact team lead for persistent memory issues
         mock_response.choices[0].message.content = "Too short and invalid format"
 
         mock_openai.chat.completions.create = AsyncMock(return_value=mock_response)
-        generator.openai_client = mock_openai
+        generator._openai_client = mock_openai
 
         result = await generator._generate_standardized_runbook(
             "Raw content", "https://example.com"

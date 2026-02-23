@@ -51,8 +51,8 @@ class RunbookGenerator(BaseScraper):
             **(config or {}),
         }
 
-        # Initialize OpenAI client
-        self.openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        # Lazy-initialize OpenAI client (only when actually used)
+        self._openai_client: Optional[openai.AsyncOpenAI] = None
 
         # Standard runbook format template
         self.runbook_template = """
@@ -114,6 +114,13 @@ FORMAT: Return ONLY the structured runbook content. Do not include explanations 
 SOURCE CONTENT TO STANDARDIZE:
 {source_content}
 """
+
+    @property
+    def openai_client(self) -> openai.AsyncOpenAI:
+        """Lazily initialize OpenAI client on first access."""
+        if self._openai_client is None:
+            self._openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        return self._openai_client
 
     def get_source_name(self) -> str:
         return "runbook_generator"

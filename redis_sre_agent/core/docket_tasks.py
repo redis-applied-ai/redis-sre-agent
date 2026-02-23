@@ -15,6 +15,10 @@ from redis_sre_agent.agent.langgraph_agent import (
     _extract_instance_details_from_message,
 )
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
+from redis_sre_agent.core.citation_message import (
+    format_citation_message,
+    should_include_citations,
+)
 from redis_sre_agent.core.config import Settings, settings
 from redis_sre_agent.core.instances import create_instance, get_instance_by_id
 from redis_sre_agent.core.knowledge_helpers import (
@@ -262,21 +266,44 @@ async def process_chat_turn(
             progress_emitter=emitter,
         )
 
-        # Store result on task
+        # Store result on task (convert AgentResponse to dict for JSON serialization)
         result = {
-            "response": response,
+            "response": response.model_dump() if hasattr(response, "model_dump") else response,
             "instance_id": instance_id,
         }
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
+        # Store decision trace for this task (tool calls + citations)
+        try:
+            from opentelemetry import trace as otel_trace
+
+            current_span = otel_trace.get_current_span()
+            span_context = current_span.get_span_context() if current_span else None
+            otel_trace_id = (
+                format(span_context.trace_id, "032x")
+                if span_context and span_context.is_valid
+                else None
+            )
+        except Exception:
+            otel_trace_id = None
+
+        await task_manager.set_decision_trace(
+            task_id=task_id,
+            tool_envelopes=response.tool_envelopes if hasattr(response, "tool_envelopes") else [],
+            search_results=response.search_results if hasattr(response, "search_results") else [],
+            otel_trace_id=otel_trace_id,
+        )
+
         # Add response to thread as assistant message
+        # response is an AgentResponse; extract the text for thread content
+        response_text = response.response if hasattr(response, "response") else str(response)
         await thread_manager.append_messages(
             thread_id,
             [
                 {
                     "role": "assistant",
-                    "content": response,
+                    "content": response_text,
                     "metadata": {"task_id": task_id, "agent": "chat"},
                 }
             ],
@@ -339,20 +366,43 @@ async def process_knowledge_query(
             progress_emitter=emitter,
         )
 
-        # Store result on task
+        # Store result on task (convert AgentResponse to dict for JSON serialization)
         result = {
-            "response": response,
+            "response": response.model_dump() if hasattr(response, "model_dump") else response,
         }
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
+        # Store decision trace for this task (tool calls + citations)
+        try:
+            from opentelemetry import trace as otel_trace
+
+            current_span = otel_trace.get_current_span()
+            span_context = current_span.get_span_context() if current_span else None
+            otel_trace_id = (
+                format(span_context.trace_id, "032x")
+                if span_context and span_context.is_valid
+                else None
+            )
+        except Exception:
+            otel_trace_id = None
+
+        await task_manager.set_decision_trace(
+            task_id=task_id,
+            tool_envelopes=response.tool_envelopes if hasattr(response, "tool_envelopes") else [],
+            search_results=response.search_results if hasattr(response, "search_results") else [],
+            otel_trace_id=otel_trace_id,
+        )
+
         # Add response to thread as assistant message
+        # response is an AgentResponse; extract the text for thread content
+        response_text = response.response if hasattr(response, "response") else str(response)
         await thread_manager.append_messages(
             thread_id,
             [
                 {
                     "role": "assistant",
-                    "content": response,
+                    "content": response_text,
                     "metadata": {"task_id": task_id, "agent": "knowledge"},
                 }
             ],
@@ -808,10 +858,11 @@ async def process_agent_turn(
                 conversation_history=lc_history if lc_history else None,
             )
 
-            # knowledge_agent_response is an AgentResponse with .response and .search_results
+            # knowledge_agent_response is an AgentResponse with .response, .search_results, .tool_envelopes
             agent_response = {
                 "response": knowledge_agent_response.response,
                 "search_results": knowledge_agent_response.search_results,
+                "tool_envelopes": knowledge_agent_response.tool_envelopes,
                 "metadata": {"agent_type": "knowledge_only"},
             }
         elif agent_type == AgentType.REDIS_CHAT:
@@ -841,10 +892,11 @@ async def process_agent_turn(
                 conversation_history=lc_history if lc_history else None,
             )
 
-            # chat_agent_response is an AgentResponse with .response and .search_results
+            # chat_agent_response is an AgentResponse with .response, .search_results, .tool_envelopes
             agent_response = {
                 "response": chat_agent_response.response,
                 "search_results": chat_agent_response.search_results,
+                "tool_envelopes": chat_agent_response.tool_envelopes,
                 "metadata": {"agent_type": "redis_chat"},
             }
         else:
@@ -881,13 +933,25 @@ async def process_agent_turn(
             }
         )
 
+        # Add citation system message if there are search results
+        # This allows the LLM to see which sources were used and retrieve more info
+        if should_include_citations(search_results):
+            citation_msg = format_citation_message(search_results)
+            conversation_state["messages"].append(
+                {
+                    "role": "system",
+                    "content": citation_msg,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
         # Update thread context with new conversation state
-        # Only save user/assistant messages - tool messages are internal to LangGraph
+        # Only save user/assistant/system messages - tool messages are internal to LangGraph
         # and shouldn't be persisted across turns
         clean_messages = [
             msg
             for msg in conversation_state["messages"]
-            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant"]
+            if isinstance(msg, dict) and msg.get("role") in ["user", "assistant", "system"]
         ]
 
         # Persist agent reflections/status updates for this turn as chat messages
@@ -985,6 +1049,23 @@ async def process_agent_turn(
 
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
+
+        # Store decision trace for this task (tool calls + citations)
+        try:
+            otel_trace_id = (
+                format(_root_span.get_span_context().trace_id, "032x")
+                if _root_span and _root_span.get_span_context().is_valid
+                else None
+            )
+        except Exception:
+            otel_trace_id = None
+
+        await task_manager.set_decision_trace(
+            task_id=task_id,
+            tool_envelopes=agent_response.get("tool_envelopes", []),
+            search_results=agent_response.get("search_results", []),
+            otel_trace_id=otel_trace_id,
+        )
 
         # Publish completion to stream for WebSocket updates
         await task_manager._publish_stream_update(
@@ -1123,13 +1204,14 @@ async def run_agent_with_progress(
 
         await progress_emitter.emit("Agent workflow completed", "agent_complete")
 
-        # agent_response is an AgentResponse with .response and .search_results
+        # agent_response is an AgentResponse with .response, .search_results, .tool_envelopes
         return {
             "response": agent_response.response,
             "search_results": agent_response.search_results,
+            "tool_envelopes": agent_response.tool_envelopes,
             "metadata": {
                 "iterations": 1,  # Since we're using process_query directly
-                "tool_calls": 0,  # Placeholder - could be enhanced to track tool calls
+                "tool_calls": len(agent_response.tool_envelopes),
                 "session_id": thread_id,
             },
         }
