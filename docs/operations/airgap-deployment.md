@@ -86,8 +86,12 @@ Bundle contents:
 - `docker-compose.airgap.yml`
 - `.env.example`
 - `config.yaml`
-- `artifacts/` (pre-built knowledge base, if source_documents exist)
 - `README.md` (quick start guide)
+
+!!! note "Knowledge Base Not Included"
+    The airgap image does **not** include pre-built knowledge base content. You must
+    provide Redis documentation by mounting a clone of https://github.com/redis/docs
+    at `/app/redis-docs`, then run the scrape and ingest commands after deployment.
 
 #### Build Options
 
@@ -184,23 +188,12 @@ podman-compose -f docker-compose.airgap.yml up -d
 
 The knowledge base requires two steps: **scrape** (collect documents) then **ingest** (index into Redis).
 
-**Option A: Using pre-built artifacts (recommended)**
-
-If your bundle includes pre-built artifacts in `/app/artifacts`:
-
-```bash
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
-  redis-sre-agent pipeline ingest --artifacts-path /app/artifacts
-```
-
-**Option B: Build from local Redis documentation**
-
-If you have Redis documentation mounted at `/app/docs`:
+Mount your clone of the Redis documentation at `/app/redis-docs`, then run scrape and ingest:
 
 ```bash
 # Step 1: Scrape the local docs into artifacts
 docker-compose -f docker-compose.airgap.yml exec sre-agent \
-  redis-sre-agent pipeline scrape --scrapers redis_docs_local --docs-path /app/docs
+  redis-sre-agent pipeline scrape --scrapers redis_docs_local
 
 # Step 2: Ingest the scraped artifacts into Redis
 docker-compose -f docker-compose.airgap.yml exec sre-agent \
@@ -213,6 +206,10 @@ docker-compose -f docker-compose.airgap.yml exec sre-agent \
 
     You must scrape before ingesting. The `--scrapers redis_docs_local` flag uses only the local
     docs scraper, which does not require an OpenAI API key.
+
+!!! tip "Custom Docs Path"
+    The default path is `/app/redis-docs`. To use a different path, add `--docs-path /your/path`
+    to the scrape command.
 
 ### 6. Verify Deployment
 
@@ -423,7 +420,7 @@ spec:
             - /bin/sh
             - -c
             - |
-              redis-sre-agent pipeline scrape --scrapers redis_docs_local --docs-path /app/docs
+              redis-sre-agent pipeline scrape --scrapers redis_docs_local
               redis-sre-agent pipeline ingest
           envFrom:
             - configMapRef:
@@ -431,12 +428,12 @@ spec:
             - secretRef:
                 name: sre-agent-secrets
           volumeMounts:
-            - name: docs
-              mountPath: /app/docs
+            - name: redis-docs
+              mountPath: /app/redis-docs
               readOnly: true
       restartPolicy: Never
       volumes:
-        - name: docs
+        - name: redis-docs
           persistentVolumeClaim:
             claimName: redis-docs-pvc
   backoffLimit: 2

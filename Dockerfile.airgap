@@ -137,8 +137,8 @@ COPY --from=builder --chown=app:app /app /app
 
 # Create required directories that may not exist in the repo
 # source_documents: for custom documents to ingest
-# docs: for local redis documentation (can be mounted or populated)
-RUN mkdir -p /app/source_documents /app/docs && chown -R app:app /app/source_documents /app/docs
+# redis-docs: for local redis documentation (mount your clone of https://github.com/redis/docs)
+RUN mkdir -p /app/source_documents /app/redis-docs && chown -R app:app /app/source_documents /app/redis-docs
 
 # Copy pre-downloaded HuggingFace models
 COPY --from=model-downloader /models /models
