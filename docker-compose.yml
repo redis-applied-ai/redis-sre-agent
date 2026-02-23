@@ -372,8 +372,9 @@ services:
       - sre-network
 
   # Tempo - Traces backend (OTLP receiver + query)
+  # Pinned to 2.6.1 - Tempo 2.10+ has breaking changes requiring Kafka/S3
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.6.1
     user: "0:0"  # run as root to create/write under mounted volume
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     ports:
@@ -419,8 +420,8 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.28.0.0/16
-          ip_range: 172.28.1.0/24
+        - subnet: 172.32.0.0/16
+          ip_range: 172.32.1.0/24
 
 
 volumes:

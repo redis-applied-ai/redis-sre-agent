@@ -411,3 +411,101 @@ def task_delete(task_id: str, yes: bool, as_json: bool):
             click.echo(f"\N{WHITE HEAVY CHECK MARK} Deleted task {task_id}")
 
     asyncio.run(_run())
+
+
+@task.command("trace")
+@click.argument("task_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def task_trace(task_id: str, as_json: bool):
+    """Show the decision trace (tool calls + citations) for a task.
+
+    This displays the agent's reasoning trace for a specific task, including:
+    - Tool calls made (name, arguments, status)
+    - Citations/sources referenced (title, source, score)
+    - OTel trace ID for correlation with Tempo
+    """
+
+    async def _trace():
+        import json as _json
+
+        from rich.console import Console
+        from rich.table import Table
+
+        from redis_sre_agent.core.redis import get_redis_client
+        from redis_sre_agent.core.tasks import TaskManager
+
+        console = Console()
+        client = get_redis_client()
+        task_manager = TaskManager(redis_client=client)
+
+        trace = await task_manager.get_decision_trace(task_id)
+
+        if not trace:
+            if as_json:
+                print(_json.dumps({"error": f"No decision trace found for task {task_id}"}))
+            else:
+                console.print(f"[yellow]No decision trace found for task {task_id}[/yellow]")
+            return
+
+        if as_json:
+            print(_json.dumps(trace, indent=2))
+            return
+
+        # Display summary
+        console.print(f"\n[bold]Decision Trace for Task:[/bold] {task_id}")
+        if trace.get("otel_trace_id"):
+            console.print(f"[dim]OTel Trace ID:[/dim] {trace['otel_trace_id']}")
+        if trace.get("created_at"):
+            console.print(f"[dim]Created:[/dim] {trace['created_at']}")
+        console.print()
+
+        # Display tool calls
+        tool_calls = trace.get("tool_calls", [])
+        if tool_calls:
+            tc_table = Table(title=f"Tool Calls ({len(tool_calls)})")
+            tc_table.add_column("#", no_wrap=True)
+            tc_table.add_column("Tool", no_wrap=True)
+            tc_table.add_column("Arguments", overflow="fold")
+            tc_table.add_column("Status", no_wrap=True)
+
+            for i, tc in enumerate(tool_calls, 1):
+                tool_name = tc.get("name") or tc.get("tool_key", "unknown")
+                args = tc.get("args", {})
+                args_str = _json.dumps(args) if args else "-"
+                if len(args_str) > 80:
+                    args_str = args_str[:77] + "..."
+                status = tc.get("status", "unknown")
+                status_style = "green" if status == "success" else "red"
+                tc_table.add_row(
+                    str(i), tool_name, args_str, f"[{status_style}]{status}[/{status_style}]"
+                )
+
+            console.print(tc_table)
+        else:
+            console.print("[dim]No tool calls recorded[/dim]")
+
+        console.print()
+
+        # Display citations
+        citations = trace.get("citations", [])
+        if citations:
+            ct_table = Table(title=f"Citations ({len(citations)})")
+            ct_table.add_column("#", no_wrap=True)
+            ct_table.add_column("Title", overflow="fold")
+            ct_table.add_column("Source", no_wrap=True)
+            ct_table.add_column("Score", no_wrap=True)
+
+            for i, ct in enumerate(citations, 1):
+                title = ct.get("title") or ct.get("document_id") or "Untitled"
+                if len(title) > 50:
+                    title = title[:47] + "..."
+                source = ct.get("source") or "-"
+                score = ct.get("score")
+                score_str = f"{score:.3f}" if score is not None else "-"
+                ct_table.add_row(str(i), title, source, score_str)
+
+            console.print(ct_table)
+        else:
+            console.print("[dim]No citations recorded[/dim]")
+
+    asyncio.run(_trace())

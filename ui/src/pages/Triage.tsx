@@ -84,8 +84,27 @@ const Triage = () => {
   const [isThreadBusy, setIsThreadBusy] = useState(false);
 
   const [liveModeLocked, setLiveModeLocked] = useState(false);
+  const [expandedCitations, setExpandedCitations] = useState<Set<string>>(
+    new Set(),
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const toggleCitation = (msgId: string) => {
+    setExpandedCitations((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) {
+        next.delete(msgId);
+      } else {
+        next.add(msgId);
+      }
+      return next;
+    });
+  };
+
+  const isCitationMessage = (content: string) => {
+    return content.startsWith("**Sources for previous response**");
+  };
   const pollingIntervalRef = useRef<number | null>(null);
 
   const userId = "sre-user-1"; // In a real app, this would come from auth
@@ -980,76 +999,142 @@ const Triage = () => {
                             key={msg.id}
                             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                           >
-                            <div
-                              className={`max-w-[80%] rounded-redis-md px-3 py-2 whitespace-pre-wrap break-words ${
-                                msg.role === "user"
-                                  ? "bg-redis-blue-03 text-white text-redis-sm"
-                                  : msg.role === "assistant"
-                                    ? "bg-redis-dusk-09 text-foreground"
-                                    : msg.role === "tool"
-                                      ? "bg-amber-50 text-amber-900 border border-amber-200 text-redis-sm"
-                                      : "bg-redis-dusk-09 text-redis-dusk-03 text-redis-sm"
-                              }`}
-                              title={new Date(msg.timestamp).toLocaleString()}
-                            >
-                              {msg.role === "assistant" ? (
-                                <div className="markdown-content text-redis-sm leading-[1.35]">
-                                  <ReactMarkdown
-                                    components={{
-                                      // Use CSS to control spacing; avoid Tailwind margin/space-y utilities here
-                                      h1: ({ children }) => <h1>{children}</h1>,
-                                      h2: ({ children }) => <h2>{children}</h2>,
-                                      h3: ({ children }) => <h3>{children}</h3>,
-                                      p: ({ children }) => <p>{children}</p>,
-                                      ul: ({ children }) => <ul>{children}</ul>,
-                                      ol: ({ children }) => <ol>{children}</ol>,
-                                      li: ({ children }) => <li>{children}</li>,
-                                      code: ({ children, ...props }) => {
-                                        const isInline =
-                                          !props.className?.includes(
-                                            "language-",
-                                          );
-                                        return isInline ? (
-                                          <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">
-                                            {children}
-                                          </code>
-                                        ) : (
-                                          <code className="block bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap">
-                                            {children}
-                                          </code>
-                                        );
-                                      },
-                                      pre: ({ children }) => (
-                                        <pre className="bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap overflow-x-auto">
-                                          {children}
-                                        </pre>
-                                      ),
-                                      strong: ({ children }) => (
-                                        <strong className="font-semibold text-foreground">
-                                          {children}
-                                        </strong>
-                                      ),
-                                      blockquote: ({ children }) => (
-                                        <blockquote className="border-l-4 border-gray-300 pl-3 italic text-redis-sm">
-                                          {children}
-                                        </blockquote>
-                                      ),
-                                    }}
+                            {msg.role === "system" &&
+                            isCitationMessage(msg.content) ? (
+                              // Citation accordion
+                              <div
+                                className="max-w-[80%] rounded-redis-md bg-redis-dusk-09 border border-redis-dusk-07 text-redis-sm"
+                                title={new Date(msg.timestamp).toLocaleString()}
+                              >
+                                <button
+                                  onClick={() => toggleCitation(msg.id)}
+                                  className="w-full px-3 py-2 flex items-center justify-between text-left text-redis-dusk-03 hover:text-redis-dusk-02 transition-colors"
+                                >
+                                  <span className="font-semibold">
+                                    📚 Sources for previous response
+                                  </span>
+                                  <span
+                                    className={`transform transition-transform ${expandedCitations.has(msg.id) ? "rotate-180" : ""}`}
                                   >
+                                    ▼
+                                  </span>
+                                </button>
+                                {expandedCitations.has(msg.id) && (
+                                  <div className="px-3 pb-2 text-redis-dusk-04 border-t border-redis-dusk-07">
+                                    <div className="markdown-content pt-2">
+                                      <ReactMarkdown
+                                        components={{
+                                          p: ({ children }) => (
+                                            <p className="mb-1">{children}</p>
+                                          ),
+                                          ul: ({ children }) => (
+                                            <ul className="list-disc pl-4 space-y-1">
+                                              {children}
+                                            </ul>
+                                          ),
+                                          li: ({ children }) => (
+                                            <li>{children}</li>
+                                          ),
+                                          strong: ({ children }) => (
+                                            <strong className="font-semibold">
+                                              {children}
+                                            </strong>
+                                          ),
+                                        }}
+                                      >
+                                        {msg.content.replace(
+                                          /^\*\*Sources for previous response\*\*\n?/,
+                                          "",
+                                        )}
+                                      </ReactMarkdown>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div
+                                className={`max-w-[80%] rounded-redis-md px-3 py-2 whitespace-pre-wrap break-words ${
+                                  msg.role === "user"
+                                    ? "bg-redis-blue-03 text-white text-redis-sm"
+                                    : msg.role === "assistant"
+                                      ? "bg-redis-dusk-09 text-foreground"
+                                      : msg.role === "tool"
+                                        ? "bg-amber-50 text-amber-900 border border-amber-200 text-redis-sm"
+                                        : "bg-redis-dusk-09 text-redis-dusk-03 text-redis-sm"
+                                }`}
+                                title={new Date(msg.timestamp).toLocaleString()}
+                              >
+                                {msg.role === "assistant" ? (
+                                  <div className="markdown-content text-redis-sm leading-[1.35]">
+                                    <ReactMarkdown
+                                      components={{
+                                        // Use CSS to control spacing; avoid Tailwind margin/space-y utilities here
+                                        h1: ({ children }) => (
+                                          <h1>{children}</h1>
+                                        ),
+                                        h2: ({ children }) => (
+                                          <h2>{children}</h2>
+                                        ),
+                                        h3: ({ children }) => (
+                                          <h3>{children}</h3>
+                                        ),
+                                        p: ({ children }) => <p>{children}</p>,
+                                        ul: ({ children }) => (
+                                          <ul>{children}</ul>
+                                        ),
+                                        ol: ({ children }) => (
+                                          <ol>{children}</ol>
+                                        ),
+                                        li: ({ children }) => (
+                                          <li>{children}</li>
+                                        ),
+                                        code: ({ children, ...props }) => {
+                                          const isInline =
+                                            !props.className?.includes(
+                                              "language-",
+                                            );
+                                          return isInline ? (
+                                            <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">
+                                              {children}
+                                            </code>
+                                          ) : (
+                                            <code className="block bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap">
+                                              {children}
+                                            </code>
+                                          );
+                                        },
+                                        pre: ({ children }) => (
+                                          <pre className="bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap overflow-x-auto">
+                                            {children}
+                                          </pre>
+                                        ),
+                                        strong: ({ children }) => (
+                                          <strong className="font-semibold text-foreground">
+                                            {children}
+                                          </strong>
+                                        ),
+                                        blockquote: ({ children }) => (
+                                          <blockquote className="border-l-4 border-gray-300 pl-3 italic text-redis-sm">
+                                            {children}
+                                          </blockquote>
+                                        ),
+                                      }}
+                                    >
+                                      {msg.content}
+                                    </ReactMarkdown>
+                                  </div>
+                                ) : (
+                                  <div className="text-redis-sm">
                                     {msg.content}
-                                  </ReactMarkdown>
-                                </div>
-                              ) : (
-                                <div className="text-redis-sm">
-                                  {msg.content}
-                                </div>
-                              )}
-                              {msg.toolCall && (
-                                <div className="mt-2 text-redis-xs opacity-80">
-                                  Tool: {msg.toolCall.name}
-                                </div>
-                              )}
-                            </div>
+                                  </div>
+                                )}
+                                {msg.toolCall && (
+                                  <div className="mt-2 text-redis-xs opacity-80">
+                                    Tool: {msg.toolCall.name}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ))
                       )}

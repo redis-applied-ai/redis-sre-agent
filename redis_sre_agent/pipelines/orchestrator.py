@@ -19,11 +19,22 @@ logger = logging.getLogger(__name__)
 class PipelineOrchestrator:
     """Orchestrates the complete data pipeline from scraping to ingestion."""
 
+    # Registry of available scraper classes (instantiated lazily)
+    SCRAPER_CLASSES = {
+        "redis_docs": RedisDocsScraper,
+        "redis_docs_local": RedisDocsLocalScraper,
+        "redis_runbooks": RedisRunbookScraper,
+        "redis_kb": RedisKBScraper,
+        "redis_cloud_api": RedisCloudAPIScraper,
+        "runbook_generator": RunbookGenerator,
+    }
+
     def __init__(
         self,
         artifacts_path: str = "./artifacts",
         config: Optional[Dict[str, Any]] = None,
         knowledge_settings=None,
+        scrapers: Optional[List[str]] = None,
     ):
         self.artifacts_path = Path(artifacts_path)
         self.config = config or {}
@@ -32,23 +43,16 @@ class PipelineOrchestrator:
         # Initialize storage
         self.storage = ArtifactStorage(self.artifacts_path)
 
-        # Initialize scrapers
-        self.scrapers = {
-            "redis_docs": RedisDocsScraper(self.storage, self.config.get("redis_docs", {})),
-            "redis_docs_local": RedisDocsLocalScraper(
-                self.storage, self.config.get("redis_docs_local", {})
-            ),
-            "redis_runbooks": RedisRunbookScraper(
-                self.storage, self.config.get("redis_runbooks", {})
-            ),
-            "redis_kb": RedisKBScraper(self.storage, self.config.get("redis_kb", {})),
-            "redis_cloud_api": RedisCloudAPIScraper(
-                self.storage, self.config.get("redis_cloud_api", {})
-            ),
-            "runbook_generator": RunbookGenerator(
-                self.storage, self.config.get("runbook_generator", {})
-            ),
-        }
+        # Only instantiate scrapers that are requested (or all if none specified)
+        # This avoids requiring OPENAI_API_KEY when not using runbook_generator
+        scrapers_to_init = scrapers if scrapers else list(self.SCRAPER_CLASSES.keys())
+        self.scrapers = {}
+        for scraper_name in scrapers_to_init:
+            if scraper_name in self.SCRAPER_CLASSES:
+                scraper_class = self.SCRAPER_CLASSES[scraper_name]
+                self.scrapers[scraper_name] = scraper_class(
+                    self.storage, self.config.get(scraper_name, {})
+                )
 
         # Initialize ingestion pipeline with knowledge settings
         self.ingestion = IngestionPipeline(

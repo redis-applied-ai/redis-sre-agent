@@ -270,6 +270,172 @@ class TestProcessAgentTurn:
             # Verify error handling - now uses task_manager.set_task_error
             mock_task_manager.set_task_error.assert_called()
 
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_appends_citation_message_when_search_results_exist(self):
+        """Test that citation system message is appended when search_results exist."""
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_manager_class,
+            patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
+            patch("redis_sre_agent.core.docket_tasks.run_agent_with_progress") as mock_run_agent,
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
+            ) as mock_get_knowledge_agent,
+            patch("redis_sre_agent.core.docket_tasks.route_to_appropriate_agent") as mock_route,
+            patch("redis_sre_agent.core.docket_tasks.QAManager") as mock_qa_manager_class,
+        ):
+            # Mock Redis client
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
+            # Mock thread manager
+            mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
+            mock_manager.get_thread.return_value = Thread(
+                thread_id="test_thread",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+            mock_manager._save_thread_state.return_value = True
+
+            # Mock QAManager
+            mock_qa = AsyncMock()
+            mock_qa_manager_class.return_value = mock_qa
+
+            # Mock routing to use Redis-focused agent (not knowledge-only)
+            from redis_sre_agent.agent.router import AgentType
+
+            # Make the mock async
+            async def mock_route_func(*args, **kwargs):
+                return AgentType.REDIS_FOCUSED
+
+            mock_route.side_effect = mock_route_func
+
+            # Mock agent
+            mock_agent = AsyncMock()
+            mock_get_agent.return_value = mock_agent
+
+            # Mock knowledge agent (in case routing changes)
+            mock_knowledge_agent = AsyncMock()
+            mock_knowledge_agent.process_query.return_value = "Test response with sources"
+            mock_get_knowledge_agent.return_value = mock_knowledge_agent
+
+            # Mock agent response WITH search_results
+            mock_run_agent.return_value = {
+                "response": "Test response with sources",
+                "search_results": [
+                    {
+                        "title": "Redis Memory Guide",
+                        "source": "redis.io/docs/memory",
+                        "document_hash": "abc123def456",
+                        "score": 0.95,
+                    }
+                ],
+                "metadata": {"iterations": 1},
+            }
+
+            # Create a real Thread object to track what gets saved
+            test_thread = Thread(
+                thread_id="test_thread",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+            mock_manager.get_thread.return_value = test_thread
+
+            # Execute the task
+            await process_agent_turn(thread_id="test_thread", message="Test message")
+
+            # Verify that _save_thread_state was called
+            mock_manager._save_thread_state.assert_called()
+
+            # Check the messages on the thread object - should have user, assistant, and system
+            roles = [msg.role for msg in test_thread.messages]
+            assert "user" in roles
+            assert "assistant" in roles
+            assert "system" in roles
+
+            # Find the system message and verify it contains citation info
+            system_msg = next(msg for msg in test_thread.messages if msg.role == "system")
+            assert "Sources for previous response" in system_msg.content
+            assert "Redis Memory Guide" in system_msg.content
+            assert "abc123def456" in system_msg.content
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_no_citation_message_when_no_search_results(self):
+        """Test that no citation message is appended when search_results is empty."""
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_manager_class,
+            patch("redis_sre_agent.agent.get_sre_agent") as mock_get_agent,
+            patch("redis_sre_agent.core.docket_tasks.run_agent_with_progress") as mock_run_agent,
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.get_knowledge_agent"
+            ) as mock_get_knowledge_agent,
+            patch("redis_sre_agent.core.docket_tasks.route_to_appropriate_agent") as mock_route,
+        ):
+            # Mock Redis client
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
+            # Mock thread manager
+            mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
+            mock_manager.get_thread.return_value = Thread(
+                thread_id="test_thread",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+            mock_manager._save_thread_state.return_value = True
+
+            # Mock routing to use Redis-focused agent (not knowledge-only)
+            from redis_sre_agent.agent.router import AgentType
+
+            # Make the mock async
+            async def mock_route_func(*args, **kwargs):
+                return AgentType.REDIS_FOCUSED
+
+            mock_route.side_effect = mock_route_func
+
+            # Mock agent
+            mock_agent = AsyncMock()
+            mock_get_agent.return_value = mock_agent
+
+            # Mock knowledge agent (in case routing changes)
+            mock_knowledge_agent = AsyncMock()
+            mock_knowledge_agent.process_query.return_value = "Test response without sources"
+            mock_get_knowledge_agent.return_value = mock_knowledge_agent
+
+            # Mock agent response WITHOUT search_results
+            mock_run_agent.return_value = {
+                "response": "Test response without sources",
+                "search_results": [],
+                "metadata": {"iterations": 1},
+            }
+
+            # Create a real Thread object to track what gets saved
+            test_thread = Thread(
+                thread_id="test_thread",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+            mock_manager.get_thread.return_value = test_thread
+
+            # Execute the task
+            await process_agent_turn(thread_id="test_thread", message="Test message")
+
+            # Verify that _save_thread_state was called
+            mock_manager._save_thread_state.assert_called()
+
+            # Check the messages on the thread object - should have user and assistant, but NO system
+            roles = [msg.role for msg in test_thread.messages]
+            assert "user" in roles
+            assert "assistant" in roles
+            assert "system" not in roles
+
 
 class TestThreadStateModels:
     """Test thread state model functionality."""

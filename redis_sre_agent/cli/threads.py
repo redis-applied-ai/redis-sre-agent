@@ -161,13 +161,21 @@ def thread_get(thread_id: str, as_json: bool):
             mt = Table(title="Messages (Conversation)")
             mt.add_column("#", no_wrap=True)
             mt.add_column("Role", no_wrap=True)
+            mt.add_column("Task ID", no_wrap=True)
             mt.add_column("Content")
             for i, m in enumerate(state.messages, 1):
                 # Truncate long messages for display
                 content = m.content
                 if len(content) > 200:
                     content = content[:197] + "..."
-                mt.add_row(str(i), m.role, content)
+                # Extract task_id from metadata for assistant messages
+                task_id_val = "-"
+                if m.role == "assistant" and m.metadata:
+                    tid = m.metadata.get("task_id")
+                    if tid:
+                        # Show truncated task_id for display (first 12 chars)
+                        task_id_val = tid[:12] + "..." if len(tid) > 12 else tid
+                mt.add_row(str(i), m.role, task_id_val, content)
             console.print(mt)
 
     asyncio.run(_get())

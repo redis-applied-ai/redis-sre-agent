@@ -104,6 +104,8 @@ class ChatAgentState(TypedDict):
     max_iterations: int
     # Accumulated tool result envelopes for context management
     signals_envelopes: List[Dict[str, Any]]
+    # Knowledge search results extracted BEFORE envelope summarization (for citations)
+    knowledge_search_results: List[Dict[str, Any]]
 
 
 class ChatAgent:
@@ -226,31 +228,6 @@ class ChatAgent:
             },
         }
 
-    def _extract_knowledge_search_results(
-        self, envelopes: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Extract knowledge base search results from tool envelopes.
-
-        Looks for envelopes from knowledge.kb.search or similar tools and
-        extracts the search results for citation tracking.
-
-        Args:
-            envelopes: List of ResultEnvelope dicts from tool executions
-
-        Returns:
-            List of search result dicts suitable for QAManager.record_qa_from_search
-        """
-        all_results = []
-        for env in envelopes:
-            tool_key = env.get("tool_key", "")
-            # Match knowledge base search tools
-            if "knowledge" in tool_key.lower() and "search" in env.get("name", "").lower():
-                data = env.get("data", {})
-                results = data.get("results", [])
-                if results:
-                    all_results.extend(results)
-        return all_results
-
     def _build_workflow(
         self,
         tool_mgr: ToolManager,
@@ -311,6 +288,7 @@ class ChatAgent:
             """Execute tool calls from the agent."""
             messages = state["messages"]
             envelopes = list(state.get("signals_envelopes") or [])
+            knowledge_results = list(state.get("knowledge_search_results") or [])
 
             # Get pending tool calls from the last AI message
             last_msg = messages[-1] if messages else None
@@ -360,6 +338,16 @@ class ChatAgent:
                     env_dict = build_result_envelope(
                         tool_name or f"tool_{idx + 1}", tool_args, tm, tooldefs_by_name
                     )
+
+                    # Extract knowledge search results BEFORE summarization (for citations)
+                    tool_key = env_dict.get("tool_key", "")
+                    env_name = env_dict.get("name", "")
+                    if "knowledge" in tool_key.lower() and "search" in env_name.lower():
+                        data = env_dict.get("data", {})
+                        results = data.get("results", [])
+                        if results:
+                            knowledge_results.extend(results)
+
                     # Summarize if large
                     env_dict = self._summarize_envelope_sync(env_dict)
                     envelopes.append(env_dict)
@@ -368,6 +356,7 @@ class ChatAgent:
                 "messages": list(messages) + new_tool_messages,
                 "current_tool_calls": [],
                 "signals_envelopes": envelopes,
+                "knowledge_search_results": knowledge_results,
             }
 
         def should_continue(state: ChatAgentState) -> str:
@@ -490,6 +479,7 @@ User Query: {query}"""
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
                 "signals_envelopes": [],  # Track tool outputs for expand_evidence
+                "knowledge_search_results": [],  # Track knowledge search results for citations
             }
 
             thread_config = {"configurable": {"thread_id": session_id}}
@@ -499,30 +489,37 @@ User Query: {query}"""
 
                 final_state = await app.ainvoke(initial_state, config=thread_config)
 
-                # Extract knowledge search results from envelopes for citation tracking
-                search_results = self._extract_knowledge_search_results(
-                    final_state.get("signals_envelopes", [])
-                )
+                # Use knowledge_search_results directly (extracted before envelope summarization)
+                search_results = final_state.get("knowledge_search_results", [])
+                # Get tool envelopes for decision tracing
+                tool_envelopes = final_state.get("signals_envelopes", [])
 
                 messages = final_state.get("messages", [])
                 if messages:
                     last_message = messages[-1]
                     if isinstance(last_message, AIMessage):
                         return AgentResponse(
-                            response=last_message.content, search_results=search_results
+                            response=last_message.content,
+                            search_results=search_results,
+                            tool_envelopes=tool_envelopes,
                         )
                     return AgentResponse(
-                        response=str(last_message.content), search_results=search_results
+                        response=str(last_message.content),
+                        search_results=search_results,
+                        tool_envelopes=tool_envelopes,
                     )
 
                 return AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                     search_results=[],
+                    tool_envelopes=[],
                 )
 
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")
-                return AgentResponse(response=f"Error processing query: {e}", search_results=[])
+                return AgentResponse(
+                    response=f"Error processing query: {e}", search_results=[], tool_envelopes=[]
+                )
 
 
 # Singleton cache keyed by instance name

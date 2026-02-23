@@ -41,6 +41,7 @@ Generated from the Click command tree.
 - task get — Get a task by TASK_ID and show details.
 - task list — List recent tasks and their statuses.
 - task purge — Delete tasks in bulk with safeguards.
+- task trace — Show the decision trace (tool calls + citations) for a task.
 - knowledge — Knowledge base management commands.
 - knowledge fragments — Fetch all fragments for a document by document hash.
 - knowledge related — Fetch related fragments around a chunk index for a document.

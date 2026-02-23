@@ -23,6 +23,7 @@ class TestRedisInfrastructure:
         """Test SRE knowledge schema definition."""
         schema = SRE_KNOWLEDGE_SCHEMA
 
+        from redis_sre_agent.core.config import settings
         from redis_sre_agent.core.keys import RedisKeys
 
         assert schema["index"]["name"] == "sre_knowledge"
@@ -45,7 +46,8 @@ class TestRedisInfrastructure:
         # Check vector field configuration
         vector_field = next(f for f in schema["fields"] if f["name"] == "vector")
         assert vector_field["type"] == "vector"
-        assert vector_field["attrs"]["dims"] == 1536
+        # Use settings.vector_dim since schema is defined at import time with that value
+        assert vector_field["attrs"]["dims"] == settings.vector_dim
         assert vector_field["attrs"]["distance_metric"] == "cosine"
 
     @patch("redis_sre_agent.core.redis.Redis")
@@ -66,27 +68,38 @@ class TestRedisInfrastructure:
         assert mock_redis.from_url.call_count == 2
 
     @patch("redis_sre_agent.core.redis.EmbeddingsCache")
+    @patch("redis_sre_agent.core.redis.HFTextVectorizer")
     @patch("redis_sre_agent.core.redis.OpenAITextVectorizer")
-    def test_get_vectorizer(self, mock_vectorizer, mock_cache):
+    def test_get_vectorizer(self, mock_openai_vectorizer, mock_hf_vectorizer, mock_cache):
         """Test vectorizer creation (no caching - creates fresh each time)."""
+        from redis_sre_agent.core.config import settings
+
         mock_cache_instance = Mock()
         mock_cache.return_value = mock_cache_instance
 
         mock_vectorizer_instance = Mock()
-        mock_vectorizer.return_value = mock_vectorizer_instance
+        # Set return value for whichever vectorizer is used based on settings
+        mock_openai_vectorizer.return_value = mock_vectorizer_instance
+        mock_hf_vectorizer.return_value = mock_vectorizer_instance
+
+        # Determine which mock to check based on settings
+        if settings.embedding_provider.lower() == "local":
+            expected_vectorizer_mock = mock_hf_vectorizer
+        else:
+            expected_vectorizer_mock = mock_openai_vectorizer
 
         # First call creates vectorizer
         vectorizer1 = get_vectorizer()
         assert vectorizer1 == mock_vectorizer_instance
         mock_cache.assert_called_once()
-        mock_vectorizer.assert_called_once()
+        expected_vectorizer_mock.assert_called_once()
 
         # Second call creates NEW instance (no caching to avoid event loop issues)
         vectorizer2 = get_vectorizer()
         assert vectorizer2 == mock_vectorizer_instance
         # Should be called TWICE (no caching)
         assert mock_cache.call_count == 2
-        assert mock_vectorizer.call_count == 2
+        assert expected_vectorizer_mock.call_count == 2
 
     @pytest.mark.asyncio
     async def test_get_knowledge_index(self):
