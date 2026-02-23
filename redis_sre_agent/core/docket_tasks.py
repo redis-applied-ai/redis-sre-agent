@@ -281,7 +281,9 @@ async def process_chat_turn(
             current_span = otel_trace.get_current_span()
             span_context = current_span.get_span_context() if current_span else None
             otel_trace_id = (
-                format(span_context.trace_id, "032x") if span_context and span_context.is_valid else None
+                format(span_context.trace_id, "032x")
+                if span_context and span_context.is_valid
+                else None
             )
         except Exception:
             otel_trace_id = None
@@ -378,7 +380,9 @@ async def process_knowledge_query(
             current_span = otel_trace.get_current_span()
             span_context = current_span.get_span_context() if current_span else None
             otel_trace_id = (
-                format(span_context.trace_id, "032x") if span_context and span_context.is_valid else None
+                format(span_context.trace_id, "032x")
+                if span_context and span_context.is_valid
+                else None
             )
         except Exception:
             otel_trace_id = None

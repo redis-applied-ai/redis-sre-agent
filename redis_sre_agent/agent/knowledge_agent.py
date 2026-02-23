@@ -534,9 +534,7 @@ class KnowledgeOnlyAgent:
 
                 await emitter.emit(f"Knowledge agent encountered an error: {str(e)}", "agent_error")
 
-                return AgentResponse(
-                    response=error_response, search_results=[], tool_envelopes=[]
-                )
+                return AgentResponse(response=error_response, search_results=[], tool_envelopes=[])
 
 
 # Singleton instance for reuse

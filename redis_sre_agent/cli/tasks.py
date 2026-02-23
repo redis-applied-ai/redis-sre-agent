@@ -476,7 +476,9 @@ def task_trace(task_id: str, as_json: bool):
                     args_str = args_str[:77] + "..."
                 status = tc.get("status", "unknown")
                 status_style = "green" if status == "success" else "red"
-                tc_table.add_row(str(i), tool_name, args_str, f"[{status_style}]{status}[/{status_style}]")
+                tc_table.add_row(
+                    str(i), tool_name, args_str, f"[{status_style}]{status}[/{status_style}]"
+                )
 
             console.print(tc_table)
         else:
