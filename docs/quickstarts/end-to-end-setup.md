@@ -22,30 +22,23 @@ Update the `.env` file to include your OpenAI key:
 OPENAI_API_KEY=your_key
 ```
 
-Generate a master key:
+Generate master keys for the SRE agent and LiteLLM proxy:
 
 ```bash
-python -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
+python -c 'import os, base64; print("REDIS_SRE_MASTER_KEY=" + base64.b64encode(os.urandom(32)).decode())'
+python -c 'import os, base64; print("LITELLM_MASTER_KEY=" + base64.b64encode(os.urandom(32)).decode())'
 ```
 
-Update the `.env` file to include the master key:
-
-```bash
-REDIS_SRE_MASTER_KEY=your_key
-```
+Copy the output and add both lines to your `.env` file.
 
 **Note:** The example environment file sets default models. If you are using newer models, confirm that they are available in the LiteLLM config at `/monitoring/litellm/config.yaml`.
 
 ## Docker Compose
 
-Start the following services using Docker Compose:
+Start the services using Docker Compose:
 
 ```bash
-docker compose up -d \
-  redis redis-demo \
-  sre-agent sre-worker \
-  prometheus grafana \
-  loki promtail
+docker compose up -d
 ```
 
 Here's what each service does:
@@ -54,10 +47,13 @@ Here's what each service does:
 - **redis-demo**: The Redis instance that the sre-agent will monitor
 - **sre-agent**: The SRE agent API
 - **sre-worker**: The SRE agent worker
+- **sre-ui**: The web UI for interacting with the agent
+- **litellm**: LLM proxy for OpenAI API calls
 - **prometheus**: Prometheus instance for metrics
 - **grafana**: Grafana instance for dashboards
 - **loki**: Loki instance for log aggregation
 - **promtail**: Promtail instance for log collection
+- **tempo**: Distributed tracing backend
 
 **Note:** There are **two** Redis instances. One is used by the application itself, and the other is the Redis instance that the sre-agent will monitor.
 
@@ -105,13 +101,9 @@ Check the index to verify that documents were loaded:
 
 ![data](./resources/data-proc.png)
 
-### Run the SRE UI
+### SRE UI
 
-```bash
-docker compose up -d sre-ui
-```
-
-The UI should be available at http://localhost:3002 and look something like this:
+The UI is started automatically with `docker compose up -d` and should be available at http://localhost:3002:
 
 ![ui](./resources/ui.png)
 

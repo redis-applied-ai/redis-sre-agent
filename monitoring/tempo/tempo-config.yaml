@@ -34,9 +34,8 @@ ingester:
   max_block_bytes: 1048576
   max_block_duration: 5m
 
-compactor:
-  compaction:
-    compacted_block_retention: 1h
+# compactor: removed - not supported in current grafana/tempo:latest config (field compactor not found in type app.Config).
+# Compaction uses defaults; override per-tenant via overrides.defaults.compaction if needed.
 
 storage:
   trace:
