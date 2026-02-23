@@ -27,8 +27,8 @@ class TestRunbookGenerator:
         config = {
             "runbook_urls": [
                 "https://gitlab.com/test-runbook.md",
-                "https://shoreline.io/test-runbook",
-                "https://redis.io/docs/test-guide",
+                "https://github.com/test/repo",
+                "https://example.com/test-guide",
             ],
             "openai_model": "gpt-4o",
             "timeout": 30,
@@ -37,17 +37,14 @@ class TestRunbookGenerator:
         return RunbookGenerator(storage, config)
 
     def test_init_with_default_urls(self, storage):
-        """Test initialization includes Redis documentation URLs."""
+        """Test initialization includes GitLab runbook URL."""
         generator = RunbookGenerator(storage)
 
-        expected_urls = [
-            "https://redis.io/docs/latest/operate/oss_and_stack/management/replication/",
-            "https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/latency/",
-            "https://redis.io/docs/latest/operate/oss_and_stack/management/debugging/",
-        ]
+        expected_url = "https://gitlab.com/gitlab-com/runbooks/-/blob/e7f620058ff9f81bec864aa6aebf3a6320c4f6a0/docs/redis/redis-survival-guide-for-sres.md"
 
-        for url in expected_urls:
-            assert url in generator.config["runbook_urls"]
+        assert expected_url in generator.config["runbook_urls"]
+        # Should have exactly 1 default URL now
+        assert len(generator.config["runbook_urls"]) == 1
 
     def test_get_source_name(self, generator):
         """Test source name identification."""
@@ -57,8 +54,6 @@ class TestRunbookGenerator:
         """Test URL source type detection."""
         test_cases = [
             ("https://gitlab.com/runbook", "gitlab_runbook"),
-            ("https://shoreline.io/runbooks/redis", "shoreline_runbook"),
-            ("https://redis.io/docs/debugging", "redis_official_docs"),
             ("https://github.com/redis/redis", "github_repository"),
             ("https://example.com/docs", "external_website"),
         ]
@@ -155,76 +150,6 @@ CONFIG GET maxmemory-policy</code></pre>
         assert "Memory Management" in content
         assert "INFO memory" in content
 
-    @pytest.mark.asyncio
-    async def test_extract_redis_docs_content(self, generator):
-        """Test Redis.io documentation extraction."""
-        redis_html = """
-        <html>
-        <body>
-        <article class="content">
-            <h1>Redis Debugging</h1>
-            <p>A comprehensive guide to debugging Redis server processes in production environments. This documentation covers systematic approaches to identifying and resolving Redis performance issues, memory leaks, and connectivity problems.</p>
-            <h2>Common Issues</h2>
-            <p>Redis administrators frequently encounter several categories of problems that require systematic debugging approaches.</p>
-            <ul>
-                <li>Memory leaks causing gradual performance degradation</li>
-                <li>Performance problems affecting application response times</li>
-                <li>Connection issues preventing client access</li>
-                <li>Configuration problems causing unexpected behavior</li>
-            </ul>
-            <h3>Diagnostic Commands</h3>
-            <p>The following commands provide essential diagnostic information:</p>
-            <pre>redis-cli INFO
-redis-cli MEMORY USAGE keyname
-redis-cli CONFIG GET "*"</pre>
-            <div class="note">
-                <p>Important: Always backup your Redis instance before performing debugging operations that might affect data integrity</p>
-            </div>
-        </article>
-        </body>
-        </html>
-        """
-
-        content = await generator._extract_redis_docs_content(redis_html)
-
-        assert content is not None
-        assert "# Redis Debugging" in content
-        assert "## Common Issues" in content
-        assert "- Memory leaks" in content
-        assert "- Performance problems" in content
-        assert "redis-cli INFO" in content
-        assert "Important: Always backup" in content
-
-    @pytest.mark.asyncio
-    async def test_extract_shoreline_content(self, generator):
-        """Test Shoreline runbook extraction."""
-        shoreline_html = """
-        <html>
-        <body>
-        <div class="main-content">
-            <h1>Redis Connection Issues</h1>
-            <div class="content">
-                <h2>Problem Description</h2>
-                <p>Redis connections are being rejected</p>
-                <h2>Solution Steps</h2>
-                <ol>
-                    <li>Check connection limits</li>
-                    <li>Monitor client connections</li>
-                </ol>
-                <pre>redis-cli CONFIG GET maxclients</pre>
-            </div>
-        </div>
-        </body>
-        </html>
-        """
-
-        content = await generator._extract_shoreline_content(shoreline_html)
-
-        assert content is not None
-        assert "Redis Connection Issues" in content
-        assert "Problem Description" in content
-        assert "Check connection limits" in content
-        assert "redis-cli CONFIG GET maxclients" in content
 
     @pytest.mark.asyncio
     @patch("aiohttp.ClientSession.get")
@@ -365,11 +290,12 @@ Contact team lead for persistent memory issues
         with patch.object(generator, "_scrape_url_content") as mock_scrape:
             mock_scrape.return_value = "Test content from URL"
 
-            result = await generator.test_url_extraction("https://redis.io/docs/test")
+            # Use GitLab URL since redis.io is now treated as external_website
+            result = await generator.test_url_extraction("https://gitlab.com/test-runbook")
 
             assert result["success"] is True
             assert result["content_length"] == len("Test content from URL")
-            assert result["source_type"] == "redis_official_docs"
+            assert result["source_type"] == "gitlab_runbook"
             assert "Test content" in result["content_preview"]
 
     @pytest.mark.asyncio
