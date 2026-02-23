@@ -150,7 +150,6 @@ CONFIG GET maxmemory-policy</code></pre>
         assert "Memory Management" in content
         assert "INFO memory" in content
 
-
     @pytest.mark.asyncio
     @patch("aiohttp.ClientSession.get")
     async def test_scrape_url_content_success(self, mock_get, generator):
