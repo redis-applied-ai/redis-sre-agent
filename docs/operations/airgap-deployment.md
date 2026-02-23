@@ -82,16 +82,16 @@ The build script:
 
 Bundle contents:
 
-- `redis-sre-agent-airgap.tar.gz` (Docker image ~4GB with models)
+- `redis-sre-agent-airgap.tar.gz` (Docker image ~4GB with models and KB artifacts)
 - `docker-compose.airgap.yml`
 - `.env.example`
 - `config.yaml`
 - `README.md` (quick start guide)
 
-!!! note "Knowledge Base Not Included"
-    The airgap image does **not** include pre-built knowledge base content. You must
-    provide Redis documentation by mounting a clone of https://github.com/redis/docs
-    at `/app/redis-docs`, then run the scrape and ingest commands after deployment.
+!!! note "Pre-built Knowledge Base"
+    The airgap image includes pre-scraped Redis documentation and SRE runbooks in
+    `/app/artifacts`. You only need to run the **ingest** command after deployment
+    to index them into Redis.
 
 #### Build Options
 
@@ -186,30 +186,27 @@ podman-compose -f docker-compose.airgap.yml up -d
 
 ### 5. Initialize Knowledge Base
 
-The knowledge base requires two steps: **scrape** (collect documents) then **ingest** (index into Redis).
-
-Mount your clone of the Redis documentation at `/app/redis-docs`, then run scrape and ingest:
+The airgap image includes pre-scraped artifacts in `/app/artifacts`. You only need to
+**ingest** them into Redis:
 
 ```bash
-# Step 1: Scrape the local docs into artifacts
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
-  redis-sre-agent pipeline scrape --scrapers redis_docs_local
-
-# Step 2: Ingest the scraped artifacts into Redis
 docker-compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent pipeline ingest
 ```
 
-!!! note "Scrape vs Ingest"
-    - **Scrape**: Reads source documents and creates artifacts (JSON files with parsed content)
-    - **Ingest**: Reads artifacts, generates embeddings, and indexes into Redis vector search
+This generates embeddings using the local model and indexes the content into Redis vector search.
 
-    You must scrape before ingesting. The `--scrapers redis_docs_local` flag uses only the local
-    docs scraper, which does not require an OpenAI API key.
+!!! tip "Adding Custom Documents"
+    To add your own documents, place markdown files in a mounted volume and run:
+    ```bash
+    # Prepare your custom docs
+    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+      redis-sre-agent pipeline prepare-sources --source-dir /your/docs
 
-!!! tip "Custom Docs Path"
-    The default path is `/app/redis-docs`. To use a different path, add `--docs-path /your/path`
-    to the scrape command.
+    # Re-ingest to include them
+    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+      redis-sre-agent pipeline ingest
+    ```
 
 ### 6. Verify Deployment
 
@@ -399,7 +396,7 @@ spec:
 
 ### Initializing Knowledge Base in Kubernetes
 
-Run a one-time Job to initialize the knowledge base:
+Run a one-time Job to ingest the pre-scraped artifacts into Redis:
 
 ```yaml
 apiVersion: batch/v1
@@ -416,26 +413,13 @@ spec:
       containers:
         - name: init
           image: your-registry.internal.com/redis-sre-agent:airgap
-          command:
-            - /bin/sh
-            - -c
-            - |
-              redis-sre-agent pipeline scrape --scrapers redis_docs_local
-              redis-sre-agent pipeline ingest
+          command: ["redis-sre-agent", "pipeline", "ingest"]
           envFrom:
             - configMapRef:
                 name: sre-agent-config
             - secretRef:
                 name: sre-agent-secrets
-          volumeMounts:
-            - name: redis-docs
-              mountPath: /app/redis-docs
-              readOnly: true
       restartPolicy: Never
-      volumes:
-        - name: redis-docs
-          persistentVolumeClaim:
-            claimName: redis-docs-pvc
   backoffLimit: 2
 ```
 
