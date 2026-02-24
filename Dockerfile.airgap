@@ -76,6 +76,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --docs-path /app/redis-docs \
     --artifacts-path /app/artifacts || \
     echo "Warning: Could not scrape redis-docs at build time") && \
+    # Scrape redis.io/kb articles (requires web access, must be done at build time)
+    (uv run --no-sync redis-sre-agent pipeline scrape \
+    --scrapers redis_kb \
+    --artifacts-path /app/artifacts || \
+    echo "Warning: Could not scrape redis KB articles at build time") && \
     # Prepare source documents if available
     (uv run --no-sync redis-sre-agent pipeline prepare-sources \
     --source-dir /app/source_documents \

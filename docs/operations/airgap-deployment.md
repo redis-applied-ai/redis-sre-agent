@@ -89,9 +89,9 @@ Bundle contents:
 - `README.md` (quick start guide)
 
 !!! note "Pre-built Knowledge Base"
-    The airgap image includes pre-scraped Redis documentation and SRE runbooks in
-    `/app/artifacts`. You only need to run the **ingest** command after deployment
-    to index them into Redis.
+    The airgap image includes pre-scraped Redis documentation, Knowledge Base articles
+    (from redis.io/kb), and SRE runbooks in `/app/artifacts`. You only need to run the
+    **ingest** command after deployment to index them into Redis.
 
 #### Build Options
 
