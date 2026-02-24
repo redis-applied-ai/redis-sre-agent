@@ -202,10 +202,27 @@ def query(
             response_text = agent_response.response
             search_results = agent_response.search_results
 
-            # Build messages list
+            # Generate message_id for the assistant response (for decision trace)
+            from ulid import ULID
+
+            assistant_message_id = str(ULID())
+
+            # Store decision trace if there are tool envelopes
+            if agent_response.tool_envelopes:
+                await thread_manager.set_message_trace(
+                    message_id=assistant_message_id,
+                    tool_envelopes=agent_response.tool_envelopes,
+                )
+                console.print(f"[dim]📋 Decision trace: {assistant_message_id}[/dim]")
+
+            # Build messages list with message_id in metadata
             messages_to_save = [
                 {"role": "user", "content": query},
-                {"role": "assistant", "content": response_text},
+                {
+                    "role": "assistant",
+                    "content": response_text,
+                    "metadata": {"message_id": assistant_message_id},
+                },
             ]
 
             # Add citation system message if there are search results

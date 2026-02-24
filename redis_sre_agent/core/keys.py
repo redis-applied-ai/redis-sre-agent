@@ -128,6 +128,15 @@ class RedisKeys:
         return f"sre:task:{task_id}:decision_trace"
 
     @staticmethod
+    def message_decision_trace(message_id: str) -> str:
+        """Key for message decision trace (tool calls for a specific message).
+
+        Enables decision tracing for synchronous interactions (like CLI query)
+        that don't use the task system.
+        """
+        return f"sre:message:{message_id}:decision_trace"
+
+    @staticmethod
     def thread_tasks_index(thread_id: str) -> str:
         """Sorted set of task_ids for a thread (score=timestamp)."""
         return f"sre:thread:{thread_id}:tasks"

@@ -35,9 +35,20 @@ class ThreadUpdate(BaseModel):
 class Message(BaseModel):
     """A single message in a thread conversation."""
 
+    message_id: Optional[str] = Field(
+        default=None,
+        description="Unique message identifier (ULID). Auto-generated if not provided.",
+    )
     role: str = Field(default="user", description="Message role: user|assistant|system")
     content: str
     metadata: Optional[Dict[str, Any]] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        """Generate message_id if not provided."""
+        if self.message_id is None:
+            from ulid import ULID
+
+            object.__setattr__(self, "message_id", str(ULID()))
 
 
 class ThreadMetadata(BaseModel):
@@ -673,6 +684,67 @@ Subject:"""
         except Exception as e:
             logger.error(f"Failed to delete thread {thread_id}: {e}")
             return False
+
+    async def set_message_trace(
+        self,
+        message_id: str,
+        tool_envelopes: List[Dict[str, Any]],
+        otel_trace_id: Optional[str] = None,
+    ) -> bool:
+        """Store a decision trace for a message.
+
+        This enables decision tracing for synchronous interactions (like CLI query)
+        that don't use the task system.
+
+        Args:
+            message_id: The message ID (ULID)
+            tool_envelopes: List of full tool execution envelopes
+            otel_trace_id: Optional OTel trace ID for correlation
+
+        Returns:
+            True if successful
+        """
+        from redis_sre_agent.agent.models import DecisionTrace
+
+        trace = DecisionTrace(
+            task_id=message_id,  # Reuse task_id field for message_id
+            tool_envelopes=tool_envelopes,
+            otel_trace_id=otel_trace_id,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        try:
+            client = await self._get_client()
+            # Store with 7-day TTL (same as task traces)
+            await client.setex(
+                RedisKeys.message_decision_trace(message_id),
+                7 * 24 * 60 * 60,  # 7 days in seconds
+                trace.model_dump_json(),
+            )
+            logger.debug(f"Stored decision trace for message {message_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to store message trace {message_id}: {e}")
+            return False
+
+    async def get_message_trace(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve the decision trace for a message.
+
+        Args:
+            message_id: The message ID (ULID)
+
+        Returns:
+            DecisionTrace dict or None if not found
+        """
+        try:
+            client = await self._get_client()
+            data = await client.get(RedisKeys.message_decision_trace(message_id))
+            if not data:
+                return None
+            return json.loads(data if isinstance(data, str) else data.decode())
+        except Exception as e:
+            logger.error(f"Failed to get message trace {message_id}: {e}")
+            return None
 
 
 # ---- Domain-level helpers moved from redis_sre_agent.models.threads ----

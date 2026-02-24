@@ -161,21 +161,25 @@ def thread_get(thread_id: str, as_json: bool):
             mt = Table(title="Messages (Conversation)")
             mt.add_column("#", no_wrap=True)
             mt.add_column("Role", no_wrap=True)
-            mt.add_column("Task ID", no_wrap=True)
+            mt.add_column("Trace ID", no_wrap=True)
             mt.add_column("Content")
             for i, m in enumerate(state.messages, 1):
                 # Truncate long messages for display
                 content = m.content
                 if len(content) > 200:
                     content = content[:197] + "..."
-                # Extract task_id from metadata for assistant messages
-                task_id_val = "-"
+                # Extract trace identifier from metadata for assistant messages
+                # Could be task_id (from task system) or message_id (from CLI query)
+                trace_id_val = "-"
                 if m.role == "assistant" and m.metadata:
+                    # Check for message_id first (CLI query traces), then task_id
+                    mid = m.metadata.get("message_id")
                     tid = m.metadata.get("task_id")
-                    if tid:
-                        # Show truncated task_id for display (first 12 chars)
-                        task_id_val = tid[:12] + "..." if len(tid) > 12 else tid
-                mt.add_row(str(i), m.role, task_id_val, content)
+                    trace_id = mid or tid
+                    if trace_id:
+                        # Show truncated ID for display (first 12 chars)
+                        trace_id_val = trace_id[:12] + "..." if len(trace_id) > 12 else trace_id
+                mt.add_row(str(i), m.role, trace_id_val, content)
             console.print(mt)
 
     asyncio.run(_get())
@@ -703,3 +707,162 @@ def thread_purge(
         )
 
     asyncio.run(_run())
+
+
+@thread.command("trace")
+@click.argument("trace_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--show-data", is_flag=True, help="Show full tool output data")
+def thread_trace(trace_id: str, as_json: bool, show_data: bool):
+    """Show the decision trace for a message or task.
+
+    TRACE_ID can be either a message_id (from CLI query) or task_id (from task system).
+
+    This displays the agent's reasoning trace, including:
+    - Tool calls made (name, arguments, status, and optionally results)
+    - Citations/sources referenced (derived from knowledge tool envelopes)
+    - OTel trace ID for correlation with Tempo
+
+    Use `thread get <thread_id>` to see trace IDs for messages.
+    """
+
+    async def _trace():
+        from rich.panel import Panel
+        from rich.syntax import Syntax
+
+        from redis_sre_agent.core.tasks import TaskManager
+
+        console = Console()
+        client = get_redis_client()
+        thread_manager = ThreadManager(redis_client=client)
+        task_manager = TaskManager(redis_client=client)
+
+        # Try to get message trace first, then fall back to task trace
+        trace = await thread_manager.get_message_trace(trace_id)
+        trace_type = "message"
+
+        if not trace:
+            trace = await task_manager.get_decision_trace(trace_id)
+            trace_type = "task"
+
+        if not trace:
+            if as_json:
+                print(json.dumps({"error": f"No decision trace found for {trace_id}"}))
+            else:
+                console.print(f"[yellow]No decision trace found for {trace_id}[/yellow]")
+                console.print(
+                    "[dim]Tip: Trace IDs can be found in thread messages (Trace ID column)[/dim]"
+                )
+            return
+
+        if as_json:
+            print(json.dumps(trace, indent=2))
+            return
+
+        # Display summary
+        console.print(f"\n[bold]Decision Trace ({trace_type}):[/bold] {trace_id}")
+        if trace.get("otel_trace_id"):
+            console.print(f"[dim]OTel Trace ID:[/dim] {trace['otel_trace_id']}")
+        if trace.get("created_at"):
+            console.print(f"[dim]Created:[/dim] {trace['created_at']}")
+        console.print()
+
+        # Use tool_envelopes
+        tool_envelopes = trace.get("tool_envelopes", [])
+
+        if tool_envelopes:
+            tc_table = Table(title=f"Tool Calls ({len(tool_envelopes)})")
+            tc_table.add_column("#", no_wrap=True)
+            tc_table.add_column("Tool", no_wrap=True)
+            tc_table.add_column("Arguments", overflow="fold")
+            tc_table.add_column("Status", no_wrap=True)
+            if not show_data:
+                tc_table.add_column("Result Preview", overflow="fold")
+
+            for i, env in enumerate(tool_envelopes, 1):
+                tool_name = env.get("name") or env.get("tool_key", "unknown")
+                args = env.get("args", {})
+                args_str = json.dumps(args) if args else "-"
+                if len(args_str) > 60:
+                    args_str = args_str[:57] + "..."
+                status = env.get("status", "unknown")
+                status_style = "green" if status == "success" else "red"
+
+                if show_data:
+                    tc_table.add_row(
+                        str(i), tool_name, args_str, f"[{status_style}]{status}[/{status_style}]"
+                    )
+                else:
+                    # Show summary or truncated data preview
+                    summary = env.get("summary")
+                    if summary:
+                        result_preview = summary[:80] + "..." if len(summary) > 80 else summary
+                    else:
+                        data = env.get("data", {})
+                        data_str = json.dumps(data, default=str)
+                        result_preview = data_str[:80] + "..." if len(data_str) > 80 else data_str
+                    tc_table.add_row(
+                        str(i),
+                        tool_name,
+                        args_str,
+                        f"[{status_style}]{status}[/{status_style}]",
+                        result_preview,
+                    )
+
+            console.print(tc_table)
+
+            # If --show-data, display full data for each tool
+            if show_data:
+                console.print()
+                console.print("[bold]Full Tool Results:[/bold]")
+                for i, env in enumerate(tool_envelopes, 1):
+                    tool_name = env.get("name") or env.get("tool_key", "unknown")
+                    data = env.get("data", {})
+                    data_str = json.dumps(data, indent=2, default=str)
+                    syntax = Syntax(data_str, "json", theme="monokai", line_numbers=False)
+                    panel = Panel(syntax, title=f"{i}. {tool_name}", border_style="dim")
+                    console.print(panel)
+        else:
+            console.print("[dim]No tool calls recorded[/dim]")
+
+        console.print()
+
+        # Derive citations from knowledge tool envelopes
+        citations = []
+        for env in tool_envelopes:
+            tool_key = env.get("tool_key", "")
+            name = env.get("name", "")
+            if "knowledge" in tool_key.lower() and "search" in name.lower():
+                data = env.get("data", {})
+                results = data.get("results", [])
+                for result in results:
+                    citations.append(
+                        {
+                            "title": result.get("title"),
+                            "source": result.get("source"),
+                            "score": result.get("score"),
+                            "document_id": result.get("id"),
+                        }
+                    )
+
+        if citations:
+            ct_table = Table(title=f"Citations ({len(citations)})")
+            ct_table.add_column("#", no_wrap=True)
+            ct_table.add_column("Title", overflow="fold")
+            ct_table.add_column("Source", no_wrap=True)
+            ct_table.add_column("Score", no_wrap=True)
+
+            for i, ct in enumerate(citations, 1):
+                title = ct.get("title") or ct.get("document_id") or "Untitled"
+                if len(title) > 50:
+                    title = title[:47] + "..."
+                source = ct.get("source") or "-"
+                score = ct.get("score")
+                score_str = f"{score:.3f}" if score is not None else "-"
+                ct_table.add_row(str(i), title, source, score_str)
+
+            console.print(ct_table)
+        else:
+            console.print("[dim]No citations recorded[/dim]")
+
+    asyncio.run(_trace())
