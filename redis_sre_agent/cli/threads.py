@@ -730,20 +730,12 @@ def thread_trace(trace_id: str, as_json: bool, show_data: bool):
         from rich.panel import Panel
         from rich.syntax import Syntax
 
-        from redis_sre_agent.core.tasks import TaskManager
-
         console = Console()
         client = get_redis_client()
         thread_manager = ThreadManager(redis_client=client)
-        task_manager = TaskManager(redis_client=client)
 
-        # Try to get message trace first, then fall back to task trace
+        # Get message trace (traces are always associated with messages)
         trace = await thread_manager.get_message_trace(trace_id)
-        trace_type = "message"
-
-        if not trace:
-            trace = await task_manager.get_decision_trace(trace_id)
-            trace_type = "task"
 
         if not trace:
             if as_json:
@@ -760,7 +752,7 @@ def thread_trace(trace_id: str, as_json: bool, show_data: bool):
             return
 
         # Display summary
-        console.print(f"\n[bold]Decision Trace ({trace_type}):[/bold] {trace_id}")
+        console.print(f"\n[bold]Decision Trace:[/bold] {trace_id}")
         if trace.get("otel_trace_id"):
             console.print(f"[dim]OTel Trace ID:[/dim] {trace['otel_trace_id']}")
         if trace.get("created_at"):

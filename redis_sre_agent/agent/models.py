@@ -135,14 +135,14 @@ class AgentResponse(BaseModel):
 
 
 class DecisionTrace(BaseModel):
-    """Complete trace of an agent's decision process for a single task/answer.
+    """Complete trace of an agent's decision process for a single message.
 
     Stores full tool envelopes as the single source of truth. This enables:
-    - CLI inspection via `task trace <task_id>` (with full tool results)
+    - CLI inspection via `thread trace <message_id>` (with full tool results)
     - Correlation with OTel traces via otel_trace_id
     - Audit trails for compliance
     - Citations derived from knowledge tool envelopes
-    - Future JQ-like query capabilities
+    - JMESPath query capabilities via `query_tool_data()`
 
     The `tool_envelopes` field contains full ResultEnvelope dicts with:
     - tool_key, name, description, args, status
@@ -150,7 +150,7 @@ class DecisionTrace(BaseModel):
     - summary (optional, for large outputs)
     """
 
-    task_id: str = Field(..., description="Task ID this trace belongs to")
+    message_id: str = Field(..., description="Message ID this trace belongs to")
 
     tool_envelopes: List[Dict[str, Any]] = Field(
         default_factory=list,

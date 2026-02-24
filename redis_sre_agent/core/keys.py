@@ -123,16 +123,12 @@ class RedisKeys:
         return f"sre:task:{task_id}:metadata"
 
     @staticmethod
-    def task_decision_trace(task_id: str) -> str:
-        """Key for task decision trace (tool calls + citations)."""
-        return f"sre:task:{task_id}:decision_trace"
-
-    @staticmethod
     def message_decision_trace(message_id: str) -> str:
         """Key for message decision trace (tool calls for a specific message).
 
-        Enables decision tracing for synchronous interactions (like CLI query)
-        that don't use the task system.
+        Decision traces are always associated with messages (not tasks).
+        Tasks contain messages, so traces can be retrieved via message_id
+        from the message metadata.
         """
         return f"sre:message:{message_id}:decision_trace"
 

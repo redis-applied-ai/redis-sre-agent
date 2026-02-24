@@ -693,8 +693,8 @@ Subject:"""
     ) -> bool:
         """Store a decision trace for a message.
 
-        This enables decision tracing for synchronous interactions (like CLI query)
-        that don't use the task system.
+        Decision traces are always associated with messages. Tasks contain messages,
+        so traces can be retrieved via message_id from message metadata.
 
         Args:
             message_id: The message ID (ULID)
@@ -707,7 +707,7 @@ Subject:"""
         from redis_sre_agent.agent.models import DecisionTrace
 
         trace = DecisionTrace(
-            task_id=message_id,  # Reuse task_id field for message_id
+            message_id=message_id,
             tool_envelopes=tool_envelopes,
             otel_trace_id=otel_trace_id,
             created_at=datetime.now(timezone.utc).isoformat(),

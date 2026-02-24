@@ -171,56 +171,6 @@ class TaskManager:
         await self._upsert_task_search_doc(task_id)
         return True
 
-    async def set_decision_trace(
-        self,
-        task_id: str,
-        tool_envelopes: List[Dict[str, Any]],
-        otel_trace_id: Optional[str] = None,
-    ) -> bool:
-        """Store a decision trace for a task.
-
-        Stores full tool envelopes as the single source of truth.
-        Citations are derived from knowledge tool envelopes.
-
-        Args:
-            task_id: The task ID
-            tool_envelopes: List of full tool execution envelopes (including data + summary)
-            otel_trace_id: Optional OTel trace ID for correlation with Tempo
-
-        Returns:
-            True if successful
-        """
-        from redis_sre_agent.agent.models import DecisionTrace
-
-        trace = DecisionTrace(
-            task_id=task_id,
-            tool_envelopes=tool_envelopes,
-            otel_trace_id=otel_trace_id,
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-        await self._redis.set(RedisKeys.task_decision_trace(task_id), trace.model_dump_json())
-        return True
-
-    async def get_decision_trace(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve the decision trace for a task.
-
-        Args:
-            task_id: The task ID
-
-        Returns:
-            DecisionTrace dict or None if not found
-        """
-        import json
-
-        data = await self._redis.get(RedisKeys.task_decision_trace(task_id))
-        if not data:
-            return None
-        try:
-            return json.loads(data if isinstance(data, str) else data.decode())
-        except Exception:
-            return None
-
     async def _upsert_task_search_doc(self, task_id: str) -> bool:
         """Upsert a simplified task document into the tasks FT index (hash)."""
         try:

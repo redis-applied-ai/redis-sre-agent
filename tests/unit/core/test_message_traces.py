@@ -129,7 +129,7 @@ class TestThreadManagerMessageTrace:
     async def test_get_message_trace_success(self, thread_manager, mock_redis_client):
         """Should return trace data when it exists."""
         trace_data = {
-            "task_id": "msg-123",
+            "message_id": "msg-123",
             "tool_envelopes": [{"tool_key": "test", "status": "success"}],
             "otel_trace_id": None,
             "created_at": "2024-01-01T00:00:00Z",
@@ -139,7 +139,7 @@ class TestThreadManagerMessageTrace:
         result = await thread_manager.get_message_trace("msg-123")
 
         assert result is not None
-        assert result["task_id"] == "msg-123"
+        assert result["message_id"] == "msg-123"
         assert len(result["tool_envelopes"]) == 1
 
     @pytest.mark.asyncio

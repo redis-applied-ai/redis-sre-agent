@@ -420,173 +420,127 @@ def task_delete(task_id: str, yes: bool, as_json: bool):
 def task_trace(task_id: str, as_json: bool, show_data: bool):
     """Show the decision trace (tool calls + citations) for a task.
 
-    This displays the agent's reasoning trace for a specific task, including:
-    - Tool calls made (name, arguments, status, and optionally results)
-    - Citations/sources referenced (derived from knowledge tool envelopes)
-    - OTel trace ID for correlation with Tempo
+    Decision traces are stored per-message. This command finds the messages
+    associated with the task and displays their traces.
+
+    Use `thread trace <message_id>` to view a specific message's trace directly.
     """
 
     async def _trace():
         import json as _json
 
         from rich.console import Console
-        from rich.panel import Panel
-        from rich.syntax import Syntax
         from rich.table import Table
 
         from redis_sre_agent.core.redis import get_redis_client
         from redis_sre_agent.core.tasks import TaskManager
+        from redis_sre_agent.core.threads import ThreadManager
 
         console = Console()
         client = get_redis_client()
         task_manager = TaskManager(redis_client=client)
+        thread_manager = ThreadManager(redis_client=client)
 
-        trace = await task_manager.get_decision_trace(task_id)
-
-        if not trace:
+        # Get task metadata to find thread_id
+        task_data = await task_manager.get_task_status(task_id)
+        if not task_data:
             if as_json:
-                print(_json.dumps({"error": f"No decision trace found for task {task_id}"}))
+                print(_json.dumps({"error": f"Task {task_id} not found"}))
             else:
-                console.print(f"[yellow]No decision trace found for task {task_id}[/yellow]")
+                console.print(f"[red]Task {task_id} not found[/red]")
+            return
+
+        # Get thread_id from task metadata
+        metadata = await task_manager.get_task_metadata(task_id)
+        thread_id = metadata.get("thread_id") if metadata else None
+
+        if not thread_id:
+            if as_json:
+                print(_json.dumps({"error": f"No thread_id found for task {task_id}"}))
+            else:
+                console.print(f"[yellow]No thread_id found for task {task_id}[/yellow]")
+            return
+
+        # Get thread and find messages with this task_id
+        thread = await thread_manager.get_thread(thread_id)
+        if not thread:
+            if as_json:
+                print(_json.dumps({"error": f"Thread {thread_id} not found"}))
+            else:
+                console.print(f"[red]Thread {thread_id} not found[/red]")
+            return
+
+        # Find assistant messages for this task
+        task_messages = []
+        for msg in thread.messages:
+            msg_metadata = msg.metadata or {}
+            if msg_metadata.get("task_id") == task_id and msg.role == "assistant":
+                message_id = msg.message_id or msg_metadata.get("message_id")
+                if message_id:
+                    trace = await thread_manager.get_message_trace(message_id)
+                    if trace:
+                        task_messages.append({"message_id": message_id, "trace": trace})
+
+        if not task_messages:
+            if as_json:
+                print(_json.dumps({"task_id": task_id, "traces": [], "message": "No traces found"}))
+            else:
+                console.print(f"[yellow]No decision traces found for task {task_id}[/yellow]")
+                console.print(
+                    "[dim]Tip: Traces are stored per-message. Use `thread trace <message_id>` directly.[/dim]"
+                )
             return
 
         if as_json:
-            print(_json.dumps(trace, indent=2))
+            print(
+                _json.dumps(
+                    {"task_id": task_id, "thread_id": thread_id, "traces": task_messages}, indent=2
+                )
+            )
             return
 
-        # Display summary
-        console.print(f"\n[bold]Decision Trace for Task:[/bold] {task_id}")
-        if trace.get("otel_trace_id"):
-            console.print(f"[dim]OTel Trace ID:[/dim] {trace['otel_trace_id']}")
-        if trace.get("created_at"):
-            console.print(f"[dim]Created:[/dim] {trace['created_at']}")
+        # Display traces for each message
+        console.print(f"\n[bold]Decision Traces for Task:[/bold] {task_id}")
+        console.print(f"[dim]Thread:[/dim] {thread_id}")
+        console.print(f"[dim]Messages with traces:[/dim] {len(task_messages)}")
         console.print()
 
-        # Use tool_envelopes (new format) or fall back to tool_calls (legacy)
-        tool_envelopes = trace.get("tool_envelopes", [])
-        tool_calls = trace.get("tool_calls", [])
+        for msg_data in task_messages:
+            message_id = msg_data["message_id"]
+            trace = msg_data["trace"]
 
-        if tool_envelopes:
-            # New format: full envelopes with data
-            tc_table = Table(title=f"Tool Calls ({len(tool_envelopes)})")
-            tc_table.add_column("#", no_wrap=True)
-            tc_table.add_column("Tool", no_wrap=True)
-            tc_table.add_column("Arguments", overflow="fold")
-            tc_table.add_column("Status", no_wrap=True)
-            if not show_data:
-                tc_table.add_column("Result Preview", overflow="fold")
+            console.print(f"[bold]Message:[/bold] {message_id}")
+            if trace.get("otel_trace_id"):
+                console.print(f"[dim]OTel Trace ID:[/dim] {trace['otel_trace_id']}")
+            if trace.get("created_at"):
+                console.print(f"[dim]Created:[/dim] {trace['created_at']}")
 
-            for i, env in enumerate(tool_envelopes, 1):
-                tool_name = env.get("name") or env.get("tool_key", "unknown")
-                args = env.get("args", {})
-                args_str = _json.dumps(args) if args else "-"
-                if len(args_str) > 60:
-                    args_str = args_str[:57] + "..."
-                status = env.get("status", "unknown")
-                status_style = "green" if status == "success" else "red"
+            tool_envelopes = trace.get("tool_envelopes", [])
+            if tool_envelopes:
+                tc_table = Table(title=f"Tool Calls ({len(tool_envelopes)})")
+                tc_table.add_column("#", no_wrap=True)
+                tc_table.add_column("Tool", no_wrap=True)
+                tc_table.add_column("Arguments", overflow="fold")
+                tc_table.add_column("Status", no_wrap=True)
 
-                if show_data:
+                for i, env in enumerate(tool_envelopes, 1):
+                    tool_name = env.get("name") or env.get("tool_key", "unknown")
+                    args = env.get("args", {})
+                    args_str = _json.dumps(args) if args else "-"
+                    if len(args_str) > 60:
+                        args_str = args_str[:57] + "..."
+                    status = env.get("status", "unknown")
+                    status_style = "green" if status == "success" else "red"
                     tc_table.add_row(
                         str(i), tool_name, args_str, f"[{status_style}]{status}[/{status_style}]"
                     )
-                else:
-                    # Show summary or truncated data preview
-                    summary = env.get("summary")
-                    if summary:
-                        result_preview = summary[:80] + "..." if len(summary) > 80 else summary
-                    else:
-                        data = env.get("data", {})
-                        data_str = _json.dumps(data, default=str)
-                        result_preview = data_str[:80] + "..." if len(data_str) > 80 else data_str
-                    tc_table.add_row(
-                        str(i),
-                        tool_name,
-                        args_str,
-                        f"[{status_style}]{status}[/{status_style}]",
-                        result_preview,
-                    )
 
-            console.print(tc_table)
+                console.print(tc_table)
+            else:
+                console.print("[dim]No tool calls recorded[/dim]")
 
-            # If --show-data, display full data for each tool
-            if show_data:
-                console.print()
-                console.print("[bold]Full Tool Results:[/bold]")
-                for i, env in enumerate(tool_envelopes, 1):
-                    tool_name = env.get("name") or env.get("tool_key", "unknown")
-                    data = env.get("data", {})
-                    data_str = _json.dumps(data, indent=2, default=str)
-                    syntax = Syntax(data_str, "json", theme="monokai", line_numbers=False)
-                    panel = Panel(syntax, title=f"{i}. {tool_name}", border_style="dim")
-                    console.print(panel)
-
-        elif tool_calls:
-            # Legacy format: tool_calls without data
-            tc_table = Table(title=f"Tool Calls ({len(tool_calls)})")
-            tc_table.add_column("#", no_wrap=True)
-            tc_table.add_column("Tool", no_wrap=True)
-            tc_table.add_column("Arguments", overflow="fold")
-            tc_table.add_column("Status", no_wrap=True)
-
-            for i, tc in enumerate(tool_calls, 1):
-                tool_name = tc.get("name") or tc.get("tool_key", "unknown")
-                args = tc.get("args", {})
-                args_str = _json.dumps(args) if args else "-"
-                if len(args_str) > 80:
-                    args_str = args_str[:77] + "..."
-                status = tc.get("status", "unknown")
-                status_style = "green" if status == "success" else "red"
-                tc_table.add_row(
-                    str(i), tool_name, args_str, f"[{status_style}]{status}[/{status_style}]"
-                )
-
-            console.print(tc_table)
-            console.print("[dim]Note: This is a legacy trace without tool result data.[/dim]")
-        else:
-            console.print("[dim]No tool calls recorded[/dim]")
-
-        console.print()
-
-        # Derive citations from knowledge tool envelopes (new format)
-        # or use legacy citations field
-        citations = trace.get("citations", [])
-
-        # If we have tool_envelopes, derive citations from knowledge tools
-        if tool_envelopes and not citations:
-            for env in tool_envelopes:
-                tool_key = env.get("tool_key", "")
-                name = env.get("name", "")
-                if "knowledge" in tool_key.lower() and "search" in name.lower():
-                    data = env.get("data", {})
-                    results = data.get("results", [])
-                    for result in results:
-                        citations.append(
-                            {
-                                "title": result.get("title"),
-                                "source": result.get("source"),
-                                "score": result.get("score"),
-                                "document_id": result.get("id"),
-                            }
-                        )
-
-        if citations:
-            ct_table = Table(title=f"Citations ({len(citations)})")
-            ct_table.add_column("#", no_wrap=True)
-            ct_table.add_column("Title", overflow="fold")
-            ct_table.add_column("Source", no_wrap=True)
-            ct_table.add_column("Score", no_wrap=True)
-
-            for i, ct in enumerate(citations, 1):
-                title = ct.get("title") or ct.get("document_id") or "Untitled"
-                if len(title) > 50:
-                    title = title[:47] + "..."
-                source = ct.get("source") or "-"
-                score = ct.get("score")
-                score_str = f"{score:.3f}" if score is not None else "-"
-                ct_table.add_row(str(i), title, source, score_str)
-
-            console.print(ct_table)
-        else:
-            console.print("[dim]No citations recorded[/dim]")
+            console.print()
+            console.print(f"[dim]Use `thread trace {message_id}` for full details[/dim]")
+            console.print()
 
     asyncio.run(_trace())
