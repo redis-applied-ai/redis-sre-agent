@@ -6,8 +6,8 @@ on tool envelope data using JMESPath expressions.
 
 import pytest
 
-from redis_sre_agent.agent.helpers import query_tool_data
 from redis_sre_agent.agent.chat_agent import ChatAgent
+from redis_sre_agent.agent.helpers import query_tool_data
 
 
 class TestQueryToolData:

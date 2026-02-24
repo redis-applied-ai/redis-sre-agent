@@ -4,8 +4,6 @@ This module tests the extract_citations function that derives citation data
 from knowledge tool envelopes, replacing the separate CitationTrace tracking.
 """
 
-import pytest
-
 from redis_sre_agent.agent.helpers import extract_citations
 from redis_sre_agent.agent.models import AgentResponse
 

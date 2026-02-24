@@ -475,7 +475,6 @@ class TestRedisStorageHelpers:
     @pytest.mark.asyncio
     async def test_get_instances_from_redis_empty(self):
         """Test getting instances when RediSearch returns no results."""
-        from redis_sre_agent.core.instances import get_instances
 
         with (
             patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
@@ -493,7 +492,6 @@ class TestRedisStorageHelpers:
     @pytest.mark.asyncio
     async def test_get_instances_from_redis_error(self):
         """Test getting instances when RediSearch raises an error."""
-        from redis_sre_agent.core.instances import get_instances
 
         with (
             patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
@@ -511,7 +509,6 @@ class TestRedisStorageHelpers:
     @pytest.mark.asyncio
     async def test_get_instances_from_redis_json_error(self):
         """Test getting instances when JSON parsing fails for a document."""
-        from redis_sre_agent.core.instances import get_instances
 
         with (
             patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
