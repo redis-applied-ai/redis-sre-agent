@@ -347,8 +347,6 @@ def query_tool_data(envelopes: List[Dict[str, Any]], tool_key: str, query: str) 
         - "entries[?duration_us > `1000`]" - filter items
         - "entries[*].{cmd: command, dur: duration_us}" - project fields
     """
-    import jmespath
-    from jmespath.exceptions import JMESPathError
 
     # Find the most recent envelope with matching tool_key
     matching_envelope = None

@@ -18,6 +18,7 @@ Generated from the Click command tree.
 - thread purge — Delete threads in bulk with safeguards.
 - thread reindex — Recreate the threads FT.SEARCH index and backfill from existing thread data.
 - thread sources — List knowledge fragments retrieved for a thread (optionally a specific turn).
+- thread trace — Show the decision trace for a message or task.
 - schedule — Schedule management commands.
 - schedule create — Create a new schedule.
 - schedule delete — Delete a schedule.
