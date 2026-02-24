@@ -478,12 +478,8 @@ class TestRedisStorageHelpers:
         from redis_sre_agent.core.instances import get_instances
 
         with (
-            patch(
-                "redis_sre_agent.core.instances._ensure_instances_index_exists"
-            ) as mock_ensure,
-            patch(
-                "redis_sre_agent.core.instances.get_instances_index"
-            ) as mock_get_index,
+            patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
+            patch("redis_sre_agent.core.instances.get_instances_index") as mock_get_index,
         ):
             mock_ensure.return_value = None
             mock_index = AsyncMock()
@@ -500,12 +496,8 @@ class TestRedisStorageHelpers:
         from redis_sre_agent.core.instances import get_instances
 
         with (
-            patch(
-                "redis_sre_agent.core.instances._ensure_instances_index_exists"
-            ) as mock_ensure,
-            patch(
-                "redis_sre_agent.core.instances.get_instances_index"
-            ) as mock_get_index,
+            patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
+            patch("redis_sre_agent.core.instances.get_instances_index") as mock_get_index,
         ):
             mock_ensure.return_value = None
             mock_index = AsyncMock()
@@ -522,12 +514,8 @@ class TestRedisStorageHelpers:
         from redis_sre_agent.core.instances import get_instances
 
         with (
-            patch(
-                "redis_sre_agent.core.instances._ensure_instances_index_exists"
-            ) as mock_ensure,
-            patch(
-                "redis_sre_agent.core.instances.get_instances_index"
-            ) as mock_get_index,
+            patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
+            patch("redis_sre_agent.core.instances.get_instances_index") as mock_get_index,
         ):
             mock_ensure.return_value = None
             mock_index = AsyncMock()

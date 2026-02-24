@@ -33,7 +33,9 @@ class ResultEnvelope(BaseModel):
     description: Optional[str] = Field(None, description="Tool description shown to the LLM")
     args: Dict[str, Any] = Field(default_factory=dict)
     status: str = Field(..., description="'success' or 'error'")
-    data: Dict[str, Any] = Field(default_factory=dict, description="Full tool result JSON (always preserved)")
+    data: Dict[str, Any] = Field(
+        default_factory=dict, description="Full tool result JSON (always preserved)"
+    )
     summary: Optional[str] = Field(
         None,
         description="Summary or preview for LLM context when data is large. "

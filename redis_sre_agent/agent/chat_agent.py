@@ -172,9 +172,7 @@ class ChatAgent:
         originals_by_key = {e.get("tool_key"): e for e in original_envelopes}
         available_keys = list(originals_by_key.keys())
 
-        def expand_evidence(
-            tool_key: str, query: Optional[str] = None
-        ) -> Dict[str, Any]:
+        def expand_evidence(tool_key: str, query: Optional[str] = None) -> Dict[str, Any]:
             """Retrieve full or queried data from a previous tool call.
 
             Args:

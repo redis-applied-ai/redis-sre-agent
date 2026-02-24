@@ -324,9 +324,7 @@ def extract_citations(envelopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return citations
 
 
-def query_tool_data(
-    envelopes: List[Dict[str, Any]], tool_key: str, query: str
-) -> Any:
+def query_tool_data(envelopes: List[Dict[str, Any]], tool_key: str, query: str) -> Any:
     """Query data from a tool envelope using JMESPath expression.
 
     Finds the most recent envelope matching the tool_key and applies

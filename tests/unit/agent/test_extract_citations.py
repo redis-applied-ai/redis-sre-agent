@@ -62,11 +62,7 @@ class TestExtractCitations:
                 "tool_key": "knowledge_search",
                 "name": "Search",
                 "status": "success",
-                "data": {
-                    "results": [
-                        {"title": "Doc A", "source": "source1", "score": 0.9}
-                    ]
-                },
+                "data": {"results": [{"title": "Doc A", "source": "source1", "score": 0.9}]},
             },
             {
                 "tool_key": "redis_info",
@@ -78,11 +74,7 @@ class TestExtractCitations:
                 "tool_key": "knowledge_search",
                 "name": "Search",
                 "status": "success",
-                "data": {
-                    "results": [
-                        {"title": "Doc B", "source": "source2", "score": 0.8}
-                    ]
-                },
+                "data": {"results": [{"title": "Doc B", "source": "source2", "score": 0.8}]},
             },
         ]
 
@@ -192,11 +184,7 @@ class TestExtractCitations:
                 tool_key="knowledge_search",
                 name="Search",
                 status="success",
-                data={
-                    "results": [
-                        {"title": "Dict-based Doc", "source": "test"}
-                    ]
-                },
+                data={"results": [{"title": "Dict-based Doc", "source": "test"}]},
             )
         ]
 
@@ -218,11 +206,7 @@ class TestAgentResponseSearchResults:
                     "tool_key": "knowledge_search",
                     "name": "Search",
                     "status": "success",
-                    "data": {
-                        "results": [
-                            {"title": "Doc 1", "source": "source1", "score": 0.9}
-                        ]
-                    },
+                    "data": {"results": [{"title": "Doc 1", "source": "source1", "score": 0.9}]},
                 },
                 {
                     "tool_key": "redis_info",
