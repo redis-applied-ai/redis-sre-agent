@@ -8,6 +8,9 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+import jmespath
+from jmespath.exceptions import JMESPathError
+
 
 def parse_json_maybe_fenced(text: str) -> Any:
     """Parse JSON that may be wrapped in markdown code fences (``` or ```json).
@@ -278,3 +281,89 @@ async def build_adapters_for_tooldefs(tool_manager: Any, tooldefs: List[Any]) ->
             )
         )
     return adapters
+
+
+def extract_citations(envelopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Extract citations from knowledge tool envelopes.
+
+    Derives citation data from knowledge search tool results, replacing the
+    separate CitationTrace tracking system. Citations are now stored as part
+    of the tool envelope data, not as a separate model.
+
+    Args:
+        envelopes: List of ResultEnvelope dicts from tool executions.
+            Each envelope should have tool_key, name, status, data fields.
+
+    Returns:
+        List of citation dicts extracted from knowledge tool results.
+        Each citation preserves all fields from the original search result.
+    """
+    citations: List[Dict[str, Any]] = []
+
+    for env in envelopes:
+        tool_key = env.get("tool_key", "")
+
+        # Match knowledge search tools by tool_key containing "knowledge"
+        if "knowledge" not in tool_key.lower():
+            continue
+
+        # Extract results from the data field
+        data = env.get("data", {})
+        if not isinstance(data, dict):
+            continue
+
+        results = data.get("results", [])
+        if not isinstance(results, list):
+            continue
+
+        # Add each result as a citation (preserving all fields)
+        for result in results:
+            if isinstance(result, dict):
+                citations.append(result)
+
+    return citations
+
+
+def query_tool_data(
+    envelopes: List[Dict[str, Any]], tool_key: str, query: str
+) -> Any:
+    """Query data from a tool envelope using JMESPath expression.
+
+    Finds the most recent envelope matching the tool_key and applies
+    the JMESPath query to its data field.
+
+    Args:
+        envelopes: List of tool execution envelopes
+        tool_key: The tool_key to find
+        query: JMESPath expression to extract data
+
+    Returns:
+        Extracted data matching the query, or None if tool not found
+
+    Raises:
+        ValueError: If the JMESPath expression is invalid
+
+    Example queries:
+        - "memory.used_memory_human" - get a single field
+        - "entries[:5]" - get first 5 items
+        - "entries[?duration_us > `1000`]" - filter items
+        - "entries[*].{cmd: command, dur: duration_us}" - project fields
+    """
+    import jmespath
+    from jmespath.exceptions import JMESPathError
+
+    # Find the most recent envelope with matching tool_key
+    matching_envelope = None
+    for env in envelopes:
+        if env.get("tool_key") == tool_key:
+            matching_envelope = env
+
+    if matching_envelope is None:
+        return None
+
+    data = matching_envelope.get("data", {})
+
+    try:
+        return jmespath.search(query, data)
+    except JMESPathError as e:
+        raise ValueError(f"Invalid JMESPath expression '{query}': {e}") from e

@@ -175,55 +175,26 @@ class TaskManager:
         self,
         task_id: str,
         tool_envelopes: List[Dict[str, Any]],
-        search_results: List[Dict[str, Any]],
         otel_trace_id: Optional[str] = None,
     ) -> bool:
         """Store a decision trace for a task.
 
+        Stores full tool envelopes as the single source of truth.
+        Citations are derived from knowledge tool envelopes.
+
         Args:
             task_id: The task ID
-            tool_envelopes: List of tool execution envelopes (from AgentResponse.tool_envelopes)
-            search_results: List of knowledge search results (from AgentResponse.search_results)
+            tool_envelopes: List of full tool execution envelopes (including data + summary)
             otel_trace_id: Optional OTel trace ID for correlation with Tempo
 
         Returns:
             True if successful
         """
-        from redis_sre_agent.agent.models import CitationTrace, DecisionTrace, ToolCallTrace
+        from redis_sre_agent.agent.models import DecisionTrace
 
-        # Convert tool envelopes to ToolCallTrace objects
-        tool_calls = []
-        for env in tool_envelopes:
-            tool_calls.append(
-                ToolCallTrace(
-                    tool_key=env.get("tool_key", "unknown"),
-                    name=env.get("name"),
-                    args=env.get("args", {}),
-                    status=env.get("status", "success"),
-                    timestamp=env.get("timestamp"),
-                )
-            )
-
-        # Convert search results to CitationTrace objects
-        citations = []
-        for result in search_results:
-            citations.append(
-                CitationTrace(
-                    document_id=result.get("id"),
-                    document_hash=result.get("document_hash"),
-                    chunk_index=result.get("chunk_index"),
-                    title=result.get("title"),
-                    source=result.get("source"),
-                    content_preview=(result.get("content") or "")[:200],
-                    score=result.get("score"),
-                )
-            )
-
-        # Create the decision trace
         trace = DecisionTrace(
             task_id=task_id,
-            tool_calls=tool_calls,
-            citations=citations,
+            tool_envelopes=tool_envelopes,
             otel_trace_id=otel_trace_id,
             created_at=datetime.now(timezone.utc).isoformat(),
         )

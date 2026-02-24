@@ -46,7 +46,7 @@ class TestEnvelopeSummarization:
 
     @pytest.mark.asyncio
     async def test_large_envelopes_summarized(self, agent):
-        """Test that large envelopes are summarized via LLM."""
+        """Test that large envelopes get summary field via LLM while preserving data."""
         # Create a large envelope (>500 chars in data)
         large_data = {"metrics": "x" * 1000, "logs": "y" * 1000}
         large_envelope = {
@@ -66,14 +66,15 @@ class TestEnvelopeSummarization:
         result = await agent._summarize_envelopes_for_reasoning([large_envelope])
 
         assert len(result) == 1
-        assert "summary" in result[0]["data"]
-        assert "high load" in result[0]["data"]["summary"]
-        # Original large data should be replaced
-        assert result[0]["data"] != large_data
+        # Summary field should be set with LLM-generated summary
+        assert "summary" in result[0]
+        assert "high load" in result[0]["summary"]
+        # Original data should be preserved (not replaced)
+        assert result[0]["data"] == large_data
 
     @pytest.mark.asyncio
     async def test_mixed_envelopes_partial_summarization(self, agent):
-        """Test that only large envelopes are summarized."""
+        """Test that only large envelopes get summary field."""
         small_envelope = {
             "tool_key": "small_tool",
             "name": "small",
@@ -99,10 +100,12 @@ class TestEnvelopeSummarization:
         result = await agent._summarize_envelopes_for_reasoning([small_envelope, large_envelope])
 
         assert len(result) == 2
-        # Small envelope unchanged
+        # Small envelope unchanged - no summary field, data preserved
         assert result[0]["data"] == {"value": 42}
-        # Large envelope summarized
-        assert "summary" in result[1]["data"]
+        assert result[0].get("summary") is None
+        # Large envelope gets summary field, data preserved
+        assert "summary" in result[1]
+        assert result[1]["data"] == {"content": "x" * 1000}
 
     @pytest.mark.asyncio
     async def test_order_preserved(self, agent):
@@ -129,7 +132,7 @@ class TestEnvelopeSummarization:
 
     @pytest.mark.asyncio
     async def test_llm_failure_fallback_truncation(self, agent):
-        """Test that LLM failure falls back to truncation."""
+        """Test that LLM failure falls back to truncation in summary field."""
         large_envelope = {
             "tool_key": "test",
             "name": "test",
@@ -145,8 +148,10 @@ class TestEnvelopeSummarization:
         result = await agent._summarize_envelopes_for_reasoning([large_envelope])
 
         assert len(result) == 1
-        assert "truncated" in result[0]["data"]
-        assert result[0]["data"]["truncated"].endswith("...")
+        # Summary field should have truncated content, data preserved
+        assert "summary" in result[0]
+        assert "..." in result[0]["summary"]
+        assert result[0]["data"] == {"content": "x" * 1000}
 
 
 class TestExpandEvidenceTool:

@@ -416,12 +416,13 @@ def task_delete(task_id: str, yes: bool, as_json: bool):
 @task.command("trace")
 @click.argument("task_id")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def task_trace(task_id: str, as_json: bool):
+@click.option("--show-data", is_flag=True, help="Show full tool output data")
+def task_trace(task_id: str, as_json: bool, show_data: bool):
     """Show the decision trace (tool calls + citations) for a task.
 
     This displays the agent's reasoning trace for a specific task, including:
-    - Tool calls made (name, arguments, status)
-    - Citations/sources referenced (title, source, score)
+    - Tool calls made (name, arguments, status, and optionally results)
+    - Citations/sources referenced (derived from knowledge tool envelopes)
     - OTel trace ID for correlation with Tempo
     """
 
@@ -429,6 +430,8 @@ def task_trace(task_id: str, as_json: bool):
         import json as _json
 
         from rich.console import Console
+        from rich.panel import Panel
+        from rich.syntax import Syntax
         from rich.table import Table
 
         from redis_sre_agent.core.redis import get_redis_client
@@ -459,9 +462,66 @@ def task_trace(task_id: str, as_json: bool):
             console.print(f"[dim]Created:[/dim] {trace['created_at']}")
         console.print()
 
-        # Display tool calls
+        # Use tool_envelopes (new format) or fall back to tool_calls (legacy)
+        tool_envelopes = trace.get("tool_envelopes", [])
         tool_calls = trace.get("tool_calls", [])
-        if tool_calls:
+
+        if tool_envelopes:
+            # New format: full envelopes with data
+            tc_table = Table(title=f"Tool Calls ({len(tool_envelopes)})")
+            tc_table.add_column("#", no_wrap=True)
+            tc_table.add_column("Tool", no_wrap=True)
+            tc_table.add_column("Arguments", overflow="fold")
+            tc_table.add_column("Status", no_wrap=True)
+            if not show_data:
+                tc_table.add_column("Result Preview", overflow="fold")
+
+            for i, env in enumerate(tool_envelopes, 1):
+                tool_name = env.get("name") or env.get("tool_key", "unknown")
+                args = env.get("args", {})
+                args_str = _json.dumps(args) if args else "-"
+                if len(args_str) > 60:
+                    args_str = args_str[:57] + "..."
+                status = env.get("status", "unknown")
+                status_style = "green" if status == "success" else "red"
+
+                if show_data:
+                    tc_table.add_row(
+                        str(i), tool_name, args_str, f"[{status_style}]{status}[/{status_style}]"
+                    )
+                else:
+                    # Show summary or truncated data preview
+                    summary = env.get("summary")
+                    if summary:
+                        result_preview = summary[:80] + "..." if len(summary) > 80 else summary
+                    else:
+                        data = env.get("data", {})
+                        data_str = _json.dumps(data, default=str)
+                        result_preview = data_str[:80] + "..." if len(data_str) > 80 else data_str
+                    tc_table.add_row(
+                        str(i),
+                        tool_name,
+                        args_str,
+                        f"[{status_style}]{status}[/{status_style}]",
+                        result_preview,
+                    )
+
+            console.print(tc_table)
+
+            # If --show-data, display full data for each tool
+            if show_data:
+                console.print()
+                console.print("[bold]Full Tool Results:[/bold]")
+                for i, env in enumerate(tool_envelopes, 1):
+                    tool_name = env.get("name") or env.get("tool_key", "unknown")
+                    data = env.get("data", {})
+                    data_str = _json.dumps(data, indent=2, default=str)
+                    syntax = Syntax(data_str, "json", theme="monokai", line_numbers=False)
+                    panel = Panel(syntax, title=f"{i}. {tool_name}", border_style="dim")
+                    console.print(panel)
+
+        elif tool_calls:
+            # Legacy format: tool_calls without data
             tc_table = Table(title=f"Tool Calls ({len(tool_calls)})")
             tc_table.add_column("#", no_wrap=True)
             tc_table.add_column("Tool", no_wrap=True)
@@ -481,13 +541,34 @@ def task_trace(task_id: str, as_json: bool):
                 )
 
             console.print(tc_table)
+            console.print("[dim]Note: This is a legacy trace without tool result data.[/dim]")
         else:
             console.print("[dim]No tool calls recorded[/dim]")
 
         console.print()
 
-        # Display citations
+        # Derive citations from knowledge tool envelopes (new format)
+        # or use legacy citations field
         citations = trace.get("citations", [])
+
+        # If we have tool_envelopes, derive citations from knowledge tools
+        if tool_envelopes and not citations:
+            for env in tool_envelopes:
+                tool_key = env.get("tool_key", "")
+                name = env.get("name", "")
+                if "knowledge" in tool_key.lower() and "search" in name.lower():
+                    data = env.get("data", {})
+                    results = data.get("results", [])
+                    for result in results:
+                        citations.append(
+                            {
+                                "title": result.get("title"),
+                                "source": result.get("source"),
+                                "score": result.get("score"),
+                                "document_id": result.get("id"),
+                            }
+                        )
+
         if citations:
             ct_table = Table(title=f"Citations ({len(citations)})")
             ct_table.add_column("#", no_wrap=True)

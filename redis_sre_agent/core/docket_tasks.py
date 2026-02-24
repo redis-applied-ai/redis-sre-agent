@@ -291,7 +291,6 @@ async def process_chat_turn(
         await task_manager.set_decision_trace(
             task_id=task_id,
             tool_envelopes=response.tool_envelopes if hasattr(response, "tool_envelopes") else [],
-            search_results=response.search_results if hasattr(response, "search_results") else [],
             otel_trace_id=otel_trace_id,
         )
 
@@ -1063,7 +1062,6 @@ async def process_agent_turn(
         await task_manager.set_decision_trace(
             task_id=task_id,
             tool_envelopes=agent_response.get("tool_envelopes", []),
-            search_results=agent_response.get("search_results", []),
             otel_trace_id=otel_trace_id,
         )
 

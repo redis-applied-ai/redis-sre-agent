@@ -529,22 +529,27 @@ JSON payload of analyses artifacts:
         envelopes: List[Dict[str, Any]],
         max_data_chars: int = 500,
     ) -> List[Dict[str, Any]]:
-        """Summarize tool output envelopes to reduce context size for reasoning.
+        """Set summary field for large envelopes, preserving full data.
 
         For envelopes with large data payloads, uses the mini LLM to extract
-        key findings. Small payloads are kept as-is.
+        key findings into the `summary` field. Small payloads are kept as-is.
+
+        The full `data` is always preserved for:
+        - Decision traces (`task trace` CLI)
+        - The `expand_evidence` tool
+        - Future query capabilities
 
         Args:
             envelopes: List of ResultEnvelope dicts from tool executions
             max_data_chars: Threshold above which to summarize (default 500 chars)
 
         Returns:
-            List of summarized envelope dicts with condensed data
+            List of envelope dicts with summary field set for large payloads
         """
         if not envelopes:
             return []
 
-        summarized = []
+        result = []
         to_summarize = []
         to_summarize_indices = []
 
@@ -557,7 +562,7 @@ JSON payload of analyses artifacts:
                 to_summarize.append(env)
                 to_summarize_indices.append(i)
             else:
-                summarized.append((i, env))
+                result.append((i, env))
 
         # Batch summarize large envelopes
         if to_summarize:
@@ -606,7 +611,7 @@ JSON payload of analyses artifacts:
                 except Exception:
                     pass
 
-                # Apply summaries to envelopes
+                # Apply summaries to envelopes (preserving full data)
                 for j, (orig_idx, env) in enumerate(zip(to_summarize_indices, to_summarize)):
                     summary_text = (
                         summaries[j].get("summary", "")
@@ -614,64 +619,27 @@ JSON payload of analyses artifacts:
                         else ""
                     )
                     if not summary_text:
-                        # Fallback: truncate data
+                        # Fallback: truncate data for summary
                         data_str = json.dumps(env.get("data", {}), default=str)
                         summary_text = data_str[:max_data_chars] + "..."
 
-                    condensed_env = {
-                        "tool_key": env.get("tool_key"),
-                        "name": env.get("name"),
-                        "description": env.get("description"),
-                        "args": env.get("args"),
-                        "status": env.get("status"),
-                        "data": {"summary": summary_text},
-                    }
-                    summarized.append((orig_idx, condensed_env))
+                    # Copy envelope and set summary, preserving full data
+                    summarized_env = dict(env)
+                    summarized_env["summary"] = summary_text
+                    result.append((orig_idx, summarized_env))
 
             except Exception as e:
                 logger.warning(f"Envelope summarization failed, using truncation: {e}")
-                # Fallback: truncate all large envelopes
+                # Fallback: truncate all large envelopes (preserving full data)
                 for orig_idx, env in zip(to_summarize_indices, to_summarize):
                     data_str = json.dumps(env.get("data", {}), default=str)
-                    condensed_env = {
-                        "tool_key": env.get("tool_key"),
-                        "name": env.get("name"),
-                        "description": env.get("description"),
-                        "args": env.get("args"),
-                        "status": env.get("status"),
-                        "data": {"truncated": data_str[:max_data_chars] + "..."},
-                    }
-                    summarized.append((orig_idx, condensed_env))
+                    summarized_env = dict(env)
+                    summarized_env["summary"] = data_str[:max_data_chars] + "..."
+                    result.append((orig_idx, summarized_env))
 
         # Sort by original index to preserve order
-        summarized.sort(key=lambda x: x[0])
-        return [env for _, env in summarized]
-
-    def _extract_knowledge_search_results(
-        self, envelopes: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Extract knowledge base search results from tool envelopes.
-
-        Looks for envelopes from knowledge search tools and extracts the
-        search results for citation tracking.
-
-        Args:
-            envelopes: List of ResultEnvelope dicts from tool executions
-
-        Returns:
-            List of search result dicts suitable for QAManager.record_qa_from_search
-        """
-        all_results = []
-        for env in envelopes:
-            tool_key = env.get("tool_key", "")
-            name = env.get("name", "")
-            # Match knowledge base search tools
-            if "knowledge" in tool_key.lower() and "search" in name.lower():
-                data = env.get("data", {})
-                results = data.get("results", [])
-                if results:
-                    all_results.extend(results)
-        return all_results
+        result.sort(key=lambda x: x[0])
+        return [env for _, env in result]
 
     def _build_expand_evidence_tool(
         self,
@@ -1875,11 +1843,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 # Run the workflow with isolated memory
                 final_state = await self.app.ainvoke(initial_state, config=thread_config)
 
-                # Get tool envelopes for decision tracing
+                # Get tool envelopes - AgentResponse derives search_results from these
                 tool_envelopes = final_state.get("signals_envelopes", [])
-
-                # Extract knowledge search results for citation tracking
-                search_results = self._extract_knowledge_search_results(tool_envelopes)
 
                 # Extract the final response
                 messages = final_state["messages"]
@@ -1890,15 +1855,12 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     )
                     return AgentResponse(
                         response=response_content,
-                        search_results=search_results,
                         tool_envelopes=tool_envelopes,
                     )
                 else:
                     logger.warning("No valid response generated by SRE agent")
                     return AgentResponse(
                         response="I apologize, but I couldn't generate a proper response. Please try rephrasing your question.",
-                        search_results=[],
-                        tool_envelopes=[],
                     )
 
             except Exception as e:
@@ -1912,8 +1874,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 error_msg = str(e) if str(e) else f"{type(e).__name__}: {e.args}"
                 return AgentResponse(
                     response=f"I encountered an error while processing your request: {error_msg}. Please try again.",
-                    search_results=[],
-                    tool_envelopes=[],
                 )
 
     async def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
