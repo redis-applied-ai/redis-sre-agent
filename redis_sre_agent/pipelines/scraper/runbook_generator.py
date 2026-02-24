@@ -33,15 +33,8 @@ class RunbookGenerator(BaseScraper):
         # Default configuration with initial URLs
         self.config = {
             "runbook_urls": [
-                # GitLab Redis survival guide
+                # GitLab Redis survival guide (external runbook not covered by other scrapers)
                 "https://gitlab.com/gitlab-com/runbooks/-/blob/e7f620058ff9f81bec864aa6aebf3a6320c4f6a0/docs/redis/redis-survival-guide-for-sres.md",
-                # Shoreline Redis runbooks
-                "https://www.shoreline.io/runbooks/redis/redis-rejected-connections",
-                "https://www.shoreline.io/runbooks/redis/redis-missing-master",
-                # Official Redis documentation
-                "https://redis.io/docs/latest/operate/oss_and_stack/management/replication/",
-                "https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/latency/",
-                "https://redis.io/docs/latest/operate/oss_and_stack/management/debugging/",
             ],
             "openai_model": "gpt-4o",
             "max_retries": 3,
@@ -182,10 +175,6 @@ SOURCE CONTENT TO STANDARDIZE:
                     # Handle different URL types
                     if "gitlab.com" in url:
                         return await self._extract_gitlab_content(html, url)
-                    elif "shoreline.io" in url:
-                        return await self._extract_shoreline_content(html)
-                    elif "redis.io" in url:
-                        return await self._extract_redis_docs_content(html)
                     else:
                         return await self._extract_generic_content(html)
 
@@ -221,152 +210,6 @@ SOURCE CONTENT TO STANDARDIZE:
 
         logger.warning(f"Could not extract meaningful content from GitLab URL: {url}")
         return None
-
-    async def _extract_shoreline_content(self, html: str) -> Optional[str]:
-        """Extract content from Shoreline runbook pages."""
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Shoreline runbook structure
-        content_parts = []
-
-        # Try to find the main content area
-        main_content = soup.select_one('.main-content, .content, article, [role="main"]')
-        if main_content:
-            # Extract title
-            title = soup.select_one("h1, .title, .page-title")
-            if title:
-                content_parts.append(f"# {title.get_text().strip()}")
-
-            # Extract sections
-            sections = main_content.find_all(
-                ["h1", "h2", "h3", "h4", "p", "ul", "ol", "pre", "code"]
-            )
-
-            current_section = ""
-            for element in sections:
-                if element.name in ["h1", "h2", "h3", "h4"]:
-                    if current_section:
-                        content_parts.append(current_section.strip())
-                    current_section = f"\n## {element.get_text().strip()}\n"
-                else:
-                    text = element.get_text(strip=True)
-                    if text:
-                        if element.name in ["pre", "code"]:
-                            current_section += f"\n```\n{text}\n```\n"
-                        elif element.name in ["ul", "ol"]:
-                            # Process list items
-                            items = element.find_all("li")
-                            for item in items:
-                                current_section += f"- {item.get_text().strip()}\n"
-                        else:
-                            current_section += f"{text}\n"
-
-            if current_section:
-                content_parts.append(current_section.strip())
-
-            content = "\n\n".join(content_parts)
-            if len(content) > 200:
-                return content
-
-        # Fallback to simple text extraction
-        body = soup.find("body")
-        if body:
-            content = body.get_text(separator="\n", strip=True)
-            # Clean up
-            content = re.sub(r"\n{3,}", "\n\n", content)
-            content = re.sub(r"^\s*$", "", content, flags=re.MULTILINE)
-
-            if len(content) > 500:
-                return content
-
-        return None
-
-    async def _extract_redis_docs_content(self, html: str) -> Optional[str]:
-        """Extract content from Redis official documentation."""
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Redis.io documentation structure
-        content_parts = []
-
-        # Try to find the main article content
-        main_content = soup.select_one(
-            'article, .content, .doc-content, [role="main"], .main-content'
-        )
-        if not main_content:
-            # Fallback to common content selectors
-            main_content = soup.select_one(".markdown-body, .rst-content, #content")
-
-        if main_content:
-            # Extract title
-            title = soup.select_one("h1, .page-title, .doc-title")
-            if title:
-                content_parts.append(f"# {title.get_text().strip()}")
-
-            # Process content elements in order
-            elements = main_content.find_all(
-                [
-                    "h1",
-                    "h2",
-                    "h3",
-                    "h4",
-                    "h5",
-                    "h6",
-                    "p",
-                    "ul",
-                    "ol",
-                    "pre",
-                    "code",
-                    "blockquote",
-                    "div",
-                ]
-            )
-
-            for element in elements:
-                text = element.get_text(strip=True)
-                if not text:
-                    continue
-
-                if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-                    # Headers - create markdown headers
-                    level = int(element.name[1])
-                    content_parts.append(f"\n{'#' * level} {text}\n")
-                elif element.name == "p":
-                    # Paragraphs
-                    content_parts.append(f"{text}\n")
-                elif element.name in ["ul", "ol"]:
-                    # Lists - process list items
-                    items = element.find_all("li")
-                    for item in items:
-                        item_text = item.get_text().strip()
-                        if item_text:
-                            content_parts.append(f"- {item_text}")
-                    content_parts.append("")  # Add spacing after lists
-                elif element.name in ["pre", "code"]:
-                    # Code blocks
-                    content_parts.append(f"\n```\n{text}\n```\n")
-                elif element.name == "blockquote":
-                    # Blockquotes
-                    content_parts.append(f"> {text}\n")
-                elif element.name == "div" and element.get("class"):
-                    # Handle special div classes (alerts, notes, etc.)
-                    classes = " ".join(element.get("class", []))
-                    if any(
-                        cls in classes.lower()
-                        for cls in ["note", "warning", "alert", "tip", "important"]
-                    ):
-                        content_parts.append(f"**Note:** {text}\n")
-
-            content = "\n".join(content_parts)
-
-            # Clean up the content
-            content = re.sub(r"\n{3,}", "\n\n", content)  # Reduce excessive newlines
-            content = re.sub(r"^\s*$", "", content, flags=re.MULTILINE)  # Remove empty lines
-
-            if len(content) > 300:  # Ensure we got substantial content
-                return content.strip()
-
-        # Fallback to generic extraction if the specific method fails
-        return await self._extract_generic_content(html)
 
     async def _extract_generic_content(self, html: str) -> Optional[str]:
         """Extract content from generic web pages."""
@@ -512,10 +355,6 @@ SOURCE CONTENT TO STANDARDIZE:
         """Detect the type of source based on URL."""
         if "gitlab.com" in url:
             return "gitlab_runbook"
-        elif "shoreline.io" in url:
-            return "shoreline_runbook"
-        elif "redis.io" in url:
-            return "redis_official_docs"
         elif "github.com" in url:
             return "github_repository"
         else:
