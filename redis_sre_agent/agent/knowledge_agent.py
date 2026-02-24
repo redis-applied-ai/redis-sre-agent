@@ -177,10 +177,16 @@ class KnowledgeOnlyAgent:
                 from redis_sre_agent.observability.llm_metrics import record_llm_call_metrics
 
                 _t0 = _time.perf_counter()
+
+                llm_to_use = llm_with_tools
+                if iteration_count == 0:
+                    # Force tool calling on first turn to ensure knowledge base search
+                    llm_to_use = llm_with_tools.bind(tool_choice="required")
+
                 with tracer.start_as_current_span(
                     "llm.call", attributes={"llm.component": "knowledge"}
                 ):
-                    response = await llm_with_tools.ainvoke(messages)
+                    response = await llm_to_use.ainvoke(messages)
                 record_llm_call_metrics(
                     component="knowledge", llm=llm_with_tools, response=response, start_time=_t0
                 )
