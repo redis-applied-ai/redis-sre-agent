@@ -151,7 +151,7 @@ class ChatAgent:
 
     def _build_expand_evidence_tool(
         self,
-        original_envelopes: List[Dict[str, Any]],
+        envelopes_container: Dict[str, List[Dict[str, Any]]],
     ) -> Dict[str, Any]:
         """Build a tool that allows the LLM to retrieve full tool output details.
 
@@ -160,17 +160,19 @@ class ChatAgent:
         if it needs more detail. Supports optional JMESPath queries for extracting
         specific data.
 
+        The tool is available from the start but references a mutable container
+        that gets populated as tool calls complete. This ensures the LLM knows
+        the tool exists and can plan to use it after making other tool calls.
+
         Args:
-            original_envelopes: The original (unsummarized) envelopes
+            envelopes_container: A mutable dict with "envelopes" key that gets
+                                 updated as tool calls complete
 
         Returns:
             A dict with name, description, func, and parameters for creating a tool
         """
         import jmespath
         from jmespath.exceptions import JMESPathError
-
-        originals_by_key = {e.get("tool_key"): e for e in original_envelopes}
-        available_keys = list(originals_by_key.keys())
 
         def expand_evidence(tool_key: str, query: Optional[str] = None) -> Dict[str, Any]:
             """Retrieve full or queried data from a previous tool call.
@@ -179,6 +181,21 @@ class ChatAgent:
                 tool_key: The tool_key from a summarized evidence item
                 query: Optional JMESPath expression to extract specific data
             """
+            # Get current envelopes from the mutable container
+            envelopes = envelopes_container.get("envelopes", [])
+            originals_by_key = {e.get("tool_key"): e for e in envelopes}
+            available_keys = list(originals_by_key.keys())
+
+            if not available_keys:
+                return {
+                    "status": "error",
+                    "error": (
+                        "No tool calls have been made yet. "
+                        "First call other tools to gather data, then use expand_evidence "
+                        "to retrieve or query their results."
+                    ),
+                }
+
             if tool_key not in originals_by_key:
                 return {
                     "status": "error",
@@ -216,9 +233,9 @@ class ChatAgent:
             "name": "expand_evidence",
             "description": (
                 "Retrieve data from a previous tool call. "
-                "Use this when the summary doesn't have enough detail. "
-                "Optionally use a JMESPath query to extract specific fields. "
-                f"Available tool_keys: {available_keys}"
+                "Use this after calling other tools when you need more detail than the summary provides. "
+                "Optionally use a JMESPath query to extract specific fields "
+                "(e.g., 'results[*].source' for just sources, 'entries[:5]' for first 5 items)."
             ),
             "func": expand_evidence,
             "parameters": {
@@ -226,14 +243,17 @@ class ChatAgent:
                 "properties": {
                     "tool_key": {
                         "type": "string",
-                        "description": "The tool_key from a summarized evidence item",
+                        "description": (
+                            "The tool_key from a previous tool call result. "
+                            "Look for tool_key in the evidence summaries."
+                        ),
                     },
                     "query": {
                         "type": "string",
                         "description": (
                             "Optional JMESPath expression to extract specific data. "
-                            "Examples: 'memory.used_memory_human', 'entries[:5]', "
-                            "'entries[?duration_us > `1000`]'"
+                            "Examples: 'results[*].title' (all titles), 'entries[:5]' (first 5), "
+                            "'entries[?duration_us > `1000`]' (filter by condition)"
                         ),
                     },
                 },
@@ -279,35 +299,27 @@ class ChatAgent:
         """
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
 
-        # We'll dynamically add expand_evidence tool when envelopes are available
-        # For now, track state needed for dynamic tool injection
-        expand_tool_added = {"value": False}
-        current_adapters = list(adapters)
+        # Mutable container for envelopes - expand_evidence references this
+        # so it can access envelopes as they're added by tool calls
+        envelopes_container: Dict[str, List[Dict[str, Any]]] = {"envelopes": []}
+
+        # Build expand_evidence tool upfront so LLM knows it exists
+        expand_spec = self._build_expand_evidence_tool(envelopes_container)
+        expand_tool = StructuredTool.from_function(
+            func=expand_spec["func"],
+            name=expand_spec["name"],
+            description=expand_spec["description"],
+        )
+        all_adapters = list(adapters) + [expand_tool]
+        llm_with_expand = self.llm.bind_tools(all_adapters)
 
         async def agent_node(state: ChatAgentState) -> Dict[str, Any]:
             """Main agent node - invokes LLM with tools."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
-            envelopes = state.get("signals_envelopes") or []
-
-            # If we have envelopes and haven't added expand_evidence yet, add it
-            nonlocal current_adapters, expand_tool_added
-            if envelopes and not expand_tool_added["value"]:
-                expand_spec = self._build_expand_evidence_tool(envelopes)
-                expand_tool = StructuredTool.from_function(
-                    func=expand_spec["func"],
-                    name=expand_spec["name"],
-                    description=expand_spec["description"],
-                )
-                current_adapters = list(adapters) + [expand_tool]
-                expand_tool_added["value"] = True
-                # Rebind tools to LLM with expand_evidence
-                bound_llm = self.llm.bind_tools(current_adapters)
-            else:
-                bound_llm = llm_with_tools
 
             with tracer.start_as_current_span("chat_agent_node"):
-                response = await bound_llm.ainvoke(messages)
+                response = await llm_with_expand.ainvoke(messages)
 
             new_messages = list(messages) + [response]
             return {
@@ -348,8 +360,7 @@ class ChatAgent:
                             await emitter.emit(f"Executing tool: {tool_name}", "tool_call")
 
             with tracer.start_as_current_span("chat_tool_node"):
-                nonlocal current_adapters
-                lg_tool_node = LGToolNode(current_adapters)
+                lg_tool_node = LGToolNode(all_adapters)
                 out = await lg_tool_node.ainvoke({"messages": messages})
                 out_messages = out.get("messages", [])
                 new_tool_messages = [m for m in out_messages if isinstance(m, ToolMessage)]
@@ -376,6 +387,9 @@ class ChatAgent:
                     # Summarize if large (preserves full data, adds summary field)
                     env_dict = self._summarize_envelope_sync(env_dict)
                     envelopes.append(env_dict)
+
+                # Update the mutable container so expand_evidence can see new envelopes
+                envelopes_container["envelopes"] = envelopes
 
             return {
                 "messages": list(messages) + new_tool_messages,

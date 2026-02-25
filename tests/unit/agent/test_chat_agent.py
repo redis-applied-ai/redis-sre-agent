@@ -254,7 +254,12 @@ class TestChatAgentWorkflowBuild:
 
 
 class TestChatAgentExpandEvidenceTool:
-    """Test the _build_expand_evidence_tool method."""
+    """Test the _build_expand_evidence_tool method.
+
+    The method uses a mutable container pattern so the tool can be added
+    to the LLM's tool list from the start, but access envelopes as they're
+    populated by other tool calls.
+    """
 
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
@@ -270,8 +275,9 @@ class TestChatAgentExpandEvidenceTool:
             {"tool_key": "redis_info_1", "name": "get_redis_info", "data": {"memory": "1GB"}},
             {"tool_key": "cluster_info_2", "name": "get_cluster_info", "data": {"nodes": 3}},
         ]
+        envelopes_container = {"envelopes": envelopes}
 
-        tool_def = agent._build_expand_evidence_tool(envelopes)
+        tool_def = agent._build_expand_evidence_tool(envelopes_container)
 
         # Get the function from the tool definition
         expand_fn = tool_def["func"]
@@ -297,8 +303,9 @@ class TestChatAgentExpandEvidenceTool:
         envelopes = [
             {"tool_key": "redis_info_1", "name": "get_redis_info", "data": {"memory": "1GB"}},
         ]
+        envelopes_container = {"envelopes": envelopes}
 
-        tool_def = agent._build_expand_evidence_tool(envelopes)
+        tool_def = agent._build_expand_evidence_tool(envelopes_container)
         expand_fn = tool_def["func"]
 
         # Test retrieving unknown key
@@ -309,18 +316,20 @@ class TestChatAgentExpandEvidenceTool:
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
     def test_expand_evidence_tool_empty_envelopes(self, mock_create_mini_llm, mock_create_llm):
-        """Test expand_evidence tool with empty envelopes."""
+        """Test expand_evidence tool with empty envelopes returns helpful error."""
         mock_llm = MagicMock()
         mock_create_llm.return_value = mock_llm
         mock_create_mini_llm.return_value = mock_llm
 
         agent = ChatAgent()
 
-        tool_def = agent._build_expand_evidence_tool([])
+        envelopes_container = {"envelopes": []}
+        tool_def = agent._build_expand_evidence_tool(envelopes_container)
         expand_fn = tool_def["func"]
 
         result = expand_fn("any_key")
         assert result["status"] == "error"
+        assert "No tool calls have been made yet" in result["error"]
 
 
 class TestChatAgentExcludeMcpCategories:

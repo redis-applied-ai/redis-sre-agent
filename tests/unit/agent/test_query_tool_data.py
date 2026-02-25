@@ -164,7 +164,25 @@ class TestQueryToolData:
 
 
 class TestExpandEvidenceWithQuery:
-    """Test expand_evidence tool with optional JMESPath query parameter."""
+    """Test expand_evidence tool with optional JMESPath query parameter.
+
+    The expand_evidence tool uses a mutable container pattern so it can be
+    added to the LLM's tool list from the start, but access envelopes as
+    they're populated by other tool calls.
+    """
+
+    def test_expand_evidence_no_envelopes_yet(self):
+        """Test expand_evidence returns helpful error when no tool calls made yet."""
+        # Empty container - simulates state before any tool calls
+        envelopes_container = {"envelopes": []}
+
+        agent = ChatAgent.__new__(ChatAgent)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
+        expand_fn = tool_spec["func"]
+
+        result = expand_fn("any_key")
+        assert result["status"] == "error"
+        assert "No tool calls have been made yet" in result["error"]
 
     def test_expand_evidence_returns_full_data_without_query(self):
         """Test expand_evidence returns full data when no query is specified."""
@@ -179,9 +197,10 @@ class TestExpandEvidenceWithQuery:
                 },
             }
         ]
+        envelopes_container = {"envelopes": envelopes}
 
         agent = ChatAgent.__new__(ChatAgent)
-        tool_spec = agent._build_expand_evidence_tool(envelopes)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
         expand_fn = tool_spec["func"]
 
         result = expand_fn("redis_info")
@@ -202,9 +221,10 @@ class TestExpandEvidenceWithQuery:
                 },
             }
         ]
+        envelopes_container = {"envelopes": envelopes}
 
         agent = ChatAgent.__new__(ChatAgent)
-        tool_spec = agent._build_expand_evidence_tool(envelopes)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
         expand_fn = tool_spec["func"]
 
         result = expand_fn("redis_info", query="memory.used_memory_human")
@@ -228,9 +248,10 @@ class TestExpandEvidenceWithQuery:
                 },
             }
         ]
+        envelopes_container = {"envelopes": envelopes}
 
         agent = ChatAgent.__new__(ChatAgent)
-        tool_spec = agent._build_expand_evidence_tool(envelopes)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
         expand_fn = tool_spec["func"]
 
         result = expand_fn("slowlog", query="entries[:2]")
@@ -254,9 +275,10 @@ class TestExpandEvidenceWithQuery:
                 },
             }
         ]
+        envelopes_container = {"envelopes": envelopes}
 
         agent = ChatAgent.__new__(ChatAgent)
-        tool_spec = agent._build_expand_evidence_tool(envelopes)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
         expand_fn = tool_spec["func"]
 
         result = expand_fn("slowlog", query="entries[?duration_us > `1000`]")
@@ -274,9 +296,10 @@ class TestExpandEvidenceWithQuery:
                 "data": {"memory": {"used_memory": 123}},
             }
         ]
+        envelopes_container = {"envelopes": envelopes}
 
         agent = ChatAgent.__new__(ChatAgent)
-        tool_spec = agent._build_expand_evidence_tool(envelopes)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
         expand_fn = tool_spec["func"]
 
         result = expand_fn("redis_info", query="[[[invalid")
@@ -285,16 +308,10 @@ class TestExpandEvidenceWithQuery:
 
     def test_expand_evidence_query_parameter_in_schema(self):
         """Test that expand_evidence tool schema includes optional query parameter."""
-        envelopes = [
-            {
-                "tool_key": "redis_info",
-                "status": "success",
-                "data": {"memory": {"used_memory": 123}},
-            }
-        ]
+        envelopes_container = {"envelopes": []}
 
         agent = ChatAgent.__new__(ChatAgent)
-        tool_spec = agent._build_expand_evidence_tool(envelopes)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
 
         # Check schema has query parameter
         assert "query" in tool_spec["parameters"]["properties"]
@@ -302,3 +319,32 @@ class TestExpandEvidenceWithQuery:
         assert query_schema["type"] == "string"
         # query should be optional (not in required)
         assert "query" not in tool_spec["parameters"].get("required", [])
+
+    def test_expand_evidence_container_updated_dynamically(self):
+        """Test that expand_evidence sees updates to the mutable container."""
+        # Start with empty container
+        envelopes_container = {"envelopes": []}
+
+        agent = ChatAgent.__new__(ChatAgent)
+        tool_spec = agent._build_expand_evidence_tool(envelopes_container)
+        expand_fn = tool_spec["func"]
+
+        # First call - no envelopes yet
+        result = expand_fn("redis_info")
+        assert result["status"] == "error"
+        assert "No tool calls have been made yet" in result["error"]
+
+        # Simulate tool call completing and adding envelope
+        envelopes_container["envelopes"] = [
+            {
+                "tool_key": "redis_info",
+                "name": "Get Redis INFO",
+                "status": "success",
+                "data": {"memory": {"used_memory_human": "1.5G"}},
+            }
+        ]
+
+        # Second call - now envelope is available
+        result = expand_fn("redis_info")
+        assert result["status"] == "success"
+        assert result["full_data"]["memory"]["used_memory_human"] == "1.5G"
