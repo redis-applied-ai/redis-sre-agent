@@ -19,19 +19,6 @@ from redis_sre_agent.core.redis import SRE_THREADS_INDEX, get_redis_client, get_
 logger = logging.getLogger(__name__)
 
 
-class ThreadUpdate(BaseModel):
-    """Individual progress update within a thread.
-
-    DEPRECATED: Progress updates should be stored on TaskState, not Thread.
-    This class is kept for backward compatibility when reading old data.
-    """
-
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    message: str
-    update_type: str = "progress"  # progress, tool_call, error, etc.
-    metadata: Optional[Dict[str, Any]] = None
-
-
 class Message(BaseModel):
     """A single message in a thread conversation."""
 

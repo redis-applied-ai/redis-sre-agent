@@ -1,30 +1,18 @@
 """
 Test progress callback validation fixes.
 
-This module tests the fixes for the ThreadUpdate validation error that was
-occurring when progress callbacks were called with None messages.
+This module tests the fixes for progress callbacks to ensure they
+handle edge cases properly.
 """
 
 import pytest
 
 from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
-from redis_sre_agent.core.threads import ThreadUpdate
 
 
 class TestProgressCallbackValidation:
     """Test progress callback validation fixes."""
-
-    def test_thread_update_validation(self):
-        """Test ThreadUpdate validation with None message."""
-        # This should fail
-        with pytest.raises(ValueError, match="Input should be a valid string"):
-            ThreadUpdate(message=None, update_type="progress")
-
-        # This should pass
-        update = ThreadUpdate(message="Valid message", update_type="progress")
-        assert update.message == "Valid message"
-        assert update.update_type == "progress"
 
     @pytest.mark.asyncio
     async def test_knowledge_agent_progress_callback(self):
