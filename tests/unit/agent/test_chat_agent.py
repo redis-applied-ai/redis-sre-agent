@@ -438,15 +438,14 @@ class TestChatAgentCreateSummarizedToolMessage:
 
         # Should be a different message
         assert result.content != original_msg.content
-        # Should contain SUMMARIZED marker
-        assert "[SUMMARIZED" in result.content
-        # Should contain tool_key
-        assert "tool_key: knowledge_search" in result.content
-        # Should contain structure info
+        # Should contain warning about large/truncated data
+        assert "LARGE RESULT" in result.content or "TRUNCATED" in result.content
+        # Should contain structure info with item keys shown
         assert "results: [10 items]" in result.content
-        # Should contain expand_evidence instructions
+        assert "each with keys" in result.content
+        # Should contain expand_evidence instructions at the top
         assert "expand_evidence" in result.content
-        assert "JMESPath" in result.content
+        assert "tool_key='knowledge_search'" in result.content
 
     def test_summarized_message_preserves_tool_call_id(self):
         """Test that summarized message preserves the tool_call_id."""

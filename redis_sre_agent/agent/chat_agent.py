@@ -314,16 +314,29 @@ class ChatAgent:
 
         # Build a helpful preview showing structure
         preview_lines = []
-        preview_lines.append(f"[SUMMARIZED - {total_size:,} chars total]")
-        preview_lines.append(f"tool_key: {tool_key}")
+
+        # WARNING and instructions FIRST - most important info at top
+        preview_lines.append(f"⚠️ LARGE RESULT ({total_size:,} chars) - DATA TRUNCATED")
+        preview_lines.append("You are NOT seeing the full data. Use expand_evidence to access it:")
+        preview_lines.append(f"  expand_evidence(tool_key='{tool_key}')")
+        preview_lines.append(f"  expand_evidence(tool_key='{tool_key}', query='results[*].source')")
         preview_lines.append("")
 
         # Show structure: top-level keys and their types/sizes
         if isinstance(data, dict):
-            preview_lines.append("Structure:")
+            preview_lines.append("Data structure:")
             for key, value in list(data.items())[:10]:  # First 10 keys
-                if isinstance(value, list):
-                    preview_lines.append(f"  {key}: [{len(value)} items]")
+                if isinstance(value, list) and len(value) > 0:
+                    # Show list length AND first item's keys if it's a dict
+                    if isinstance(value[0], dict):
+                        item_keys = list(value[0].keys())[:8]
+                        preview_lines.append(
+                            f"  {key}: [{len(value)} items] each with keys: {item_keys}"
+                        )
+                    else:
+                        preview_lines.append(f"  {key}: [{len(value)} items]")
+                elif isinstance(value, list):
+                    preview_lines.append(f"  {key}: [empty]")
                 elif isinstance(value, dict):
                     preview_lines.append(f"  {key}: {{...}}")
                 elif isinstance(value, str) and len(value) > 50:
@@ -334,19 +347,10 @@ class ChatAgent:
                         val_str = val_str[:60] + "..."
                     preview_lines.append(f"  {key}: {val_str}")
 
-        # Add data preview (truncated)
+        # Brief preview of the data
         preview_lines.append("")
-        preview_lines.append("Preview:")
+        preview_lines.append(f"Preview (first {self.ENVELOPE_SUMMARY_THRESHOLD} chars):")
         preview_lines.append(data_str[: self.ENVELOPE_SUMMARY_THRESHOLD] + "...")
-
-        # Instructions for expand_evidence
-        preview_lines.append("")
-        preview_lines.append("To get more data, use expand_evidence tool:")
-        preview_lines.append(f"  - Full data: expand_evidence(tool_key='{tool_key}')")
-        preview_lines.append(
-            f"  - Query with JMESPath: expand_evidence(tool_key='{tool_key}', "
-            "query='results[*].title')"
-        )
 
         summarized_content = "\n".join(preview_lines)
 
@@ -473,6 +477,17 @@ class ChatAgent:
                     data = env_dict.get("data", {})
                     summarized_msg = self._create_summarized_tool_message(tm, tool_key, data)
                     messages_for_llm.append(summarized_msg)
+
+                    # Log summarization for debugging
+                    orig_len = len(tm.content) if hasattr(tm, "content") else 0
+                    summ_len = (
+                        len(summarized_msg.content) if hasattr(summarized_msg, "content") else 0
+                    )
+                    if orig_len != summ_len:
+                        logger.debug(
+                            f"Summarized tool result: {tool_key} "
+                            f"({orig_len:,} -> {summ_len:,} chars)"
+                        )
 
                 # Update the mutable container so expand_evidence can see new envelopes
                 envelopes_container["envelopes"] = envelopes
