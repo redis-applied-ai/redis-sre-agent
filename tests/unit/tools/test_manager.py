@@ -3,7 +3,7 @@
 import pytest
 
 from redis_sre_agent.tools.manager import ToolManager
-from redis_sre_agent.tools.models import ToolDefinition
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
 
 @pytest.mark.asyncio
@@ -262,3 +262,45 @@ class TestToolManagerGetStatusUpdate:
                 # May return None or a string depending on tool
                 result = mgr.get_status_update(tool_name, {})
                 assert result is None or isinstance(result, str)
+
+
+class TestToolDefinitionRepresentation:
+    """Tests for ToolDefinition __str__ and __repr__ methods."""
+
+    def test_tool_definition_str(self):
+        """Test that __str__ returns expected format."""
+        tool = ToolDefinition(
+            name="test_tool",
+            description="A test tool",
+            parameters={"type": "object", "properties": {"arg1": {"type": "string"}}},
+            capability=ToolCapability.DIAGNOSTICS,
+        )
+        assert str(tool) == "ToolDefinition(name=test_tool)"
+
+    def test_tool_definition_repr(self):
+        """Test that __repr__ returns expected format with parameter names."""
+        tool = ToolDefinition(
+            name="test_tool",
+            description="A test tool",
+            parameters={
+                "type": "object",
+                "properties": {"arg1": {"type": "string"}, "arg2": {"type": "integer"}},
+            },
+            capability=ToolCapability.DIAGNOSTICS,
+        )
+        repr_str = repr(tool)
+        assert "ToolDefinition(name=test_tool" in repr_str
+        assert "arg1" in repr_str
+        assert "arg2" in repr_str
+
+    def test_tool_definition_repr_empty_parameters(self):
+        """Test __repr__ with empty parameters."""
+        tool = ToolDefinition(
+            name="empty_params_tool",
+            description="A tool with no parameters",
+            parameters={"type": "object", "properties": {}},
+            capability=ToolCapability.UTILITIES,
+        )
+        repr_str = repr(tool)
+        assert "ToolDefinition(name=empty_params_tool" in repr_str
+        assert "parameters=[]" in repr_str
