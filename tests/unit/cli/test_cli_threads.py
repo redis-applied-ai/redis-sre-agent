@@ -99,8 +99,8 @@ class TestThreadGet:
         assert result.exit_code == 0, result.output
         # Should show Message ID column header
         assert "Message ID" in result.output
-        # Should show truncated message_id for assistant message
-        assert "01HX98765432..." in result.output
+        # Should show full message_id for assistant message (for easy copy/paste)
+        assert "01HX9876543210ZYXWVUTSRQ" in result.output
         # Should include hint about thread trace
         assert "thread trace <message_id>" in result.output
 

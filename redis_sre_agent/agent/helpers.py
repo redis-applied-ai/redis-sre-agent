@@ -300,15 +300,15 @@ def extract_citations(envelopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     citations: List[Dict[str, Any]] = []
 
-    for env in envelopes:
-        tool_key = env.get("tool_key", "")
+    for envelope in envelopes:
+        tool_key = envelope.get("tool_key", "")
 
         # Match knowledge search tools by tool_key containing "knowledge"
         if "knowledge" not in tool_key.lower():
             continue
 
         # Extract results from the data field
-        data = env.get("data", {})
+        data = envelope.get("data", {})
         if not isinstance(data, dict):
             continue
 
@@ -350,9 +350,9 @@ def query_tool_data(envelopes: List[Dict[str, Any]], tool_key: str, query: str) 
 
     # Find the most recent envelope with matching tool_key
     matching_envelope = None
-    for env in envelopes:
-        if env.get("tool_key") == tool_key:
-            matching_envelope = env
+    for envelope in envelopes:
+        if envelope.get("tool_key") == tool_key:
+            matching_envelope = envelope
 
     if matching_envelope is None:
         return None

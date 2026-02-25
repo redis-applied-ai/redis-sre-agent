@@ -241,8 +241,9 @@ class ChatAgent:
             "name": "expand_evidence",
             "description": (
                 "Retrieve or query data from a previous tool call using JMESPath. "
-                "IMPORTANT: tool_key is the NAME of the tool you called (like 'knowledge_abc123_search'), "
-                "NOT document IDs or Redis keys from inside results. "
+                "IMPORTANT: The tool_key parameter must be the exact function name you called "
+                "(e.g., 'knowledge_abc123_search', 'redis_info'), NOT document IDs, Redis keys, "
+                "or any values from inside the tool's results. "
                 "JMESPath examples: 'results[*].title' extracts all titles, "
                 "'entries[:3]' gets first 3 items, "
                 "'items[?score > `0.8`]' filters by condition."
@@ -254,8 +255,9 @@ class ChatAgent:
                     "tool_key": {
                         "type": "string",
                         "description": (
-                            "The name of the tool you previously called (e.g., 'knowledge_abc123_search'). "
-                            "This is the function name, NOT a document ID or Redis key from the results."
+                            "The exact function name you previously called (e.g., 'knowledge_abc123_search', "
+                            "'redis_info'). This is the tool/function name from your tool call, NOT a "
+                            "document ID, Redis key, or value from inside the results."
                         ),
                     },
                     "query": {

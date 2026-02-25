@@ -287,7 +287,7 @@ class TestExpandEvidenceWithQuery:
         assert result["queried_data"][0]["id"] == 2
 
     def test_expand_evidence_invalid_query(self):
-        """Test expand_evidence with invalid JMESPath returns error."""
+        """Test expand_evidence with invalid JMESPath returns helpful error with syntax tips."""
         envelopes = [
             {
                 "tool_key": "redis_info",
@@ -305,6 +305,10 @@ class TestExpandEvidenceWithQuery:
         result = expand_fn("redis_info", query="[[[invalid")
         assert result["status"] == "error"
         assert "Invalid JMESPath" in result["error"]
+        # Check that syntax tips are included to help LLM retry
+        assert "JMESPath syntax tips" in result["error"]
+        assert "field.subfield" in result["error"]
+        assert "results[*].fieldname" in result["error"]
 
     def test_expand_evidence_query_parameter_in_schema(self):
         """Test that expand_evidence tool schema includes optional query parameter."""

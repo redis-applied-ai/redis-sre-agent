@@ -2099,10 +2099,11 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                         )
                     except Exception:
                         edited_sanitized = edited
-                    # Return corrected response with original search results
+                    # Return corrected response with original search results and tool envelopes
                     return AgentResponse(
                         response=edited_sanitized,
                         search_results=agent_response.search_results,
+                        tool_envelopes=agent_response.tool_envelopes,
                     )
                 # If no change, just return original
                 return agent_response

@@ -163,22 +163,22 @@ def thread_get(thread_id: str, as_json: bool):
             mt.add_column("Role", no_wrap=True)
             mt.add_column("Message ID", no_wrap=True)
             mt.add_column("Content")
-            for i, m in enumerate(state.messages, 1):
+            for idx, message in enumerate(state.messages, 1):
                 # Truncate long messages for display
-                content = m.content
+                content = message.content
                 if len(content) > 200:
                     content = content[:197] + "..."
                 # Get message_id for assistant messages (used to look up decision traces)
-                msg_id_val = "-"
-                if m.role == "assistant":
+                message_id_display = "-"
+                if message.role == "assistant":
                     # Use message_id field directly, or fall back to metadata
-                    msg_id = m.message_id
-                    if not msg_id and m.metadata:
-                        msg_id = m.metadata.get("message_id")
-                    if msg_id:
-                        # Show truncated ID for display (first 12 chars)
-                        msg_id_val = msg_id[:12] + "..." if len(msg_id) > 12 else msg_id
-                mt.add_row(str(i), m.role, msg_id_val, content)
+                    message_id = message.message_id
+                    if not message_id and message.metadata:
+                        message_id = message.metadata.get("message_id")
+                    if message_id:
+                        # Show full message ID (needed for `thread trace` command)
+                        message_id_display = message_id
+                mt.add_row(str(idx), message.role, message_id_display, content)
             console.print(mt)
             console.print()
             console.print(
@@ -824,11 +824,11 @@ def thread_trace(message_id: str, as_json: bool, show_data: bool):
 
         # Derive citations from knowledge tool envelopes
         citations = []
-        for env in tool_envelopes:
-            tool_key = env.get("tool_key", "")
-            name = env.get("name", "")
+        for envelope in tool_envelopes:
+            tool_key = envelope.get("tool_key", "")
+            name = envelope.get("name", "")
             if "knowledge" in tool_key.lower() and "search" in name.lower():
-                data = env.get("data", {})
+                data = envelope.get("data", {})
                 results = data.get("results", [])
                 for result in results:
                     citations.append(

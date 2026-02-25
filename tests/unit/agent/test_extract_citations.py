@@ -240,10 +240,13 @@ class TestAgentResponseSearchResults:
 
         assert len(response.search_results) == 0
 
-    def test_search_results_backwards_compatible_with_explicit_value(self):
-        """Test that explicit search_results still works for backwards compatibility."""
-        # When search_results is explicitly passed, it should be used
-        # This is for backwards compatibility during migration
+    def test_search_results_explicit_value_used_directly(self):
+        """Test that explicit search_results is used when provided.
+
+        When search_results is explicitly passed (e.g., from KnowledgeAgent
+        which doesn't track tool_envelopes), it should be used directly
+        without derivation.
+        """
         explicit_results = [{"title": "Explicit Doc", "source": "test"}]
         response = AgentResponse(
             response="Test response",
