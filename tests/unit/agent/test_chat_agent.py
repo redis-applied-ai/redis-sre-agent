@@ -407,3 +407,70 @@ class TestChatAgentEnvelopeSummaryThreshold:
         assert ChatAgent.ENVELOPE_SUMMARY_THRESHOLD >= 100
         # Should not be too large (e.g., > 10000)
         assert ChatAgent.ENVELOPE_SUMMARY_THRESHOLD <= 10000
+
+
+class TestChatAgentCreateSummarizedToolMessage:
+    """Test the _create_summarized_tool_message method."""
+
+    def test_small_data_returns_original_message(self):
+        """Test that small data returns the original message unchanged."""
+        from langchain_core.messages import ToolMessage
+
+        agent = ChatAgent()
+        original_msg = ToolMessage(content='{"key": "small"}', tool_call_id="test123")
+        data = {"key": "small"}
+
+        result = agent._create_summarized_tool_message(original_msg, "test_tool", data)
+
+        assert result.content == original_msg.content
+        assert result.tool_call_id == "test123"
+
+    def test_large_data_creates_summarized_message(self):
+        """Test that large data creates a summarized message with preview."""
+        from langchain_core.messages import ToolMessage
+
+        agent = ChatAgent()
+        large_data = {"results": [{"title": f"Item {i}", "content": "x" * 200} for i in range(10)]}
+        original_content = '{"results": [' + ",".join(['{"title": "test"}'] * 10) + "]}"
+        original_msg = ToolMessage(content=original_content, tool_call_id="test456")
+
+        result = agent._create_summarized_tool_message(original_msg, "knowledge_search", large_data)
+
+        # Should be a different message
+        assert result.content != original_msg.content
+        # Should contain SUMMARIZED marker
+        assert "[SUMMARIZED" in result.content
+        # Should contain tool_key
+        assert "tool_key: knowledge_search" in result.content
+        # Should contain structure info
+        assert "results: [10 items]" in result.content
+        # Should contain expand_evidence instructions
+        assert "expand_evidence" in result.content
+        assert "JMESPath" in result.content
+
+    def test_summarized_message_preserves_tool_call_id(self):
+        """Test that summarized message preserves the tool_call_id."""
+        from langchain_core.messages import ToolMessage
+
+        agent = ChatAgent()
+        large_data = {"items": ["x" * 100 for _ in range(20)]}
+        original_msg = ToolMessage(content='{"large": true}', tool_call_id="preserve_me")
+
+        result = agent._create_summarized_tool_message(original_msg, "test_tool", large_data)
+
+        assert result.tool_call_id == "preserve_me"
+
+    def test_summarized_message_shows_array_lengths(self):
+        """Test that summarized message shows array lengths in structure."""
+        from langchain_core.messages import ToolMessage
+
+        agent = ChatAgent()
+        data = {"results": [1, 2, 3, 4, 5], "metadata": {"key": "value"}, "count": 5}
+        # Make it large enough to trigger summarization
+        data["padding"] = "x" * 1000
+        original_msg = ToolMessage(content='{"test": true}', tool_call_id="test789")
+
+        result = agent._create_summarized_tool_message(original_msg, "test_tool", data)
+
+        assert "results: [5 items]" in result.content
+        assert "metadata: {...}" in result.content

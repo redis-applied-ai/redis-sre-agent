@@ -297,6 +297,65 @@ class ChatAgent:
         )
         return env
 
+    def _create_summarized_tool_message(
+        self, original_msg: ToolMessage, tool_key: str, data: Dict[str, Any]
+    ) -> ToolMessage:
+        """Create a summarized ToolMessage for the LLM when data is large.
+
+        The LLM receives a preview with structure hints and instructions on how
+        to use expand_evidence to get full data or query specific fields.
+        """
+        data_str = json.dumps(data, default=str)
+        total_size = len(data_str)
+
+        if total_size <= self.ENVELOPE_SUMMARY_THRESHOLD:
+            # Small enough - return original message unchanged
+            return original_msg
+
+        # Build a helpful preview showing structure
+        preview_lines = []
+        preview_lines.append(f"[SUMMARIZED - {total_size:,} chars total]")
+        preview_lines.append(f"tool_key: {tool_key}")
+        preview_lines.append("")
+
+        # Show structure: top-level keys and their types/sizes
+        if isinstance(data, dict):
+            preview_lines.append("Structure:")
+            for key, value in list(data.items())[:10]:  # First 10 keys
+                if isinstance(value, list):
+                    preview_lines.append(f"  {key}: [{len(value)} items]")
+                elif isinstance(value, dict):
+                    preview_lines.append(f"  {key}: {{...}}")
+                elif isinstance(value, str) and len(value) > 50:
+                    preview_lines.append(f'  {key}: "{value[:50]}..."')
+                else:
+                    val_str = json.dumps(value, default=str)
+                    if len(val_str) > 60:
+                        val_str = val_str[:60] + "..."
+                    preview_lines.append(f"  {key}: {val_str}")
+
+        # Add data preview (truncated)
+        preview_lines.append("")
+        preview_lines.append("Preview:")
+        preview_lines.append(data_str[: self.ENVELOPE_SUMMARY_THRESHOLD] + "...")
+
+        # Instructions for expand_evidence
+        preview_lines.append("")
+        preview_lines.append("To get more data, use expand_evidence tool:")
+        preview_lines.append(f"  - Full data: expand_evidence(tool_key='{tool_key}')")
+        preview_lines.append(
+            f"  - Query with JMESPath: expand_evidence(tool_key='{tool_key}', "
+            "query='results[*].title')"
+        )
+
+        summarized_content = "\n".join(preview_lines)
+
+        return ToolMessage(
+            content=summarized_content,
+            tool_call_id=original_msg.tool_call_id,
+            name=original_msg.name if hasattr(original_msg, "name") else None,
+        )
+
     def _build_workflow(
         self,
         tool_mgr: ToolManager,
@@ -380,8 +439,10 @@ class ChatAgent:
                 out_messages = out.get("messages", [])
                 new_tool_messages = [m for m in out_messages if isinstance(m, ToolMessage)]
 
-                # Build envelopes for each tool call result
-                # Citations are now derived from envelopes via extract_citations()
+                # Build envelopes and create summarized messages for the LLM
+                # The LLM sees summarized versions; full data stays in envelopes
+                messages_for_llm: List[ToolMessage] = []
+
                 for idx, tc in enumerate(tool_calls):
                     tool_name = (
                         tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
@@ -390,24 +451,34 @@ class ChatAgent:
                         tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
                     ) or {}
 
-                    # Skip expand_evidence calls - they don't need envelope tracking
-                    if tool_name == "expand_evidence":
+                    tm = new_tool_messages[idx] if idx < len(new_tool_messages) else None
+                    if tm is None:
                         continue
 
-                    tm = new_tool_messages[idx] if idx < len(new_tool_messages) else None
+                    # Skip expand_evidence calls - pass through unchanged
+                    if tool_name == "expand_evidence":
+                        messages_for_llm.append(tm)
+                        continue
+
                     env_dict = build_result_envelope(
                         tool_name or f"tool_{idx + 1}", tool_args, tm, tooldefs_by_name
                     )
 
-                    # Summarize if large (preserves full data, adds summary field)
+                    # Summarize envelope (preserves full data, adds summary field)
                     env_dict = self._summarize_envelope_sync(env_dict)
                     envelopes.append(env_dict)
+
+                    # Create summarized message for LLM if data is large
+                    tool_key = env_dict.get("tool_key", tool_name)
+                    data = env_dict.get("data", {})
+                    summarized_msg = self._create_summarized_tool_message(tm, tool_key, data)
+                    messages_for_llm.append(summarized_msg)
 
                 # Update the mutable container so expand_evidence can see new envelopes
                 envelopes_container["envelopes"] = envelopes
 
             return {
-                "messages": list(messages) + new_tool_messages,
+                "messages": list(messages) + messages_for_llm,
                 "current_tool_calls": [],
                 "signals_envelopes": envelopes,
             }
