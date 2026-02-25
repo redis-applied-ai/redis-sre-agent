@@ -296,7 +296,9 @@ class KnowledgeOnlyAgent:
                     tool_messages.append(tool_msg)
 
                     # Build result envelope for decision trace
-                    envelope = build_result_envelope(tool_name, tool_args, tool_msg, tooldefs_by_name)
+                    envelope = build_result_envelope(
+                        tool_name, tool_args, tool_msg, tooldefs_by_name
+                    )
                     envelopes.append(envelope)
 
                     # Record knowledge sources when a knowledge search tool returns results
