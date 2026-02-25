@@ -161,26 +161,29 @@ def thread_get(thread_id: str, as_json: bool):
             mt = Table(title="Messages (Conversation)")
             mt.add_column("#", no_wrap=True)
             mt.add_column("Role", no_wrap=True)
-            mt.add_column("Trace ID", no_wrap=True)
+            mt.add_column("Message ID", no_wrap=True)
             mt.add_column("Content")
             for i, m in enumerate(state.messages, 1):
                 # Truncate long messages for display
                 content = m.content
                 if len(content) > 200:
                     content = content[:197] + "..."
-                # Extract trace identifier from metadata for assistant messages
-                # Could be task_id (from task system) or message_id (from CLI query)
-                trace_id_val = "-"
-                if m.role == "assistant" and m.metadata:
-                    # Check for message_id first (CLI query traces), then task_id
-                    mid = m.metadata.get("message_id")
-                    tid = m.metadata.get("task_id")
-                    trace_id = mid or tid
-                    if trace_id:
+                # Get message_id for assistant messages (used to look up decision traces)
+                msg_id_val = "-"
+                if m.role == "assistant":
+                    # Use message_id field directly, or fall back to metadata
+                    msg_id = m.message_id
+                    if not msg_id and m.metadata:
+                        msg_id = m.metadata.get("message_id")
+                    if msg_id:
                         # Show truncated ID for display (first 12 chars)
-                        trace_id_val = trace_id[:12] + "..." if len(trace_id) > 12 else trace_id
-                mt.add_row(str(i), m.role, trace_id_val, content)
+                        msg_id_val = msg_id[:12] + "..." if len(msg_id) > 12 else msg_id
+                mt.add_row(str(i), m.role, msg_id_val, content)
             console.print(mt)
+            console.print()
+            console.print(
+                "[dim]Use `thread trace <message_id>` to see tool calls for a message[/dim]"
+            )
 
     asyncio.run(_get())
 
@@ -710,20 +713,22 @@ def thread_purge(
 
 
 @thread.command("trace")
-@click.argument("trace_id")
+@click.argument("message_id")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--show-data", is_flag=True, help="Show full tool output data")
-def thread_trace(trace_id: str, as_json: bool, show_data: bool):
-    """Show the decision trace for a message or task.
+def thread_trace(message_id: str, as_json: bool, show_data: bool):
+    """Show the decision trace for a single message.
 
-    TRACE_ID can be either a message_id (from CLI query) or task_id (from task system).
+    MESSAGE_ID is the unique identifier for the assistant message whose
+    tool calls you want to inspect. Each message has exactly one trace
+    that contains all tool calls that produced that message's content.
 
-    This displays the agent's reasoning trace, including:
-    - Tool calls made (name, arguments, status, and optionally results)
+    This displays:
+    - Tool calls made (name, arguments, status, and optionally full results)
     - Citations/sources referenced (derived from knowledge tool envelopes)
-    - OTel trace ID for correlation with Tempo
+    - OTel trace ID for correlation with distributed tracing
 
-    Use `thread get <thread_id>` to see trace IDs for messages.
+    Use `thread get <thread_id>` to see message IDs for all messages in a thread.
     """
 
     async def _trace():
@@ -734,17 +739,15 @@ def thread_trace(trace_id: str, as_json: bool, show_data: bool):
         client = get_redis_client()
         thread_manager = ThreadManager(redis_client=client)
 
-        # Get message trace (traces are always associated with messages)
-        trace = await thread_manager.get_message_trace(trace_id)
+        # Get trace for this specific message
+        trace = await thread_manager.get_message_trace(message_id)
 
         if not trace:
             if as_json:
-                print(json.dumps({"error": f"No decision trace found for {trace_id}"}))
+                print(json.dumps({"error": f"No decision trace found for message {message_id}"}))
             else:
-                console.print(f"[yellow]No decision trace found for {trace_id}[/yellow]")
-                console.print(
-                    "[dim]Tip: Trace IDs can be found in thread messages (Trace ID column)[/dim]"
-                )
+                console.print(f"[yellow]No decision trace found for message {message_id}[/yellow]")
+                console.print("[dim]Tip: Use `thread get <thread_id>` to see message IDs[/dim]")
             return
 
         if as_json:
@@ -752,7 +755,7 @@ def thread_trace(trace_id: str, as_json: bool, show_data: bool):
             return
 
         # Display summary
-        console.print(f"\n[bold]Decision Trace:[/bold] {trace_id}")
+        console.print(f"\n[bold]Decision Trace for Message:[/bold] {message_id}")
         if trace.get("otel_trace_id"):
             console.print(f"[dim]OTel Trace ID:[/dim] {trace['otel_trace_id']}")
         if trace.get("created_at"):
