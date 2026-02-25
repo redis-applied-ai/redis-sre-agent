@@ -199,7 +199,8 @@ class ChatAgent:
             if tool_key not in originals_by_key:
                 return {
                     "status": "error",
-                    "error": f"Unknown tool_key: {tool_key}. Available: {available_keys}",
+                    "error": f"Unknown tool_key: '{tool_key}'. Available tool_keys: {available_keys}. "
+                    "Use one of the available tool_keys from a previous tool call.",
                 }
             original = originals_by_key[tool_key]
             data = original.get("data", {})
@@ -216,9 +217,16 @@ class ChatAgent:
                         "queried_data": queried_data,
                     }
                 except JMESPathError as e:
+                    # Provide helpful error with syntax hints
                     return {
                         "status": "error",
-                        "error": f"Invalid JMESPath expression '{query}': {e}",
+                        "error": f"Invalid JMESPath query '{query}': {e}. "
+                        "JMESPath syntax tips: "
+                        "- Access nested fields: 'field.subfield' "
+                        "- Get all items from array field: 'results[*].fieldname' "
+                        "- Slice arrays: 'items[:5]' (first 5) or 'items[-3:]' (last 3) "
+                        "- Filter: 'items[?score > `0.5`]' (note: numbers need backticks) "
+                        "- Project multiple fields: 'results[*].{name: title, url: source}'",
                     }
 
             # No query - return full data
@@ -232,10 +240,12 @@ class ChatAgent:
         return {
             "name": "expand_evidence",
             "description": (
-                "Retrieve data from a previous tool call. "
-                "Use this after calling other tools when you need more detail than the summary provides. "
-                "Optionally use a JMESPath query to extract specific fields "
-                "(e.g., 'results[*].source' for just sources, 'entries[:5]' for first 5 items)."
+                "Retrieve or query data from a previous tool call using JMESPath. "
+                "IMPORTANT: tool_key is the NAME of the tool you called (like 'knowledge_abc123_search'), "
+                "NOT document IDs or Redis keys from inside results. "
+                "JMESPath examples: 'results[*].title' extracts all titles, "
+                "'entries[:3]' gets first 3 items, "
+                "'items[?score > `0.8`]' filters by condition."
             ),
             "func": expand_evidence,
             "parameters": {
@@ -244,16 +254,21 @@ class ChatAgent:
                     "tool_key": {
                         "type": "string",
                         "description": (
-                            "The tool_key from a previous tool call result. "
-                            "Look for tool_key in the evidence summaries."
+                            "The name of the tool you previously called (e.g., 'knowledge_abc123_search'). "
+                            "This is the function name, NOT a document ID or Redis key from the results."
                         ),
                     },
                     "query": {
                         "type": "string",
                         "description": (
-                            "Optional JMESPath expression to extract specific data. "
-                            "Examples: 'results[*].title' (all titles), 'entries[:5]' (first 5), "
-                            "'entries[?duration_us > `1000`]' (filter by condition)"
+                            "JMESPath expression to extract specific data. "
+                            "Common patterns: "
+                            "'fieldname' - get a field, "
+                            "'results[*].title' - extract field from all array items, "
+                            "'results[:5]' - first 5 items, "
+                            "'results[?score > `0.5`]' - filter (numbers in backticks), "
+                            "'results[*].{name: title, link: source}' - project/rename fields. "
+                            "Omit to get full data."
                         ),
                     },
                 },
