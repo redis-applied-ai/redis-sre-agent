@@ -564,7 +564,14 @@ Subject:"""
                 if role not in ("user", "assistant", "system"):
                     role = "user"
 
+                # Preserve message_id if provided (top-level or in metadata)
+                # This is critical for decision trace lookup
+                message_id = m.get("message_id") or (m.get("metadata") or {}).get(
+                    "message_id"
+                )
+
                 msg = Message(
+                    message_id=message_id,  # None triggers auto-generation in model_post_init
                     role=role,
                     content=content,
                     metadata=m.get("metadata"),

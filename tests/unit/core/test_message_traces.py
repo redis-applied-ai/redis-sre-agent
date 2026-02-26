@@ -45,6 +45,96 @@ class TestMessageModel:
         assert msg.metadata["message_id"] == "msg-456"
 
 
+class TestAppendMessagesPreservesMessageId:
+    """Test that append_messages preserves message_id from input."""
+
+    @pytest.fixture
+    def mock_redis_client(self):
+        """Mock Redis client for testing."""
+        client = AsyncMock()
+        client.rpush = AsyncMock(return_value=1)
+        client.hset = AsyncMock(return_value=1)
+        return client
+
+    @pytest.fixture
+    def thread_manager(self, mock_redis_client):
+        """Create thread manager with mocked Redis."""
+        manager = ThreadManager()
+        manager._redis_client = mock_redis_client
+        # Disable search doc update for this test
+        manager._upsert_thread_search_doc = AsyncMock(return_value=True)
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_append_messages_preserves_message_id_from_metadata(
+        self, thread_manager, mock_redis_client
+    ):
+        """append_messages should preserve message_id from metadata."""
+        custom_id = "01CUSTOM1234567890ABCDEF"
+        messages = [
+            {
+                "role": "assistant",
+                "content": "Test response",
+                "metadata": {"message_id": custom_id, "task_id": "task-123"},
+            }
+        ]
+
+        await thread_manager.append_messages("thread-123", messages)
+
+        # Verify rpush was called
+        assert mock_redis_client.rpush.called
+        call_args = mock_redis_client.rpush.call_args
+        stored_json = call_args[0][1]
+        stored_data = json.loads(stored_json)
+
+        # The stored message should have the custom message_id, not an auto-generated one
+        assert stored_data["message_id"] == custom_id
+
+    @pytest.mark.asyncio
+    async def test_append_messages_preserves_message_id_from_top_level(
+        self, thread_manager, mock_redis_client
+    ):
+        """append_messages should preserve message_id from top-level field."""
+        custom_id = "01TOPLEVEL234567890ABCDEF"
+        messages = [
+            {
+                "role": "assistant",
+                "content": "Test response",
+                "message_id": custom_id,
+            }
+        ]
+
+        await thread_manager.append_messages("thread-123", messages)
+
+        call_args = mock_redis_client.rpush.call_args
+        stored_json = call_args[0][1]
+        stored_data = json.loads(stored_json)
+
+        assert stored_data["message_id"] == custom_id
+
+    @pytest.mark.asyncio
+    async def test_append_messages_auto_generates_id_when_none_provided(
+        self, thread_manager, mock_redis_client
+    ):
+        """append_messages should auto-generate message_id when not provided."""
+        messages = [
+            {
+                "role": "user",
+                "content": "User query",
+            }
+        ]
+
+        await thread_manager.append_messages("thread-123", messages)
+
+        call_args = mock_redis_client.rpush.call_args
+        stored_json = call_args[0][1]
+        stored_data = json.loads(stored_json)
+
+        # Should have an auto-generated ULID (26 chars)
+        assert stored_data["message_id"] is not None
+        assert len(stored_data["message_id"]) == 26
+
+
 class TestRedisKeysMessageTrace:
     """Test RedisKeys.message_decision_trace method."""
 
