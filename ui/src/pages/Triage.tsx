@@ -58,6 +58,7 @@ interface ChatThread {
   isScheduled?: boolean;
   instanceId?: string;
   instanceName?: string;
+  supportPackageId?: string;
 }
 
 const Triage = () => {
@@ -79,6 +80,16 @@ const Triage = () => {
   const [threadToDelete, setThreadToDelete] = useState<string | null>(null);
   const [instances, setInstances] = useState<RedisInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
+  const [selectedSupportPackageId, setSelectedSupportPackageId] =
+    useState<string>("");
+  const [selectedSupportPackageFilename, setSelectedSupportPackageFilename] =
+    useState<string>("");
+  const [isUploadingSupportPackage, setIsUploadingSupportPackage] =
+    useState(false);
+  const [supportPackageUploadError, setSupportPackageUploadError] =
+    useState("");
+  const [activeSupportPackageId, setActiveSupportPackageId] =
+    useState<string>("");
   const [isThinking, setIsThinking] = useState(false);
   const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
   const [isThreadBusy, setIsThreadBusy] = useState(false);
@@ -145,6 +156,39 @@ const Triage = () => {
       console.error("Failed to load instances:", err);
       // Don't show error to user, just log it
     }
+  };
+
+  const uploadSupportPackage = async (file: File) => {
+    setSupportPackageUploadError("");
+    setIsUploadingSupportPackage(true);
+    try {
+      const uploaded = await sreAgentApi.uploadSupportPackage(file);
+      setSelectedSupportPackageId(uploaded.package_id);
+      setSelectedSupportPackageFilename(uploaded.filename || file.name);
+    } catch (err) {
+      setSelectedSupportPackageId("");
+      setSelectedSupportPackageFilename("");
+      setSupportPackageUploadError(
+        err instanceof Error ? err.message : "Failed to upload support package",
+      );
+    } finally {
+      setIsUploadingSupportPackage(false);
+    }
+  };
+
+  const handleSupportPackageFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await uploadSupportPackage(file);
+    event.target.value = "";
+  };
+
+  const clearSupportPackageSelection = () => {
+    setSelectedSupportPackageId("");
+    setSelectedSupportPackageFilename("");
+    setSupportPackageUploadError("");
   };
 
   // Handle URL parameters to auto-select thread
@@ -444,6 +488,7 @@ const Triage = () => {
     setError("");
     setShowNewConversation(true);
     setShowWebSocketMonitor(false);
+    setActiveSupportPackageId("");
 
     // Clear any `thread` query parameter from the URL so that the page
     // no longer treats an existing thread as selected. Without this, the
@@ -507,6 +552,12 @@ const Triage = () => {
     try {
       const status = await sreAgentApi.getTaskStatus(threadId);
       const transcript = await sreAgentApi.getTranscript(threadId);
+      const supportPackageIdFromContext =
+        status.context?.support_package_id ||
+        (typeof status.context?.support_package_path === "string"
+          ? status.context.support_package_path.split("/").filter(Boolean).pop()
+          : "");
+      setActiveSupportPackageId(supportPackageIdFromContext || "");
 
       const newMessages: ChatMessage[] = transcript.map((m, idx) => ({
         id: `m-${idx}-${m.role}-${m.timestamp || idx}`,
@@ -540,6 +591,7 @@ const Triage = () => {
     } catch (err) {
       console.warn("Could not load thread status:", err);
       setIsThreadBusy(false);
+      setActiveSupportPackageId("");
     }
   };
 
@@ -576,12 +628,14 @@ const Triage = () => {
           0,
           undefined,
           selectedInstanceId || undefined,
+          selectedSupportPackageId || undefined,
         );
         threadId = triageResponse;
 
         // Update the active thread ID
         setActiveThreadId(threadId);
         setShowNewConversation(false);
+        setActiveSupportPackageId(selectedSupportPackageId || "");
 
         // Store the initial query for WebSocket display and show live monitor
         sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
@@ -607,6 +661,7 @@ const Triage = () => {
           status: "queued",
           instanceId: selectedInstanceId || undefined,
           instanceName: resolvedInstanceName,
+          supportPackageId: selectedSupportPackageId || undefined,
         };
         setThreads((prev) => [newThread, ...prev]);
 
@@ -662,6 +717,7 @@ const Triage = () => {
         setMessages([]);
         setError("");
         setIsPolling(false);
+        setActiveSupportPackageId("");
 
         // Stop polling
         if (pollingIntervalRef.current) {
@@ -953,6 +1009,18 @@ const Triage = () => {
                       </div>
                     </div>
                   )}
+                {activeSupportPackageId && (
+                  <div className="px-4 py-3 border-b border-redis-dusk-08 bg-redis-dusk-09">
+                    <div className="flex items-center gap-2 text-redis-sm">
+                      <span className="text-redis-dusk-04">
+                        Support Package:
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {activeSupportPackageId}
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Chat Content Area: WebSocket monitor for live threads, static transcript for completed */}
                 <CardContent className="flex-1 overflow-hidden">
@@ -1233,6 +1301,57 @@ const Triage = () => {
                     </div>
                   )}
 
+                  <div className="mb-3">
+                    <label
+                      htmlFor="support-package-upload"
+                      className="block text-redis-xs text-redis-dusk-04 mb-1"
+                    >
+                      Support package (optional)
+                    </label>
+                    <input
+                      id="support-package-upload"
+                      type="file"
+                      accept=".tar.gz,.tgz,.tar"
+                      onChange={handleSupportPackageFileChange}
+                      disabled={isUploadingSupportPackage || isLoading}
+                      className="w-full text-redis-sm"
+                    />
+                    {isUploadingSupportPackage && (
+                      <p className="text-redis-xs text-redis-dusk-04 mt-1">
+                        Uploading support package...
+                      </p>
+                    )}
+                    {!!selectedSupportPackageId && (
+                      <div className="mt-2 flex items-center justify-between rounded-redis-sm border border-redis-dusk-07 bg-redis-dusk-09 px-2 py-2">
+                        <div className="min-w-0">
+                          <p className="text-redis-xs text-foreground truncate">
+                            {selectedSupportPackageFilename ||
+                              selectedSupportPackageId}
+                          </p>
+                          <p className="text-redis-xs text-redis-dusk-04 truncate">
+                            ID: {selectedSupportPackageId}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={clearSupportPackageSelection}
+                        >
+                          Clear
+                        </Button>
+                      </div>
+                    )}
+                    {!!supportPackageUploadError && (
+                      <p className="text-redis-xs text-redis-red mt-1">
+                        Upload failed: {supportPackageUploadError}
+                      </p>
+                    )}
+                    <p className="text-redis-xs text-redis-dusk-04 mt-1">
+                      Upload a Redis Enterprise support package to analyze its
+                      captured diagnostics and logs.
+                    </p>
+                  </div>
+
                   <div className="flex gap-2">
                     <textarea
                       value={inputMessage}
@@ -1249,6 +1368,7 @@ const Triage = () => {
                       disabled={
                         !inputMessage.trim() ||
                         isLoading ||
+                        isUploadingSupportPackage ||
                         agentStatus !== "available"
                       }
                       className="self-end"

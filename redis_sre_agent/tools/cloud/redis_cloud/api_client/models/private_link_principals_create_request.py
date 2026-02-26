@@ -4,7 +4,9 @@ from typing import Any, TypeVar, Union
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.private_link_principals_create_request_type import PrivateLinkPrincipalsCreateRequestType
+from ..models.private_link_principals_create_request_type import (
+    PrivateLinkPrincipalsCreateRequestType,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="PrivateLinkPrincipalsCreateRequest")

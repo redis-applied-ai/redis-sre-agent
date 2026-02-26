@@ -5,8 +5,12 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.database_backup_config_backup_interval import DatabaseBackupConfigBackupInterval
-from ..models.database_backup_config_backup_storage_type import DatabaseBackupConfigBackupStorageType
-from ..models.database_backup_config_database_backup_time_utc import DatabaseBackupConfigDatabaseBackupTimeUTC
+from ..models.database_backup_config_backup_storage_type import (
+    DatabaseBackupConfigBackupStorageType,
+)
+from ..models.database_backup_config_database_backup_time_utc import (
+    DatabaseBackupConfigDatabaseBackupTimeUTC,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="DatabaseBackupConfig")
@@ -108,7 +112,9 @@ class DatabaseBackupConfig:
         if isinstance(_database_backup_time_utc, Unset):
             database_backup_time_utc = UNSET
         else:
-            database_backup_time_utc = DatabaseBackupConfigDatabaseBackupTimeUTC(_database_backup_time_utc)
+            database_backup_time_utc = DatabaseBackupConfigDatabaseBackupTimeUTC(
+                _database_backup_time_utc
+            )
 
         storage_type = d.pop("storageType", UNSET)
 

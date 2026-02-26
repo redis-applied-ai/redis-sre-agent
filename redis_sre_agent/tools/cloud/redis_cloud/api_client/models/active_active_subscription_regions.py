@@ -7,7 +7,9 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.active_active_subscription_regions_links_item import ActiveActiveSubscriptionRegionsLinksItem
+    from ..models.active_active_subscription_regions_links_item import (
+        ActiveActiveSubscriptionRegionsLinksItem,
+    )
 
 
 T = TypeVar("T", bound="ActiveActiveSubscriptionRegions")
@@ -60,7 +62,9 @@ class ActiveActiveSubscriptionRegions:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.active_active_subscription_regions_links_item import ActiveActiveSubscriptionRegionsLinksItem
+        from ..models.active_active_subscription_regions_links_item import (
+            ActiveActiveSubscriptionRegionsLinksItem,
+        )
 
         d = dict(src_dict)
         subscription_id = d.pop("subscriptionId", UNSET)

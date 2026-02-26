@@ -5,7 +5,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.modules_data_links_item_additional_property import ModulesDataLinksItemAdditionalProperty
+    from ..models.modules_data_links_item_additional_property import (
+        ModulesDataLinksItemAdditionalProperty,
+    )
 
 
 T = TypeVar("T", bound="ModulesDataLinksItem")
@@ -15,7 +17,9 @@ T = TypeVar("T", bound="ModulesDataLinksItem")
 class ModulesDataLinksItem:
     """ """
 
-    additional_properties: dict[str, "ModulesDataLinksItemAdditionalProperty"] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, "ModulesDataLinksItemAdditionalProperty"] = _attrs_field(
+        init=False, factory=dict
+    )
 
     def to_dict(self) -> dict[str, Any]:
         field_dict: dict[str, Any] = {}
@@ -26,7 +30,9 @@ class ModulesDataLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.modules_data_links_item_additional_property import ModulesDataLinksItemAdditionalProperty
+        from ..models.modules_data_links_item_additional_property import (
+            ModulesDataLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         modules_data_links_item = cls()

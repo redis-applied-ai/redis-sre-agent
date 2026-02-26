@@ -5,7 +5,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.fixed_database_links_item_additional_property import FixedDatabaseLinksItemAdditionalProperty
+    from ..models.fixed_database_links_item_additional_property import (
+        FixedDatabaseLinksItemAdditionalProperty,
+    )
 
 
 T = TypeVar("T", bound="FixedDatabaseLinksItem")
@@ -28,7 +30,9 @@ class FixedDatabaseLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.fixed_database_links_item_additional_property import FixedDatabaseLinksItemAdditionalProperty
+        from ..models.fixed_database_links_item_additional_property import (
+            FixedDatabaseLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         fixed_database_links_item = cls()

@@ -5,7 +5,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.payment_methods_links_item_additional_property import PaymentMethodsLinksItemAdditionalProperty
+    from ..models.payment_methods_links_item_additional_property import (
+        PaymentMethodsLinksItemAdditionalProperty,
+    )
 
 
 T = TypeVar("T", bound="PaymentMethodsLinksItem")
@@ -28,7 +30,9 @@ class PaymentMethodsLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.payment_methods_links_item_additional_property import PaymentMethodsLinksItemAdditionalProperty
+        from ..models.payment_methods_links_item_additional_property import (
+            PaymentMethodsLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         payment_methods_links_item = cls()

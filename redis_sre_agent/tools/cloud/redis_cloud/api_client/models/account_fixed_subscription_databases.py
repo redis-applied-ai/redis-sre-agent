@@ -7,7 +7,9 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.account_fixed_subscription_databases_links_item import AccountFixedSubscriptionDatabasesLinksItem
+    from ..models.account_fixed_subscription_databases_links_item import (
+        AccountFixedSubscriptionDatabasesLinksItem,
+    )
 
 
 T = TypeVar("T", bound="AccountFixedSubscriptionDatabases")
@@ -83,7 +85,9 @@ class AccountFixedSubscriptionDatabases:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.account_fixed_subscription_databases_links_item import AccountFixedSubscriptionDatabasesLinksItem
+        from ..models.account_fixed_subscription_databases_links_item import (
+            AccountFixedSubscriptionDatabasesLinksItem,
+        )
 
         d = dict(src_dict)
         account_id = d.pop("accountId", UNSET)

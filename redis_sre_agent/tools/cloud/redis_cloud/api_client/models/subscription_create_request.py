@@ -4,9 +4,15 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.subscription_create_request_deployment_type import SubscriptionCreateRequestDeploymentType
-from ..models.subscription_create_request_memory_storage import SubscriptionCreateRequestMemoryStorage
-from ..models.subscription_create_request_payment_method import SubscriptionCreateRequestPaymentMethod
+from ..models.subscription_create_request_deployment_type import (
+    SubscriptionCreateRequestDeploymentType,
+)
+from ..models.subscription_create_request_memory_storage import (
+    SubscriptionCreateRequestMemoryStorage,
+)
+from ..models.subscription_create_request_payment_method import (
+    SubscriptionCreateRequestPaymentMethod,
+)
 from ..models.subscription_create_request_persistent_storage_encryption_type import (
     SubscriptionCreateRequestPersistentStorageEncryptionType,
 )
@@ -64,7 +70,9 @@ class SubscriptionCreateRequest:
     payment_method: Union[Unset, SubscriptionCreateRequestPaymentMethod] = UNSET
     payment_method_id: Union[Unset, int] = UNSET
     memory_storage: Union[Unset, SubscriptionCreateRequestMemoryStorage] = UNSET
-    persistent_storage_encryption_type: Union[Unset, SubscriptionCreateRequestPersistentStorageEncryptionType] = UNSET
+    persistent_storage_encryption_type: Union[
+        Unset, SubscriptionCreateRequestPersistentStorageEncryptionType
+    ] = UNSET
     persistent_storage_encryption_keys: Union[Unset, "CustomerManagedKeyProperties"] = UNSET
     redis_version: Union[Unset, str] = UNSET
     command_type: Union[Unset, str] = UNSET
@@ -191,12 +199,16 @@ class SubscriptionCreateRequest:
             memory_storage = SubscriptionCreateRequestMemoryStorage(_memory_storage)
 
         _persistent_storage_encryption_type = d.pop("persistentStorageEncryptionType", UNSET)
-        persistent_storage_encryption_type: Union[Unset, SubscriptionCreateRequestPersistentStorageEncryptionType]
+        persistent_storage_encryption_type: Union[
+            Unset, SubscriptionCreateRequestPersistentStorageEncryptionType
+        ]
         if isinstance(_persistent_storage_encryption_type, Unset):
             persistent_storage_encryption_type = UNSET
         else:
-            persistent_storage_encryption_type = SubscriptionCreateRequestPersistentStorageEncryptionType(
-                _persistent_storage_encryption_type
+            persistent_storage_encryption_type = (
+                SubscriptionCreateRequestPersistentStorageEncryptionType(
+                    _persistent_storage_encryption_type
+                )
             )
 
         _persistent_storage_encryption_keys = d.pop("persistentStorageEncryptionKeys", UNSET)

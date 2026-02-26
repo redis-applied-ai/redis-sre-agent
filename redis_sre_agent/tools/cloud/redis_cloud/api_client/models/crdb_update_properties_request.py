@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.crdb_update_properties_request_data_eviction_policy import CrdbUpdatePropertiesRequestDataEvictionPolicy
+from ..models.crdb_update_properties_request_data_eviction_policy import (
+    CrdbUpdatePropertiesRequestDataEvictionPolicy,
+)
 from ..models.crdb_update_properties_request_global_data_persistence import (
     CrdbUpdatePropertiesRequestGlobalDataPersistence,
 )
@@ -174,7 +176,9 @@ class CrdbUpdatePropertiesRequest:
         if support_oss_cluster_api is not UNSET:
             field_dict["supportOSSClusterApi"] = support_oss_cluster_api
         if use_external_endpoint_for_oss_cluster_api is not UNSET:
-            field_dict["useExternalEndpointForOSSClusterApi"] = use_external_endpoint_for_oss_cluster_api
+            field_dict["useExternalEndpointForOSSClusterApi"] = (
+                use_external_endpoint_for_oss_cluster_api
+            )
         if client_ssl_certificate is not UNSET:
             field_dict["clientSslCertificate"] = client_ssl_certificate
         if client_tls_certificates is not UNSET:
@@ -221,14 +225,18 @@ class CrdbUpdatePropertiesRequest:
 
         support_oss_cluster_api = d.pop("supportOSSClusterApi", UNSET)
 
-        use_external_endpoint_for_oss_cluster_api = d.pop("useExternalEndpointForOSSClusterApi", UNSET)
+        use_external_endpoint_for_oss_cluster_api = d.pop(
+            "useExternalEndpointForOSSClusterApi", UNSET
+        )
 
         client_ssl_certificate = d.pop("clientSslCertificate", UNSET)
 
         client_tls_certificates = []
         _client_tls_certificates = d.pop("clientTlsCertificates", UNSET)
         for client_tls_certificates_item_data in _client_tls_certificates or []:
-            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(client_tls_certificates_item_data)
+            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(
+                client_tls_certificates_item_data
+            )
 
             client_tls_certificates.append(client_tls_certificates_item)
 
@@ -239,7 +247,9 @@ class CrdbUpdatePropertiesRequest:
         if isinstance(_global_data_persistence, Unset):
             global_data_persistence = UNSET
         else:
-            global_data_persistence = CrdbUpdatePropertiesRequestGlobalDataPersistence(_global_data_persistence)
+            global_data_persistence = CrdbUpdatePropertiesRequestGlobalDataPersistence(
+                _global_data_persistence
+            )
 
         global_password = d.pop("globalPassword", UNSET)
 
@@ -266,7 +276,9 @@ class CrdbUpdatePropertiesRequest:
         if isinstance(_data_eviction_policy, Unset):
             data_eviction_policy = UNSET
         else:
-            data_eviction_policy = CrdbUpdatePropertiesRequestDataEvictionPolicy(_data_eviction_policy)
+            data_eviction_policy = CrdbUpdatePropertiesRequestDataEvictionPolicy(
+                _data_eviction_policy
+            )
 
         command_type = d.pop("commandType", UNSET)
 

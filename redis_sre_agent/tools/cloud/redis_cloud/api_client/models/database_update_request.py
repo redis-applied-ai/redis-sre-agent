@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.database_update_request_data_eviction_policy import DatabaseUpdateRequestDataEvictionPolicy
+from ..models.database_update_request_data_eviction_policy import (
+    DatabaseUpdateRequestDataEvictionPolicy,
+)
 from ..models.database_update_request_data_persistence import DatabaseUpdateRequestDataPersistence
 from ..models.database_update_request_resp_version import DatabaseUpdateRequestRespVersion
 from ..types import UNSET, Unset
@@ -243,7 +245,9 @@ class DatabaseUpdateRequest:
         if support_oss_cluster_api is not UNSET:
             field_dict["supportOSSClusterApi"] = support_oss_cluster_api
         if use_external_endpoint_for_oss_cluster_api is not UNSET:
-            field_dict["useExternalEndpointForOSSClusterApi"] = use_external_endpoint_for_oss_cluster_api
+            field_dict["useExternalEndpointForOSSClusterApi"] = (
+                use_external_endpoint_for_oss_cluster_api
+            )
         if password is not UNSET:
             field_dict["password"] = password
         if sasl_username is not UNSET:
@@ -337,7 +341,9 @@ class DatabaseUpdateRequest:
 
         support_oss_cluster_api = d.pop("supportOSSClusterApi", UNSET)
 
-        use_external_endpoint_for_oss_cluster_api = d.pop("useExternalEndpointForOSSClusterApi", UNSET)
+        use_external_endpoint_for_oss_cluster_api = d.pop(
+            "useExternalEndpointForOSSClusterApi", UNSET
+        )
 
         password = d.pop("password", UNSET)
 
@@ -352,7 +358,9 @@ class DatabaseUpdateRequest:
         client_tls_certificates = []
         _client_tls_certificates = d.pop("clientTlsCertificates", UNSET)
         for client_tls_certificates_item_data in _client_tls_certificates or []:
-            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(client_tls_certificates_item_data)
+            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(
+                client_tls_certificates_item_data
+            )
 
             client_tls_certificates.append(client_tls_certificates_item)
 

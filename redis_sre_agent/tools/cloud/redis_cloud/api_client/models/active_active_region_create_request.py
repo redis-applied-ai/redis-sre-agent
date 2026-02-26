@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.active_active_region_create_request_resp_version import ActiveActiveRegionCreateRequestRespVersion
+from ..models.active_active_region_create_request_resp_version import (
+    ActiveActiveRegionCreateRequestRespVersion,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:

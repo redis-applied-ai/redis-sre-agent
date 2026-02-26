@@ -703,6 +703,7 @@ async def process_agent_turn(
                 f"Using Redis instance: {active_instance_id}",
                 "instance_context",
             )
+            thread.context["instance_id"] = active_instance_id
 
         elif instance_id_from_thread:
             # No instance_id from client, but we have one saved in thread
@@ -713,6 +714,7 @@ async def process_agent_turn(
                 f"Continuing with Redis instance: {active_instance_id}",
                 "instance_context",
             )
+            thread.context["instance_id"] = active_instance_id
 
         else:
             # No instance_id from client or thread - attempt to create one from message
@@ -749,6 +751,7 @@ async def process_agent_turn(
                         f"Created Redis instance: {new_instance.name} ({active_instance_id})",
                         "instance_created",
                     )
+                    thread.context["instance_id"] = active_instance_id
 
                 except Exception as e:
                     logger.warning(f"Failed to create instance from user details: {e}")
@@ -759,6 +762,34 @@ async def process_agent_turn(
                     )
                     # Continue without instance_id - will route to knowledge agent
 
+        support_package_id_from_client = context.get("support_package_id") if context else None
+        support_package_path_from_client = context.get("support_package_path") if context else None
+        support_package_path_from_thread = thread.context.get("support_package_path")
+        active_support_package_path = None
+
+        if support_package_path_from_client:
+            active_support_package_path = str(support_package_path_from_client)
+            logger.info(
+                f"Using support package path from client context: {active_support_package_path}"
+            )
+            updates: Dict[str, Any] = {"support_package_path": active_support_package_path}
+            if support_package_id_from_client:
+                updates["support_package_id"] = str(support_package_id_from_client)
+            await thread_manager.update_thread_context(thread_id, updates, merge=True)
+            thread.context.update(updates)
+            await task_manager.add_task_update(
+                task_id,
+                f"Using support package: {support_package_id_from_client or active_support_package_path}",
+                "support_package_context",
+            )
+        elif support_package_path_from_thread:
+            active_support_package_path = str(support_package_path_from_thread)
+            await task_manager.add_task_update(
+                task_id,
+                "Continuing with support package context",
+                "support_package_context",
+            )
+
         # Merge context for routing decision
         routing_context = thread.context.copy()
         if context:
@@ -767,6 +798,8 @@ async def process_agent_turn(
         # Ensure active_instance_id is in routing context
         if active_instance_id:
             routing_context["instance_id"] = active_instance_id
+        if active_support_package_path:
+            routing_context["support_package_path"] = active_support_package_path
 
         agent_type = await route_to_appropriate_agent(
             query=message,

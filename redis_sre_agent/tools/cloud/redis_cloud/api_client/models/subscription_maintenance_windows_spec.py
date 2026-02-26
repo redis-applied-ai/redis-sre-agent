@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.subscription_maintenance_windows_spec_mode import SubscriptionMaintenanceWindowsSpecMode
+from ..models.subscription_maintenance_windows_spec_mode import (
+    SubscriptionMaintenanceWindowsSpecMode,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:

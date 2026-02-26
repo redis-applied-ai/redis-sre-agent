@@ -4,7 +4,9 @@ from typing import Any, TypeVar, Union
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.fixed_subscription_create_request_payment_method import FixedSubscriptionCreateRequestPaymentMethod
+from ..models.fixed_subscription_create_request_payment_method import (
+    FixedSubscriptionCreateRequestPaymentMethod,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="FixedSubscriptionCreateRequest")

@@ -6,7 +6,9 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.fixed_subscriptions_plans import FixedSubscriptionsPlans
-from ...models.get_all_fixed_subscriptions_plans_provider import GetAllFixedSubscriptionsPlansProvider
+from ...models.get_all_fixed_subscriptions_plans_provider import (
+    GetAllFixedSubscriptionsPlansProvider,
+)
 from ...types import UNSET, Response, Unset
 
 

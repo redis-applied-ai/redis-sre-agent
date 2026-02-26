@@ -4,10 +4,16 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.fixed_database_create_request_data_eviction_policy import FixedDatabaseCreateRequestDataEvictionPolicy
-from ..models.fixed_database_create_request_data_persistence import FixedDatabaseCreateRequestDataPersistence
+from ..models.fixed_database_create_request_data_eviction_policy import (
+    FixedDatabaseCreateRequestDataEvictionPolicy,
+)
+from ..models.fixed_database_create_request_data_persistence import (
+    FixedDatabaseCreateRequestDataPersistence,
+)
 from ..models.fixed_database_create_request_protocol import FixedDatabaseCreateRequestProtocol
-from ..models.fixed_database_create_request_resp_version import FixedDatabaseCreateRequestRespVersion
+from ..models.fixed_database_create_request_resp_version import (
+    FixedDatabaseCreateRequestRespVersion,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -225,7 +231,9 @@ class FixedDatabaseCreateRequest:
         if resp_version is not UNSET:
             field_dict["respVersion"] = resp_version
         if use_external_endpoint_for_oss_cluster_api is not UNSET:
-            field_dict["useExternalEndpointForOSSClusterApi"] = use_external_endpoint_for_oss_cluster_api
+            field_dict["useExternalEndpointForOSSClusterApi"] = (
+                use_external_endpoint_for_oss_cluster_api
+            )
         if enable_database_clustering is not UNSET:
             field_dict["enableDatabaseClustering"] = enable_database_clustering
         if number_of_shards is not UNSET:
@@ -297,7 +305,9 @@ class FixedDatabaseCreateRequest:
         else:
             resp_version = FixedDatabaseCreateRequestRespVersion(_resp_version)
 
-        use_external_endpoint_for_oss_cluster_api = d.pop("useExternalEndpointForOSSClusterApi", UNSET)
+        use_external_endpoint_for_oss_cluster_api = d.pop(
+            "useExternalEndpointForOSSClusterApi", UNSET
+        )
 
         enable_database_clustering = d.pop("enableDatabaseClustering", UNSET)
 
@@ -315,7 +325,9 @@ class FixedDatabaseCreateRequest:
         if isinstance(_data_eviction_policy, Unset):
             data_eviction_policy = UNSET
         else:
-            data_eviction_policy = FixedDatabaseCreateRequestDataEvictionPolicy(_data_eviction_policy)
+            data_eviction_policy = FixedDatabaseCreateRequestDataEvictionPolicy(
+                _data_eviction_policy
+            )
 
         replication = d.pop("replication", UNSET)
 
@@ -339,7 +351,9 @@ class FixedDatabaseCreateRequest:
         client_tls_certificates = []
         _client_tls_certificates = d.pop("clientTlsCertificates", UNSET)
         for client_tls_certificates_item_data in _client_tls_certificates or []:
-            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(client_tls_certificates_item_data)
+            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(
+                client_tls_certificates_item_data
+            )
 
             client_tls_certificates.append(client_tls_certificates_item)
 

@@ -17,8 +17,8 @@ T = TypeVar("T", bound="AccountSubscriptionsLinksItem")
 class AccountSubscriptionsLinksItem:
     """ """
 
-    additional_properties: dict[str, "AccountSubscriptionsLinksItemAdditionalProperty"] = _attrs_field(
-        init=False, factory=dict
+    additional_properties: dict[str, "AccountSubscriptionsLinksItemAdditionalProperty"] = (
+        _attrs_field(init=False, factory=dict)
     )
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,7 +39,9 @@ class AccountSubscriptionsLinksItem:
 
         additional_properties = {}
         for prop_name, prop_dict in d.items():
-            additional_property = AccountSubscriptionsLinksItemAdditionalProperty.from_dict(prop_dict)
+            additional_property = AccountSubscriptionsLinksItemAdditionalProperty.from_dict(
+                prop_dict
+            )
 
             additional_properties[prop_name] = additional_property
 
@@ -53,7 +55,9 @@ class AccountSubscriptionsLinksItem:
     def __getitem__(self, key: str) -> "AccountSubscriptionsLinksItemAdditionalProperty":
         return self.additional_properties[key]
 
-    def __setitem__(self, key: str, value: "AccountSubscriptionsLinksItemAdditionalProperty") -> None:
+    def __setitem__(
+        self, key: str, value: "AccountSubscriptionsLinksItemAdditionalProperty"
+    ) -> None:
         self.additional_properties[key] = value
 
     def __delitem__(self, key: str) -> None:

@@ -227,7 +227,9 @@ class FixedDatabase:
         if support_oss_cluster_api is not UNSET:
             field_dict["supportOSSClusterApi"] = support_oss_cluster_api
         if use_external_endpoint_for_oss_cluster_api is not UNSET:
-            field_dict["useExternalEndpointForOSSClusterApi"] = use_external_endpoint_for_oss_cluster_api
+            field_dict["useExternalEndpointForOSSClusterApi"] = (
+                use_external_endpoint_for_oss_cluster_api
+            )
         if data_persistence is not UNSET:
             field_dict["dataPersistence"] = data_persistence
         if replication is not UNSET:
@@ -308,7 +310,9 @@ class FixedDatabase:
 
         support_oss_cluster_api = d.pop("supportOSSClusterApi", UNSET)
 
-        use_external_endpoint_for_oss_cluster_api = d.pop("useExternalEndpointForOSSClusterApi", UNSET)
+        use_external_endpoint_for_oss_cluster_api = d.pop(
+            "useExternalEndpointForOSSClusterApi", UNSET
+        )
 
         _data_persistence = d.pop("dataPersistence", UNSET)
         data_persistence: Union[Unset, FixedDatabaseDataPersistence]

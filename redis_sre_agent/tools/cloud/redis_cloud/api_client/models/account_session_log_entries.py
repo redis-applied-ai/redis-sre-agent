@@ -53,7 +53,9 @@ class AccountSessionLogEntries:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.account_session_log_entries_links_item import AccountSessionLogEntriesLinksItem
+        from ..models.account_session_log_entries_links_item import (
+            AccountSessionLogEntriesLinksItem,
+        )
         from ..models.account_session_log_entry import AccountSessionLogEntry
 
         d = dict(src_dict)

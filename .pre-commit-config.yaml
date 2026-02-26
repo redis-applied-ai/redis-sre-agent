@@ -1,12 +1,21 @@
+# All ruff hooks use 'local' repo to ensure we use the same ruff version
+# as CI (from uv.lock), avoiding version mismatch surprises.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.13.2
+  - repo: local
     hooks:
-      # Run the linter
-      - id: ruff
-        args: [--fix]
-      # Run the formatter
+      # Run ruff formatter (applies formatting)
       - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+
+      # Run ruff linter with auto-fix
+      - id: ruff-lint
+        name: ruff lint
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

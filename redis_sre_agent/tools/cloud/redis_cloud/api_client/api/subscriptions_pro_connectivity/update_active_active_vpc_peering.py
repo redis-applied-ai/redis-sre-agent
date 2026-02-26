@@ -5,7 +5,9 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.active_active_vpc_peering_update_aws_request import ActiveActiveVpcPeeringUpdateAwsRequest
+from ...models.active_active_vpc_peering_update_aws_request import (
+    ActiveActiveVpcPeeringUpdateAwsRequest,
+)
 from ...models.task_state_update import TaskStateUpdate
 from ...types import Response
 

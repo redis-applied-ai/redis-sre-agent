@@ -50,6 +50,12 @@ export interface TriageResponse {
   estimated_completion?: string;
 }
 
+export interface SupportPackageUploadResponse {
+  package_id: string;
+  status: string;
+  filename: string;
+}
+
 export interface ThreadSummary {
   thread_id: string;
   subject: string;
@@ -187,7 +193,7 @@ export interface AgentStatus {
   status?: string;
 }
 
-class SREAgentAPI {
+export class SREAgentAPI {
   private tasksBaseUrl: string;
 
   constructor(baseUrl?: string) {
@@ -259,6 +265,7 @@ class SREAgentAPI {
     priority: number = 0,
     tags?: string[],
     instanceId?: string,
+    supportPackageId?: string,
   ): Promise<TriageResponse> {
     const response = await fetch(`${this.tasksBaseUrl}/tasks`, {
       method: "POST",
@@ -273,6 +280,7 @@ class SREAgentAPI {
           priority,
           tags,
           ...(instanceId && { instance_id: instanceId }),
+          ...(supportPackageId && { support_package_id: supportPackageId }),
         },
       }),
     });
@@ -737,6 +745,7 @@ class SREAgentAPI {
     priority: number = 0,
     tags?: string[],
     instanceId?: string,
+    supportPackageId?: string,
   ): Promise<string> {
     const triageResponse = await this.submitTriageRequest(
       message,
@@ -745,8 +754,35 @@ class SREAgentAPI {
       priority,
       tags,
       instanceId,
+      supportPackageId,
     );
     return triageResponse.thread_id;
+  }
+
+  async uploadSupportPackage(
+    file: File,
+    packageId?: string,
+  ): Promise<SupportPackageUploadResponse> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const baseUrl = `${this.tasksBaseUrl}/support-packages/upload`;
+    const url = this.createURL(baseUrl);
+    if (packageId) {
+      url.searchParams.append("package_id", packageId);
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    return response.json();
   }
 
   // Instance Management Methods

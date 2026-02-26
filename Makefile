@@ -13,7 +13,7 @@ UI_DIST ?= $(UI_DIR)/dist
 REDIS_DOCS_REPO_URL ?= https://github.com/redis/docs.git
 REDIS_DOCS_BRANCH ?= main
 
-.PHONY: help venv sync docs-build docs-serve local-services local-services-down local-services-logs test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
+.PHONY: help venv sync docs-build docs-serve local-services local-services-down local-services-logs test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index lint format lint-check
 
 help: ## Show this help and available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9][^:]*:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -23,6 +23,19 @@ venv: ## Create a virtual environment with uv (./.venv)
 
 sync: ## Sync project dependencies (including dev) into the uv virtualenv
 	$(UV) sync --dev
+
+# --- Linting and Formatting ---
+# These targets mirror what CI runs (see .github/workflows/lint.yml)
+
+lint-check: sync ## Check linting without fixing (same as CI)
+	$(UV) run ruff format --check .
+	$(UV) run ruff check .
+
+lint: sync ## Run linting with auto-fix
+	$(UV) run ruff format .
+	$(UV) run ruff check --fix .
+
+format: lint ## Alias for lint (formats and fixes)
 
 # --- Documentation ---
 

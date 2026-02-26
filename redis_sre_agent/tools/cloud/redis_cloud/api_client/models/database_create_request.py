@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.database_create_request_data_eviction_policy import DatabaseCreateRequestDataEvictionPolicy
+from ..models.database_create_request_data_eviction_policy import (
+    DatabaseCreateRequestDataEvictionPolicy,
+)
 from ..models.database_create_request_data_persistence import DatabaseCreateRequestDataPersistence
 from ..models.database_create_request_protocol import DatabaseCreateRequestProtocol
 from ..models.database_create_request_resp_version import DatabaseCreateRequestRespVersion
@@ -274,7 +276,9 @@ class DatabaseCreateRequest:
         if support_oss_cluster_api is not UNSET:
             field_dict["supportOSSClusterApi"] = support_oss_cluster_api
         if use_external_endpoint_for_oss_cluster_api is not UNSET:
-            field_dict["useExternalEndpointForOSSClusterApi"] = use_external_endpoint_for_oss_cluster_api
+            field_dict["useExternalEndpointForOSSClusterApi"] = (
+                use_external_endpoint_for_oss_cluster_api
+            )
         if data_persistence is not UNSET:
             field_dict["dataPersistence"] = data_persistence
         if data_eviction_policy is not UNSET:
@@ -363,7 +367,9 @@ class DatabaseCreateRequest:
 
         support_oss_cluster_api = d.pop("supportOSSClusterApi", UNSET)
 
-        use_external_endpoint_for_oss_cluster_api = d.pop("useExternalEndpointForOSSClusterApi", UNSET)
+        use_external_endpoint_for_oss_cluster_api = d.pop(
+            "useExternalEndpointForOSSClusterApi", UNSET
+        )
 
         _data_persistence = d.pop("dataPersistence", UNSET)
         data_persistence: Union[Unset, DatabaseCreateRequestDataPersistence]
@@ -400,7 +406,9 @@ class DatabaseCreateRequest:
         local_throughput_measurement = []
         _local_throughput_measurement = d.pop("localThroughputMeasurement", UNSET)
         for local_throughput_measurement_item_data in _local_throughput_measurement or []:
-            local_throughput_measurement_item = LocalThroughput.from_dict(local_throughput_measurement_item_data)
+            local_throughput_measurement_item = LocalThroughput.from_dict(
+                local_throughput_measurement_item_data
+            )
 
             local_throughput_measurement.append(local_throughput_measurement_item)
 
@@ -422,7 +430,9 @@ class DatabaseCreateRequest:
         client_tls_certificates = []
         _client_tls_certificates = d.pop("clientTlsCertificates", UNSET)
         for client_tls_certificates_item_data in _client_tls_certificates or []:
-            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(client_tls_certificates_item_data)
+            client_tls_certificates_item = DatabaseCertificateSpec.from_dict(
+                client_tls_certificates_item_data
+            )
 
             client_tls_certificates.append(client_tls_certificates_item)
 

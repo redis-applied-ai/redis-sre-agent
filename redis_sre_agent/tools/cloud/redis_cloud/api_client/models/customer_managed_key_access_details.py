@@ -32,7 +32,9 @@ class CustomerManagedKeyAccessDetails:
     google_predefined_roles: Union[Unset, list[str]] = UNSET
     google_custom_permissions: Union[Unset, list[str]] = UNSET
     redis_iam_role: Union[Unset, str] = UNSET
-    required_key_policy_statements: Union[Unset, "CustomerManagedKeyAccessDetailsRequiredKeyPolicyStatements"] = UNSET
+    required_key_policy_statements: Union[
+        Unset, "CustomerManagedKeyAccessDetailsRequiredKeyPolicyStatements"
+    ] = UNSET
     deletion_grace_period_options: Union[Unset, list[str]] = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -91,12 +93,16 @@ class CustomerManagedKeyAccessDetails:
         redis_iam_role = d.pop("redisIamRole", UNSET)
 
         _required_key_policy_statements = d.pop("requiredKeyPolicyStatements", UNSET)
-        required_key_policy_statements: Union[Unset, CustomerManagedKeyAccessDetailsRequiredKeyPolicyStatements]
+        required_key_policy_statements: Union[
+            Unset, CustomerManagedKeyAccessDetailsRequiredKeyPolicyStatements
+        ]
         if isinstance(_required_key_policy_statements, Unset):
             required_key_policy_statements = UNSET
         else:
-            required_key_policy_statements = CustomerManagedKeyAccessDetailsRequiredKeyPolicyStatements.from_dict(
-                _required_key_policy_statements
+            required_key_policy_statements = (
+                CustomerManagedKeyAccessDetailsRequiredKeyPolicyStatements.from_dict(
+                    _required_key_policy_statements
+                )
             )
 
         deletion_grace_period_options = cast(list[str], d.pop("deletionGracePeriodOptions", UNSET))

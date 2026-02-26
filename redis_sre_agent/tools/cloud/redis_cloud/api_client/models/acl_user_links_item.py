@@ -15,7 +15,9 @@ T = TypeVar("T", bound="ACLUserLinksItem")
 class ACLUserLinksItem:
     """ """
 
-    additional_properties: dict[str, "ACLUserLinksItemAdditionalProperty"] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, "ACLUserLinksItemAdditionalProperty"] = _attrs_field(
+        init=False, factory=dict
+    )
 
     def to_dict(self) -> dict[str, Any]:
         field_dict: dict[str, Any] = {}
@@ -26,7 +28,9 @@ class ACLUserLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.acl_user_links_item_additional_property import ACLUserLinksItemAdditionalProperty
+        from ..models.acl_user_links_item_additional_property import (
+            ACLUserLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         acl_user_links_item = cls()

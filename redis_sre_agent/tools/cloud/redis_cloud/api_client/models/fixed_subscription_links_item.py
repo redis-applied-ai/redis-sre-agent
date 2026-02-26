@@ -5,7 +5,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.fixed_subscription_links_item_additional_property import FixedSubscriptionLinksItemAdditionalProperty
+    from ..models.fixed_subscription_links_item_additional_property import (
+        FixedSubscriptionLinksItemAdditionalProperty,
+    )
 
 
 T = TypeVar("T", bound="FixedSubscriptionLinksItem")

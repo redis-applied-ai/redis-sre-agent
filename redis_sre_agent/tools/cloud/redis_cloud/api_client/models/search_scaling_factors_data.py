@@ -49,7 +49,9 @@ class SearchScalingFactorsData:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.search_scaling_factors_data_links_item import SearchScalingFactorsDataLinksItem
+        from ..models.search_scaling_factors_data_links_item import (
+            SearchScalingFactorsDataLinksItem,
+        )
 
         d = dict(src_dict)
         query_performance_factors = cast(list[str], d.pop("queryPerformanceFactors", UNSET))

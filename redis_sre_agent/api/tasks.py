@@ -6,6 +6,7 @@ Separate from legacy endpoints that returned status by thread.
 from __future__ import annotations
 
 import logging
+from typing import Any, Dict
 
 from docket import Docket
 from fastapi import APIRouter, HTTPException, status
@@ -25,14 +26,38 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _resolve_support_package_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve support_package_id to support_package_path when needed."""
+    resolved_context = dict(context)
+    support_package_id = resolved_context.get("support_package_id")
+
+    # If the extracted path is already present, nothing to resolve.
+    if resolved_context.get("support_package_path") or not support_package_id:
+        return resolved_context
+
+    from redis_sre_agent.api.support_package import get_manager as get_support_package_manager
+
+    manager = get_support_package_manager()
+    metadata = await manager.get_metadata(str(support_package_id))
+    if not metadata:
+        raise HTTPException(status_code=404, detail=f"Support package not found: {support_package_id}")
+
+    extract_path = await manager.extract(str(support_package_id))
+    resolved_context["support_package_path"] = str(extract_path)
+    return resolved_context
+
+
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
     try:
+        request_context = dict(req.context or {})
+        request_context = await _resolve_support_package_context(request_context)
+
         redis_client = get_redis_client()
         data = await create_task(
             message=req.message,
             thread_id=req.thread_id,
-            context=req.context,
+            context=request_context or None,
             redis_client=redis_client,
         )
         task = TaskCreateResponse(**data)
@@ -47,11 +72,13 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
             await task_func(
                 thread_id=task.thread_id,
                 message=req.message,
-                context=req.context or {},
+                context=request_context or {},
                 task_id=task.task_id,
             )
 
         return task
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create task: {e}")
         raise HTTPException(status_code=500, detail=str(e))

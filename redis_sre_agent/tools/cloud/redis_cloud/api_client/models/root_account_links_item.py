@@ -5,7 +5,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.root_account_links_item_additional_property import RootAccountLinksItemAdditionalProperty
+    from ..models.root_account_links_item_additional_property import (
+        RootAccountLinksItemAdditionalProperty,
+    )
 
 
 T = TypeVar("T", bound="RootAccountLinksItem")
@@ -15,7 +17,9 @@ T = TypeVar("T", bound="RootAccountLinksItem")
 class RootAccountLinksItem:
     """ """
 
-    additional_properties: dict[str, "RootAccountLinksItemAdditionalProperty"] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, "RootAccountLinksItemAdditionalProperty"] = _attrs_field(
+        init=False, factory=dict
+    )
 
     def to_dict(self) -> dict[str, Any]:
         field_dict: dict[str, Any] = {}
@@ -26,7 +30,9 @@ class RootAccountLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.root_account_links_item_additional_property import RootAccountLinksItemAdditionalProperty
+        from ..models.root_account_links_item_additional_property import (
+            RootAccountLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         root_account_links_item = cls()

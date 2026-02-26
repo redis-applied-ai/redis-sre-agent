@@ -15,7 +15,9 @@ T = TypeVar("T", bound="DatabaseLinksItem")
 class DatabaseLinksItem:
     """ """
 
-    additional_properties: dict[str, "DatabaseLinksItemAdditionalProperty"] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, "DatabaseLinksItemAdditionalProperty"] = _attrs_field(
+        init=False, factory=dict
+    )
 
     def to_dict(self) -> dict[str, Any]:
         field_dict: dict[str, Any] = {}
@@ -26,7 +28,9 @@ class DatabaseLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.database_links_item_additional_property import DatabaseLinksItemAdditionalProperty
+        from ..models.database_links_item_additional_property import (
+            DatabaseLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         database_links_item = cls()

@@ -1,5 +1,6 @@
 """Unit tests for tasks API endpoints mounted under /api/v1."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -51,6 +52,57 @@ class TestTasksAPI:
             data = resp.json()
             assert data["task_id"] == "t1"
             assert data["thread_id"] == "th1"
+
+    def test_create_task_resolves_support_package_context(self, client):
+        """POST /api/v1/tasks resolves support_package_id to support_package_path."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake))
+            as mock_create_task,
+            patch("redis_sre_agent.api.support_package.get_manager") as mock_get_manager,
+        ):
+            mock_manager = AsyncMock()
+            mock_manager.get_metadata.return_value = object()
+            mock_manager.extract.return_value = Path("/tmp/extracted/pkg-123")
+            mock_get_manager.return_value = mock_manager
+
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "analyze this support package",
+                    "context": {"support_package_id": "pkg-123"},
+                },
+            )
+            assert resp.status_code == 202
+
+            create_kwargs = mock_create_task.await_args.kwargs
+            assert create_kwargs["context"]["support_package_id"] == "pkg-123"
+            assert create_kwargs["context"]["support_package_path"] == "/tmp/extracted/pkg-123"
+            mock_manager.extract.assert_awaited_once_with("pkg-123")
+
+    def test_create_task_support_package_not_found(self, client):
+        """POST /api/v1/tasks returns 404 for unknown support_package_id."""
+        with (
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock()) as mock_create_task,
+            patch("redis_sre_agent.api.support_package.get_manager") as mock_get_manager,
+        ):
+            mock_manager = AsyncMock()
+            mock_manager.get_metadata.return_value = None
+            mock_get_manager.return_value = mock_manager
+
+            resp = client.post(
+                "/api/v1/tasks",
+                json={"message": "analyze", "context": {"support_package_id": "missing-pkg"}},
+            )
+            assert resp.status_code == 404
+            assert resp.json()["detail"] == "Support package not found: missing-pkg"
+            mock_create_task.assert_not_awaited()
 
     def test_get_task_success(self, client):
         """GET /api/v1/tasks/{task_id} returns 200 with state."""

@@ -15,7 +15,9 @@ T = TypeVar("T", bound="RegionsLinksItem")
 class RegionsLinksItem:
     """ """
 
-    additional_properties: dict[str, "RegionsLinksItemAdditionalProperty"] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, "RegionsLinksItemAdditionalProperty"] = _attrs_field(
+        init=False, factory=dict
+    )
 
     def to_dict(self) -> dict[str, Any]:
         field_dict: dict[str, Any] = {}
@@ -26,7 +28,9 @@ class RegionsLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.regions_links_item_additional_property import RegionsLinksItemAdditionalProperty
+        from ..models.regions_links_item_additional_property import (
+            RegionsLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         regions_links_item = cls()

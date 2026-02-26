@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.subscription_database_spec_data_persistence import SubscriptionDatabaseSpecDataPersistence
+from ..models.subscription_database_spec_data_persistence import (
+    SubscriptionDatabaseSpecDataPersistence,
+)
 from ..models.subscription_database_spec_protocol import SubscriptionDatabaseSpecProtocol
 from ..models.subscription_database_spec_resp_version import SubscriptionDatabaseSpecRespVersion
 from ..models.subscription_database_spec_sharding_type import SubscriptionDatabaseSpecShardingType
@@ -216,7 +218,9 @@ class SubscriptionDatabaseSpec:
         local_throughput_measurement = []
         _local_throughput_measurement = d.pop("localThroughputMeasurement", UNSET)
         for local_throughput_measurement_item_data in _local_throughput_measurement or []:
-            local_throughput_measurement_item = LocalThroughput.from_dict(local_throughput_measurement_item_data)
+            local_throughput_measurement_item = LocalThroughput.from_dict(
+                local_throughput_measurement_item_data
+            )
 
             local_throughput_measurement.append(local_throughput_measurement_item)
 

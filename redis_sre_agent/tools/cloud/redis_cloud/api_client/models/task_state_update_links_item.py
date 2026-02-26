@@ -5,7 +5,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.task_state_update_links_item_additional_property import TaskStateUpdateLinksItemAdditionalProperty
+    from ..models.task_state_update_links_item_additional_property import (
+        TaskStateUpdateLinksItemAdditionalProperty,
+    )
 
 
 T = TypeVar("T", bound="TaskStateUpdateLinksItem")
@@ -28,7 +30,9 @@ class TaskStateUpdateLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.task_state_update_links_item_additional_property import TaskStateUpdateLinksItemAdditionalProperty
+        from ..models.task_state_update_links_item_additional_property import (
+            TaskStateUpdateLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         task_state_update_links_item = cls()

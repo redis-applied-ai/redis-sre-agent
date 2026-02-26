@@ -62,7 +62,9 @@ class CustomerManagedKeyProperties:
         customer_managed_keys = []
         _customer_managed_keys = d.pop("customerManagedKeys")
         for customer_managed_keys_item_data in _customer_managed_keys:
-            customer_managed_keys_item = CustomerManagedKey.from_dict(customer_managed_keys_item_data)
+            customer_managed_keys_item = CustomerManagedKey.from_dict(
+                customer_managed_keys_item_data
+            )
 
             customer_managed_keys.append(customer_managed_keys_item)
 
@@ -71,7 +73,9 @@ class CustomerManagedKeyProperties:
         if isinstance(_deletion_grace_period, Unset):
             deletion_grace_period = UNSET
         else:
-            deletion_grace_period = CustomerManagedKeyPropertiesDeletionGracePeriod(_deletion_grace_period)
+            deletion_grace_period = CustomerManagedKeyPropertiesDeletionGracePeriod(
+                _deletion_grace_period
+            )
 
         customer_managed_key_properties = cls(
             customer_managed_keys=customer_managed_keys,

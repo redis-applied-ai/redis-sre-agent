@@ -5,7 +5,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.cloud_tag_links_item_additional_property import CloudTagLinksItemAdditionalProperty
+    from ..models.cloud_tag_links_item_additional_property import (
+        CloudTagLinksItemAdditionalProperty,
+    )
 
 
 T = TypeVar("T", bound="CloudTagLinksItem")
@@ -15,7 +17,9 @@ T = TypeVar("T", bound="CloudTagLinksItem")
 class CloudTagLinksItem:
     """ """
 
-    additional_properties: dict[str, "CloudTagLinksItemAdditionalProperty"] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, "CloudTagLinksItemAdditionalProperty"] = _attrs_field(
+        init=False, factory=dict
+    )
 
     def to_dict(self) -> dict[str, Any]:
         field_dict: dict[str, Any] = {}
@@ -26,7 +30,9 @@ class CloudTagLinksItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.cloud_tag_links_item_additional_property import CloudTagLinksItemAdditionalProperty
+        from ..models.cloud_tag_links_item_additional_property import (
+            CloudTagLinksItemAdditionalProperty,
+        )
 
         d = dict(src_dict)
         cloud_tag_links_item = cls()
