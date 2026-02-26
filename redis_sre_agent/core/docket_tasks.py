@@ -274,26 +274,32 @@ async def process_chat_turn(
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
-        # Store decision trace for this task (tool calls + citations)
-        try:
-            from opentelemetry import trace as otel_trace
+        # Generate message_id for the assistant response
+        from ulid import ULID
 
-            current_span = otel_trace.get_current_span()
-            span_context = current_span.get_span_context() if current_span else None
-            otel_trace_id = (
-                format(span_context.trace_id, "032x")
-                if span_context and span_context.is_valid
-                else None
+        message_id = str(ULID())
+
+        # Store decision trace for this message (tool calls + citations)
+        tool_envelopes = response.tool_envelopes if hasattr(response, "tool_envelopes") else []
+        if tool_envelopes:
+            try:
+                from opentelemetry import trace as otel_trace
+
+                current_span = otel_trace.get_current_span()
+                span_context = current_span.get_span_context() if current_span else None
+                otel_trace_id = (
+                    format(span_context.trace_id, "032x")
+                    if span_context and span_context.is_valid
+                    else None
+                )
+            except Exception:
+                otel_trace_id = None
+
+            await thread_manager.set_message_trace(
+                message_id=message_id,
+                tool_envelopes=tool_envelopes,
+                otel_trace_id=otel_trace_id,
             )
-        except Exception:
-            otel_trace_id = None
-
-        await task_manager.set_decision_trace(
-            task_id=task_id,
-            tool_envelopes=response.tool_envelopes if hasattr(response, "tool_envelopes") else [],
-            search_results=response.search_results if hasattr(response, "search_results") else [],
-            otel_trace_id=otel_trace_id,
-        )
 
         # Add response to thread as assistant message
         # response is an AgentResponse; extract the text for thread content
@@ -304,7 +310,7 @@ async def process_chat_turn(
                 {
                     "role": "assistant",
                     "content": response_text,
-                    "metadata": {"task_id": task_id, "agent": "chat"},
+                    "metadata": {"task_id": task_id, "message_id": message_id, "agent": "chat"},
                 }
             ],
         )
@@ -373,26 +379,32 @@ async def process_knowledge_query(
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
-        # Store decision trace for this task (tool calls + citations)
-        try:
-            from opentelemetry import trace as otel_trace
+        # Generate message_id for the assistant response
+        from ulid import ULID
 
-            current_span = otel_trace.get_current_span()
-            span_context = current_span.get_span_context() if current_span else None
-            otel_trace_id = (
-                format(span_context.trace_id, "032x")
-                if span_context and span_context.is_valid
-                else None
+        message_id = str(ULID())
+
+        # Store decision trace for this message (tool calls + citations)
+        tool_envelopes = response.tool_envelopes if hasattr(response, "tool_envelopes") else []
+        if tool_envelopes:
+            try:
+                from opentelemetry import trace as otel_trace
+
+                current_span = otel_trace.get_current_span()
+                span_context = current_span.get_span_context() if current_span else None
+                otel_trace_id = (
+                    format(span_context.trace_id, "032x")
+                    if span_context and span_context.is_valid
+                    else None
+                )
+            except Exception:
+                otel_trace_id = None
+
+            await thread_manager.set_message_trace(
+                message_id=message_id,
+                tool_envelopes=tool_envelopes,
+                otel_trace_id=otel_trace_id,
             )
-        except Exception:
-            otel_trace_id = None
-
-        await task_manager.set_decision_trace(
-            task_id=task_id,
-            tool_envelopes=response.tool_envelopes if hasattr(response, "tool_envelopes") else [],
-            search_results=response.search_results if hasattr(response, "search_results") else [],
-            otel_trace_id=otel_trace_id,
-        )
 
         # Add response to thread as assistant message
         # response is an AgentResponse; extract the text for thread content
@@ -403,7 +415,11 @@ async def process_knowledge_query(
                 {
                     "role": "assistant",
                     "content": response_text,
-                    "metadata": {"task_id": task_id, "agent": "knowledge"},
+                    "metadata": {
+                        "task_id": task_id,
+                        "message_id": message_id,
+                        "agent": "knowledge",
+                    },
                 }
             ],
         )
@@ -1050,22 +1066,32 @@ async def process_agent_turn(
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
-        # Store decision trace for this task (tool calls + citations)
-        try:
-            otel_trace_id = (
-                format(_root_span.get_span_context().trace_id, "032x")
-                if _root_span and _root_span.get_span_context().is_valid
-                else None
-            )
-        except Exception:
-            otel_trace_id = None
+        # Store decision trace for this message (tool calls + citations)
+        # Find the last assistant message to get its message_id
+        tool_envelopes = agent_response.get("tool_envelopes", [])
+        if tool_envelopes and thread.messages:
+            # Find the last assistant message's message_id
+            last_assistant_msg = None
+            for msg in reversed(thread.messages):
+                if msg.role == "assistant":
+                    last_assistant_msg = msg
+                    break
 
-        await task_manager.set_decision_trace(
-            task_id=task_id,
-            tool_envelopes=agent_response.get("tool_envelopes", []),
-            search_results=agent_response.get("search_results", []),
-            otel_trace_id=otel_trace_id,
-        )
+            if last_assistant_msg and last_assistant_msg.message_id:
+                try:
+                    otel_trace_id = (
+                        format(_root_span.get_span_context().trace_id, "032x")
+                        if _root_span and _root_span.get_span_context().is_valid
+                        else None
+                    )
+                except Exception:
+                    otel_trace_id = None
+
+                await thread_manager.set_message_trace(
+                    message_id=last_assistant_msg.message_id,
+                    tool_envelopes=tool_envelopes,
+                    otel_trace_id=otel_trace_id,
+                )
 
         # Publish completion to stream for WebSocket updates
         await task_manager._publish_stream_update(

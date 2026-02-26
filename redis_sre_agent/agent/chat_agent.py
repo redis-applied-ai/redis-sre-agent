@@ -102,10 +102,8 @@ class ChatAgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
-    # Accumulated tool result envelopes for context management
+    # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
-    # Knowledge search results extracted BEFORE envelope summarization (for citations)
-    knowledge_search_results: List[Dict[str, Any]]
 
 
 class ChatAgent:
@@ -153,44 +151,102 @@ class ChatAgent:
 
     def _build_expand_evidence_tool(
         self,
-        original_envelopes: List[Dict[str, Any]],
+        envelopes_container: Dict[str, List[Dict[str, Any]]],
     ) -> Dict[str, Any]:
         """Build a tool that allows the LLM to retrieve full tool output details.
 
         When we summarize tool outputs, the LLM only sees condensed versions.
         This tool lets the LLM request the full original output for any tool_key
-        if it needs more detail.
+        if it needs more detail. Supports optional JMESPath queries for extracting
+        specific data.
+
+        The tool is available from the start but references a mutable container
+        that gets populated as tool calls complete. This ensures the LLM knows
+        the tool exists and can plan to use it after making other tool calls.
 
         Args:
-            original_envelopes: The original (unsummarized) envelopes
+            envelopes_container: A mutable dict with "envelopes" key that gets
+                                 updated as tool calls complete
 
         Returns:
             A dict with name, description, func, and parameters for creating a tool
         """
-        originals_by_key = {e.get("tool_key"): e for e in original_envelopes}
-        available_keys = list(originals_by_key.keys())
+        import jmespath
+        from jmespath.exceptions import JMESPathError
 
-        def expand_evidence(tool_key: str) -> Dict[str, Any]:
-            """Retrieve the full, unsummarized output from a previous tool call."""
+        def expand_evidence(tool_key: str, query: Optional[str] = None) -> Dict[str, Any]:
+            """Retrieve full or queried data from a previous tool call.
+
+            Args:
+                tool_key: The tool_key from a summarized evidence item
+                query: Optional JMESPath expression to extract specific data
+            """
+            # Get current envelopes from the mutable container
+            envelopes = envelopes_container.get("envelopes", [])
+            originals_by_key = {e.get("tool_key"): e for e in envelopes}
+            available_keys = list(originals_by_key.keys())
+
+            if not available_keys:
+                return {
+                    "status": "error",
+                    "error": (
+                        "No tool calls have been made yet. "
+                        "First call other tools to gather data, then use expand_evidence "
+                        "to retrieve or query their results."
+                    ),
+                }
+
             if tool_key not in originals_by_key:
                 return {
                     "status": "error",
-                    "error": f"Unknown tool_key: {tool_key}. Available: {available_keys}",
+                    "error": f"Unknown tool_key: '{tool_key}'. Available tool_keys: {available_keys}. "
+                    "Use one of the available tool_keys from a previous tool call.",
                 }
             original = originals_by_key[tool_key]
+            data = original.get("data", {})
+
+            # If query is provided, use JMESPath to extract data
+            if query:
+                try:
+                    queried_data = jmespath.search(query, data)
+                    return {
+                        "status": "success",
+                        "tool_key": tool_key,
+                        "name": original.get("name"),
+                        "query": query,
+                        "queried_data": queried_data,
+                    }
+                except JMESPathError as e:
+                    # Provide helpful error with syntax hints
+                    return {
+                        "status": "error",
+                        "error": f"Invalid JMESPath query '{query}': {e}. "
+                        "JMESPath syntax tips: "
+                        "- Access nested fields: 'field.subfield' "
+                        "- Get all items from array field: 'results[*].fieldname' "
+                        "- Slice arrays: 'items[:5]' (first 5) or 'items[-3:]' (last 3) "
+                        "- Filter: 'items[?score > `0.5`]' (note: numbers need backticks) "
+                        "- Project multiple fields: 'results[*].{name: title, url: source}'",
+                    }
+
+            # No query - return full data
             return {
                 "status": "success",
                 "tool_key": tool_key,
                 "name": original.get("name"),
-                "full_data": original.get("data"),
+                "full_data": data,
             }
 
         return {
             "name": "expand_evidence",
             "description": (
-                "Retrieve the full, unsummarized output from a previous tool call. "
-                "Use this when the summary doesn't have enough detail. "
-                f"Available tool_keys: {available_keys}"
+                "Retrieve or query data from a previous tool call using JMESPath. "
+                "IMPORTANT: The tool_key parameter must be the exact function name you called "
+                "(e.g., 'knowledge_abc123_search', 'redis_info'), NOT document IDs, Redis keys, "
+                "or any values from inside the tool's results. "
+                "JMESPath examples: 'results[*].title' extracts all titles, "
+                "'entries[:3]' gets first 3 items, "
+                "'items[?score > `0.8`]' filters by condition."
             ),
             "func": expand_evidence,
             "parameters": {
@@ -198,35 +254,113 @@ class ChatAgent:
                 "properties": {
                     "tool_key": {
                         "type": "string",
-                        "description": "The tool_key from a summarized evidence item",
-                    }
+                        "description": (
+                            "The exact function name you previously called (e.g., 'knowledge_abc123_search', "
+                            "'redis_info'). This is the tool/function name from your tool call, NOT a "
+                            "document ID, Redis key, or value from inside the results."
+                        ),
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "JMESPath expression to extract specific data. "
+                            "Common patterns: "
+                            "'fieldname' - get a field, "
+                            "'results[*].title' - extract field from all array items, "
+                            "'results[:5]' - first 5 items, "
+                            "'results[?score > `0.5`]' - filter (numbers in backticks), "
+                            "'results[*].{name: title, link: source}' - project/rename fields. "
+                            "Omit to get full data."
+                        ),
+                    },
                 },
                 "required": ["tool_key"],
             },
         }
 
     def _summarize_envelope_sync(self, env: Dict[str, Any]) -> Dict[str, Any]:
-        """Synchronously truncate large envelope data (simple fallback).
+        """Set summary field for large envelope data, preserving full data.
 
         For chat agent, we use simple truncation rather than LLM summarization
-        to keep things fast.
+        to keep things fast. The full `data` is always preserved for:
+        - Decision traces (`task trace` CLI)
+        - The `expand_evidence` tool
+        - Future query capabilities
         """
         data_str = json.dumps(env.get("data", {}), default=str)
         if len(data_str) <= self.ENVELOPE_SUMMARY_THRESHOLD:
             return env
 
-        # Truncate large data
-        return {
-            "tool_key": env.get("tool_key"),
-            "name": env.get("name"),
-            "description": env.get("description"),
-            "args": env.get("args"),
-            "status": env.get("status"),
-            "data": {
-                "summary": data_str[: self.ENVELOPE_SUMMARY_THRESHOLD] + "...",
-                "note": "Data truncated. Use expand_evidence tool to get full output.",
-            },
-        }
+        # Set summary, keep full data
+        env = dict(env)  # Copy to avoid mutating original
+        env["summary"] = (
+            data_str[: self.ENVELOPE_SUMMARY_THRESHOLD]
+            + f"... (use expand_evidence for full {len(data_str)} chars)"
+        )
+        return env
+
+    def _create_summarized_tool_message(
+        self, original_msg: ToolMessage, tool_key: str, data: Dict[str, Any]
+    ) -> ToolMessage:
+        """Create a summarized ToolMessage for the LLM when data is large.
+
+        The LLM receives a preview with structure hints and instructions on how
+        to use expand_evidence to get full data or query specific fields.
+        """
+        data_str = json.dumps(data, default=str)
+        total_size = len(data_str)
+
+        if total_size <= self.ENVELOPE_SUMMARY_THRESHOLD:
+            # Small enough - return original message unchanged
+            return original_msg
+
+        # Build a helpful preview showing structure
+        preview_lines = []
+
+        # WARNING and instructions FIRST - most important info at top
+        preview_lines.append(f"⚠️ LARGE RESULT ({total_size:,} chars) - DATA TRUNCATED")
+        preview_lines.append("You are NOT seeing the full data. Use expand_evidence to access it:")
+        preview_lines.append(f"  expand_evidence(tool_key='{tool_key}')")
+        preview_lines.append(f"  expand_evidence(tool_key='{tool_key}', query='results[*].source')")
+        preview_lines.append("")
+
+        # Show structure: top-level keys and their types/sizes
+        if isinstance(data, dict):
+            preview_lines.append("Data structure:")
+            for key, value in list(data.items())[:10]:  # First 10 keys
+                if isinstance(value, list) and len(value) > 0:
+                    # Show list length AND first item's keys if it's a dict
+                    if isinstance(value[0], dict):
+                        item_keys = list(value[0].keys())[:8]
+                        preview_lines.append(
+                            f"  {key}: [{len(value)} items] each with keys: {item_keys}"
+                        )
+                    else:
+                        preview_lines.append(f"  {key}: [{len(value)} items]")
+                elif isinstance(value, list):
+                    preview_lines.append(f"  {key}: [empty]")
+                elif isinstance(value, dict):
+                    preview_lines.append(f"  {key}: {{...}}")
+                elif isinstance(value, str) and len(value) > 50:
+                    preview_lines.append(f'  {key}: "{value[:50]}..."')
+                else:
+                    val_str = json.dumps(value, default=str)
+                    if len(val_str) > 60:
+                        val_str = val_str[:60] + "..."
+                    preview_lines.append(f"  {key}: {val_str}")
+
+        # Brief preview of the data
+        preview_lines.append("")
+        preview_lines.append(f"Preview (first {self.ENVELOPE_SUMMARY_THRESHOLD} chars):")
+        preview_lines.append(data_str[: self.ENVELOPE_SUMMARY_THRESHOLD] + "...")
+
+        summarized_content = "\n".join(preview_lines)
+
+        return ToolMessage(
+            content=summarized_content,
+            tool_call_id=original_msg.tool_call_id,
+            name=original_msg.name if hasattr(original_msg, "name") else None,
+        )
 
     def _build_workflow(
         self,
@@ -245,35 +379,27 @@ class ChatAgent:
         """
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
 
-        # We'll dynamically add expand_evidence tool when envelopes are available
-        # For now, track state needed for dynamic tool injection
-        expand_tool_added = {"value": False}
-        current_adapters = list(adapters)
+        # Mutable container for envelopes - expand_evidence references this
+        # so it can access envelopes as they're added by tool calls
+        envelopes_container: Dict[str, List[Dict[str, Any]]] = {"envelopes": []}
+
+        # Build expand_evidence tool upfront so LLM knows it exists
+        expand_spec = self._build_expand_evidence_tool(envelopes_container)
+        expand_tool = StructuredTool.from_function(
+            func=expand_spec["func"],
+            name=expand_spec["name"],
+            description=expand_spec["description"],
+        )
+        all_adapters = list(adapters) + [expand_tool]
+        llm_with_expand = self.llm.bind_tools(all_adapters)
 
         async def agent_node(state: ChatAgentState) -> Dict[str, Any]:
             """Main agent node - invokes LLM with tools."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
-            envelopes = state.get("signals_envelopes") or []
-
-            # If we have envelopes and haven't added expand_evidence yet, add it
-            nonlocal current_adapters, expand_tool_added
-            if envelopes and not expand_tool_added["value"]:
-                expand_spec = self._build_expand_evidence_tool(envelopes)
-                expand_tool = StructuredTool.from_function(
-                    func=expand_spec["func"],
-                    name=expand_spec["name"],
-                    description=expand_spec["description"],
-                )
-                current_adapters = list(adapters) + [expand_tool]
-                expand_tool_added["value"] = True
-                # Rebind tools to LLM with expand_evidence
-                bound_llm = self.llm.bind_tools(current_adapters)
-            else:
-                bound_llm = llm_with_tools
 
             with tracer.start_as_current_span("chat_agent_node"):
-                response = await bound_llm.ainvoke(messages)
+                response = await llm_with_expand.ainvoke(messages)
 
             new_messages = list(messages) + [response]
             return {
@@ -288,7 +414,6 @@ class ChatAgent:
             """Execute tool calls from the agent."""
             messages = state["messages"]
             envelopes = list(state.get("signals_envelopes") or [])
-            knowledge_results = list(state.get("knowledge_search_results") or [])
 
             # Get pending tool calls from the last AI message
             last_msg = messages[-1] if messages else None
@@ -315,13 +440,15 @@ class ChatAgent:
                             await emitter.emit(f"Executing tool: {tool_name}", "tool_call")
 
             with tracer.start_as_current_span("chat_tool_node"):
-                nonlocal current_adapters
-                lg_tool_node = LGToolNode(current_adapters)
+                lg_tool_node = LGToolNode(all_adapters)
                 out = await lg_tool_node.ainvoke({"messages": messages})
                 out_messages = out.get("messages", [])
                 new_tool_messages = [m for m in out_messages if isinstance(m, ToolMessage)]
 
-                # Build envelopes for each tool call result
+                # Build envelopes and create summarized messages for the LLM
+                # The LLM sees summarized versions; full data stays in envelopes
+                messages_for_llm: List[ToolMessage] = []
+
                 for idx, tc in enumerate(tool_calls):
                     tool_name = (
                         tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
@@ -330,33 +457,47 @@ class ChatAgent:
                         tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
                     ) or {}
 
-                    # Skip expand_evidence calls - they don't need envelope tracking
-                    if tool_name == "expand_evidence":
+                    tm = new_tool_messages[idx] if idx < len(new_tool_messages) else None
+                    if tm is None:
                         continue
 
-                    tm = new_tool_messages[idx] if idx < len(new_tool_messages) else None
+                    # Skip expand_evidence calls - pass through unchanged
+                    if tool_name == "expand_evidence":
+                        messages_for_llm.append(tm)
+                        continue
+
                     env_dict = build_result_envelope(
                         tool_name or f"tool_{idx + 1}", tool_args, tm, tooldefs_by_name
                     )
 
-                    # Extract knowledge search results BEFORE summarization (for citations)
-                    tool_key = env_dict.get("tool_key", "")
-                    env_name = env_dict.get("name", "")
-                    if "knowledge" in tool_key.lower() and "search" in env_name.lower():
-                        data = env_dict.get("data", {})
-                        results = data.get("results", [])
-                        if results:
-                            knowledge_results.extend(results)
-
-                    # Summarize if large
+                    # Summarize envelope (preserves full data, adds summary field)
                     env_dict = self._summarize_envelope_sync(env_dict)
                     envelopes.append(env_dict)
 
+                    # Create summarized message for LLM if data is large
+                    tool_key = env_dict.get("tool_key", tool_name)
+                    data = env_dict.get("data", {})
+                    summarized_msg = self._create_summarized_tool_message(tm, tool_key, data)
+                    messages_for_llm.append(summarized_msg)
+
+                    # Log summarization for debugging
+                    orig_len = len(tm.content) if hasattr(tm, "content") else 0
+                    summ_len = (
+                        len(summarized_msg.content) if hasattr(summarized_msg, "content") else 0
+                    )
+                    if orig_len != summ_len:
+                        logger.debug(
+                            f"Summarized tool result: {tool_key} "
+                            f"({orig_len:,} -> {summ_len:,} chars)"
+                        )
+
+                # Update the mutable container so expand_evidence can see new envelopes
+                envelopes_container["envelopes"] = envelopes
+
             return {
-                "messages": list(messages) + new_tool_messages,
+                "messages": list(messages) + messages_for_llm,
                 "current_tool_calls": [],
                 "signals_envelopes": envelopes,
-                "knowledge_search_results": knowledge_results,
             }
 
         def should_continue(state: ChatAgentState) -> str:
@@ -478,8 +619,7 @@ User Query: {query}"""
                 "current_tool_calls": [],
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
-                "signals_envelopes": [],  # Track tool outputs for expand_evidence
-                "knowledge_search_results": [],  # Track knowledge search results for citations
+                "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
             }
 
             thread_config = {"configurable": {"thread_id": session_id}}
@@ -489,9 +629,7 @@ User Query: {query}"""
 
                 final_state = await app.ainvoke(initial_state, config=thread_config)
 
-                # Use knowledge_search_results directly (extracted before envelope summarization)
-                search_results = final_state.get("knowledge_search_results", [])
-                # Get tool envelopes for decision tracing
+                # Get tool envelopes - AgentResponse derives search_results from these
                 tool_envelopes = final_state.get("signals_envelopes", [])
 
                 messages = final_state.get("messages", [])
@@ -500,26 +638,20 @@ User Query: {query}"""
                     if isinstance(last_message, AIMessage):
                         return AgentResponse(
                             response=last_message.content,
-                            search_results=search_results,
                             tool_envelopes=tool_envelopes,
                         )
                     return AgentResponse(
                         response=str(last_message.content),
-                        search_results=search_results,
                         tool_envelopes=tool_envelopes,
                     )
 
                 return AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
-                    search_results=[],
-                    tool_envelopes=[],
                 )
 
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")
-                return AgentResponse(
-                    response=f"Error processing query: {e}", search_results=[], tool_envelopes=[]
-                )
+                return AgentResponse(response=f"Error processing query: {e}")
 
 
 # Singleton cache keyed by instance name

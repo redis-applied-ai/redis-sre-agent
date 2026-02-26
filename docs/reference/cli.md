@@ -18,6 +18,7 @@ Generated from the Click command tree.
 - thread purge — Delete threads in bulk with safeguards.
 - thread reindex — Recreate the threads FT.SEARCH index and backfill from existing thread data.
 - thread sources — List knowledge fragments retrieved for a thread (optionally a specific turn).
+- thread trace — Show the decision trace for a single message.
 - schedule — Schedule management commands.
 - schedule create — Create a new schedule.
 - schedule delete — Delete a schedule.
@@ -41,7 +42,6 @@ Generated from the Click command tree.
 - task get — Get a task by TASK_ID and show details.
 - task list — List recent tasks and their statuses.
 - task purge — Delete tasks in bulk with safeguards.
-- task trace — Show the decision trace (tool calls + citations) for a task.
 - knowledge — Knowledge base management commands.
 - knowledge fragments — Fetch all fragments for a document by document hash.
 - knowledge related — Fetch related fragments around a chunk index for a document.

@@ -474,13 +474,16 @@ class TestRedisStorageHelpers:
 
     @pytest.mark.asyncio
     async def test_get_instances_from_redis_empty(self):
-        """Test getting instances when Redis returns None."""
-        from redis_sre_agent.core.instances import get_instances
+        """Test getting instances when RediSearch returns no results."""
 
-        with patch("redis_sre_agent.core.instances.get_redis_client") as mock_client:
-            mock_redis = AsyncMock()
-            mock_redis.get = AsyncMock(return_value=None)
-            mock_client.return_value = mock_redis
+        with (
+            patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
+            patch("redis_sre_agent.core.instances.get_instances_index") as mock_get_index,
+        ):
+            mock_ensure.return_value = None
+            mock_index = AsyncMock()
+            mock_index.query = AsyncMock(return_value=[])  # Empty results
+            mock_get_index.return_value = mock_index
 
             result = await get_instances()
 
@@ -488,13 +491,16 @@ class TestRedisStorageHelpers:
 
     @pytest.mark.asyncio
     async def test_get_instances_from_redis_error(self):
-        """Test getting instances when Redis raises an error."""
-        from redis_sre_agent.core.instances import get_instances
+        """Test getting instances when RediSearch raises an error."""
 
-        with patch("redis_sre_agent.core.instances.get_redis_client") as mock_client:
-            mock_redis = AsyncMock()
-            mock_redis.get = AsyncMock(side_effect=Exception("Redis error"))
-            mock_client.return_value = mock_redis
+        with (
+            patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
+            patch("redis_sre_agent.core.instances.get_instances_index") as mock_get_index,
+        ):
+            mock_ensure.return_value = None
+            mock_index = AsyncMock()
+            mock_index.query = AsyncMock(side_effect=Exception("Redis error"))
+            mock_get_index.return_value = mock_index
 
             result = await get_instances()
 
@@ -502,11 +508,22 @@ class TestRedisStorageHelpers:
 
     @pytest.mark.asyncio
     async def test_get_instances_from_redis_json_error(self):
-        """Test getting instances when JSON parsing fails."""
-        with patch("redis_sre_agent.core.instances.get_redis_client") as mock_client:
-            mock_redis = AsyncMock()
-            mock_redis.get = AsyncMock(return_value="invalid json")
-            mock_client.return_value = mock_redis
+        """Test getting instances when JSON parsing fails for a document."""
+
+        with (
+            patch("redis_sre_agent.core.instances._ensure_instances_index_exists") as mock_ensure,
+            patch("redis_sre_agent.core.instances.get_instances_index") as mock_get_index,
+        ):
+            mock_ensure.return_value = None
+            mock_index = AsyncMock()
+            # Return a document with invalid JSON in the "data" field
+            mock_index.query = AsyncMock(
+                side_effect=[
+                    0,  # CountQuery returns 0 docs
+                    [],  # FilterQuery returns empty
+                ]
+            )
+            mock_get_index.return_value = mock_index
 
             result = await get_instances()
 

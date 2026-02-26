@@ -11,7 +11,6 @@ from redis_sre_agent.core.threads import (
     Thread,
     ThreadManager,
     ThreadMetadata,
-    ThreadUpdate,
 )
 
 
@@ -439,17 +438,6 @@ class TestProcessAgentTurn:
 
 class TestThreadStateModels:
     """Test thread state model functionality."""
-
-    def test_thread_update_creation(self):
-        """Test ThreadUpdate model creation."""
-        update = ThreadUpdate(
-            message="Test update", update_type="progress", metadata={"tool": "test_tool"}
-        )
-
-        assert update.message == "Test update"
-        assert update.update_type == "progress"
-        assert update.metadata["tool"] == "test_tool"
-        assert update.timestamp is not None
 
     def test_thread_state_creation(self):
         """Test Thread model creation."""

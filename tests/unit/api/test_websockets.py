@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.api.websockets import TaskStreamManager
-from redis_sre_agent.core.threads import Thread, ThreadUpdate
+from redis_sre_agent.core.threads import Thread
 
 
 class TestTaskStreamManager:
@@ -189,10 +189,6 @@ class TestWebSocketEndpoint:
         # Mock thread state
         mock_thread_state = Thread(
             thread_id=thread_id,
-            updates=[
-                ThreadUpdate(message="Processing...", update_type="progress"),
-                ThreadUpdate(message="Task started", update_type="info"),
-            ],
         )
 
         with (

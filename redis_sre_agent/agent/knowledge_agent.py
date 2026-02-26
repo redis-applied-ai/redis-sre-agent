@@ -25,6 +25,7 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.tools.manager import ToolManager
 
+from .helpers import build_result_envelope
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,8 @@ class KnowledgeAgentState(TypedDict):
     tool_calls_executed: int
     # Accumulated search results for citation tracking
     knowledge_search_results: List[Dict[str, Any]]
+    # Accumulated tool result envelopes for decision traces
+    signals_envelopes: List[Dict[str, Any]]
 
 
 class KnowledgeOnlyAgent:
@@ -121,6 +124,9 @@ class KnowledgeOnlyAgent:
             llm_with_tools: LLM with tools bound
             emitter: Emitter for progress notifications
         """
+        # Build tool definitions lookup for envelope building (captured by tool_node closure)
+        tooldefs = tool_mgr.get_tools()
+        tooldefs_by_name = {t.name: t for t in tooldefs}
 
         async def agent_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
             """Main agent node for knowledge queries."""
@@ -267,13 +273,36 @@ class KnowledgeOnlyAgent:
                 state["tool_calls_executed"] = prev_exec + len(tool_results or [])
 
                 tool_messages = []
-                # Get existing search results to accumulate
+                # Get existing search results and envelopes to accumulate
                 accumulated_results = list(state.get("knowledge_search_results") or [])
+                envelopes = list(state.get("signals_envelopes") or [])
 
                 for tool_call, result in zip(last_message.tool_calls, tool_results):
+                    tool_name = str(tool_call.get("name", ""))
+                    tool_args = dict(tool_call.get("args") or {})
+
+                    # Prefer JSON content to help the LLM consume results
+                    try:
+                        import json as _json
+
+                        _content = _json.dumps(result, default=str)
+                    except Exception:
+                        _content = str(result)
+
+                    tool_msg = ToolMessage(
+                        content=_content,
+                        tool_call_id=tool_call["id"],
+                    )
+                    tool_messages.append(tool_msg)
+
+                    # Build result envelope for decision trace
+                    envelope = build_result_envelope(
+                        tool_name, tool_args, tool_msg, tooldefs_by_name
+                    )
+                    envelopes.append(envelope)
+
                     # Record knowledge sources when a knowledge search tool returns results
                     try:
-                        tool_name = str(tool_call.get("name", ""))
                         if tool_name.startswith("knowledge_") and "search" in tool_name:
                             if isinstance(result, dict):
                                 res_list = result.get("results") or []
@@ -301,23 +330,9 @@ class KnowledgeOnlyAgent:
                         # Don't let telemetry failures break tool handling
                         pass
 
-                    # Prefer JSON content to help the LLM consume results
-                    try:
-                        import json as _json
-
-                        _content = _json.dumps(result, default=str)
-                    except Exception:
-                        _content = str(result)
-
-                    tool_messages.append(
-                        ToolMessage(
-                            content=_content,
-                            tool_call_id=tool_call["id"],
-                        )
-                    )
-
                 state["messages"] = messages + tool_messages
                 state["knowledge_search_results"] = accumulated_results
+                state["signals_envelopes"] = envelopes
                 return state
 
             except Exception as e:
@@ -480,6 +495,7 @@ class KnowledgeOnlyAgent:
                 "max_iterations": max_iterations,
                 "tool_calls_executed": 0,
                 "knowledge_search_results": [],
+                "signals_envelopes": [],
             }
 
             # Create MemorySaver for this query
@@ -505,6 +521,9 @@ class KnowledgeOnlyAgent:
                 # Extract knowledge search results for citation tracking
                 search_results = final_state.get("knowledge_search_results", [])
 
+                # Get tool envelopes for decision traces
+                tool_envelopes = final_state.get("signals_envelopes", [])
+
                 # Extract the final response
                 messages = final_state.get("messages", [])
 
@@ -523,9 +542,8 @@ class KnowledgeOnlyAgent:
                 )
 
                 logger.info(f"Knowledge query completed for user {user_id}")
-                # Knowledge agent doesn't track tool envelopes separately (search results are captured directly)
                 return AgentResponse(
-                    response=response, search_results=search_results, tool_envelopes=[]
+                    response=response, search_results=search_results, tool_envelopes=tool_envelopes
                 )
 
             except Exception as e:
