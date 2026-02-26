@@ -1,9 +1,9 @@
 """Tests for the knowledge-only agent."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
 from redis_sre_agent.core.knowledge_helpers import (
@@ -225,6 +225,50 @@ class TestKnowledgeAgentMethods:
 
         workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
         assert workflow is not None
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_first_iteration_forces_tool_choice_required(self, mock_create_llm):
+        """Test that first iteration forces tool_choice='required' to ensure KB search."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        # Mock LLM returned by create_llm
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+
+        # Configure mock for workflow invocation
+        mock_llm.bind = MagicMock(return_value=mock_llm)
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="response", tool_calls=[]))
+
+        # Create agent (gets mock_llm via patched create_llm)
+        agent = KnowledgeOnlyAgent()
+
+        # Build workflow
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        emitter = NullEmitter()
+        workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
+        compiled = workflow.compile()
+
+        # Test iteration_count=0: should call .bind(tool_choice="required")
+        state_iter_0 = {
+            "messages": [HumanMessage(content="test query")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+        }
+        await compiled.nodes["agent"].ainvoke(state_iter_0)
+        mock_llm.bind.assert_called_once_with(tool_choice="required")
+
+        # Test iteration_count=1: should NOT call .bind()
+        mock_llm.bind.reset_mock()
+        state_iter_1 = {**state_iter_0, "iteration_count": 1}
+        await compiled.nodes["agent"].ainvoke(state_iter_1)
+        mock_llm.bind.assert_not_called()
 
 
 class TestSafeToolNodeErrorHandling:
