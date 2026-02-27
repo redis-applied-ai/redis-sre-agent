@@ -233,7 +233,7 @@ class TestKnowledgeAgentMethods:
         from redis_sre_agent.core.progress import NullEmitter
         from redis_sre_agent.tools.manager import ToolManager
 
-        # Mock LLM returned by create_llm
+        # Create mock LLM returned by create_llm
         mock_llm = MagicMock()
         mock_create_llm.return_value = mock_llm
 
