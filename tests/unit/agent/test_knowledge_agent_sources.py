@@ -15,6 +15,10 @@ class FakeLLM:
     def bind_tools(self, _schemas):
         return self
 
+    def bind(self, **kwargs):
+        # Support .bind(tool_choice="required") for first iteration
+        return self
+
     async def ainvoke(self, _messages):
         # First agent node returns a response with a tool call
         return FakeResponse()
