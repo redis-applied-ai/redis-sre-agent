@@ -154,8 +154,18 @@ uv run redis-sre-agent task get <task_id>
 # Threads
 uv run redis-sre-agent thread list
 uv run redis-sre-agent thread get <thread_id>
+uv run redis-sre-agent thread trace <message_id>
 uv run redis-sre-agent thread sources <thread_id>
 ```
+
+#### Citations in thread history
+Use these commands together when you want citation-level provenance for an answer:
+
+1. Run `thread get <thread_id>` to list messages in the thread and find assistant `message_id` values.
+2. Run `thread trace <message_id>` to inspect the decision trace for that assistant response, including tool calls and citations derived from knowledge-search tool results.
+3. Run `thread sources <thread_id>` to list retrieved knowledge fragments by thread or turn.
+
+When a response uses knowledge search, citations are also added to the chat history as a follow-up system message (`Sources for previous response`) in the same thread.
 
 ### Tips
 - Use the Docker stack to get Prometheus/Loki; set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL so the agent can fetch metrics/logs.
