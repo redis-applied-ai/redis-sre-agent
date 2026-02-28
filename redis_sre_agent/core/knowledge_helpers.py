@@ -7,6 +7,7 @@ They are called by:
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,59 @@ from redis_sre_agent.core.redis import get_knowledge_index, get_vectorizer
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+_SOURCE_VERSION_RE = re.compile(r"/(\d+\.\d+)/")
+
+
+def _extract_version_from_source(source: str) -> str:
+    """Infer doc version from source URL/path."""
+    if not source:
+        return "latest"
+    match = _SOURCE_VERSION_RE.search(source)
+    if match:
+        return match.group(1)
+    return "latest"
+
+
+def _normalized_doc_version(doc: Dict[str, Any]) -> str:
+    """Choose the most reliable version for output."""
+    source_version = _extract_version_from_source(str(doc.get("source", "")))
+    if source_version != "latest":
+        return source_version
+    version = str(doc.get("version", "")).strip()
+    return version or "latest"
+
+
+def _doc_matches_requested_version(doc: Dict[str, Any], requested_version: Optional[str]) -> bool:
+    """Apply source-aware version matching for compatibility with legacy indexed docs."""
+    if requested_version is None:
+        return True
+
+    source_version = _extract_version_from_source(str(doc.get("source", "")))
+    doc_version = str(doc.get("version", "")).strip()
+
+    if requested_version == "latest":
+        # Canonical latest docs are unversioned paths.
+        return source_version == "latest"
+
+    return source_version == requested_version or doc_version == requested_version
+
+
+def _dedupe_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Preserve order while removing duplicate documents/chunks."""
+    deduped: List[Dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for doc in docs:
+        key = (
+            doc.get("id"),
+            doc.get("document_hash"),
+            doc.get("chunk_index"),
+            doc.get("source"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(doc)
+    return deduped
 
 
 async def search_knowledge_base_helper(
@@ -73,7 +127,10 @@ async def search_knowledge_base_helper(
         "version",
     ]
 
-    # Build version filter expression if version is specified
+    # Build version filter expression if version is specified.
+    # NOTE: legacy indices may have incorrect version tags; we apply
+    # source-aware filtering post-query and can fall back to an unfiltered
+    # query if the tag-filtered query is too restrictive.
     from redisvl.query.filter import Tag
 
     filter_expr = None
@@ -93,45 +150,52 @@ async def search_knowledge_base_helper(
 
     query_vector = vectors[0] if vectors else []
 
-    # We need to fetch more results if there's an offset, then slice
+    # We need to fetch more results if there's an offset, then slice.
     # This is because RedisVL vector queries don't support offset directly
     fetch_limit = limit + offset
+    if version is not None:
+        # Oversample when version filtering to improve recall after post-filtering.
+        fetch_limit = min(fetch_limit * 4, 200)
 
-    if hybrid_search:
-        logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
-        query_obj = HybridQuery(
-            vector=query_vector,
-            vector_field_name="vector",
-            text_field_name="content",
-            text=query,
-            num_results=fetch_limit,
-            return_fields=return_fields,
-            filter_expression=filter_expr,
-        )
-    else:
+    def _build_query(version_filter, num_results: int):
+        if hybrid_search:
+            logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
+            return HybridQuery(
+                vector=query_vector,
+                vector_field_name="vector",
+                text_field_name="content",
+                text=query,
+                num_results=num_results,
+                return_fields=return_fields,
+                filter_expression=version_filter,
+            )
+
         # Build pure vector query
         # distance_threshold default is 0.5; None disables threshold (pure KNN)
         effective_threshold = distance_threshold
         if effective_threshold is not None:
-            query_obj = VectorRangeQuery(
+            q = VectorRangeQuery(
                 vector=query_vector,
                 vector_field_name="vector",
                 return_fields=return_fields,
-                num_results=fetch_limit,
+                num_results=num_results,
                 distance_threshold=effective_threshold,
             )
         else:
-            query_obj = VectorQuery(
+            q = VectorQuery(
                 vector=query_vector,
                 vector_field_name="vector",
                 return_fields=return_fields,
-                num_results=fetch_limit,
+                num_results=num_results,
             )
-        if filter_expr is not None:
-            query_obj.set_filter(filter_expr)
+        if version_filter is not None:
+            q.set_filter(version_filter)
+        return q
 
     # Perform vector search
     _t2 = time.monotonic()
+    desired_results = limit + offset
+    query_obj = _build_query(filter_expr, fetch_limit)
     with tracer.start_as_current_span("knowledge.index.query") as _span:
         _span.set_attribute("limit", int(limit))
         _span.set_attribute("offset", int(offset))
@@ -142,10 +206,43 @@ async def search_knowledge_base_helper(
             float(distance_threshold) if distance_threshold is not None else -1.0,
         )
         all_results = await index.query(query_obj)
+        _span.set_attribute("query.filtered", bool(filter_expr is not None))
     _t3 = time.monotonic()
 
+    version_filtered_results = [
+        doc for doc in all_results if _doc_matches_requested_version(doc, version)
+    ]
+
+    if version not in (None, "latest") and len(version_filtered_results) < desired_results:
+        fallback_fetch_limit = min(max(desired_results * 8, fetch_limit), 500)
+        logger.debug(
+            "Version-filter fallback query triggered for version=%s; "
+            "primary_count=%s desired=%s fallback_fetch_limit=%s",
+            version,
+            len(version_filtered_results),
+            desired_results,
+            fallback_fetch_limit,
+        )
+        fallback_query = _build_query(None, fallback_fetch_limit)
+        with tracer.start_as_current_span("knowledge.index.query") as _span:
+            _span.set_attribute("limit", int(limit))
+            _span.set_attribute("offset", int(offset))
+            _span.set_attribute("hybrid_search", bool(hybrid_search))
+            _span.set_attribute("version", version or "all")
+            _span.set_attribute(
+                "distance_threshold",
+                float(distance_threshold) if distance_threshold is not None else -1.0,
+            )
+            _span.set_attribute("query.filtered", False)
+            fallback_results = await index.query(fallback_query)
+
+        fallback_version_filtered = [
+            doc for doc in fallback_results if _doc_matches_requested_version(doc, version)
+        ]
+        version_filtered_results = _dedupe_docs(version_filtered_results + fallback_version_filtered)
+
     # Apply offset by slicing results
-    results = all_results[offset:] if offset > 0 else all_results
+    results = version_filtered_results[offset:] if offset > 0 else version_filtered_results
 
     search_result = {
         "query": query,
@@ -155,7 +252,7 @@ async def search_knowledge_base_helper(
         "limit": limit,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "results_count": len(results),
-        "total_fetched": len(all_results),
+        "total_fetched": len(version_filtered_results),
         "results": [
             {
                 "id": doc.get("id", ""),
@@ -166,7 +263,7 @@ async def search_knowledge_base_helper(
                 "content": doc.get("content", ""),
                 "source": doc.get("source", ""),
                 "category": doc.get("category", ""),
-                "version": doc.get("version", "latest"),
+                "version": _normalized_doc_version(doc),
                 # RedisVL returns distance when return_score=True (default). Some versions
                 # expose it as 'score' and others as 'vector_distance' or 'distance'.
                 # Normalize to float.

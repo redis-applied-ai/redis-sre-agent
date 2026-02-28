@@ -312,6 +312,16 @@ class Settings(BaseSettings):
             "If not set, uses the default ChatOpenAI factory."
         ),
     )
+    async_openai_client_factory: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dot-path to a custom AsyncOpenAI client factory function. The function must "
+            "accept (tier: str, model: str | None, api_key: str | None, timeout: float | None, "
+            "**kwargs) and return an OpenAI-compatible async client. "
+            "Example: 'mypackage.llm.async_openai_factory'. "
+            "If not set, uses the default AsyncOpenAI factory."
+        ),
+    )
 
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")

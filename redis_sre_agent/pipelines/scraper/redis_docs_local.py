@@ -59,6 +59,18 @@ class RedisDocsLocalScraper(BaseScraper):
 
         return bool(re.match(r"^\d+\.\d+$", part))
 
+    def _extract_version_from_rel_path(self, rel_path: Path) -> str:
+        """Extract docs version from a content-relative path.
+
+        Examples:
+            operate/rs/7.22/references/terminology.md -> "7.22"
+            operate/rs/references/terminology.md -> "latest"
+        """
+        for part in rel_path.parts:
+            if self._is_version_dir(part):
+                return part
+        return "latest"
+
     async def scrape(self) -> List[ScrapedDocument]:
         """Scrape Redis documentation from local repo clone."""
 
@@ -164,6 +176,7 @@ class RedisDocsLocalScraper(BaseScraper):
         rel_path = md_file.relative_to(content_dir)
         source_url = f"https://github.com/redis/docs/blob/main/content/{rel_path}"
 
+        version = self._extract_version_from_rel_path(rel_path)
         return ScrapedDocument(
             title=title,
             content=content,
@@ -175,6 +188,7 @@ class RedisDocsLocalScraper(BaseScraper):
                 "file_path": str(md_file),
                 "relative_path": str(rel_path),
                 "file_size": md_file.stat().st_size,
+                "version": version,
                 **metadata,
             },
         )
