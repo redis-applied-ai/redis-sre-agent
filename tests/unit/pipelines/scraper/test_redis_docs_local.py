@@ -18,12 +18,14 @@ def test_extract_version_from_rel_path(tmp_path):
     storage = ArtifactStorage(tmp_path / "artifacts")
     scraper = RedisDocsLocalScraper(storage)
 
-    assert scraper._extract_version_from_rel_path(
-        Path("operate/rs/7.22/references/terminology.md")
-    ) == "7.22"
-    assert scraper._extract_version_from_rel_path(
-        Path("operate/rs/references/terminology.md")
-    ) == "latest"
+    assert (
+        scraper._extract_version_from_rel_path(Path("operate/rs/7.22/references/terminology.md"))
+        == "7.22"
+    )
+    assert (
+        scraper._extract_version_from_rel_path(Path("operate/rs/references/terminology.md"))
+        == "latest"
+    )
 
 
 @pytest.mark.asyncio

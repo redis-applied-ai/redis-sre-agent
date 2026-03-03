@@ -239,7 +239,9 @@ async def search_knowledge_base_helper(
         fallback_version_filtered = [
             doc for doc in fallback_results if _doc_matches_requested_version(doc, version)
         ]
-        version_filtered_results = _dedupe_docs(version_filtered_results + fallback_version_filtered)
+        version_filtered_results = _dedupe_docs(
+            version_filtered_results + fallback_version_filtered
+        )
 
     # Apply offset by slicing results
     results = version_filtered_results[offset:] if offset > 0 else version_filtered_results
