@@ -497,7 +497,7 @@ class TestGenerateThreadSubject:
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "Redis memory at 95%"
 
-        with patch("redis_sre_agent.core.threads.AsyncOpenAI") as mock_openai:
+        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
             mock_client.chat.completions.create.return_value = mock_response
@@ -516,7 +516,7 @@ class TestGenerateThreadSubject:
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = '"Redis memory issue"'
 
-        with patch("redis_sre_agent.core.threads.AsyncOpenAI") as mock_openai:
+        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
             mock_client.chat.completions.create.return_value = mock_response
@@ -531,7 +531,7 @@ class TestGenerateThreadSubject:
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "A" * 100
 
-        with patch("redis_sre_agent.core.threads.AsyncOpenAI") as mock_openai:
+        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
             mock_client.chat.completions.create.return_value = mock_response
@@ -542,7 +542,7 @@ class TestGenerateThreadSubject:
     @pytest.mark.asyncio
     async def test_generate_thread_subject_fallback_on_error(self, thread_manager):
         """Test fallback to truncated original message on error."""
-        with patch("redis_sre_agent.core.threads.AsyncOpenAI") as mock_openai:
+        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
             mock_client.chat.completions.create.side_effect = Exception("API error")
@@ -554,7 +554,7 @@ class TestGenerateThreadSubject:
     @pytest.mark.asyncio
     async def test_generate_thread_subject_long_original_fallback(self, thread_manager):
         """Test fallback adds ellipsis for long messages."""
-        with patch("redis_sre_agent.core.threads.AsyncOpenAI") as mock_openai:
+        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
             mock_client.chat.completions.create.side_effect = Exception("API error")

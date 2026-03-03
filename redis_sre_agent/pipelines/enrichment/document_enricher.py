@@ -10,9 +10,9 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-import openai
+from redis_sre_agent.core.llm_helpers import create_nano_async_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 class DocumentEnricher:
     """Enriches documents with semantic metadata for improved search quality."""
 
-    def __init__(self, openai_api_key: str):
-        self.client = openai.AsyncOpenAI(api_key=openai_api_key)
+    def __init__(self, openai_api_key: Optional[str] = None):
+        self.client = create_nano_async_openai_client(api_key=openai_api_key)
 
         # Redis command patterns for classification
         self.command_patterns = {

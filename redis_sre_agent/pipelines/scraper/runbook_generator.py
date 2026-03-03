@@ -8,10 +8,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import aiohttp
-import openai
 from bs4 import BeautifulSoup
 
-from ...core.config import settings
+from ...core.llm_helpers import create_async_openai_client
 from .base import (
     ArtifactStorage,
     BaseScraper,
@@ -45,7 +44,7 @@ class RunbookGenerator(BaseScraper):
         }
 
         # Lazy-initialize OpenAI client (only when actually used)
-        self._openai_client: Optional[openai.AsyncOpenAI] = None
+        self._openai_client: Optional[Any] = None
 
         # Standard runbook format template
         self.runbook_template = """
@@ -109,10 +108,10 @@ SOURCE CONTENT TO STANDARDIZE:
 """
 
     @property
-    def openai_client(self) -> openai.AsyncOpenAI:
+    def openai_client(self) -> Any:
         """Lazily initialize OpenAI client on first access."""
         if self._openai_client is None:
-            self._openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            self._openai_client = create_async_openai_client()
         return self._openai_client
 
     def get_source_name(self) -> str:
