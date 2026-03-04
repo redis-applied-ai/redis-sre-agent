@@ -20,8 +20,8 @@ def test_knowledge_provider_tool_schemas():
     provider = KnowledgeBaseToolProvider()
     schemas = provider.create_tool_schemas()
 
-    # Should have 2 tools
-    assert len(schemas) == 4  # search, ingest, get_all_fragments, get_related_fragments
+    # Should have all knowledge tools
+    assert len(schemas) == 6
 
     # All should be ToolDefinition objects
     for schema in schemas:
@@ -32,6 +32,8 @@ def test_knowledge_provider_tool_schemas():
     tool_names = [s.name for s in schemas]
     assert any("search" in name for name in tool_names)
     assert any("ingest" in name for name in tool_names)
+    assert any("skills_check" in name for name in tool_names)
+    assert any("get_skill" in name for name in tool_names)
 
     # All tool names should include provider name and hash
     for name in tool_names:
@@ -102,7 +104,7 @@ async def test_knowledge_provider_context_manager():
 
         # Should be able to create schemas
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 4  # search, ingest, get_all_fragments, get_related_fragments
+        assert len(schemas) == 6
 
 
 class TestKnowledgeProviderProperties:
@@ -170,6 +172,24 @@ class TestKnowledgeProviderGetRelatedFragmentsSchema:
         assert "chunk_index" in schema.parameters["required"]
 
 
+class TestKnowledgeProviderSkillSchemas:
+    """Test skills_check/get_skill tool schemas."""
+
+    def test_skills_check_schema_exists(self):
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        skill_schemas = [s for s in schemas if "skills_check" in s.name]
+        assert len(skill_schemas) == 1
+
+    def test_get_skill_schema_requires_document_hash(self):
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        schema = next(s for s in schemas if "get_skill" in s.name)
+        assert "document_hash" in schema.parameters["required"]
+
+
 class TestKnowledgeProviderToolCapabilities:
     """Test knowledge tool capabilities."""
 
@@ -181,8 +201,8 @@ class TestKnowledgeProviderToolCapabilities:
         for schema in schemas:
             assert schema.capability == ToolCapability.KNOWLEDGE
 
-    def test_tool_count_is_four(self):
-        """Test there are exactly 4 tools."""
+    def test_tool_count_is_six(self):
+        """Test there are exactly 6 tools."""
         provider = KnowledgeBaseToolProvider()
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 4
+        assert len(schemas) == 6

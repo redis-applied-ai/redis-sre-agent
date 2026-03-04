@@ -43,15 +43,15 @@ class TestKnowledgeAgent:
 
             # Verify knowledge tools are present
             knowledge_tools = [n for n in tool_names if "knowledge_" in n]
-            assert (
-                len(knowledge_tools) == 4
-            )  # search, ingest, get_all_fragments, get_related_fragments
+            assert len(knowledge_tools) == 6
 
             # Verify specific tools are present
             assert any("search" in n for n in knowledge_tools)
             assert any("ingest" in n for n in knowledge_tools)
             assert any("get_all_fragments" in n for n in knowledge_tools)
             assert any("get_related_fragments" in n for n in knowledge_tools)
+            assert any("skills_check" in n for n in knowledge_tools)
+            assert any("get_skill" in n for n in knowledge_tools)
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_wrapper(self):

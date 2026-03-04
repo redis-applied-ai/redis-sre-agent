@@ -15,7 +15,9 @@ from redis_sre_agent.core.docket_tasks import (
 from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
+    get_skill_helper,
     search_knowledge_base_helper,
+    skills_check_helper,
 )
 from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
@@ -213,6 +215,59 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "required": ["document_hash", "chunk_index"],
                 },
             ),
+            ToolDefinition(
+                name=self._make_tool_name("skills_check"),
+                description=(
+                    "List available skills from the knowledge base. "
+                    "Use this to get a table-of-contents style view before requesting "
+                    "a full skill with get_skill."
+                ),
+                capability=ToolCapability.KNOWLEDGE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of skills to return (default: 20)",
+                            "default": 20,
+                            "minimum": 1,
+                            "maximum": 100,
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Number of skills to skip for pagination (default: 0)",
+                            "default": 0,
+                            "minimum": 0,
+                        },
+                        "version": {
+                            "type": "string",
+                            "description": (
+                                "Optional Redis documentation version filter. "
+                                "Defaults to 'latest'. Set to null to include all versions."
+                            ),
+                            "default": "latest",
+                        },
+                    },
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_skill"),
+                description=(
+                    "Retrieve the complete content of a skill document by document hash. "
+                    "Use a hash from skills_check results."
+                ),
+                capability=ToolCapability.KNOWLEDGE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "document_hash": {
+                            "type": "string",
+                            "description": "Document hash of the skill to retrieve",
+                        },
+                    },
+                    "required": ["document_hash"],
+                },
+            ),
         ]
 
     def _operation_from_tool(self, tool_name: str) -> str:
@@ -368,3 +423,27 @@ class KnowledgeBaseToolProvider(ToolProvider):
             },
         ):
             return await get_related_document_fragments(document_hash, chunk_index, limit)
+
+    @status_update("I'm checking the available skills in the knowledge base.")
+    async def skills_check(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        version: Optional[str] = "latest",
+    ) -> Dict[str, Any]:
+        """List available skills from the knowledge base."""
+        logger.info("Checking skills (limit=%s, offset=%s, version=%s)", limit, offset, version)
+        with tracer.start_as_current_span(
+            "tool.knowledge.skills_check",
+            attributes={"limit": int(limit), "offset": int(offset), "version": version or "all"},
+        ):
+            return await skills_check_helper(limit=limit, offset=offset, version=version)
+
+    async def get_skill(self, document_hash: str) -> Dict[str, Any]:
+        """Get complete content for a single skill document."""
+        logger.info("Getting full skill document: %s", document_hash)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_skill",
+            attributes={"document_hash": str(document_hash)[:16]},
+        ):
+            return await get_skill_helper(document_hash=document_hash)

@@ -10,8 +10,10 @@ from redis_sre_agent.core.knowledge_helpers import (
     _doc_matches_requested_version,
     get_all_document_fragments,
     get_related_document_fragments,
+    get_skill_helper,
     ingest_sre_document_helper,
     search_knowledge_base_helper,
+    skills_check_helper,
 )
 
 
@@ -636,3 +638,104 @@ class TestGetRelatedDocumentFragments:
         assert result["document_hash"] == "test-hash"
         assert "error" in result
         assert "Database error" in result["error"]
+
+
+class TestSkillHelpers:
+    """Tests for skill-specific helper functions."""
+
+    @pytest.mark.asyncio
+    async def test_skills_check_helper_lists_unique_skills(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "id": "a-0",
+                        "document_hash": "hash-a",
+                        "chunk_index": 0,
+                        "title": "Skill A",
+                        "content": "First chunk",
+                        "source": "docs/latest/a",
+                        "document_type": "skill",
+                        "version": "latest",
+                    },
+                    {
+                        "id": "a-1",
+                        "document_hash": "hash-a",
+                        "chunk_index": 1,
+                        "title": "Skill A",
+                        "content": "Second chunk",
+                        "source": "docs/latest/a",
+                        "document_type": "skill",
+                        "version": "latest",
+                    },
+                ],
+                [
+                    {
+                        "id": "b-0",
+                        "document_hash": "hash-b",
+                        "chunk_index": 0,
+                        "title": "Skill B",
+                        "content": "Only chunk",
+                        "source": "docs/latest/b",
+                        "doc_type": "skill",
+                        "version": "latest",
+                    }
+                ],
+            ]
+        )
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+            new_callable=AsyncMock,
+            return_value=mock_index,
+        ):
+            result = await skills_check_helper(limit=10, offset=0, version="latest")
+
+        assert result["results_count"] == 2
+        assert result["total_fetched"] == 2
+        assert [skill["title"] for skill in result["skills"]] == ["Skill A", "Skill B"]
+        assert [skill["document_hash"] for skill in result["skills"]] == ["hash-a", "hash-b"]
+
+    @pytest.mark.asyncio
+    async def test_get_skill_helper_returns_full_content_for_skill(self):
+        fragments_result = {
+            "document_hash": "hash-skill",
+            "title": "Skill Doc",
+            "source": "docs/latest/skill",
+            "document_type": "skill",
+            "fragments": [
+                {"chunk_index": 0, "content": "Part 1"},
+                {"chunk_index": 1, "content": "Part 2"},
+            ],
+            "metadata": {"owner": "sre"},
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+            return_value=fragments_result,
+        ):
+            result = await get_skill_helper(document_hash="hash-skill")
+
+        assert result["document_hash"] == "hash-skill"
+        assert result["document_type"] == "skill"
+        assert result["fragments_count"] == 2
+        assert result["full_content"] == "Part 1\n\nPart 2"
+
+    @pytest.mark.asyncio
+    async def test_get_skill_helper_rejects_non_skill_document(self):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+            return_value={
+                "document_hash": "hash-runbook",
+                "document_type": "runbook",
+                "fragments": [{"chunk_index": 0, "content": "text"}],
+            },
+        ):
+            result = await get_skill_helper(document_hash="hash-runbook")
+
+        assert result["document_hash"] == "hash-runbook"
+        assert result["document_type"] == "runbook"
+        assert "not 'skill'" in result["error"]

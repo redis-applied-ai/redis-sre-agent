@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from opentelemetry import trace
-from redisvl.query import HybridQuery, VectorQuery, VectorRangeQuery
+from redisvl.query import FilterQuery, HybridQuery, VectorQuery, VectorRangeQuery
 from ulid import ULID
 
 from redis_sre_agent.core.config import Settings
@@ -53,6 +53,8 @@ def _normalized_doc_type(doc: Dict[str, Any]) -> str:
     if legacy_doc_type:
         return legacy_doc_type
     return "general"
+
+
 def _doc_matches_requested_version(doc: Dict[str, Any], requested_version: Optional[str]) -> bool:
     """Apply source-aware version matching for compatibility with legacy indexed docs."""
     if requested_version is None:
@@ -73,6 +75,8 @@ def _doc_matches_requested_type(doc: Dict[str, Any], requested_type: Optional[st
     if requested_type is None:
         return True
     return _normalized_doc_type(doc) == requested_type.lower()
+
+
 def _dedupe_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Preserve order while removing duplicate documents/chunks."""
     deduped: List[Dict[str, Any]] = []
@@ -89,6 +93,139 @@ def _dedupe_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen.add(key)
         deduped.append(doc)
     return deduped
+
+
+def _doc_chunk_index(doc: Dict[str, Any]) -> int:
+    """Best-effort chunk index parsing for deterministic ordering."""
+    try:
+        if doc.get("chunk_index") is not None and str(doc.get("chunk_index")) != "":
+            return int(doc.get("chunk_index"))  # type: ignore[arg-type]
+    except Exception:
+        pass
+    return 10**9
+
+
+async def skills_check_helper(
+    limit: int = 20,
+    offset: int = 0,
+    version: Optional[str] = "latest",
+    config: Optional[Settings] = None,
+) -> Dict[str, Any]:
+    """List available skills from the knowledge base."""
+    logger.info("Listing skills (version=%s, offset=%s, limit=%s)", version, offset, limit)
+    index = await get_knowledge_index(config=config)
+
+    fetch_limit = min(max(limit + offset, 1) * 8, 1000)
+    return_fields = [
+        "id",
+        "document_hash",
+        "chunk_index",
+        "title",
+        "content",
+        "source",
+        "document_type",
+        "doc_type",
+        "version",
+    ]
+
+    # Query canonical and legacy type fields, then normalize/dedupe in memory.
+    canonical = await index.query(
+        FilterQuery(
+            filter_expression='@document_type:{"skill"}',
+            return_fields=return_fields,
+            num_results=fetch_limit,
+        )
+    )
+    legacy = await index.query(
+        FilterQuery(
+            filter_expression='@doc_type:{"skill"}',
+            return_fields=return_fields,
+            num_results=fetch_limit,
+        )
+    )
+
+    candidates = [
+        doc
+        for doc in _dedupe_docs(canonical + legacy)
+        if _doc_matches_requested_type(doc, "skill")
+        and _doc_matches_requested_version(doc, version)
+    ]
+
+    # Keep one representative row per document, preferring the first chunk.
+    by_document: Dict[str, Dict[str, Any]] = {}
+    for doc in candidates:
+        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
+        if not key:
+            continue
+        existing = by_document.get(key)
+        if existing is None or _doc_chunk_index(doc) < _doc_chunk_index(existing):
+            by_document[key] = doc
+
+    ordered_docs = sorted(
+        by_document.values(),
+        key=lambda d: (str(d.get("title", "")).lower(), str(d.get("source", "")).lower()),
+    )
+    paged_docs = ordered_docs[offset : offset + limit]
+
+    def _summary(text: str, max_len: int = 280) -> str:
+        compact = " ".join((text or "").split())
+        if len(compact) <= max_len:
+            return compact
+        return f"{compact[:max_len].rstrip()}..."
+
+    skills = [
+        {
+            "document_hash": str(doc.get("document_hash", "")),
+            "title": str(doc.get("title", "")),
+            "source": str(doc.get("source", "")),
+            "version": _normalized_doc_version(doc),
+            "summary": _summary(str(doc.get("content", ""))),
+        }
+        for doc in paged_docs
+    ]
+
+    return {
+        "version": version,
+        "offset": offset,
+        "limit": limit,
+        "results_count": len(skills),
+        "total_fetched": len(ordered_docs),
+        "skills": skills,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def get_skill_helper(document_hash: str) -> Dict[str, Any]:
+    """Get complete content for a skill document by document hash."""
+    result = await get_all_document_fragments(document_hash=document_hash, include_metadata=True)
+
+    fragments = result.get("fragments") or []
+    if not fragments:
+        return result
+
+    normalized_type = str(
+        result.get("document_type") or _normalized_doc_type(fragments[0])  # type: ignore[index]
+    ).lower()
+    if normalized_type != "skill":
+        return {
+            "document_hash": document_hash,
+            "error": f"Document type is '{normalized_type}', not 'skill'",
+            "document_type": normalized_type,
+        }
+
+    sorted_fragments = sorted(fragments, key=lambda x: _doc_chunk_index(x))
+    full_content = "\n\n".join(str(f.get("content", "")).strip() for f in sorted_fragments).strip()
+
+    return {
+        "document_hash": document_hash,
+        "title": result.get("title", ""),
+        "source": result.get("source", ""),
+        "document_type": normalized_type,
+        "fragments_count": len(sorted_fragments),
+        "fragments": sorted_fragments,
+        "full_content": full_content,
+        "metadata": result.get("metadata", {}),
+    }
 
 
 async def search_knowledge_base_helper(
@@ -532,7 +669,9 @@ async def get_all_document_fragments(
             "category": metadata.get("category", ""),
             "document_type": metadata.get(
                 "document_type",
-                _normalized_doc_type(normalized_fragments[0]) if normalized_fragments else "general",
+                _normalized_doc_type(normalized_fragments[0])
+                if normalized_fragments
+                else "general",
             ),
             "metadata": metadata,
         }

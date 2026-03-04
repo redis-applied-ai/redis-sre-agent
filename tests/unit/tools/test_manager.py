@@ -39,11 +39,13 @@ async def test_tool_manager_knowledge_tools():
         redis_command_tools = [n for n in tool_names if "redis_command_" in n]
 
         # Knowledge tools (always loaded)
-        assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
+        assert len(knowledge_tools) == 6
         assert any("search" in n for n in knowledge_tools)
         assert any("ingest" in n for n in knowledge_tools)
         assert any("get_all_fragments" in n for n in knowledge_tools)
         assert any("get_related_fragments" in n for n in knowledge_tools)
+        assert any("skills_check" in n for n in knowledge_tools)
+        assert any("get_skill" in n for n in knowledge_tools)
 
         # Instance-specific tools should NOT be loaded without an instance
         assert len(prometheus_tools) == 0
@@ -76,7 +78,7 @@ async def test_tool_manager_with_instance():
         redis_command_tools = [n for n in tool_names if "redis_command_" in n]
 
         # Knowledge tools (always loaded)
-        assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
+        assert len(knowledge_tools) == 6
 
         # Instance-specific tools should be loaded
         assert len(prometheus_tools) == 3  # query, query_range, search_metrics
