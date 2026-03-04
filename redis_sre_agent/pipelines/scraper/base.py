@@ -21,7 +21,15 @@ class DocumentCategory(str, Enum):
 
 
 class DocumentType(str, Enum):
-    """Document type classification."""
+    """
+    Document type classification.
+
+    RUNBOOK: step-by-step operational procedures used during incidents
+    and maintenance.
+    TROUBLESHOOTING: diagnostic guidance for identifying likely causes.
+    SKILL: capability instruction documents consumed by the agent's
+    skills workflow rather than general operator runbooks.
+    """
 
     RUNBOOK = "runbook"
     DOCUMENTATION = "documentation"

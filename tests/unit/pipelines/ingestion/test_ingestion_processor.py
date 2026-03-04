@@ -288,14 +288,10 @@ class TestIngestionPipeline:
         assert pipeline.processor.config["chunk_size"] == 300
         assert pipeline.processor.config["min_chunk_size"] == 50
 
-    @pytest.mark.parametrize(
-        ("front_matter_key", "expected_type"),
-        [("document type", DocumentType.SKILL), ("doc type", DocumentType.TICKET)],
-    )
-    def test_create_scraped_document_from_markdown_supports_doc_type_aliases(
-        self, pipeline, tmp_path, front_matter_key, expected_type
+    def test_create_scraped_document_from_markdown_uses_doc_type_frontmatter_key(
+        self, pipeline, tmp_path
     ):
-        """Test doc-type aliases in front matter are normalized."""
+        """Test canonical doc_type front matter key is used for document type."""
         md_file = tmp_path / "test-doc.md"
         md_file.write_text(
             (
@@ -303,7 +299,7 @@ class TestIngestionPipeline:
                 'title: "Front Matter Title"\n'
                 "category: shared\n"
                 "severity: high\n"
-                f"{front_matter_key}: {expected_type.value}\n"
+                "doc type: ticket\n"
                 "---\n\n"
                 "# Body Heading\n\n"
                 "Some content.\n"
@@ -314,19 +310,39 @@ class TestIngestionPipeline:
         document = pipeline._create_scraped_document_from_markdown(md_file)
 
         assert document.title == "Front Matter Title"
-        assert document.doc_type == expected_type
-        assert document.metadata["original_doc_type"] == expected_type.value
-        assert document.metadata["document_type"] == expected_type.value
+        assert document.doc_type == DocumentType.TICKET
+        assert document.metadata["original_doc_type"] == "ticket"
+        assert document.metadata["document_type"] == "ticket"
+
+    def test_create_scraped_document_from_markdown_ignores_document_type_frontmatter_key(
+        self, pipeline, tmp_path
+    ):
+        """Test legacy document_type front matter key is ignored."""
+        md_file = tmp_path / "test-doc.md"
+        md_file.write_text(
+            (
+                "---\n"
+                'title: "Front Matter Title"\n'
+                "category: shared\n"
+                "severity: high\n"
+                "document type: skill\n"
+                "---\n\n"
+                "# Body Heading\n\n"
+                "Some content.\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.title == "Front Matter Title"
+        assert document.doc_type == DocumentType.RUNBOOK
+        assert document.metadata["original_doc_type"] == "runbook"
+        assert document.metadata["document_type"] == "runbook"
 
     def test_parse_markdown_metadata_normalizes_spaced_keys(self, pipeline):
         """Test metadata keys with spaces normalize to snake_case."""
-        content = (
-            "---\n"
-            "document type: skill\n"
-            "---\n\n"
-            "# Test Title\n"
-            "**Doc Type**: ticket\n"
-        )
+        content = "---\ndocument type: skill\n---\n\n# Test Title\n**Doc Type**: ticket\n"
 
         metadata = pipeline._parse_markdown_metadata(content)
 

@@ -507,18 +507,14 @@ class IngestionPipeline:
         }
         severity = severity_map.get(severity_str.lower(), SeverityLevel.MEDIUM)
 
-        # Determine document type from metadata aliases, defaulting to runbook.
-        doc_type_raw = (
-            metadata.get("document_type")
-            or metadata.get("doc_type")
-            or metadata.get("documenttype")
-            or metadata.get("doctype")
-            or "runbook"
-        ).lower()
+        # Determine document type from canonical front-matter key, defaulting to runbook.
+        doc_type_raw = str(metadata.get("doc_type", "runbook")).lower()
         try:
             doc_type = DocumentType(doc_type_raw)
         except ValueError:
-            logger.debug("Unknown document type '%s' in %s; defaulting to runbook", doc_type_raw, md_file)
+            logger.debug(
+                "Unknown document type '%s' in %s; defaulting to runbook", doc_type_raw, md_file
+            )
             doc_type = DocumentType.RUNBOOK
 
         return ScrapedDocument(
@@ -529,14 +525,15 @@ class IngestionPipeline:
             doc_type=doc_type,
             severity=severity,
             metadata={
+                **metadata,
                 "file_path": str(md_file),
                 "file_size": md_file.stat().st_size,
                 "original_category": metadata.get("category", "shared").lower(),
                 "original_severity": severity_str,
                 "original_doc_type": doc_type_raw,
                 "determined_category": category.value,
+                "doc_type": doc_type.value,
                 "document_type": doc_type.value,
-                **metadata,
             },
         )
 
