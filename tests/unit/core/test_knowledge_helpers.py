@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from redis_sre_agent.core.knowledge_helpers import (
+    _dedupe_docs,
+    _doc_matches_requested_version,
     get_all_document_fragments,
     get_related_document_fragments,
     ingest_sre_document_helper,
@@ -64,6 +66,7 @@ class TestSearchKnowledgeBaseHelper:
                     "content": "Redis memory management guide",
                     "source": "docs",
                     "category": "monitoring",
+                    "document_type": "runbook",
                     "version": "latest",
                     "score": 0.95,
                 }
@@ -93,6 +96,52 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results_count"] == 1
         assert len(result["results"]) == 1
         assert result["results"][0]["title"] == "Redis Memory"
+        assert result["results"][0]["document_type"] == "runbook"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_with_document_type_filter(self):
+        """Test document type filtering with legacy and canonical fields."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-1",
+                    "title": "Skill Doc",
+                    "document_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-2",
+                    "title": "Ticket Doc",
+                    "doc_type": "ticket",
+                    "version": "latest",
+                },
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="documents",
+                document_type="skill",
+                limit=10,
+            )
+
+        assert result["document_type"] == "skill"
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-1"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_version_filter(self):
@@ -122,6 +171,100 @@ class TestSearchKnowledgeBaseHelper:
 
         assert result["version"] == "7.8"
         assert result["results_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_latest_filters_versioned_source_paths(self):
+        """Test latest filtering excludes versioned source paths from legacy docs."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-latest",
+                    "title": "Latest doc",
+                    "source": "https://github.com/redis/docs/blob/main/content/operate/rs/references/a.md",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-7-22",
+                    "title": "Versioned doc",
+                    "source": "https://github.com/redis/docs/blob/main/content/operate/rs/7.22/references/a.md",
+                    "version": "latest",
+                },
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="redis memory",
+                version="latest",
+                limit=10,
+            )
+
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-latest"
+        assert result["results"][0]["version"] == "latest"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_specific_version_uses_fallback(self):
+        """Test fallback query can recover versioned docs from legacy-tagged data."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [],
+                [
+                    {
+                        "id": "doc-7-22",
+                        "title": "Versioned doc",
+                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/7.22/references/a.md",
+                        "version": "latest",
+                    },
+                    {
+                        "id": "doc-latest",
+                        "title": "Latest doc",
+                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/references/a.md",
+                        "version": "latest",
+                    },
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="redis memory",
+                version="7.22",
+                limit=5,
+            )
+
+        assert mock_index.query.call_count == 2
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-7-22"
+        assert result["results"][0]["version"] == "7.22"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_hybrid_search(self):
@@ -219,6 +362,30 @@ class TestSearchKnowledgeBaseHelper:
         mock_index.query.assert_called_once()
 
 
+class TestSearchKnowledgeBaseVersionHelpers:
+    """Test helper functions used by search_knowledge_base_helper."""
+
+    def test_doc_matches_requested_version_none_matches_any(self):
+        """None requested version should match all docs."""
+        doc = {
+            "source": "https://github.com/redis/docs/blob/main/content/operate/rs/7.22/references/a.md",
+            "version": "latest",
+        }
+        assert _doc_matches_requested_version(doc, None) is True
+
+    def test_dedupe_docs_removes_duplicates_and_preserves_order(self):
+        """Duplicate docs should be removed while preserving first-seen order."""
+        docs = [
+            {"id": "a", "document_hash": "h1", "chunk_index": 0, "source": "s1"},
+            {"id": "b", "document_hash": "h2", "chunk_index": 1, "source": "s2"},
+            {"id": "a", "document_hash": "h1", "chunk_index": 0, "source": "s1"},
+        ]
+
+        deduped = _dedupe_docs(docs)
+
+        assert [doc["id"] for doc in deduped] == ["a", "b"]
+
+
 class TestIngestSreDocumentHelper:
     """Test ingest_sre_document_helper function."""
 
@@ -254,6 +421,7 @@ class TestIngestSreDocumentHelper:
         assert result["title"] == "Test Document"
         assert result["source"] == "test"
         assert result["category"] == "runbook"
+        assert result["document_type"] == "general"
         assert "document_id" in result
         mock_index.load.assert_called_once()
 
@@ -282,14 +450,18 @@ class TestIngestSreDocumentHelper:
                 content="Redis Cloud content",
                 source="docs",
                 category="guide",
+                document_type="skill",
                 product_labels=["redis-cloud", "enterprise"],
             )
 
         assert result["status"] == "ingested"
+        assert result["document_type"] == "skill"
         # Verify the document was loaded with product labels
         call_args = mock_index.load.call_args
         doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert doc_data[0]["product_labels"] == "redis-cloud,enterprise"
+        assert doc_data[0]["document_type"] == "skill"
+        assert doc_data[0]["doc_type"] == "skill"
 
 
 class TestGetAllDocumentFragments:

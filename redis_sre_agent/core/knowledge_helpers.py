@@ -7,6 +7,7 @@ They are called by:
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -21,11 +22,83 @@ from redis_sre_agent.core.redis import get_knowledge_index, get_vectorizer
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+_SOURCE_VERSION_RE = re.compile(r"/(\d+\.\d+)/")
+
+
+def _extract_version_from_source(source: str) -> str:
+    """Infer doc version from source URL/path."""
+    if not source:
+        return "latest"
+    match = _SOURCE_VERSION_RE.search(source)
+    if match:
+        return match.group(1)
+    return "latest"
+
+
+def _normalized_doc_version(doc: Dict[str, Any]) -> str:
+    """Choose the most reliable version for output."""
+    source_version = _extract_version_from_source(str(doc.get("source", "")))
+    if source_version != "latest":
+        return source_version
+    version = str(doc.get("version", "")).strip()
+    return version or "latest"
+
+
+def _normalized_doc_type(doc: Dict[str, Any]) -> str:
+    """Normalize document type from canonical/legacy fields."""
+    doc_type = str(doc.get("document_type", "")).strip().lower()
+    if doc_type:
+        return doc_type
+    legacy_doc_type = str(doc.get("doc_type", "")).strip().lower()
+    if legacy_doc_type:
+        return legacy_doc_type
+    return "general"
+
+
+def _doc_matches_requested_version(doc: Dict[str, Any], requested_version: Optional[str]) -> bool:
+    """Apply source-aware version matching for compatibility with legacy indexed docs."""
+    if requested_version is None:
+        return True
+
+    source_version = _extract_version_from_source(str(doc.get("source", "")))
+    doc_version = str(doc.get("version", "")).strip()
+
+    if requested_version == "latest":
+        # Canonical latest docs are unversioned paths.
+        return source_version == "latest"
+
+    return source_version == requested_version or doc_version == requested_version
+
+
+def _doc_matches_requested_type(doc: Dict[str, Any], requested_type: Optional[str]) -> bool:
+    """Apply document type filtering while supporting legacy fields."""
+    if requested_type is None:
+        return True
+    return _normalized_doc_type(doc) == requested_type.lower()
+
+
+def _dedupe_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Preserve order while removing duplicate documents/chunks."""
+    deduped: List[Dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for doc in docs:
+        key = (
+            doc.get("id"),
+            doc.get("document_hash"),
+            doc.get("chunk_index"),
+            doc.get("source"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(doc)
+    return deduped
 
 
 async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
+    document_type: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
     distance_threshold: Optional[float] = 0.8,
@@ -48,6 +121,8 @@ async def search_knowledge_base_helper(
     Args:
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
+        document_type: Optional document type filter
+            (e.g., "skill", "ticket", "runbook", "documentation")
         limit: Maximum number of results
         offset: Number of results to skip (for pagination)
         distance_threshold: Cosine distance cutoff; None disables threshold
@@ -69,11 +144,16 @@ async def search_knowledge_base_helper(
         "content",
         "source",
         "category",
+        "doc_type",
+        "document_type",
         "severity",
         "version",
     ]
 
-    # Build version filter expression if version is specified
+    # Build version filter expression if version is specified.
+    # NOTE: legacy indices may have incorrect version tags; we apply
+    # source-aware filtering post-query and can fall back to an unfiltered
+    # query if the tag-filtered query is too restrictive.
     from redisvl.query.filter import Tag
 
     filter_expr = None
@@ -81,6 +161,10 @@ async def search_knowledge_base_helper(
         # Filter by specific version (e.g., "latest", "7.8", "7.4")
         filter_expr = Tag("version") == version
         logger.debug(f"Applying version filter: {version}")
+    if category is not None:
+        category_filter = Tag("category") == category
+        filter_expr = category_filter if filter_expr is None else (filter_expr & category_filter)
+        logger.debug("Applying category filter: %s", category)
     # Always use vector search (tests rely on embedding being used)
     vectorizer = get_vectorizer()
 
@@ -93,45 +177,52 @@ async def search_knowledge_base_helper(
 
     query_vector = vectors[0] if vectors else []
 
-    # We need to fetch more results if there's an offset, then slice
+    # We need to fetch more results if there's an offset, then slice.
     # This is because RedisVL vector queries don't support offset directly
     fetch_limit = limit + offset
+    if version is not None or document_type is not None:
+        # Oversample when version filtering to improve recall after post-filtering.
+        fetch_limit = min(fetch_limit * 4, 200)
 
-    if hybrid_search:
-        logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
-        query_obj = HybridQuery(
-            vector=query_vector,
-            vector_field_name="vector",
-            text_field_name="content",
-            text=query,
-            num_results=fetch_limit,
-            return_fields=return_fields,
-            filter_expression=filter_expr,
-        )
-    else:
+    def _build_query(query_filter, num_results: int):
+        if hybrid_search:
+            logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
+            return HybridQuery(
+                vector=query_vector,
+                vector_field_name="vector",
+                text_field_name="content",
+                text=query,
+                num_results=num_results,
+                return_fields=return_fields,
+                filter_expression=query_filter,
+            )
+
         # Build pure vector query
         # distance_threshold default is 0.5; None disables threshold (pure KNN)
         effective_threshold = distance_threshold
         if effective_threshold is not None:
-            query_obj = VectorRangeQuery(
+            q = VectorRangeQuery(
                 vector=query_vector,
                 vector_field_name="vector",
                 return_fields=return_fields,
-                num_results=fetch_limit,
+                num_results=num_results,
                 distance_threshold=effective_threshold,
             )
         else:
-            query_obj = VectorQuery(
+            q = VectorQuery(
                 vector=query_vector,
                 vector_field_name="vector",
                 return_fields=return_fields,
-                num_results=fetch_limit,
+                num_results=num_results,
             )
-        if filter_expr is not None:
-            query_obj.set_filter(filter_expr)
+        if query_filter is not None:
+            q.set_filter(query_filter)
+        return q
 
     # Perform vector search
     _t2 = time.monotonic()
+    desired_results = limit + offset
+    query_obj = _build_query(filter_expr, fetch_limit)
     with tracer.start_as_current_span("knowledge.index.query") as _span:
         _span.set_attribute("limit", int(limit))
         _span.set_attribute("offset", int(offset))
@@ -142,20 +233,86 @@ async def search_knowledge_base_helper(
             float(distance_threshold) if distance_threshold is not None else -1.0,
         )
         all_results = await index.query(query_obj)
+        _span.set_attribute("query.filtered", bool(filter_expr is not None))
     _t3 = time.monotonic()
 
+    filtered_results = [
+        doc
+        for doc in all_results
+        if _doc_matches_requested_version(doc, version)
+        and _doc_matches_requested_type(doc, document_type)
+    ]
+
+    if version not in (None, "latest") and len(filtered_results) < desired_results:
+        fallback_fetch_limit = min(max(desired_results * 8, fetch_limit), 500)
+        logger.debug(
+            "Version-filter fallback query triggered for version=%s; "
+            "primary_count=%s desired=%s fallback_fetch_limit=%s",
+            version,
+            len(filtered_results),
+            desired_results,
+            fallback_fetch_limit,
+        )
+        fallback_query = _build_query(None, fallback_fetch_limit)
+        with tracer.start_as_current_span("knowledge.index.query") as _span:
+            _span.set_attribute("limit", int(limit))
+            _span.set_attribute("offset", int(offset))
+            _span.set_attribute("hybrid_search", bool(hybrid_search))
+            _span.set_attribute("version", version or "all")
+            _span.set_attribute(
+                "distance_threshold",
+                float(distance_threshold) if distance_threshold is not None else -1.0,
+            )
+            _span.set_attribute("query.filtered", False)
+            fallback_results = await index.query(fallback_query)
+
+        fallback_filtered = [
+            doc
+            for doc in fallback_results
+            if _doc_matches_requested_version(doc, version)
+            and _doc_matches_requested_type(doc, document_type)
+        ]
+        filtered_results = _dedupe_docs(filtered_results + fallback_filtered)
+
+    # Category fallback: if a category filter returns nothing, retry without category
+    # while preserving other filters such as version/document_type.
+    if category is not None and len(filtered_results) == 0:
+        category_fallback_expr = Tag("version") == version if version is not None else None
+        category_fallback_query = _build_query(category_fallback_expr, fetch_limit)
+        with tracer.start_as_current_span("knowledge.index.query") as _span:
+            _span.set_attribute("limit", int(limit))
+            _span.set_attribute("offset", int(offset))
+            _span.set_attribute("hybrid_search", bool(hybrid_search))
+            _span.set_attribute("version", version or "all")
+            _span.set_attribute(
+                "distance_threshold",
+                float(distance_threshold) if distance_threshold is not None else -1.0,
+            )
+            _span.set_attribute("query.filtered", bool(category_fallback_expr is not None))
+            category_fallback_results = await index.query(category_fallback_query)
+
+        filtered_results = [
+            doc
+            for doc in category_fallback_results
+            if _doc_matches_requested_version(doc, version)
+            and _doc_matches_requested_type(doc, document_type)
+        ]
+
     # Apply offset by slicing results
-    results = all_results[offset:] if offset > 0 else all_results
+    results = filtered_results[offset:] if offset > 0 else filtered_results
 
     search_result = {
         "query": query,
         "category": category,
+        "category_filter": category,
+        "document_type": document_type,
+        "document_type_filter": document_type,
         "version": version,
         "offset": offset,
         "limit": limit,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "results_count": len(results),
-        "total_fetched": len(all_results),
+        "total_fetched": len(filtered_results),
         "results": [
             {
                 "id": doc.get("id", ""),
@@ -166,7 +323,8 @@ async def search_knowledge_base_helper(
                 "content": doc.get("content", ""),
                 "source": doc.get("source", ""),
                 "category": doc.get("category", ""),
-                "version": doc.get("version", "latest"),
+                "document_type": _normalized_doc_type(doc),
+                "version": _normalized_doc_version(doc),
                 # RedisVL returns distance when return_score=True (default). Some versions
                 # expose it as 'score' and others as 'vector_distance' or 'distance'.
                 # Normalize to float.
@@ -202,6 +360,7 @@ async def ingest_sre_document_helper(
     source: str,
     category: str = "general",
     severity: str = "info",
+    document_type: Optional[str] = None,
     product_labels: Optional[List[str]] = None,
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
@@ -216,6 +375,7 @@ async def ingest_sre_document_helper(
         source: Source system or file
         category: Document category (incident, runbook, monitoring, etc.)
         severity: Severity level (info, warning, critical)
+        document_type: Optional document type (e.g., skill, ticket, runbook)
         product_labels: Optional list of product labels
         config: Optional Settings for dependency injection (testing)
 
@@ -237,6 +397,7 @@ async def ingest_sre_document_helper(
 
     # Convert product_labels list to comma-separated string for tag field
     product_labels_str = ",".join(product_labels) if product_labels else ""
+    normalized_document_type = (document_type or "general").lower()
 
     document = {
         "id": doc_id,
@@ -244,6 +405,9 @@ async def ingest_sre_document_helper(
         "content": content,
         "source": source,
         "category": category,
+        # Keep legacy `doc_type` while promoting `document_type`.
+        "doc_type": normalized_document_type,
+        "document_type": normalized_document_type,
         "severity": severity,
         "created_at": datetime.now(timezone.utc).timestamp(),
         "vector": content_vector,
@@ -260,6 +424,7 @@ async def ingest_sre_document_helper(
         "title": title,
         "source": source,
         "category": category,
+        "document_type": normalized_document_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "ingested",
     }
@@ -310,6 +475,8 @@ async def get_all_document_fragments(
                 "content",
                 "source",
                 "category",
+                "doc_type",
+                "document_type",
                 "severity",
                 "document_hash",
                 "chunk_index",
@@ -367,6 +534,10 @@ async def get_all_document_fragments(
             "title": metadata.get("title", ""),
             "source": metadata.get("source", ""),
             "category": metadata.get("category", ""),
+            "document_type": metadata.get(
+                "document_type",
+                _normalized_doc_type(normalized_fragments[0]) if normalized_fragments else "general",
+            ),
             "metadata": metadata,
         }
 
@@ -445,6 +616,7 @@ async def get_related_document_fragments(
             "title": all_fragments_result.get("title", ""),
             "source": all_fragments_result.get("source", ""),
             "category": all_fragments_result.get("category", ""),
+            "document_type": all_fragments_result.get("document_type", "general"),
             "metadata": all_fragments_result.get("metadata", {}),
         }
 

@@ -50,6 +50,18 @@ class TestRunbookGenerator:
         """Test source name identification."""
         assert generator.get_source_name() == "runbook_generator"
 
+    def test_openai_client_uses_central_factory(self, generator):
+        """Test OpenAI client is created through centralized factory."""
+        with patch(
+            "redis_sre_agent.pipelines.scraper.runbook_generator.create_async_openai_client"
+        ) as mock_factory:
+            mock_client = AsyncMock()
+            mock_factory.return_value = mock_client
+
+            assert generator.openai_client is mock_client
+            assert generator.openai_client is mock_client
+            mock_factory.assert_called_once()
+
     def test_detect_source_type(self, generator):
         """Test URL source type detection."""
         test_cases = [
@@ -186,11 +198,9 @@ CONFIG GET maxmemory-policy</code></pre>
         assert result is None
 
     @pytest.mark.asyncio
-    @patch("openai.AsyncOpenAI")
-    async def test_generate_standardized_runbook_success(self, mock_openai_class, generator):
+    async def test_generate_standardized_runbook_success(self, generator):
         """Test successful runbook standardization with GPT-4o."""
         mock_openai = AsyncMock()
-        mock_openai_class.return_value = mock_openai
 
         # Mock OpenAI response
         mock_response = MagicMock()
@@ -241,11 +251,9 @@ Contact team lead for persistent memory issues
         # Temperature parameter removed for reasoning models
 
     @pytest.mark.asyncio
-    @patch("openai.AsyncOpenAI")
-    async def test_generate_standardized_runbook_invalid_format(self, mock_openai_class, generator):
+    async def test_generate_standardized_runbook_invalid_format(self, generator):
         """Test runbook generation with invalid format response."""
         mock_openai = AsyncMock()
-        mock_openai_class.return_value = mock_openai
 
         # Mock OpenAI response with invalid format
         mock_response = MagicMock()

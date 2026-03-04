@@ -301,7 +301,9 @@ class DocumentDeduplicator:
                     "content": chunk["content"],
                     "source": chunk["source"],
                     "category": chunk["category"],
+                    # Keep legacy `doc_type` while promoting `document_type`.
                     "doc_type": chunk["doc_type"],
+                    "document_type": chunk.get("document_type", chunk["doc_type"]),
                     "severity": chunk["severity"],
                     "version": chunk.get("version", "latest"),
                     "chunk_index": chunk["chunk_index"],
@@ -331,6 +333,9 @@ class DocumentDeduplicator:
                     "title": chunks[0].get("title", ""),
                     "source": chunks[0].get("source", ""),
                     "category": chunks[0].get("category", ""),
+                    "document_type": chunks[0].get(
+                        "document_type", chunks[0].get("doc_type", "general")
+                    ),
                     "chunk_count": len(chunks),
                     "total_content_length": sum(len(chunk.get("content", "")) for chunk in chunks),
                 },

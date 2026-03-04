@@ -1,16 +1,19 @@
 """Helper functions for creating LLM clients with consistent configuration.
 
-This module provides factory functions for creating LangChain chat models.
-By default, it creates ChatOpenAI instances, but users can configure a custom
-factory function to use different LangChain chat models (e.g., ChatAnthropic,
-ChatVertexAI, ChatBedrock).
+This module provides factory functions for:
+- LangChain chat models (BaseChatModel)
+- OpenAI async SDK clients (AsyncOpenAI)
+
+By default, it creates ChatOpenAI / AsyncOpenAI instances, but users can
+configure custom factory functions.
 
 Configuration:
-    Set the LLM_FACTORY environment variable to a dot-path import string:
+    Set factory environment variables to dot-path import strings:
 
     LLM_FACTORY=mypackage.llm.anthropic_factory
+    ASYNC_OPENAI_CLIENT_FACTORY=mypackage.llm.async_openai_factory
 
-    The factory function must match the LLMFactory protocol signature.
+    Factory functions must match the corresponding protocol signatures.
 
 Programmatic registration:
     from redis_sre_agent.core.llm_helpers import set_llm_factory
@@ -32,6 +35,7 @@ from typing import Optional, Protocol
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+from openai import AsyncOpenAI
 
 from redis_sre_agent.core.config import settings
 
@@ -60,9 +64,35 @@ class LLMFactory(Protocol):
     ) -> BaseChatModel: ...
 
 
+class AsyncOpenAIClientFactory(Protocol):
+    """Protocol for custom AsyncOpenAI client factory functions.
+
+    A factory function receives:
+        tier: One of "main", "mini", or "nano" indicating the intended use case
+        model: Optional model name hint for custom factories
+        api_key: Optional API key override
+        timeout: Optional timeout override
+        **kwargs: Additional arguments passed through from client helpers
+
+    Returns:
+        An OpenAI-compatible async client (typically openai.AsyncOpenAI)
+    """
+
+    def __call__(
+        self,
+        tier: str,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+        **kwargs,
+    ) -> AsyncOpenAI: ...
+
+
 # Global factory function - can be replaced by users or loaded from config
 _llm_factory: Optional[LLMFactory] = None
 _factory_initialized: bool = False
+_async_openai_client_factory: Optional[AsyncOpenAIClientFactory] = None
+_async_openai_factory_initialized: bool = False
 
 
 def _load_factory_from_config() -> None:
@@ -106,6 +136,40 @@ def _load_factory_from_config() -> None:
         raise
 
 
+def _load_async_openai_factory_from_config() -> None:
+    """Load the AsyncOpenAI client factory from config if specified."""
+    global _async_openai_client_factory, _async_openai_factory_initialized
+
+    if _async_openai_factory_initialized:
+        return
+
+    _async_openai_factory_initialized = True
+
+    factory_path = getattr(settings, "async_openai_client_factory", None)
+    if not factory_path or not isinstance(factory_path, str):
+        return
+
+    try:
+        module_path, _, func_name = factory_path.rpartition(".")
+        if not module_path:
+            raise ValueError(
+                f"Invalid ASYNC_OPENAI_CLIENT_FACTORY path '{factory_path}': "
+                "must be a dot-path like 'mypackage.module.factory_func'"
+            )
+
+        module = importlib.import_module(module_path)
+        factory = getattr(module, func_name)
+
+        if not callable(factory):
+            raise ValueError(f"ASYNC_OPENAI_CLIENT_FACTORY '{factory_path}' is not callable")
+
+        _async_openai_client_factory = factory
+        logger.info(f"Loaded custom AsyncOpenAI client factory from {factory_path}")
+    except Exception as e:
+        logger.error(f"Failed to load AsyncOpenAI client factory from '{factory_path}': {e}")
+        raise
+
+
 def set_llm_factory(factory: Optional[LLMFactory]) -> None:
     """Register a custom LLM factory function.
 
@@ -135,6 +199,16 @@ def set_llm_factory(factory: Optional[LLMFactory]) -> None:
     _factory_initialized = True  # Mark as initialized to prevent config override
 
 
+def set_async_openai_client_factory(factory: Optional[AsyncOpenAIClientFactory]) -> None:
+    """Register a custom AsyncOpenAI client factory function.
+
+    This overrides any factory configured via ASYNC_OPENAI_CLIENT_FACTORY.
+    """
+    global _async_openai_client_factory, _async_openai_factory_initialized
+    _async_openai_client_factory = factory
+    _async_openai_factory_initialized = True
+
+
 def get_llm_factory() -> Optional[LLMFactory]:
     """Get the currently registered LLM factory, if any.
 
@@ -142,6 +216,11 @@ def get_llm_factory() -> Optional[LLMFactory]:
     to ensure the factory is loaded from config if not already set.
     """
     return _llm_factory
+
+
+def get_async_openai_client_factory() -> Optional[AsyncOpenAIClientFactory]:
+    """Get the currently registered AsyncOpenAI client factory, if any."""
+    return _async_openai_client_factory
 
 
 def _default_openai_factory(
@@ -183,6 +262,39 @@ def _default_openai_factory(
     return ChatOpenAI(**llm_kwargs)
 
 
+def _default_async_openai_client_factory(
+    tier: str,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[float] = None,
+    **kwargs,
+) -> AsyncOpenAI:
+    """Default factory that creates AsyncOpenAI instances.
+
+    Args:
+        tier: One of "main", "mini", or "nano" (informational for default factory)
+        model: Optional model hint (unused by default factory)
+        api_key: Optional API key override
+        timeout: Optional timeout override
+        **kwargs: Additional arguments to pass to AsyncOpenAI
+
+    Returns:
+        Configured AsyncOpenAI instance
+    """
+    # tier/model are part of the protocol for custom factories; default client
+    # initialization does not require them.
+    del tier, model
+
+    client_kwargs = {
+        "api_key": api_key or settings.openai_api_key,
+        "timeout": timeout if timeout is not None else settings.llm_timeout,
+        **kwargs,
+    }
+    if settings.openai_base_url:
+        client_kwargs["base_url"] = settings.openai_base_url
+    return AsyncOpenAI(**client_kwargs)
+
+
 def _create_llm_with_factory(
     tier: str,
     model: Optional[str] = None,
@@ -207,6 +319,29 @@ def _create_llm_with_factory(
 
     factory = _llm_factory if _llm_factory is not None else _default_openai_factory
     return factory(tier=tier, model=model, timeout=timeout, **kwargs)
+
+
+def _create_async_openai_client_with_factory(
+    tier: str,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[float] = None,
+    **kwargs,
+) -> AsyncOpenAI:
+    """Create an AsyncOpenAI client using the registered factory or default."""
+    _load_async_openai_factory_from_config()
+    factory = (
+        _async_openai_client_factory
+        if _async_openai_client_factory is not None
+        else _default_async_openai_client_factory
+    )
+    return factory(
+        tier=tier,
+        model=model,
+        api_key=api_key,
+        timeout=timeout,
+        **kwargs,
+    )
 
 
 def create_llm(
@@ -297,6 +432,54 @@ def create_nano_llm(
     return _create_llm_with_factory(
         tier="nano",
         model=model,
+        timeout=timeout,
+        **kwargs,
+    )
+
+
+def create_async_openai_client(
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[float] = None,
+    **kwargs,
+) -> AsyncOpenAI:
+    """Create an AsyncOpenAI client for main tasks."""
+    return _create_async_openai_client_with_factory(
+        tier="main",
+        model=model,
+        api_key=api_key,
+        timeout=timeout,
+        **kwargs,
+    )
+
+
+def create_mini_async_openai_client(
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[float] = None,
+    **kwargs,
+) -> AsyncOpenAI:
+    """Create an AsyncOpenAI client for utility/knowledge tasks."""
+    return _create_async_openai_client_with_factory(
+        tier="mini",
+        model=model,
+        api_key=api_key,
+        timeout=timeout,
+        **kwargs,
+    )
+
+
+def create_nano_async_openai_client(
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[float] = None,
+    **kwargs,
+) -> AsyncOpenAI:
+    """Create an AsyncOpenAI client for simple/fast tasks."""
+    return _create_async_openai_client_with_factory(
+        tier="nano",
+        model=model,
+        api_key=api_key,
         timeout=timeout,
         **kwargs,
     )

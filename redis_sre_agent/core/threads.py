@@ -5,7 +5,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from redisvl.query import FilterQuery
@@ -14,6 +13,7 @@ from ulid import ULID
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.llm_helpers import create_nano_async_openai_client
 from redis_sre_agent.core.redis import SRE_THREADS_INDEX, get_redis_client, get_threads_index
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class ThreadManager:
         """Generate a concise subject for the thread based on the original message."""
         try:
             # Use a small, fast model for subject generation
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            client = create_nano_async_openai_client()
 
             prompt = f"""Generate a concise, descriptive subject line (max 50 characters) for this SRE support request:
 
@@ -110,7 +110,7 @@ Examples:
 Subject:"""
 
             response = await client.chat.completions.create(
-                model="gpt-4o-mini",  # Fast, cost-effective model
+                model=settings.openai_model_nano,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=20,
             )

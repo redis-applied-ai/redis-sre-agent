@@ -63,6 +63,15 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "tag",
         },
         {
+            # Legacy field retained for backward compatibility.
+            "name": "doc_type",
+            "type": "tag",
+        },
+        {
+            "name": "document_type",
+            "type": "tag",
+        },
+        {
             "name": "severity",
             "type": "tag",
         },
