@@ -52,6 +52,7 @@ def test_knowledge_provider_search_schema():
     # Check optional fields
     props = search_schema.parameters["properties"]
     assert "category" not in props
+    assert "document_type" in props
     assert "limit" in props
     assert "distance_threshold" in props
 
@@ -69,6 +70,7 @@ def test_knowledge_provider_ingest_schema():
     assert "content" in required
     assert "source" in required
     assert "category" in required
+    assert "document_type" in ingest_schema.parameters["properties"]
 
 
 def test_knowledge_provider_tool_name_uniqueness():

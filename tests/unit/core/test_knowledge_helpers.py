@@ -66,6 +66,7 @@ class TestSearchKnowledgeBaseHelper:
                     "content": "Redis memory management guide",
                     "source": "docs",
                     "category": "monitoring",
+                    "document_type": "runbook",
                     "version": "latest",
                     "score": 0.95,
                 }
@@ -95,6 +96,52 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results_count"] == 1
         assert len(result["results"]) == 1
         assert result["results"][0]["title"] == "Redis Memory"
+        assert result["results"][0]["document_type"] == "runbook"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_with_document_type_filter(self):
+        """Test document type filtering with legacy and canonical fields."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-1",
+                    "title": "Skill Doc",
+                    "document_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-2",
+                    "title": "Ticket Doc",
+                    "doc_type": "ticket",
+                    "version": "latest",
+                },
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="documents",
+                document_type="skill",
+                limit=10,
+            )
+
+        assert result["document_type"] == "skill"
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-1"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_version_filter(self):
@@ -374,6 +421,7 @@ class TestIngestSreDocumentHelper:
         assert result["title"] == "Test Document"
         assert result["source"] == "test"
         assert result["category"] == "runbook"
+        assert result["document_type"] == "general"
         assert "document_id" in result
         mock_index.load.assert_called_once()
 
@@ -402,14 +450,18 @@ class TestIngestSreDocumentHelper:
                 content="Redis Cloud content",
                 source="docs",
                 category="guide",
+                document_type="skill",
                 product_labels=["redis-cloud", "enterprise"],
             )
 
         assert result["status"] == "ingested"
+        assert result["document_type"] == "skill"
         # Verify the document was loaded with product labels
         call_args = mock_index.load.call_args
         doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert doc_data[0]["product_labels"] == "redis-cloud,enterprise"
+        assert doc_data[0]["document_type"] == "skill"
+        assert doc_data[0]["doc_type"] == "skill"
 
 
 class TestGetAllDocumentFragments:

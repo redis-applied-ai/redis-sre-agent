@@ -288,6 +288,52 @@ class TestIngestionPipeline:
         assert pipeline.processor.config["chunk_size"] == 300
         assert pipeline.processor.config["min_chunk_size"] == 50
 
+    @pytest.mark.parametrize(
+        ("front_matter_key", "expected_type"),
+        [("document type", DocumentType.SKILL), ("doc type", DocumentType.TICKET)],
+    )
+    def test_create_scraped_document_from_markdown_supports_doc_type_aliases(
+        self, pipeline, tmp_path, front_matter_key, expected_type
+    ):
+        """Test doc-type aliases in front matter are normalized."""
+        md_file = tmp_path / "test-doc.md"
+        md_file.write_text(
+            (
+                "---\n"
+                'title: "Front Matter Title"\n'
+                "category: shared\n"
+                "severity: high\n"
+                f"{front_matter_key}: {expected_type.value}\n"
+                "---\n\n"
+                "# Body Heading\n\n"
+                "Some content.\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.title == "Front Matter Title"
+        assert document.doc_type == expected_type
+        assert document.metadata["original_doc_type"] == expected_type.value
+        assert document.metadata["document_type"] == expected_type.value
+
+    def test_parse_markdown_metadata_normalizes_spaced_keys(self, pipeline):
+        """Test metadata keys with spaces normalize to snake_case."""
+        content = (
+            "---\n"
+            "document type: skill\n"
+            "---\n\n"
+            "# Test Title\n"
+            "**Doc Type**: ticket\n"
+        )
+
+        metadata = pipeline._parse_markdown_metadata(content)
+
+        assert metadata["document_type"] == "skill"
+        assert metadata["doc_type"] == "ticket"
+        assert metadata["title"] == "Test Title"
+
     @pytest.mark.asyncio
     async def test_ingest_batch_missing_manifest(self, pipeline):
         """Test ingestion fails gracefully with missing manifest."""

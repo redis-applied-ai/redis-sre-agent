@@ -177,6 +177,7 @@ class DocumentProcessor:
 
         # Extract version from metadata, default to "latest"
         version = document.metadata.get("version", "latest")
+        document_type = document.doc_type.value
 
         return {
             "id": chunk_id,
@@ -185,7 +186,9 @@ class DocumentProcessor:
             "content": content,
             "source": document.source_url,
             "category": document.category.value,
-            "doc_type": document.doc_type.value,
+            # Keep legacy `doc_type` while promoting `document_type`.
+            "doc_type": document_type,
+            "document_type": document_type,
             "severity": document.severity.value,
             "version": version,
             "chunk_index": chunk_index,
@@ -449,21 +452,37 @@ class IngestionPipeline:
 
     def _parse_markdown_metadata(self, content: str) -> Dict[str, str]:
         """Extract metadata from markdown document."""
-        metadata = {}
+        metadata: Dict[str, str] = {}
 
-        # Extract title (first # heading)
+        # Extract optional YAML front matter at top of file.
+        front_matter_match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
+        if front_matter_match:
+            front_matter = front_matter_match.group(1)
+            for line in front_matter.splitlines():
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                normalized_key = self._normalize_metadata_key(key)
+                metadata[normalized_key] = value.strip().strip('"').strip("'")
+
+        # Extract title (first # heading) if front matter did not define one.
         title_match = re.search(r"^# (.+)", content, re.MULTILINE)
-        if title_match:
+        if title_match and "title" not in metadata:
             metadata["title"] = title_match.group(1).strip()
 
         # Extract metadata lines (**Key**: value)
-        metadata_pattern = r"^\*\*(\w+)\*\*:\s*(.+)$"
+        metadata_pattern = r"^\*\*([^*]+)\*\*:\s*(.+)$"
         for match in re.finditer(metadata_pattern, content, re.MULTILINE):
-            key = match.group(1).lower()
+            key = self._normalize_metadata_key(match.group(1))
             value = match.group(2).strip()
             metadata[key] = value
 
         return metadata
+
+    def _normalize_metadata_key(self, key: str) -> str:
+        """Normalize metadata keys into snake_case aliases."""
+        normalized = re.sub(r"[\s-]+", "_", key.strip().lower())
+        return re.sub(r"[^\w]", "", normalized)
 
     def _create_scraped_document_from_markdown(self, md_file: Path) -> ScrapedDocument:
         """Convert a markdown file to a ScrapedDocument for processing."""
@@ -488,19 +507,35 @@ class IngestionPipeline:
         }
         severity = severity_map.get(severity_str.lower(), SeverityLevel.MEDIUM)
 
+        # Determine document type from metadata aliases, defaulting to runbook.
+        doc_type_raw = (
+            metadata.get("document_type")
+            or metadata.get("doc_type")
+            or metadata.get("documenttype")
+            or metadata.get("doctype")
+            or "runbook"
+        ).lower()
+        try:
+            doc_type = DocumentType(doc_type_raw)
+        except ValueError:
+            logger.debug("Unknown document type '%s' in %s; defaulting to runbook", doc_type_raw, md_file)
+            doc_type = DocumentType.RUNBOOK
+
         return ScrapedDocument(
             title=title,
             source_url=f"file://{md_file.absolute()}",
             content=content,
             category=category,
-            doc_type=DocumentType.RUNBOOK,
+            doc_type=doc_type,
             severity=severity,
             metadata={
                 "file_path": str(md_file),
                 "file_size": md_file.stat().st_size,
                 "original_category": metadata.get("category", "shared").lower(),
                 "original_severity": severity_str,
+                "original_doc_type": doc_type_raw,
                 "determined_category": category.value,
+                "document_type": doc_type.value,
                 **metadata,
             },
         )

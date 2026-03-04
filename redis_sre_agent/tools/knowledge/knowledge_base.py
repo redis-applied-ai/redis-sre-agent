@@ -76,6 +76,13 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "default": 0,
                             "minimum": 0,
                         },
+                        "document_type": {
+                            "type": "string",
+                            "description": (
+                                "Optional document type filter (e.g., 'skill', 'ticket', "
+                                "'runbook', 'documentation')."
+                            ),
+                        },
                         "version": {
                             "type": "string",
                             "description": (
@@ -137,6 +144,13 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "type": "string",
                             "description": "Severity level (for incidents/alerts)",
                             "enum": ["critical", "high", "medium", "low", "info"],
+                        },
+                        "document_type": {
+                            "type": "string",
+                            "description": (
+                                "Document type (e.g., 'skill', 'ticket', 'runbook', "
+                                "'documentation')."
+                            ),
                         },
                         "product_labels": {
                             "type": "array",
@@ -216,6 +230,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
         query: str,
         limit: int = 10,
         offset: int = 0,
+        document_type: Optional[str] = None,
         version: Optional[str] = "latest",
         distance_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -239,6 +254,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
             "query": query,
             "limit": limit,
             "offset": offset,
+            "document_type": document_type,
             "version": version,
             "distance_threshold": distance_threshold,
         }
@@ -270,6 +286,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
         source: str,
         category: str,
         severity: Optional[str] = None,
+        document_type: Optional[str] = None,
         product_labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Ingest a document into the knowledge base.
@@ -294,6 +311,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         }
         if severity:
             kwargs["severity"] = severity
+        if document_type:
+            kwargs["document_type"] = document_type
         if product_labels:
             kwargs["product_labels"] = product_labels
 
@@ -303,6 +322,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
             attributes={
                 "title.len": len(title or ""),
                 "category": str(category or ""),
+                "document_type": str(document_type or ""),
                 "has.labels": bool(product_labels),
                 "has.severity": bool(severity),
             },

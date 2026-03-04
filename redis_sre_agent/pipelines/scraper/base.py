@@ -30,6 +30,8 @@ class DocumentType(str, Enum):
     TROUBLESHOOTING = "troubleshooting"
     REFERENCE = "reference"
     API_DOC = "api_doc"
+    SKILL = "skill"
+    TICKET = "ticket"
 
 
 class SeverityLevel(str, Enum):
