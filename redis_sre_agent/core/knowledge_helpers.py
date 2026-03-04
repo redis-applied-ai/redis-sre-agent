@@ -53,8 +53,6 @@ def _normalized_doc_type(doc: Dict[str, Any]) -> str:
     if legacy_doc_type:
         return legacy_doc_type
     return "general"
-
-
 def _doc_matches_requested_version(doc: Dict[str, Any], requested_version: Optional[str]) -> bool:
     """Apply source-aware version matching for compatibility with legacy indexed docs."""
     if requested_version is None:
@@ -75,8 +73,6 @@ def _doc_matches_requested_type(doc: Dict[str, Any], requested_type: Optional[st
     if requested_type is None:
         return True
     return _normalized_doc_type(doc) == requested_type.lower()
-
-
 def _dedupe_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Preserve order while removing duplicate documents/chunks."""
     deduped: List[Dict[str, Any]] = []
