@@ -98,7 +98,7 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results_count"] == 1
         assert len(result["results"]) == 1
         assert result["results"][0]["title"] == "Redis Memory"
-        assert result["results"][0]["document_type"] == "runbook"
+        assert result["results"][0]["doc_type"] == "runbook"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_document_type_filter(self):
@@ -191,7 +191,7 @@ class TestSearchKnowledgeBaseHelper:
         assert result["document_type"] == "support_ticket"
         assert result["results_count"] == 1
         assert result["results"][0]["id"] == "doc-ticket"
-        assert result["results"][0]["document_type"] == "support_ticket"
+        assert result["results"][0]["doc_type"] == "support_ticket"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_version_filter(self):
@@ -471,7 +471,7 @@ class TestIngestSreDocumentHelper:
         assert result["title"] == "Test Document"
         assert result["source"] == "test"
         assert result["category"] == "runbook"
-        assert result["document_type"] == "general"
+        assert result["document_type"] == "knowledge"
         assert "document_id" in result
         mock_index.load.assert_called_once()
 
@@ -486,7 +486,7 @@ class TestIngestSreDocumentHelper:
 
         with (
             patch(
-                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
                 new_callable=AsyncMock,
                 return_value=mock_index,
             ),
@@ -510,7 +510,6 @@ class TestIngestSreDocumentHelper:
         call_args = mock_index.load.call_args
         doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert doc_data[0]["product_labels"] == "redis-cloud,enterprise"
-        assert doc_data[0]["document_type"] == "skill"
         assert doc_data[0]["doc_type"] == "skill"
 
 
@@ -695,46 +694,42 @@ class TestSkillHelpers:
     async def test_skills_check_helper_lists_unique_skills(self):
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
-            side_effect=[
-                [
-                    {
-                        "id": "a-0",
-                        "document_hash": "hash-a",
-                        "chunk_index": 0,
-                        "title": "Skill A",
-                        "content": "First chunk",
-                        "source": "docs/latest/a",
-                        "document_type": "skill",
-                        "version": "latest",
-                    },
-                    {
-                        "id": "a-1",
-                        "document_hash": "hash-a",
-                        "chunk_index": 1,
-                        "title": "Skill A",
-                        "content": "Second chunk",
-                        "source": "docs/latest/a",
-                        "document_type": "skill",
-                        "version": "latest",
-                    },
-                ],
-                [
-                    {
-                        "id": "b-0",
-                        "document_hash": "hash-b",
-                        "chunk_index": 0,
-                        "title": "Skill B",
-                        "content": "Only chunk",
-                        "source": "docs/latest/b",
-                        "doc_type": "skill",
-                        "version": "latest",
-                    }
-                ],
+            return_value=[
+                {
+                    "id": "a-0",
+                    "document_hash": "hash-a",
+                    "chunk_index": 0,
+                    "title": "Skill A",
+                    "content": "First chunk",
+                    "source": "docs/latest/a",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "a-1",
+                    "document_hash": "hash-a",
+                    "chunk_index": 1,
+                    "title": "Skill A",
+                    "content": "Second chunk",
+                    "source": "docs/latest/a",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "b-0",
+                    "document_hash": "hash-b",
+                    "chunk_index": 0,
+                    "title": "Skill B",
+                    "content": "Only chunk",
+                    "source": "docs/latest/b",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
             ]
         )
 
         with patch(
-            "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+            "redis_sre_agent.core.knowledge_helpers.get_skills_index",
             new_callable=AsyncMock,
             return_value=mock_index,
         ):
@@ -751,7 +746,7 @@ class TestSkillHelpers:
             "document_hash": "hash-skill",
             "title": "Skill Doc",
             "source": "docs/latest/skill",
-            "document_type": "skill",
+            "doc_type": "skill",
             "fragments": [
                 {"chunk_index": 0, "content": "Part 1"},
                 {"chunk_index": 1, "content": "Part 2"},
@@ -806,7 +801,7 @@ class TestSkillHelpers:
                 new_callable=AsyncMock,
                 return_value={
                     "document_hash": "hash-runbook",
-                    "document_type": "runbook",
+                    "doc_type": "runbook",
                     "fragments": [{"chunk_index": 0, "content": "text"}],
                 },
             ),

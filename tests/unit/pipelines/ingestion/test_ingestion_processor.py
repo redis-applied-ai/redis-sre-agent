@@ -274,12 +274,20 @@ class TestIngestionPipeline:
             "redis_sre_agent.pipelines.ingestion.processor.get_knowledge_index"
         ) as mock_get_index:
             with patch(
-                "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer"
-            ) as mock_get_vectorizer:
-                mock_get_index.return_value = mock_index
-                mock_get_vectorizer.return_value = mock_vectorizer
+                "redis_sre_agent.pipelines.ingestion.processor.get_skills_index"
+            ) as mock_get_skills_index:
+                with patch(
+                    "redis_sre_agent.pipelines.ingestion.processor.get_support_tickets_index"
+                ) as mock_get_support_tickets_index:
+                    with patch(
+                        "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer"
+                    ) as mock_get_vectorizer:
+                        mock_get_index.return_value = mock_index
+                        mock_get_skills_index.return_value = mock_index
+                        mock_get_support_tickets_index.return_value = mock_index
+                        mock_get_vectorizer.return_value = mock_vectorizer
 
-                yield mock_index, mock_vectorizer
+                        yield mock_index, mock_vectorizer
 
     def test_init(self, pipeline, storage):
         """Test pipeline initialization."""
@@ -312,7 +320,7 @@ class TestIngestionPipeline:
         assert document.title == "Front Matter Title"
         assert document.doc_type == DocumentType.SUPPORT_TICKET
         assert document.metadata["original_doc_type"] == "ticket"
-        assert document.metadata["document_type"] == "support_ticket"
+        assert document.metadata["doc_type"] == "support_ticket"
 
     def test_create_scraped_document_from_markdown_ignores_document_type_frontmatter_key(
         self, pipeline, tmp_path
@@ -338,7 +346,8 @@ class TestIngestionPipeline:
         assert document.title == "Front Matter Title"
         assert document.doc_type == DocumentType.KNOWLEDGE
         assert document.metadata["original_doc_type"] == "knowledge"
-        assert document.metadata["document_type"] == "knowledge"
+        assert document.metadata["doc_type"] == "knowledge"
+        assert "document_type" not in document.metadata
 
     def test_create_scraped_document_from_markdown_applies_adr_defaults(self, pipeline, tmp_path):
         """Test ADR metadata defaults for source docs without frontmatter."""
@@ -348,7 +357,7 @@ class TestIngestionPipeline:
         document = pipeline._create_scraped_document_from_markdown(md_file)
 
         assert document.doc_type == DocumentType.KNOWLEDGE
-        assert document.metadata["document_type"] == "knowledge"
+        assert document.metadata["doc_type"] == "knowledge"
         assert document.metadata["priority"] == "normal"
         assert document.metadata["pinned"] is False
         assert document.metadata["name"] == "no-frontmatter"
@@ -376,7 +385,7 @@ class TestIngestionPipeline:
         document = pipeline._create_scraped_document_from_markdown(md_file)
 
         assert document.doc_type == DocumentType.SUPPORT_TICKET
-        assert document.metadata["document_type"] == "support_ticket"
+        assert document.metadata["doc_type"] == "support_ticket"
         assert document.metadata["priority"] == "critical"
         assert document.metadata["pinned"] is True
         assert document.metadata["name"] == "Incident Triage"
@@ -495,19 +504,17 @@ class TestIngestionPipeline:
             with open(doc_path, "w") as f:
                 json.dump(doc_data, f)
 
-        # Create mock deduplicator
-        with patch(
-            "redis_sre_agent.pipelines.ingestion.processor.DocumentDeduplicator"
-        ) as mock_dedup_class:
-            mock_deduplicator = AsyncMock()
-            mock_deduplicator.replace_document_chunks.return_value = (
-                3  # Return number of chunks indexed
-            )
-            mock_dedup_class.return_value = mock_deduplicator
+        mock_deduplicator = AsyncMock()
+        mock_deduplicator.replace_document_chunks.return_value = (
+            3  # Return number of chunks indexed
+        )
 
-            result = await pipeline._process_category(
-                category_path, category, mock_index, mock_vectorizer, mock_deduplicator
-            )
+        result = await pipeline._process_category(
+            category_path,
+            category,
+            mock_vectorizer,
+            {"knowledge": mock_deduplicator},
+        )
 
         assert result["category"] == category
         assert result["documents_processed"] == 3
@@ -542,19 +549,17 @@ class TestIngestionPipeline:
         with open(category_path / "invalid_doc.json", "w") as f:
             json.dump({"incomplete": "data"}, f)
 
-        # Create mock deduplicator
-        with patch(
-            "redis_sre_agent.pipelines.ingestion.processor.DocumentDeduplicator"
-        ) as mock_dedup_class:
-            mock_deduplicator = AsyncMock()
-            mock_deduplicator.replace_document_chunks.return_value = (
-                1  # Return number of chunks indexed
-            )
-            mock_dedup_class.return_value = mock_deduplicator
+        mock_deduplicator = AsyncMock()
+        mock_deduplicator.replace_document_chunks.return_value = (
+            1  # Return number of chunks indexed
+        )
 
-            result = await pipeline._process_category(
-                category_path, category, mock_index, mock_vectorizer, mock_deduplicator
-            )
+        result = await pipeline._process_category(
+            category_path,
+            category,
+            mock_vectorizer,
+            {"knowledge": mock_deduplicator},
+        )
 
         assert result["documents_processed"] == 1  # Only valid document
         assert len(result["errors"]) == 1  # One error for invalid document

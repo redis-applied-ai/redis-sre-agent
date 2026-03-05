@@ -143,12 +143,16 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "description": "Severity level (for incidents/alerts)",
                             "enum": ["critical", "high", "medium", "low", "info"],
                         },
-                        "document_type": {
+                        "doc_type": {
                             "type": "string",
                             "description": (
                                 "Document type (e.g., 'skill', 'ticket', 'runbook', "
                                 "'documentation')."
                             ),
+                        },
+                        "document_type": {
+                            "type": "string",
+                            "description": "Deprecated alias for doc_type.",
                         },
                         "product_labels": {
                             "type": "array",
@@ -402,6 +406,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
         source: str,
         category: str,
         severity: Optional[str] = None,
+        doc_type: Optional[str] = None,
         document_type: Optional[str] = None,
         product_labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
@@ -427,8 +432,10 @@ class KnowledgeBaseToolProvider(ToolProvider):
         }
         if severity:
             kwargs["severity"] = severity
-        if document_type:
-            kwargs["document_type"] = document_type
+        effective_doc_type = doc_type if doc_type is not None else document_type
+        if effective_doc_type:
+            kwargs["doc_type"] = effective_doc_type
+            kwargs["document_type"] = effective_doc_type
         if product_labels:
             kwargs["product_labels"] = product_labels
 
@@ -438,6 +445,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
             attributes={
                 "title.len": len(title or ""),
                 "category": str(category or ""),
+                "doc_type": str(doc_type or ""),
                 "document_type": str(document_type or ""),
                 "has.labels": bool(product_labels),
                 "has.severity": bool(severity),

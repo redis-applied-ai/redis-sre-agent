@@ -17,14 +17,23 @@ from redisvl.query import FilterQuery, HybridQuery, VectorQuery, VectorRangeQuer
 from ulid import ULID
 
 from redis_sre_agent.core.config import Settings
-from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.redis import get_knowledge_index, get_vectorizer
+from redis_sre_agent.core.redis import (
+    get_knowledge_index,
+    get_skills_index,
+    get_support_tickets_index,
+    get_vectorizer,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 _SOURCE_VERSION_RE = re.compile(r"/(\d+\.\d+)/")
 _SPECIAL_DOCUMENT_TYPES = {"skill", "support_ticket"}
 _PRIORITY_ORDER = {"critical": 0, "high": 1, "normal": 2, "low": 3}
+_INDEX_TYPE_TO_PREFIX = {
+    "knowledge": "sre_knowledge",
+    "skills": "sre_skills",
+    "support_tickets": "sre_support_tickets",
+}
 
 
 def _extract_version_from_source(source: str) -> str:
@@ -47,18 +56,23 @@ def _normalized_doc_version(doc: Dict[str, Any]) -> str:
 
 
 def _normalized_doc_type(doc: Dict[str, Any]) -> str:
-    """Normalize document type from canonical/legacy fields."""
-    doc_type = str(doc.get("document_type", "")).strip().lower()
-    if doc_type:
-        if doc_type == "ticket":
-            return "support_ticket"
-        return doc_type
-    legacy_doc_type = str(doc.get("doc_type", "")).strip().lower()
-    if legacy_doc_type:
-        if legacy_doc_type == "ticket":
-            return "support_ticket"
-        return legacy_doc_type
-    return "general"
+    """Normalize document type from doc_type fields."""
+    doc_type = (
+        str(
+            doc.get("doc_type")
+            or doc.get("meta_doc_type")
+            or doc.get("document_type")
+            or doc.get("meta_document_type")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if doc_type == "general":
+        return "knowledge"
+    if doc_type == "ticket":
+        return "support_ticket"
+    return doc_type or "knowledge"
 
 
 def _doc_matches_requested_version(doc: Dict[str, Any], requested_version: Optional[str]) -> bool:
@@ -172,6 +186,16 @@ def _doc_chunk_index(doc: Dict[str, Any]) -> int:
     return 10**9
 
 
+async def _get_index_for_type(index_type: str, config: Optional[Settings] = None):
+    """Resolve an index getter by logical document type."""
+    normalized = index_type.strip().lower()
+    if normalized == "skills":
+        return await get_skills_index(config=config)
+    if normalized == "support_tickets":
+        return await get_support_tickets_index(config=config)
+    return await get_knowledge_index(config=config)
+
+
 async def skills_check_helper(
     query: Optional[str] = None,
     limit: int = 20,
@@ -191,7 +215,7 @@ async def skills_check_helper(
         offset,
         limit,
     )
-    index = await get_knowledge_index(config=config)
+    index = await get_skills_index(config=config)
 
     fetch_limit = min(max(limit + offset, 1) * 8, 1000)
     return_fields = [
@@ -209,7 +233,6 @@ async def skills_check_helper(
         "meta_summary",
         "meta_priority",
         "meta_pinned",
-        "document_type",
         "doc_type",
         "version",
         "score",
@@ -218,13 +241,11 @@ async def skills_check_helper(
     ]
 
     if query:
-        from redisvl.query.filter import Tag
-
         vectorizer = get_vectorizer()
         vectors = await vectorizer.aembed_many([query])
         query_vector = vectors[0] if vectors else []
 
-        def _skill_vector_query(filter_expression):
+        def _skill_vector_query():
             if distance_threshold is not None:
                 q = VectorRangeQuery(
                     vector=query_vector,
@@ -240,34 +261,43 @@ async def skills_check_helper(
                     return_fields=return_fields,
                     num_results=fetch_limit,
                 )
-            q.set_filter(filter_expression)
             return q
 
-        canonical = await index.query(_skill_vector_query(Tag("document_type") == "skill"))
-        legacy = await index.query(_skill_vector_query(Tag("doc_type") == "skill"))
+        candidates = await index.query(_skill_vector_query())
     else:
-        # Query canonical and legacy type fields, then normalize/dedupe in memory.
-        canonical = await index.query(
+        candidates = await index.query(
             FilterQuery(
-                filter_expression='@document_type:{"skill"}',
+                filter_expression="*",
                 return_fields=return_fields,
                 num_results=fetch_limit,
             )
         )
-        legacy = await index.query(
-            FilterQuery(
-                filter_expression='@doc_type:{"skill"}',
-                return_fields=return_fields,
-                num_results=fetch_limit,
+
+    candidates = [{**doc, "_index_type": "skills"} for doc in candidates]
+    if not candidates:
+        # Backward-compatibility fallback for deployments still storing skills
+        # in the legacy knowledge index.
+        legacy_index = await get_knowledge_index(config=config)
+        if query:
+            from redisvl.query.filter import Tag
+
+            legacy_query = _skill_vector_query()
+            legacy_query.set_filter(Tag("doc_type") == "skill")
+            legacy_rows = await legacy_index.query(legacy_query)
+        else:
+            legacy_rows = await legacy_index.query(
+                FilterQuery(
+                    filter_expression='@doc_type:{"skill"}',
+                    return_fields=return_fields,
+                    num_results=fetch_limit,
+                )
             )
-        )
+        candidates = [{**doc, "_index_type": "knowledge"} for doc in legacy_rows]
 
     candidates = [
         doc
-        for doc in _dedupe_docs(canonical + legacy)
-        if _doc_matches_requested_type(doc, "skill")
-        and _doc_matches_requested_version(doc, version)
-        and not _doc_is_pinned(doc)
+        for doc in _dedupe_docs(candidates)
+        if _doc_matches_requested_version(doc, version) and not _doc_is_pinned(doc)
     ]
 
     # Keep one representative row per document, preferring the first chunk.
@@ -312,6 +342,7 @@ async def skills_check_helper(
             "version": _normalized_doc_version(doc),
             "priority": _doc_priority(doc),
             "summary": _doc_summary(doc) or _summary_preview(str(doc.get("content", ""))),
+            "index_type": str(doc.get("_index_type", "skills")),
         }
         for doc in paged_docs
     ]
@@ -356,7 +387,19 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
             "error": "Skill document hash is missing",
         }
 
-    result = await get_all_document_fragments(document_hash=document_hash, include_metadata=True)
+    result = await get_all_document_fragments(
+        document_hash=document_hash,
+        include_metadata=True,
+        index_type=str(target.get("index_type", "skills")),
+        version=version,
+    )
+    if result.get("error") and str(target.get("index_type", "skills")) != "knowledge":
+        result = await get_all_document_fragments(
+            document_hash=document_hash,
+            include_metadata=True,
+            index_type="knowledge",
+            version=version,
+        )
 
     fragments = result.get("fragments") or []
     if not fragments:
@@ -367,13 +410,14 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
         }
 
     normalized_type = str(
-        result.get("document_type") or _normalized_doc_type(fragments[0])  # type: ignore[index]
+        result.get("doc_type") or _normalized_doc_type(fragments[0])  # type: ignore[index]
     ).lower()
     if normalized_type != "skill":
         return {
             "skill_name": skill_name,
             "document_hash": document_hash,
             "error": f"Document type is '{normalized_type}', not 'skill'",
+            "doc_type": normalized_type,
             "document_type": normalized_type,
         }
 
@@ -385,6 +429,7 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
         "document_hash": document_hash,
         "title": result.get("title", ""),
         "source": result.get("source", ""),
+        "doc_type": normalized_type,
         "document_type": normalized_type,
         "fragments_count": len(sorted_fragments),
         "fragments": sorted_fragments,
@@ -405,14 +450,13 @@ async def search_support_tickets_helper(
     """Search support tickets only."""
     result = await search_knowledge_base_helper(
         query=query,
-        document_type="support_ticket",
         limit=limit,
         offset=offset,
         distance_threshold=distance_threshold,
         hybrid_search=hybrid_search,
         version=version,
         config=config,
-        include_special_document_types=True,
+        index_type="support_tickets",
     )
 
     tickets = []
@@ -427,6 +471,8 @@ async def search_support_tickets_helper(
             "tickets": tickets,
             "results": tickets,
             "results_count": len(tickets),
+            "doc_type": "support_ticket",
+            "doc_type_filter": "support_ticket",
             "document_type": "support_ticket",
             "document_type_filter": "support_ticket",
         }
@@ -436,7 +482,11 @@ async def search_support_tickets_helper(
 
 async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     """Get complete content for a support ticket by ticket id."""
-    result = await get_all_document_fragments(document_hash=ticket_id, include_metadata=True)
+    result = await get_all_document_fragments(
+        document_hash=ticket_id,
+        include_metadata=True,
+        index_type="support_tickets",
+    )
     fragments = result.get("fragments") or []
     if not fragments:
         return {
@@ -445,13 +495,14 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
         }
 
     normalized_type = str(
-        result.get("document_type") or _normalized_doc_type(fragments[0])  # type: ignore[index]
+        result.get("doc_type") or _normalized_doc_type(fragments[0])  # type: ignore[index]
     ).lower()
     if normalized_type != "support_ticket":
         return {
             "ticket_id": ticket_id,
             "document_hash": ticket_id,
             "error": f"Document type is '{normalized_type}', not 'support_ticket'",
+            "doc_type": normalized_type,
             "document_type": normalized_type,
         }
 
@@ -463,6 +514,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
         "document_hash": ticket_id,
         "title": result.get("title", ""),
         "source": result.get("source", ""),
+        "doc_type": normalized_type,
         "document_type": normalized_type,
         "priority": str(metadata.get("priority", "normal")),
         "summary": str(metadata.get("summary", "")),
@@ -496,7 +548,6 @@ async def get_pinned_documents_helper(
         "meta_summary",
         "meta_priority",
         "meta_pinned",
-        "document_type",
         "doc_type",
         "version",
     ]
@@ -536,7 +587,7 @@ async def get_pinned_documents_helper(
                 "summary": _doc_summary(sample) or _summary_preview(full_content),
                 "priority": _doc_priority(sample),
                 "source": str(sample.get("source", "")),
-                "document_type": _normalized_doc_type(sample),
+                "doc_type": _normalized_doc_type(sample),
                 "full_content": full_content,
                 "truncated": False,
             }
@@ -586,6 +637,7 @@ async def get_pinned_documents_helper(
 async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
+    doc_type: Optional[str] = None,
     document_type: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
@@ -593,6 +645,7 @@ async def search_knowledge_base_helper(
     hybrid_search: bool = False,
     version: Optional[str] = "latest",
     config: Optional[Settings] = None,
+    index_type: str = "knowledge",
     include_special_document_types: bool = False,
 ) -> Dict[str, Any]:
     """Search the SRE knowledge base.
@@ -610,7 +663,8 @@ async def search_knowledge_base_helper(
     Args:
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
-        document_type: Optional document type filter
+        doc_type: Optional document type filter
+        document_type: Deprecated alias for doc_type
         limit: Maximum number of results
         offset: Number of results to skip (for pagination)
         distance_threshold: Cosine distance cutoff; None disables threshold
@@ -623,10 +677,14 @@ async def search_knowledge_base_helper(
         Dictionary with search results including task_id, query, results, etc.
     """
     logger.info(f"Searching SRE knowledge: '{query}' (version={version}, offset={offset})")
-    index = await get_knowledge_index(config=config)
-    normalized_document_type = document_type.strip().lower() if document_type else None
-    if normalized_document_type == "ticket":
-        normalized_document_type = "support_ticket"
+    effective_doc_type = doc_type if doc_type is not None else document_type
+    normalized_index_type = index_type.strip().lower()
+    index = await _get_index_for_type(normalized_index_type, config=config)
+    normalized_doc_type = effective_doc_type.strip().lower() if effective_doc_type else None
+    if normalized_doc_type == "ticket":
+        normalized_doc_type = "support_ticket"
+    if normalized_doc_type == "general":
+        normalized_doc_type = "knowledge"
 
     return_fields = [
         "id",
@@ -637,7 +695,6 @@ async def search_knowledge_base_helper(
         "source",
         "category",
         "doc_type",
-        "document_type",
         "name",
         "summary",
         "priority",
@@ -680,7 +737,7 @@ async def search_knowledge_base_helper(
     # We need to fetch more results if there's an offset, then slice.
     # This is because RedisVL vector queries don't support offset directly
     fetch_limit = limit + offset
-    if version is not None or normalized_document_type is not None:
+    if version is not None or normalized_doc_type is not None:
         # Oversample when version filtering to improve recall after post-filtering.
         fetch_limit = min(fetch_limit * 4, 200)
 
@@ -740,8 +797,12 @@ async def search_knowledge_base_helper(
         doc
         for doc in all_results
         if _doc_matches_requested_version(doc, version)
-        and _doc_matches_requested_type(doc, normalized_document_type)
-        and (include_special_document_types or _doc_is_general_knowledge(doc))
+        and _doc_matches_requested_type(doc, normalized_doc_type)
+        and (
+            normalized_index_type != "knowledge"
+            or include_special_document_types
+            or _doc_is_general_knowledge(doc)
+        )
     ]
 
     if version not in (None, "latest") and len(filtered_results) < desired_results:
@@ -771,13 +832,17 @@ async def search_knowledge_base_helper(
             doc
             for doc in fallback_results
             if _doc_matches_requested_version(doc, version)
-            and _doc_matches_requested_type(doc, normalized_document_type)
-            and (include_special_document_types or _doc_is_general_knowledge(doc))
+            and _doc_matches_requested_type(doc, normalized_doc_type)
+            and (
+                normalized_index_type != "knowledge"
+                or include_special_document_types
+                or _doc_is_general_knowledge(doc)
+            )
         ]
         filtered_results = _dedupe_docs(filtered_results + fallback_filtered)
 
     # Category fallback: if a category filter returns nothing, retry without category
-    # while preserving other filters such as version/document_type.
+    # while preserving other filters such as version/doc_type.
     if category is not None and len(filtered_results) == 0:
         category_fallback_expr = Tag("version") == version if version is not None else None
         category_fallback_query = _build_query(category_fallback_expr, fetch_limit)
@@ -797,8 +862,12 @@ async def search_knowledge_base_helper(
             doc
             for doc in category_fallback_results
             if _doc_matches_requested_version(doc, version)
-            and _doc_matches_requested_type(doc, normalized_document_type)
-            and (include_special_document_types or _doc_is_general_knowledge(doc))
+            and _doc_matches_requested_type(doc, normalized_doc_type)
+            and (
+                normalized_index_type != "knowledge"
+                or include_special_document_types
+                or _doc_is_general_knowledge(doc)
+            )
         ]
 
     # Apply offset by slicing results
@@ -811,9 +880,12 @@ async def search_knowledge_base_helper(
         "query": query,
         "category": category,
         "category_filter": category,
-        "document_type": normalized_document_type,
-        "document_type_filter": normalized_document_type,
+        "doc_type": normalized_doc_type,
+        "doc_type_filter": normalized_doc_type,
+        "document_type": normalized_doc_type,
+        "document_type_filter": normalized_doc_type,
         "version": version,
+        "index_type": normalized_index_type,
         "offset": offset,
         "limit": limit,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -829,6 +901,7 @@ async def search_knowledge_base_helper(
                 "content": doc.get("content", ""),
                 "source": doc.get("source", ""),
                 "category": doc.get("category", ""),
+                "doc_type": _normalized_doc_type(doc),
                 "document_type": _normalized_doc_type(doc),
                 "name": _doc_name(doc),
                 "summary": _doc_summary(doc) or _summary_preview(str(doc.get("content", ""))),
@@ -870,6 +943,7 @@ async def ingest_sre_document_helper(
     source: str,
     category: str = "general",
     severity: str = "info",
+    doc_type: Optional[str] = None,
     document_type: Optional[str] = None,
     product_labels: Optional[List[str]] = None,
     config: Optional[Settings] = None,
@@ -885,7 +959,8 @@ async def ingest_sre_document_helper(
         source: Source system or file
         category: Document category (incident, runbook, monitoring, etc.)
         severity: Severity level (info, warning, critical)
-        document_type: Optional document type (e.g., skill, ticket, runbook)
+        doc_type: Optional document type (e.g., skill, support_ticket, runbook)
+        document_type: Deprecated alias for doc_type
         product_labels: Optional list of product labels
         config: Optional Settings for dependency injection (testing)
 
@@ -894,8 +969,21 @@ async def ingest_sre_document_helper(
     """
     logger.info(f"Ingesting SRE document: {title} from {source}")
 
-    # Get components
-    index = await get_knowledge_index(config=config)
+    effective_doc_type = doc_type if doc_type is not None else document_type
+    normalized_doc_type = (effective_doc_type or "knowledge").lower()
+    if normalized_doc_type == "ticket":
+        normalized_doc_type = "support_ticket"
+    if normalized_doc_type == "general":
+        normalized_doc_type = "knowledge"
+    index_type = "knowledge"
+    if normalized_doc_type == "skill":
+        index = await get_skills_index(config=config)
+        index_type = "skills"
+    elif normalized_doc_type == "support_ticket":
+        index = await get_support_tickets_index(config=config)
+        index_type = "support_tickets"
+    else:
+        index = await get_knowledge_index(config=config)
     vectorizer = get_vectorizer()
 
     # Create document embedding (as_buffer=True for Redis storage)
@@ -903,33 +991,29 @@ async def ingest_sre_document_helper(
 
     # Prepare document data
     doc_id = str(ULID())
-    doc_key = RedisKeys.knowledge_document(doc_id)
+    key_prefix = _INDEX_TYPE_TO_PREFIX.get(index_type, "sre_knowledge")
+    doc_key = f"{key_prefix}:{doc_id}"
 
     # Convert product_labels list to comma-separated string for tag field
     product_labels_str = ",".join(product_labels) if product_labels else ""
-    normalized_document_type = (document_type or "general").lower()
-    if normalized_document_type == "ticket":
-        normalized_document_type = "support_ticket"
-
     document = {
         "id": doc_id,
         "title": title,
         "content": content,
         "source": source,
         "category": category,
-        # Keep legacy `doc_type` while promoting `document_type`.
-        "doc_type": normalized_document_type,
-        "document_type": normalized_document_type,
+        "doc_type": normalized_doc_type,
         "severity": severity,
         "name": title,
         "summary": "",
         "priority": "normal",
-        "pinned": "false",
         "created_at": datetime.now(timezone.utc).timestamp(),
         "vector": content_vector,
         "product_labels": product_labels_str,
         "product_label_tags": product_labels_str,  # Duplicate for tag searching
     }
+    if normalized_doc_type not in {"skill", "support_ticket"}:
+        document["pinned"] = "false"
 
     # Store in vector index
     await index.load(data=[document], id_field="id", keys=[doc_key])
@@ -940,7 +1024,8 @@ async def ingest_sre_document_helper(
         "title": title,
         "source": source,
         "category": category,
-        "document_type": normalized_document_type,
+        "doc_type": normalized_doc_type,
+        "document_type": normalized_doc_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "ingested",
     }
@@ -950,7 +1035,11 @@ async def ingest_sre_document_helper(
 
 
 async def get_all_document_fragments(
-    document_hash: str, include_metadata: bool = True
+    document_hash: str,
+    include_metadata: bool = True,
+    index_type: str = "knowledge",
+    version: Optional[str] = None,
+    config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """
     Retrieve all fragments/chunks of a specific document.
@@ -961,6 +1050,9 @@ async def get_all_document_fragments(
     Args:
         document_hash: The document hash to retrieve all fragments for
         include_metadata: Whether to include document metadata
+        index_type: Which index to query ('knowledge', 'skills', 'support_tickets')
+        version: Optional version filter for source-aware matching
+        config: Optional Settings for dependency injection (testing)
 
     Returns:
         Dictionary containing all fragments and metadata of the document
@@ -969,7 +1061,8 @@ async def get_all_document_fragments(
 
     try:
         # Get components
-        index = await get_knowledge_index()
+        normalized_index_type = index_type.strip().lower()
+        index = await _get_index_for_type(normalized_index_type, config=config)
 
         # Use FT.SEARCH to find all chunks for this document
         # document_hash is indexed as a TAG field, so we can filter on it.
@@ -992,7 +1085,6 @@ async def get_all_document_fragments(
                 "source",
                 "category",
                 "doc_type",
-                "document_type",
                 "severity",
                 "document_hash",
                 "chunk_index",
@@ -1008,6 +1100,8 @@ async def get_all_document_fragments(
 
         # Execute search
         results = await index.query(filter_query)
+        if version is not None:
+            results = [doc for doc in results if _doc_matches_requested_version(doc, version)]
 
         if not results:
             return {
@@ -1044,21 +1138,25 @@ async def get_all_document_fragments(
                 DocumentDeduplicator,
             )
 
-            deduplicator = DocumentDeduplicator(index)
+            deduplicator = DocumentDeduplicator(
+                index,
+                key_prefix=_INDEX_TYPE_TO_PREFIX.get(normalized_index_type, "sre_knowledge"),
+            )
             metadata = await deduplicator.get_document_metadata(document_hash) or {}
 
         result = {
             "document_hash": document_hash,
+            "index_type": normalized_index_type,
             "fragments_count": len(normalized_fragments),
             "fragments": normalized_fragments,
             "title": metadata.get("title", ""),
             "source": metadata.get("source", ""),
             "category": metadata.get("category", ""),
-            "document_type": metadata.get(
-                "document_type",
+            "doc_type": metadata.get(
+                "doc_type",
                 _normalized_doc_type(normalized_fragments[0])
                 if normalized_fragments
-                else "general",
+                else "knowledge",
             ),
             "name": metadata.get(
                 "name", _doc_name(normalized_fragments[0]) if normalized_fragments else ""
@@ -1077,6 +1175,7 @@ async def get_all_document_fragments(
             ),
             "metadata": metadata,
         }
+        result["document_type"] = result["doc_type"]
 
         logger.info(f"Retrieved {len(normalized_fragments)} fragments for document {document_hash}")
         return result
@@ -1153,7 +1252,8 @@ async def get_related_document_fragments(
             "title": all_fragments_result.get("title", ""),
             "source": all_fragments_result.get("source", ""),
             "category": all_fragments_result.get("category", ""),
-            "document_type": all_fragments_result.get("document_type", "general"),
+            "doc_type": all_fragments_result.get("doc_type", "knowledge"),
+            "document_type": all_fragments_result.get("doc_type", "knowledge"),
             "metadata": all_fragments_result.get("metadata", {}),
         }
 

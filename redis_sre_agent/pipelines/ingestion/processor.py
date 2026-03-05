@@ -30,6 +30,18 @@ async def get_knowledge_index():
     return await _get_knowledge_index()
 
 
+async def get_skills_index():
+    from ...core.redis import get_skills_index as _get_skills_index
+
+    return await _get_skills_index()
+
+
+async def get_support_tickets_index():
+    from ...core.redis import get_support_tickets_index as _get_support_tickets_index
+
+    return await _get_support_tickets_index()
+
+
 def get_vectorizer():
     from ...core.redis import get_vectorizer as _get_vectorizer
 
@@ -177,7 +189,7 @@ class DocumentProcessor:
 
         # Extract version from metadata, default to "latest"
         version = document.metadata.get("version", "latest")
-        document_type = document.doc_type.value
+        doc_type = document.doc_type.value
         name = str(document.metadata.get("name") or document.title or "").strip()
         summary = document.metadata.get("summary")
         summary_str = str(summary).strip() if summary is not None else ""
@@ -191,9 +203,7 @@ class DocumentProcessor:
             "content": content,
             "source": document.source_url,
             "category": document.category.value,
-            # Keep legacy `doc_type` while promoting `document_type`.
-            "doc_type": document_type,
-            "document_type": document_type,
+            "doc_type": doc_type,
             "name": name,
             "summary": summary_str,
             "priority": priority,
@@ -289,11 +299,19 @@ class IngestionPipeline:
 
         try:
             # Get Redis components (via patchable wrappers)
-            index = await get_knowledge_index()
+            knowledge_index = await get_knowledge_index()
+            skills_index = await get_skills_index()
+            support_tickets_index = await get_support_tickets_index()
             vectorizer = get_vectorizer()
 
-            # Initialize deduplicator
-            deduplicator = DocumentDeduplicator(index)
+            deduplicators = {
+                "knowledge": DocumentDeduplicator(knowledge_index, key_prefix="sre_knowledge"),
+                "skill": DocumentDeduplicator(skills_index, key_prefix="sre_skills"),
+                "support_ticket": DocumentDeduplicator(
+                    support_tickets_index,
+                    key_prefix="sre_support_tickets",
+                ),
+            }
 
             # Process each category
             for category in ["oss", "enterprise", "shared"]:
@@ -302,7 +320,10 @@ class IngestionPipeline:
                     continue
 
                 category_stats = await self._process_category(
-                    category_path, category, index, vectorizer, deduplicator
+                    category_path,
+                    category,
+                    vectorizer,
+                    deduplicators,
                 )
 
                 ingestion_stats["categories_processed"][category] = category_stats
@@ -331,9 +352,8 @@ class IngestionPipeline:
         self,
         category_path: Path,
         category: str,
-        index: Any,
         vectorizer: Any,
-        deduplicator: DocumentDeduplicator,
+        deduplicators: Dict[str, DocumentDeduplicator],
     ) -> Dict[str, Any]:
         """Process all documents in a category folder."""
         logger.info(f"Processing category: {category}")
@@ -393,6 +413,9 @@ class IngestionPipeline:
 
                 # Process document into chunks
                 chunks = self.processor.chunk_document(document)
+
+                doc_type_key = str(document.doc_type.value).strip().lower() or "knowledge"
+                deduplicator = deduplicators.get(doc_type_key) or deduplicators["knowledge"]
 
                 # Index chunks with deduplication
                 indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
@@ -546,6 +569,8 @@ class IngestionPipeline:
         """Convert a markdown file to a ScrapedDocument for processing."""
         content = md_file.read_text(encoding="utf-8")
         metadata = self._parse_markdown_metadata(content)
+        # Ignore legacy document_type in source metadata; doc_type is canonical.
+        metadata.pop("document_type", None)
 
         # Extract or generate title
         title = metadata.get("title", md_file.stem.replace("-", " ").title())
@@ -595,7 +620,6 @@ class IngestionPipeline:
                 "original_doc_type": doc_type_raw,
                 "determined_category": category.value,
                 "doc_type": normalized_doc_type,
-                "document_type": normalized_doc_type,
                 "name": name,
                 "summary": summary or None,
                 "priority": priority,
@@ -654,11 +678,19 @@ class IngestionPipeline:
         logger.info(f"Found {len(markdown_files)} markdown files to process")
 
         # Get Redis components (via patchable wrappers)
-        index = await get_knowledge_index()
+        knowledge_index = await get_knowledge_index()
+        skills_index = await get_skills_index()
+        support_tickets_index = await get_support_tickets_index()
         vectorizer = get_vectorizer()
 
-        # Initialize deduplicator
-        deduplicator = DocumentDeduplicator(index)
+        deduplicators = {
+            "knowledge": DocumentDeduplicator(knowledge_index, key_prefix="sre_knowledge"),
+            "skill": DocumentDeduplicator(skills_index, key_prefix="sre_skills"),
+            "support_ticket": DocumentDeduplicator(
+                support_tickets_index,
+                key_prefix="sre_support_tickets",
+            ),
+        }
 
         results = []
 
@@ -671,6 +703,9 @@ class IngestionPipeline:
 
                 # Process document into chunks
                 chunks = self.processor.chunk_document(document)
+
+                doc_type_key = str(document.doc_type.value).strip().lower() or "knowledge"
+                deduplicator = deduplicators.get(doc_type_key) or deduplicators["knowledge"]
 
                 # Index chunks with deduplication
                 indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)

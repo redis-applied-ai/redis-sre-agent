@@ -422,6 +422,7 @@ async def redis_sre_knowledge_search(
     offset: int = 0,
     category: Optional[str] = None,
     document_type: Optional[str] = None,
+    doc_type: Optional[str] = None,
     version: Optional[str] = "latest",
 ) -> Dict[str, Any]:
     """Search the Redis SRE knowledge base (returns raw results).
@@ -437,7 +438,8 @@ async def redis_sre_knowledge_search(
         limit: Maximum number of results (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
         category: Optional filter by category ('incident', 'maintenance', 'monitoring', etc.)
-        document_type: Optional filter by document type ('skill', 'ticket', etc.)
+        document_type: Deprecated alias for doc_type
+        doc_type: Optional filter by document type
         version: Redis documentation version filter. Defaults to "latest".
 
     Returns:
@@ -459,8 +461,10 @@ async def redis_sre_knowledge_search(
         }
         if category:
             kwargs["category"] = category
-        if document_type:
-            kwargs["document_type"] = document_type
+        effective_doc_type = doc_type if doc_type is not None else document_type
+        if effective_doc_type:
+            kwargs["doc_type"] = effective_doc_type
+            kwargs["document_type"] = effective_doc_type
 
         result = await search_knowledge_base_helper(**kwargs)
 
@@ -472,7 +476,7 @@ async def redis_sre_knowledge_search(
                     "content": item.get("content", ""),
                     "source": item.get("source"),
                     "category": item.get("category"),
-                    "document_type": item.get("document_type", "general"),
+                    "doc_type": item.get("doc_type", "knowledge"),
                     "version": item.get("version", "latest"),
                     "score": item.get("score"),
                 }
@@ -483,7 +487,8 @@ async def redis_sre_knowledge_search(
             "version": version,
             "offset": offset,
             "limit": limit,
-            "document_type": document_type,
+            "doc_type": effective_doc_type,
+            "document_type": effective_doc_type,
             "results": results,
             "total_results": len(results),
             "has_more": len(results) == limit,  # Hint for pagination

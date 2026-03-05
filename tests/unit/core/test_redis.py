@@ -171,6 +171,11 @@ class TestRedisInfrastructure:
 
         with (
             patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_skills_index", return_value=mock_search_index),
+            patch(
+                "redis_sre_agent.core.redis.get_support_tickets_index",
+                return_value=mock_search_index,
+            ),
             patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_threads_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
@@ -179,9 +184,10 @@ class TestRedisInfrastructure:
             result = await create_indices()
 
         assert result is True
-        # Should be called five times - knowledge, schedules, threads, tasks, instances
-        assert mock_search_index.exists.call_count == 5
-        assert mock_search_index.create.call_count == 5
+        # Should be called seven times - knowledge, skills, support_tickets,
+        # schedules, threads, tasks, instances
+        assert mock_search_index.exists.call_count == 7
+        assert mock_search_index.create.call_count == 7
 
     @pytest.mark.asyncio
     async def test_create_indices_existing_index(self, mock_search_index):
@@ -190,6 +196,11 @@ class TestRedisInfrastructure:
 
         with (
             patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_skills_index", return_value=mock_search_index),
+            patch(
+                "redis_sre_agent.core.redis.get_support_tickets_index",
+                return_value=mock_search_index,
+            ),
             patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_threads_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
@@ -198,8 +209,9 @@ class TestRedisInfrastructure:
             result = await create_indices()
 
         assert result is True
-        # Should be called five times - knowledge, schedules, threads, tasks, instances
-        assert mock_search_index.exists.call_count == 5
+        # Should be called seven times - knowledge, skills, support_tickets,
+        # schedules, threads, tasks, instances
+        assert mock_search_index.exists.call_count == 7
         mock_search_index.create.assert_not_called()
 
     @pytest.mark.asyncio

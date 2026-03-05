@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Index names
 SRE_KNOWLEDGE_INDEX = "sre_knowledge"
+SRE_SKILLS_INDEX = "sre_skills"
+SRE_SUPPORT_TICKETS_INDEX = "sre_support_tickets"
 METRICS_INDEX = "sre_metrics"
 SRE_SCHEDULES_INDEX = "sre_schedules"
 
@@ -30,14 +32,9 @@ SRE_INSTANCES_INDEX = "sre_instances"
 SRE_QA_INDEX = "sre_qa"
 
 
-# Schema definitions
-SRE_KNOWLEDGE_SCHEMA = {
-    "index": {
-        "name": SRE_KNOWLEDGE_INDEX,
-        "prefix": f"{SRE_KNOWLEDGE_INDEX}:",
-        "storage_type": "hash",
-    },
-    "fields": [
+def _build_document_schema(index_name: str, include_pinned: bool) -> dict:
+    """Build a search schema for chunked source documents."""
+    fields = [
         {
             "name": "title",
             "type": "text",
@@ -63,12 +60,7 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "tag",
         },
         {
-            # Legacy field retained for backward compatibility.
             "name": "doc_type",
-            "type": "tag",
-        },
-        {
-            "name": "document_type",
             "type": "tag",
         },
         {
@@ -81,10 +73,6 @@ SRE_KNOWLEDGE_SCHEMA = {
         },
         {
             "name": "priority",
-            "type": "tag",
-        },
-        {
-            "name": "pinned",
             "type": "tag",
         },
         {
@@ -121,8 +109,32 @@ SRE_KNOWLEDGE_SCHEMA = {
                 "datatype": "float32",
             },
         },
-    ],
-}
+    ]
+    if include_pinned:
+        fields.insert(
+            10,
+            {
+                "name": "pinned",
+                "type": "tag",
+            },
+        )
+    return {
+        "index": {
+            "name": index_name,
+            "prefix": f"{index_name}:",
+            "storage_type": "hash",
+        },
+        "fields": fields,
+    }
+
+
+# Schema definitions
+SRE_KNOWLEDGE_SCHEMA = _build_document_schema(SRE_KNOWLEDGE_INDEX, include_pinned=True)
+SRE_SKILLS_SCHEMA = _build_document_schema(SRE_SKILLS_INDEX, include_pinned=False)
+SRE_SUPPORT_TICKETS_SCHEMA = _build_document_schema(
+    SRE_SUPPORT_TICKETS_INDEX,
+    include_pinned=False,
+)
 
 SRE_SCHEDULES_SCHEMA = {
     "index": {
@@ -380,6 +392,30 @@ async def get_knowledge_index(config: Optional[Settings] = None) -> AsyncSearchI
     return index
 
 
+async def get_skills_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE skills index (creates fresh to avoid event loop issues)."""
+    from redisvl.schema import IndexSchema
+
+    cfg = config or settings
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_SKILLS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
+async def get_support_tickets_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE support tickets index (creates fresh to avoid event loop issues)."""
+    from redisvl.schema import IndexSchema
+
+    cfg = config or settings
+    redis_url = cfg.redis_url.get_secret_value()
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_SUPPORT_TICKETS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
 async def get_tasks_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
     """Get SRE tasks index (async).
 
@@ -557,6 +593,24 @@ async def create_indices(config: Optional[Settings] = None) -> bool:
         else:
             logger.debug(f"Vector index already exists: {SRE_KNOWLEDGE_INDEX}")
 
+        # Create skills index
+        skills_index = await get_skills_index(config=config)
+        skills_exists = await skills_index.exists()
+        if not skills_exists:
+            await skills_index.create()
+            logger.debug(f"Created vector index: {SRE_SKILLS_INDEX}")
+        else:
+            logger.debug(f"Vector index already exists: {SRE_SKILLS_INDEX}")
+
+        # Create support tickets index
+        support_tickets_index = await get_support_tickets_index(config=config)
+        support_tickets_exists = await support_tickets_index.exists()
+        if not support_tickets_exists:
+            await support_tickets_index.create()
+            logger.debug(f"Created vector index: {SRE_SUPPORT_TICKETS_INDEX}")
+        else:
+            logger.debug(f"Vector index already exists: {SRE_SUPPORT_TICKETS_INDEX}")
+
         # Create schedules index
         schedules_index = await get_schedules_index(config=config)
         schedules_exists = await schedules_index.exists()
@@ -609,8 +663,9 @@ async def recreate_indices(
     This is useful when the schema has changed (e.g., new fields added).
 
     Args:
-        index_name: Specific index to recreate ('knowledge', 'schedules', 'threads',
-                   'tasks', 'instances'), or None to recreate all.
+        index_name: Specific index to recreate ('knowledge', 'skills',
+                   'support_tickets', 'schedules', 'threads', 'tasks',
+                   'instances'), or None to recreate all.
         config: Optional Settings object. If not provided, uses global settings.
             This enables dependency injection for testing without modifying
             environment variables.
@@ -622,6 +677,8 @@ async def recreate_indices(
 
     index_configs = [
         ("knowledge", SRE_KNOWLEDGE_INDEX, get_knowledge_index),
+        ("skills", SRE_SKILLS_INDEX, get_skills_index),
+        ("support_tickets", SRE_SUPPORT_TICKETS_INDEX, get_support_tickets_index),
         ("schedules", SRE_SCHEDULES_INDEX, get_schedules_index),
         ("threads", SRE_THREADS_INDEX, get_threads_index),
         ("tasks", SRE_TASKS_INDEX, get_tasks_index),

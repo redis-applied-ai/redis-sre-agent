@@ -7,32 +7,32 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from redis_sre_agent.core.keys import RedisKeys
-
 logger = logging.getLogger(__name__)
 
 
 class DocumentDeduplicator:
     """Handles document deduplication and replacement during ingestion."""
 
-    def __init__(self, index: Any):
+    def __init__(self, index: Any, key_prefix: str = "sre_knowledge"):
         self.index = index
+        self.key_prefix = key_prefix
+        self.meta_prefix = f"{key_prefix}_meta"
 
     def generate_deterministic_chunk_key(self, document_hash: str, chunk_index: int) -> str:
         """Generate deterministic key for a document chunk."""
-        return RedisKeys.knowledge_chunk(document_hash, chunk_index)
+        return f"{self.key_prefix}:{document_hash}:chunk:{chunk_index}"
 
     def generate_document_tracking_key(self, document_hash: str) -> str:
         """Generate key for tracking document metadata."""
-        return f"sre_knowledge_meta:{document_hash}"
+        return f"{self.meta_prefix}:{document_hash}"
 
     async def find_existing_chunks(self, document_hash: str) -> List[str]:
         """Find all existing chunk keys for a document.
 
         Supports both current and legacy key formats to avoid duplicate leftovers
         after schema changes:
-        - Current: sre_knowledge:{document_hash}:chunk:{index}
-        - Legacy:  sre_knowledge:{document_hash}_{index}
+        - Current: {prefix}:{document_hash}:chunk:{index}
+        - Legacy:  {prefix}:{document_hash}_{index}
         """
         try:
             # Get Redis client from the index (already initialized)
@@ -42,7 +42,7 @@ class DocumentDeduplicator:
 
             # Current key format
             try:
-                current_pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
+                current_pattern = f"{self.key_prefix}:{document_hash}:chunk:*"
                 async for key in redis_client.scan_iter(match=current_pattern):
                     if isinstance(key, bytes):
                         key = key.decode("utf-8")
@@ -120,7 +120,7 @@ class DocumentDeduplicator:
         """Get existing chunks with their content hashes and embeddings for reuse."""
         try:
             redis_client = self.index.client
-            pattern = RedisKeys.knowledge_chunk_pattern(document_hash)
+            pattern = f"{self.key_prefix}:{document_hash}:chunk:*"
 
             existing_chunks = {}
             async for key in redis_client.scan_iter(match=pattern):
@@ -301,9 +301,7 @@ class DocumentDeduplicator:
                     "content": chunk["content"],
                     "source": chunk["source"],
                     "category": chunk["category"],
-                    # Keep legacy `doc_type` while promoting `document_type`.
                     "doc_type": chunk["doc_type"],
-                    "document_type": chunk.get("document_type", chunk["doc_type"]),
                     "name": chunk.get("name", chunk.get("title", "")),
                     "summary": chunk.get("summary", ""),
                     "priority": chunk.get("priority", "normal"),
@@ -337,9 +335,7 @@ class DocumentDeduplicator:
                     "title": chunks[0].get("title", ""),
                     "source": chunks[0].get("source", ""),
                     "category": chunks[0].get("category", ""),
-                    "document_type": chunks[0].get(
-                        "document_type", chunks[0].get("doc_type", "general")
-                    ),
+                    "doc_type": chunks[0].get("doc_type", "knowledge"),
                     "name": chunks[0].get("name", chunks[0].get("title", "")),
                     "summary": chunks[0].get("summary", ""),
                     "priority": chunks[0].get("priority", "normal"),
