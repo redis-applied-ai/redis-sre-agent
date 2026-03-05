@@ -304,6 +304,10 @@ class DocumentDeduplicator:
                     # Keep legacy `doc_type` while promoting `document_type`.
                     "doc_type": chunk["doc_type"],
                     "document_type": chunk.get("document_type", chunk["doc_type"]),
+                    "name": chunk.get("name", chunk.get("title", "")),
+                    "summary": chunk.get("summary", ""),
+                    "priority": chunk.get("priority", "normal"),
+                    "pinned": chunk.get("pinned", "false"),
                     "severity": chunk["severity"],
                     "version": chunk.get("version", "latest"),
                     "chunk_index": chunk["chunk_index"],
@@ -336,6 +340,10 @@ class DocumentDeduplicator:
                     "document_type": chunks[0].get(
                         "document_type", chunks[0].get("doc_type", "general")
                     ),
+                    "name": chunks[0].get("name", chunks[0].get("title", "")),
+                    "summary": chunks[0].get("summary", ""),
+                    "priority": chunks[0].get("priority", "normal"),
+                    "pinned": chunks[0].get("pinned", "false"),
                     "chunk_count": len(chunks),
                     "total_content_length": sum(len(chunk.get("content", "")) for chunk in chunks),
                 },

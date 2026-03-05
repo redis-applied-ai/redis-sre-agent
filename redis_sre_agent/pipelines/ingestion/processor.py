@@ -178,6 +178,11 @@ class DocumentProcessor:
         # Extract version from metadata, default to "latest"
         version = document.metadata.get("version", "latest")
         document_type = document.doc_type.value
+        name = str(document.metadata.get("name") or document.title or "").strip()
+        summary = document.metadata.get("summary")
+        summary_str = str(summary).strip() if summary is not None else ""
+        priority = str(document.metadata.get("priority") or "normal").strip().lower() or "normal"
+        pinned = self._parse_bool(document.metadata.get("pinned"), default=False)
 
         return {
             "id": chunk_id,
@@ -189,6 +194,10 @@ class DocumentProcessor:
             # Keep legacy `doc_type` while promoting `document_type`.
             "doc_type": document_type,
             "document_type": document_type,
+            "name": name,
+            "summary": summary_str,
+            "priority": priority,
+            "pinned": "true" if pinned else "false",
             "severity": document.severity.value,
             "version": version,
             "chunk_index": chunk_index,
@@ -199,6 +208,20 @@ class DocumentProcessor:
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             },
         }
+
+    @staticmethod
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        """Best-effort boolean parser for chunk metadata fields."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        normalized = str(value).strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+        return default
 
     def _strip_yaml_front_matter(self, text: str) -> tuple[str, bool]:
         """Remove YAML front-matter delimited by leading --- blocks.
@@ -484,6 +507,41 @@ class IngestionPipeline:
         normalized = re.sub(r"[\s-]+", "_", key.strip().lower())
         return re.sub(r"[^\w]", "", normalized)
 
+    def _normalize_doc_type(self, doc_type_raw: str) -> tuple[DocumentType, str]:
+        """Normalize canonical doc_type values and legacy aliases."""
+        normalized = re.sub(r"[\s-]+", "_", (doc_type_raw or "").strip().lower())
+        if normalized == "ticket":
+            normalized = "support_ticket"
+
+        if not normalized:
+            normalized = "knowledge"
+
+        try:
+            return DocumentType(normalized), normalized
+        except ValueError:
+            logger.debug("Unknown document type '%s'; defaulting to knowledge", doc_type_raw)
+            return DocumentType.KNOWLEDGE, "knowledge"
+
+    def _normalize_priority(self, priority_raw: Any) -> str:
+        """Normalize priority values to the ADR enum."""
+        normalized = str(priority_raw or "").strip().lower()
+        if normalized in {"low", "normal", "high", "critical"}:
+            return normalized
+        return "normal"
+
+    def _parse_bool(self, value: Any, default: bool = False) -> bool:
+        """Best-effort boolean parser for frontmatter metadata."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        normalized = str(value).strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+        return default
+
     def _create_scraped_document_from_markdown(self, md_file: Path) -> ScrapedDocument:
         """Convert a markdown file to a ScrapedDocument for processing."""
         content = md_file.read_text(encoding="utf-8")
@@ -495,27 +553,31 @@ class IngestionPipeline:
         # Determine category from explicit metadata or directory structure
         category = self._determine_document_category(md_file, metadata)
 
+        priority = self._normalize_priority(metadata.get("priority"))
+        # Support legacy `severity` while allowing ADR `priority`-based severity defaults.
+        severity_str = str(metadata.get("severity") or priority).strip().lower()
+
         # Map severity strings to SeverityLevel enum
-        severity_str = metadata.get("severity", "medium")
         severity_map = {
             "critical": SeverityLevel.CRITICAL,
             "high": SeverityLevel.HIGH,
             "warning": SeverityLevel.MEDIUM,
             "medium": SeverityLevel.MEDIUM,
+            "normal": SeverityLevel.MEDIUM,
             "low": SeverityLevel.LOW,
             "info": SeverityLevel.LOW,
         }
         severity = severity_map.get(severity_str.lower(), SeverityLevel.MEDIUM)
 
-        # Determine document type from canonical front-matter key, defaulting to runbook.
-        doc_type_raw = str(metadata.get("doc_type", "runbook")).lower()
-        try:
-            doc_type = DocumentType(doc_type_raw)
-        except ValueError:
-            logger.debug(
-                "Unknown document type '%s' in %s; defaulting to runbook", doc_type_raw, md_file
-            )
-            doc_type = DocumentType.RUNBOOK
+        # Determine document type from canonical front-matter key.
+        # ADR default is `knowledge`, and `ticket` is normalized to `support_ticket`.
+        doc_type_raw = str(metadata.get("doc_type", "knowledge"))
+        doc_type, normalized_doc_type = self._normalize_doc_type(doc_type_raw)
+
+        name = str(metadata.get("name") or md_file.stem).strip() or md_file.stem
+        summary_raw = metadata.get("summary")
+        summary = str(summary_raw).strip() if summary_raw is not None else ""
+        pinned = self._parse_bool(metadata.get("pinned"), default=False)
 
         return ScrapedDocument(
             title=title,
@@ -532,8 +594,12 @@ class IngestionPipeline:
                 "original_severity": severity_str,
                 "original_doc_type": doc_type_raw,
                 "determined_category": category.value,
-                "doc_type": doc_type.value,
-                "document_type": doc_type.value,
+                "doc_type": normalized_doc_type,
+                "document_type": normalized_doc_type,
+                "name": name,
+                "summary": summary or None,
+                "priority": priority,
+                "pinned": pinned,
             },
         )
 

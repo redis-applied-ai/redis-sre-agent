@@ -21,7 +21,7 @@ def test_knowledge_provider_tool_schemas():
     schemas = provider.create_tool_schemas()
 
     # Should have all knowledge tools
-    assert len(schemas) == 6
+    assert len(schemas) == 8
 
     # All should be ToolDefinition objects
     for schema in schemas:
@@ -34,6 +34,8 @@ def test_knowledge_provider_tool_schemas():
     assert any("ingest" in name for name in tool_names)
     assert any("skills_check" in name for name in tool_names)
     assert any("get_skill" in name for name in tool_names)
+    assert any("search_support_tickets" in name for name in tool_names)
+    assert any("get_support_ticket" in name for name in tool_names)
 
     # All tool names should include provider name and hash
     for name in tool_names:
@@ -54,7 +56,7 @@ def test_knowledge_provider_search_schema():
     # Check optional fields
     props = search_schema.parameters["properties"]
     assert "category" not in props
-    assert "document_type" in props
+    assert "document_type" not in props
     assert "limit" in props
     assert "distance_threshold" in props
 
@@ -104,7 +106,7 @@ async def test_knowledge_provider_context_manager():
 
         # Should be able to create schemas
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 6
+        assert len(schemas) == 8
 
 
 class TestKnowledgeProviderProperties:
@@ -187,7 +189,7 @@ class TestKnowledgeProviderSkillSchemas:
         schemas = provider.create_tool_schemas()
 
         schema = next(s for s in schemas if "get_skill" in s.name)
-        assert "document_hash" in schema.parameters["required"]
+        assert "skill_name" in schema.parameters["required"]
 
 
 class TestKnowledgeProviderToolCapabilities:
@@ -201,8 +203,8 @@ class TestKnowledgeProviderToolCapabilities:
         for schema in schemas:
             assert schema.capability == ToolCapability.KNOWLEDGE
 
-    def test_tool_count_is_six(self):
-        """Test there are exactly 6 tools."""
+    def test_tool_count_is_eight(self):
+        """Test there are exactly 8 tools."""
         provider = KnowledgeBaseToolProvider()
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 6
+        assert len(schemas) == 8

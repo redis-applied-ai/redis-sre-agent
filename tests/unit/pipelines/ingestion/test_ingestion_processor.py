@@ -310,9 +310,9 @@ class TestIngestionPipeline:
         document = pipeline._create_scraped_document_from_markdown(md_file)
 
         assert document.title == "Front Matter Title"
-        assert document.doc_type == DocumentType.TICKET
+        assert document.doc_type == DocumentType.SUPPORT_TICKET
         assert document.metadata["original_doc_type"] == "ticket"
-        assert document.metadata["document_type"] == "ticket"
+        assert document.metadata["document_type"] == "support_ticket"
 
     def test_create_scraped_document_from_markdown_ignores_document_type_frontmatter_key(
         self, pipeline, tmp_path
@@ -336,9 +336,51 @@ class TestIngestionPipeline:
         document = pipeline._create_scraped_document_from_markdown(md_file)
 
         assert document.title == "Front Matter Title"
-        assert document.doc_type == DocumentType.RUNBOOK
-        assert document.metadata["original_doc_type"] == "runbook"
-        assert document.metadata["document_type"] == "runbook"
+        assert document.doc_type == DocumentType.KNOWLEDGE
+        assert document.metadata["original_doc_type"] == "knowledge"
+        assert document.metadata["document_type"] == "knowledge"
+
+    def test_create_scraped_document_from_markdown_applies_adr_defaults(self, pipeline, tmp_path):
+        """Test ADR metadata defaults for source docs without frontmatter."""
+        md_file = tmp_path / "no-frontmatter.md"
+        md_file.write_text("# Test Title\n\nSome content.\n", encoding="utf-8")
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.doc_type == DocumentType.KNOWLEDGE
+        assert document.metadata["document_type"] == "knowledge"
+        assert document.metadata["priority"] == "normal"
+        assert document.metadata["pinned"] is False
+        assert document.metadata["name"] == "no-frontmatter"
+        assert document.metadata["summary"] is None
+
+    def test_create_scraped_document_from_markdown_parses_adr_frontmatter_fields(
+        self, pipeline, tmp_path
+    ):
+        """Test pinned/priority/name/summary frontmatter fields are preserved."""
+        md_file = tmp_path / "with-frontmatter.md"
+        md_file.write_text(
+            (
+                "---\n"
+                "doc_type: support_ticket\n"
+                "priority: critical\n"
+                "pinned: true\n"
+                "name: Incident Triage\n"
+                "summary: Step-by-step triage process.\n"
+                "---\n\n"
+                "# Test Title\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.doc_type == DocumentType.SUPPORT_TICKET
+        assert document.metadata["document_type"] == "support_ticket"
+        assert document.metadata["priority"] == "critical"
+        assert document.metadata["pinned"] is True
+        assert document.metadata["name"] == "Incident Triage"
+        assert document.metadata["summary"] == "Step-by-step triage process."
 
     def test_parse_markdown_metadata_normalizes_spaced_keys(self, pipeline):
         """Test metadata keys with spaces normalize to snake_case."""

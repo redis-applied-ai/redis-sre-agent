@@ -29,6 +29,10 @@ class DocumentType(str, Enum):
     TROUBLESHOOTING: diagnostic guidance for identifying likely causes.
     SKILL: capability instruction documents consumed by the agent's
     skills workflow rather than general operator runbooks.
+    KNOWLEDGE: default long-form knowledge documents used for
+    general vector retrieval.
+    SUPPORT_TICKET: historical support records that are retrieved
+    through dedicated support-ticket tooling.
     """
 
     RUNBOOK = "runbook"
@@ -39,6 +43,8 @@ class DocumentType(str, Enum):
     REFERENCE = "reference"
     API_DOC = "api_doc"
     SKILL = "skill"
+    KNOWLEDGE = "knowledge"
+    SUPPORT_TICKET = "support_ticket"
     TICKET = "ticket"
 
 

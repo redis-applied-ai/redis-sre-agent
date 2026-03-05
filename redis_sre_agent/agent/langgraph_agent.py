@@ -42,6 +42,7 @@ from ..core.redis import get_redis_client
 from ..tools.manager import ToolManager
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
+from .knowledge_context import build_startup_knowledge_context
 from .models import AgentResponse
 from .prompts import SRE_SYSTEM_PROMPT
 from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
@@ -745,7 +746,11 @@ JSON payload of analyses artifacts:
 
             # Add system message if this is the first interaction
             if len(messages) == 1 and isinstance(messages[0], HumanMessage):
-                system_prompt = SRE_SYSTEM_PROMPT
+                startup_context = await build_startup_knowledge_context(
+                    query=str(messages[0].content or ""),
+                    version="latest",
+                )
+                system_prompt = f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
 
                 # Add Redis Cloud-specific context if working with a cloud instance
                 if target_instance and target_instance.instance_type == "redis_cloud":

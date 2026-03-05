@@ -26,6 +26,7 @@ from redis_sre_agent.core.progress import (
 from redis_sre_agent.tools.manager import ToolManager
 
 from .helpers import build_result_envelope
+from .knowledge_context import build_startup_knowledge_context
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,13 @@ class KnowledgeOnlyAgent:
 
             # Add system message if this is the first interaction
             if len(messages) == 1 and isinstance(messages[0], HumanMessage):
-                system_message = SystemMessage(content=KNOWLEDGE_SYSTEM_PROMPT)
+                startup_context = await build_startup_knowledge_context(
+                    query=str(messages[0].content or ""),
+                    version="latest",
+                )
+                system_message = SystemMessage(
+                    content=f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
+                )
                 messages = [system_message] + messages
 
             # Generate response with knowledge tools

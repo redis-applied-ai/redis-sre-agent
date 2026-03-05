@@ -139,11 +139,59 @@ class TestSearchKnowledgeBaseHelper:
                 query="documents",
                 document_type="skill",
                 limit=10,
+                include_special_document_types=True,
             )
 
         assert result["document_type"] == "skill"
         assert result["results_count"] == 1
         assert result["results"][0]["id"] == "doc-1"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_support_ticket_alias_matches_legacy_ticket(self):
+        """`support_ticket` filter should match legacy `ticket` doc_type."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-ticket",
+                    "title": "Legacy Ticket",
+                    "doc_type": "ticket",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-runbook",
+                    "title": "Runbook",
+                    "document_type": "runbook",
+                    "version": "latest",
+                },
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="tickets",
+                document_type="support_ticket",
+                limit=10,
+                include_special_document_types=True,
+            )
+
+        assert result["document_type"] == "support_ticket"
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-ticket"
+        assert result["results"][0]["document_type"] == "support_ticket"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_version_filter(self):
@@ -711,30 +759,59 @@ class TestSkillHelpers:
             "metadata": {"owner": "sre"},
         }
 
-        with patch(
-            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
-            new_callable=AsyncMock,
-            return_value=fragments_result,
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "skills": [
+                        {
+                            "name": "Incident Triage",
+                            "document_hash": "hash-skill",
+                        }
+                    ]
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value=fragments_result,
+            ),
         ):
-            result = await get_skill_helper(document_hash="hash-skill")
+            result = await get_skill_helper(skill_name="Incident Triage")
 
         assert result["document_hash"] == "hash-skill"
         assert result["document_type"] == "skill"
         assert result["fragments_count"] == 2
         assert result["full_content"] == "Part 1\n\nPart 2"
+        assert result["skill_name"] == "Incident Triage"
 
     @pytest.mark.asyncio
     async def test_get_skill_helper_rejects_non_skill_document(self):
-        with patch(
-            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
-            new_callable=AsyncMock,
-            return_value={
-                "document_hash": "hash-runbook",
-                "document_type": "runbook",
-                "fragments": [{"chunk_index": 0, "content": "text"}],
-            },
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "skills": [
+                        {
+                            "name": "Incident Triage",
+                            "document_hash": "hash-runbook",
+                        }
+                    ]
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value={
+                    "document_hash": "hash-runbook",
+                    "document_type": "runbook",
+                    "fragments": [{"chunk_index": 0, "content": "text"}],
+                },
+            ),
         ):
-            result = await get_skill_helper(document_hash="hash-runbook")
+            result = await get_skill_helper(skill_name="Incident Triage")
 
         assert result["document_hash"] == "hash-runbook"
         assert result["document_type"] == "runbook"

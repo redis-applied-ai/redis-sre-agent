@@ -72,6 +72,22 @@ SRE_KNOWLEDGE_SCHEMA = {
             "type": "tag",
         },
         {
+            "name": "name",
+            "type": "tag",
+        },
+        {
+            "name": "summary",
+            "type": "text",
+        },
+        {
+            "name": "priority",
+            "type": "tag",
+        },
+        {
+            "name": "pinned",
+            "type": "tag",
+        },
+        {
             "name": "severity",
             "type": "tag",
         },
