@@ -157,6 +157,21 @@ class TestClustersAPI:
             assert data["description"] == "Updated description"
             assert data["status"] == "maintenance"
 
+    def test_update_cluster_rejects_invalid_merged_state(self, client, sample_cluster):
+        """Changing enterprise cluster_type to non-enterprise should fail validation."""
+        update_data = {"cluster_type": "oss_cluster"}
+
+        with patch("redis_sre_agent.core.clusters.get_clusters") as mock_get:
+            mock_get.return_value = [sample_cluster]
+
+            response = client.put("/api/v1/clusters/test-cluster-123", json=update_data)
+
+            assert response.status_code == 400
+            assert (
+                "admin_url/admin_username/admin_password are only valid"
+                in response.json()["detail"]
+            )
+
     def test_update_cluster_not_found(self, client):
         """Test cluster update when not found."""
         update_data = {"description": "Updated description"}

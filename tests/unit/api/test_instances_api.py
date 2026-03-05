@@ -412,6 +412,18 @@ class TestInstancesAPI:
             assert data["admin_username"] == "admin@example.com"
             assert data["admin_password"] == "***"
 
+    def test_update_instance_rejects_partial_deprecated_admin_fields(self, client, sample_instance):
+        """Update should enforce that deprecated admin fields are provided together."""
+        update_data = {"admin_url": "https://cluster.example.com:9443"}
+
+        with patch("redis_sre_agent.core.instances.get_instances") as mock_get:
+            mock_get.return_value = [sample_instance]
+
+            response = client.put("/api/v1/instances/test-instance-123", json=update_data)
+
+            assert response.status_code == 400
+            assert "Deprecated admin fields must be provided together" in response.json()["detail"]
+
     def test_update_instance_rejects_unknown_cluster_id(self, client, sample_instance):
         """Update should fail when cluster_id does not exist."""
         update_data = {

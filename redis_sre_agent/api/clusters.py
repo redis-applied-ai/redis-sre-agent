@@ -5,7 +5,15 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from redis_sre_agent.core import clusters as core_clusters
 
@@ -346,7 +354,12 @@ async def update_cluster(cluster_id: str, request: UpdateClusterRequest):
         updated_cluster = current_cluster.model_copy(update=update_data)
 
         # Enforce final validation against domain model rules after merge
-        validated_cluster = core_clusters.RedisCluster(**updated_cluster.model_dump(mode="json"))
+        try:
+            validated_cluster = core_clusters.RedisCluster(
+                **updated_cluster.model_dump(mode="json")
+            )
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         clusters[cluster_index] = validated_cluster
         if not await core_clusters.save_clusters(clusters):
