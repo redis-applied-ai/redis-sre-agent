@@ -508,7 +508,7 @@ async def redis_sre_search_support_tickets(
     limit: int = 10,
     offset: int = 0,
     version: Optional[str] = "latest",
-    distance_threshold: Optional[float] = None,
+    distance_threshold: Optional[float] = 0.8,
 ) -> Dict[str, Any]:
     """Search support-ticket documents only.
 
@@ -519,7 +519,8 @@ async def redis_sre_search_support_tickets(
         limit: Maximum results to return (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
         version: Redis documentation version filter. Defaults to "latest".
-        distance_threshold: Optional cosine distance threshold
+        distance_threshold: Optional cosine distance threshold (default: 0.8).
+            Set to null to disable threshold and use pure KNN.
 
     Returns:
         Ticket search results and pagination metadata.

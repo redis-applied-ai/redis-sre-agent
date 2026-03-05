@@ -365,6 +365,7 @@ class TestSupportTicketTools:
             assert result["ticket_count"] == 1
             assert result["tickets"][0]["ticket_id"] == "ticket-123"
             mock_search.assert_called_once()
+            assert mock_search.call_args.kwargs["distance_threshold"] == pytest.approx(0.8)
 
     @pytest.mark.asyncio
     async def test_search_support_tickets_limit_clamped(self):

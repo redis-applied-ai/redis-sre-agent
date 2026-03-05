@@ -126,14 +126,6 @@ services:
     networks:
       sre-network:
         ipv4_address: 172.32.0.20
-networks:
-  sre-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.32.0.0/16
-          ip_range: 172.32.1.0/24
-
 volumes:
   redis_enterprise_node1_data:
   redis_enterprise_node2_data:

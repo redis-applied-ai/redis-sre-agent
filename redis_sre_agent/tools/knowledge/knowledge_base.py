@@ -311,6 +311,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "description": (
                                 "Optional cosine distance threshold. Set to null for pure KNN."
                             ),
+                            "default": 0.8,
                         },
                     },
                     "required": ["query"],
@@ -332,15 +333,6 @@ class KnowledgeBaseToolProvider(ToolProvider):
                 },
             ),
         ]
-
-    def _operation_from_tool(self, tool_name: str) -> str:
-        parts = tool_name.split("_")
-        if len(parts) >= 3:
-            return "_".join(parts[2:])
-        return tool_name
-
-    def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
-        return self._operation_from_tool(tool_name)
 
     @status_update("I'm searching the knowledge base for {query}.")
     async def search(
@@ -533,7 +525,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
         limit: int = 10,
         offset: int = 0,
         version: Optional[str] = "latest",
-        distance_threshold: Optional[float] = None,
+        distance_threshold: Optional[float] = 0.8,
     ) -> Dict[str, Any]:
         """Search support tickets only."""
         logger.info(

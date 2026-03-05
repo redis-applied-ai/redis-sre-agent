@@ -1,5 +1,7 @@
 """Tests for KnowledgeBaseToolProvider."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from redis_sre_agent.tools.knowledge.knowledge_base import KnowledgeBaseToolProvider
@@ -208,3 +210,43 @@ class TestKnowledgeProviderToolCapabilities:
         provider = KnowledgeBaseToolProvider()
         schemas = provider.create_tool_schemas()
         assert len(schemas) == 8
+
+
+def test_knowledge_provider_resolve_operation_for_multi_word_tool_name():
+    """Multi-word operations should resolve correctly from generated tool names."""
+    provider = KnowledgeBaseToolProvider()
+    tool_name = provider._make_tool_name("search_support_tickets")
+
+    assert provider.resolve_operation(tool_name, {}) == "search_support_tickets"
+
+
+@pytest.mark.asyncio
+async def test_search_support_tickets_uses_default_distance_threshold():
+    """Provider should preserve helper default threshold behavior."""
+    provider = KnowledgeBaseToolProvider()
+    with patch(
+        "redis_sre_agent.tools.knowledge.knowledge_base.search_support_tickets_helper",
+        new_callable=AsyncMock,
+    ) as mock_search:
+        mock_search.return_value = {"results": []}
+
+        await provider.search_support_tickets(query="connection reset")
+
+        assert mock_search.call_args.kwargs["distance_threshold"] == pytest.approx(0.8)
+
+
+@pytest.mark.asyncio
+async def test_search_support_tickets_allows_threshold_disable_with_none():
+    """Explicit None should disable threshold for pure KNN behavior."""
+    provider = KnowledgeBaseToolProvider()
+    with patch(
+        "redis_sre_agent.tools.knowledge.knowledge_base.search_support_tickets_helper",
+        new_callable=AsyncMock,
+    ) as mock_search:
+        mock_search.return_value = {"results": []}
+
+        await provider.search_support_tickets(
+            query="connection reset", distance_threshold=None
+        )
+
+        assert mock_search.call_args.kwargs["distance_threshold"] is None
