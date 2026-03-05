@@ -462,7 +462,3 @@ async def run_instances_to_clusters_migration(
     finally:
         if lock_acquired:
             await _release_lock(client, lock_token)
-        try:
-            await client.aclose()
-        except Exception:
-            pass

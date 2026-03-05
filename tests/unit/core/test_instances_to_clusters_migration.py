@@ -234,6 +234,7 @@ async def test_migration_dry_run_does_not_write():
     mock_save_clusters.assert_not_awaited()
     mock_save_instances.assert_not_awaited()
     assert mock_client.set.await_count == 1  # lock only; no marker in dry-run
+    mock_client.aclose.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -251,6 +252,7 @@ async def test_migration_skips_when_lock_not_acquired():
     assert summary.skipped_due_lock is True
     assert summary.skipped_due_marker is False
     assert summary.scanned == 0
+    mock_client.aclose.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -277,4 +279,4 @@ async def test_migration_skips_when_done_marker_exists():
     assert summary.skipped_due_lock is False
     mock_get_instances.assert_not_awaited()
     mock_client.eval.assert_awaited_once()
-
+    mock_client.aclose.assert_not_awaited()

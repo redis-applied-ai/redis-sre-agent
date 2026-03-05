@@ -4,6 +4,27 @@
 echo "🚀 Setting up Redis Enterprise 3-node cluster..."
 echo
 
+# Prefer GNU timeout when available (macOS may only have gtimeout, or neither).
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="gtimeout"
+fi
+
+run_with_timeout() {
+    local seconds="$1"
+    shift
+
+    if [ -n "$TIMEOUT_BIN" ]; then
+        "$TIMEOUT_BIN" "$seconds" "$@"
+        return $?
+    fi
+
+    echo "⚠️  'timeout' not found; running without timeout: $*"
+    "$@"
+}
+
 # Check if cluster already exists and is working
 echo "🔍 Checking for existing cluster..."
 if curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs 2>/dev/null | grep -q "^\["; then
@@ -83,7 +104,7 @@ else
     # Join node 3 to cluster
     echo
     echo "📋 Step 3: Joining node 3 to cluster..."
-    if ! timeout 60 docker exec redis-enterprise-node3 rladmin cluster join nodes $NODE1_IP username admin@redis.com password admin; then
+    if ! run_with_timeout 60 docker exec redis-enterprise-node3 rladmin cluster join nodes $NODE1_IP username admin@redis.com password admin; then
         echo "❌ Node 3 failed to join the cluster"
         exit 1
     fi
@@ -94,7 +115,7 @@ fi
 # Check cluster status
 echo
 echo "📋 Step 4: Checking cluster status..."
-timeout 10 docker exec redis-enterprise-node1 rladmin status nodes || echo "Status command timed out"
+run_with_timeout 10 docker exec redis-enterprise-node1 rladmin status nodes || echo "Status command timed out or failed"
 
 # Wait for REST API to be ready
 echo
@@ -231,5 +252,9 @@ echo "🔧 To put node 2 in maintenance mode:"
 echo "   docker exec redis-enterprise-node1 rladmin node 2 maintenance_mode on"
 echo
 echo "🔍 To check cluster status:"
-echo "   timeout 10 docker exec redis-enterprise-node1 rladmin status nodes"
+if [ -n "$TIMEOUT_BIN" ]; then
+    echo "   $TIMEOUT_BIN 10 docker exec redis-enterprise-node1 rladmin status nodes"
+else
+    echo "   docker exec redis-enterprise-node1 rladmin status nodes"
+fi
 echo

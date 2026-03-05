@@ -130,11 +130,19 @@ class RedisCloudToolProvider(ToolProvider):
         self._database_name: Optional[str] = None
         if redis_instance is not None:
             try:
-                if redis_instance.instance_type == "redis_cloud":
-                    self._subscription_id = redis_instance.redis_cloud_subscription_id
-                    self._database_id = redis_instance.redis_cloud_database_id
-                    self._subscription_type = redis_instance.redis_cloud_subscription_type
-                    self._database_name = redis_instance.redis_cloud_database_name
+                if getattr(redis_instance, "instance_type", None) == "redis_cloud":
+                    # Resolve each optional field independently so one missing attribute
+                    # does not prevent all Redis Cloud defaults from being applied.
+                    self._subscription_id = getattr(
+                        redis_instance, "redis_cloud_subscription_id", None
+                    )
+                    self._database_id = getattr(redis_instance, "redis_cloud_database_id", None)
+                    self._subscription_type = getattr(
+                        redis_instance, "redis_cloud_subscription_type", None
+                    )
+                    self._database_name = getattr(
+                        redis_instance, "redis_cloud_database_name", None
+                    )
             except Exception:
                 # Be defensive; absence of attributes shouldn't break provider init
                 pass
