@@ -102,7 +102,6 @@ def _validate_worker_process(pid: int, worker_name: str) -> tuple[bool, str]:
 
     return True, "Process validated as legitimate worker"
 
-
 @click.group()
 def worker():
     """Manage the Docket worker.
@@ -161,6 +160,17 @@ def start(concurrency: int):
         except Exception as e:
             logger.error(f"Failed to initialize Redis indices: {e}")
             # Continue anyway - some functionality may still work
+
+        # Run startup migration for legacy instance->cluster links (idempotent).
+        try:
+            from redis_sre_agent.core.migrations.instances_to_clusters import (
+                run_instances_to_clusters_migration,
+            )
+
+            migration_summary = await run_instances_to_clusters_migration(source="worker_startup")
+            logger.info("Instance-cluster backfill summary: %s", migration_summary.to_dict())
+        except Exception as e:
+            logger.warning("Instance-cluster startup migration failed (continuing): %s", e)
 
         try:
             # Register tasks first (support both sync and async implementations)

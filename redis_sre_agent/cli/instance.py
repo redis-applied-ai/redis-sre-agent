@@ -12,6 +12,7 @@ from pydantic import SecretStr
 from rich.console import Console
 from rich.table import Table
 
+from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core import instances as core_instances
 from redis_sre_agent.core.redis import test_redis_connection
 
@@ -44,12 +45,15 @@ def _print_instances_table(items: List[core_instances.RedisInstance], limit: int
     table.add_column("Name")
     table.add_column("Env", no_wrap=True)
     table.add_column("Type", no_wrap=True)
+    table.add_column("Cluster ID", no_wrap=True)
     table.add_column("URL (masked)")
 
     for inst in items[:limit]:
         masked_url = core_instances.mask_redis_url(inst.connection_url)
         itype = inst.instance_type.value if inst.instance_type else "-"
-        table.add_row(inst.id, inst.name, inst.environment, itype, masked_url)
+        table.add_row(
+            inst.id, inst.name, inst.environment, itype, inst.cluster_id or "-", masked_url
+        )
 
     console.print(table)
 
@@ -121,6 +125,7 @@ def instances_get(instance_id: str, as_json: bool):
                 "admin_url",
                 "admin_username",
                 "admin_password",
+                "cluster_id",
                 "status",
                 "version",
                 "memory",
@@ -156,6 +161,66 @@ _ALLOWED_TYPES = ["oss_single", "oss_cluster", "redis_enterprise", "redis_cloud"
 _ALLOWED_SUB_TYPES = ["pro", "essentials"]
 
 
+def _normalize_cluster_id(cluster_id: Optional[str]) -> Optional[str]:
+    if cluster_id is None:
+        return None
+    normalized = cluster_id.strip()
+    return normalized or None
+
+
+def _uses_deprecated_admin_fields(
+    admin_url: Optional[str], admin_username: Optional[str], admin_password: Optional[str]
+) -> bool:
+    return bool((admin_url or "").strip()) or bool((admin_username or "").strip()) or bool(
+        admin_password
+    )
+
+
+def _warn_deprecated_admin_fields_if_used(
+    admin_url: Optional[str], admin_username: Optional[str], admin_password: Optional[str]
+) -> None:
+    if _uses_deprecated_admin_fields(admin_url, admin_username, admin_password):
+        click.echo(
+            "⚠️  DEPRECATED: instance admin_* fields are deprecated. "
+            "Prefer --cluster-id with RedisCluster credentials."
+        )
+
+
+async def _validate_instance_cluster_link(
+    *,
+    cluster_id: Optional[str],
+    instance_type: Optional[str],
+) -> Optional[str]:
+    normalized_cluster_id = _normalize_cluster_id(cluster_id)
+    if normalized_cluster_id is None:
+        return None
+
+    cluster = await core_clusters.get_cluster_by_id(normalized_cluster_id)
+    if not cluster:
+        raise RuntimeError(f"Cluster with ID '{normalized_cluster_id}' not found")
+
+    normalized_instance_type = (instance_type or "unknown").strip().lower()
+    cluster_type = (
+        cluster.cluster_type.value
+        if hasattr(cluster.cluster_type, "value")
+        else str(cluster.cluster_type).strip().lower()
+    )
+
+    compatible_cluster_types = {
+        "redis_enterprise": {"redis_enterprise"},
+        "oss_cluster": {"oss_cluster"},
+        "redis_cloud": {"redis_cloud"},
+    }
+    allowed_cluster_types = compatible_cluster_types.get(normalized_instance_type)
+    if allowed_cluster_types and cluster_type not in allowed_cluster_types:
+        allowed_list = ", ".join(sorted(allowed_cluster_types))
+        raise RuntimeError(
+            f"instance_type '{normalized_instance_type}' is incompatible with cluster_type "
+            f"'{cluster_type}'. Allowed cluster_type(s): {allowed_list}"
+        )
+    return normalized_cluster_id
+
+
 @instance.command("create")
 @click.option("--name", required=True, help="Instance name")
 @click.option("--connection-url", required=True, help="Redis connection URL")
@@ -175,9 +240,20 @@ _ALLOWED_SUB_TYPES = ["pro", "essentials"]
     "--instance-type", type=click.Choice(_ALLOWED_TYPES, case_sensitive=False), default="unknown"
 )
 # Redis Enterprise admin (optional)
-@click.option("--admin-url")
-@click.option("--admin-username")
-@click.option("--admin-password")
+@click.option(
+    "--admin-url",
+    help="DEPRECATED: Redis Enterprise admin API URL. Prefer --cluster-id.",
+)
+@click.option(
+    "--admin-username",
+    help="DEPRECATED: Redis Enterprise admin API username. Prefer --cluster-id.",
+)
+@click.option(
+    "--admin-password",
+    help="DEPRECATED: Redis Enterprise admin API password. Prefer --cluster-id.",
+)
+# Cluster relation (preferred)
+@click.option("--cluster-id", help="Associated RedisCluster ID (preferred)")
 # Redis Cloud identifiers (optional)
 @click.option("--redis-cloud-subscription-id", type=int)
 @click.option("--redis-cloud-database-id", type=int)
@@ -202,6 +278,7 @@ def instances_create(
     admin_url: Optional[str],
     admin_username: Optional[str],
     admin_password: Optional[str],
+    cluster_id: Optional[str],
     redis_cloud_subscription_id: Optional[int],
     redis_cloud_database_id: Optional[int],
     redis_cloud_subscription_type: Optional[str],
@@ -216,6 +293,12 @@ def instances_create(
             instances = await core_instances.get_instances()
             if any(inst.name == name for inst in instances):
                 raise RuntimeError(f"Instance with name '{name}' already exists")
+
+            normalized_cluster_id = await _validate_instance_cluster_link(
+                cluster_id=cluster_id,
+                instance_type=instance_type,
+            )
+            _warn_deprecated_admin_fields_if_used(admin_url, admin_username, admin_password)
 
             instance_id = f"redis-{environment}-{int(datetime.now().timestamp())}"
             new_inst = core_instances.RedisInstance(
@@ -233,6 +316,7 @@ def instances_create(
                 admin_url=admin_url,
                 admin_username=admin_username,
                 admin_password=admin_password,
+                cluster_id=normalized_cluster_id,
                 redis_cloud_subscription_id=redis_cloud_subscription_id,
                 redis_cloud_database_id=redis_cloud_database_id,
                 redis_cloud_subscription_type=(
@@ -274,9 +358,19 @@ def instances_create(
 @click.option("--monitoring-identifier")
 @click.option("--logging-identifier")
 @click.option("--instance-type", type=click.Choice(_ALLOWED_TYPES, case_sensitive=False))
-@click.option("--admin-url")
-@click.option("--admin-username")
-@click.option("--admin-password")
+@click.option(
+    "--admin-url",
+    help="DEPRECATED: Redis Enterprise admin API URL. Prefer --cluster-id.",
+)
+@click.option(
+    "--admin-username",
+    help="DEPRECATED: Redis Enterprise admin API username. Prefer --cluster-id.",
+)
+@click.option(
+    "--admin-password",
+    help="DEPRECATED: Redis Enterprise admin API password. Prefer --cluster-id.",
+)
+@click.option("--cluster-id", help="Associated RedisCluster ID (preferred)")
 @click.option("--redis-cloud-subscription-id", type=int)
 @click.option("--redis-cloud-database-id", type=int)
 @click.option(
@@ -317,6 +411,7 @@ def instances_update(
     admin_url: Optional[str],
     admin_username: Optional[str],
     admin_password: Optional[str],
+    cluster_id: Optional[str],
     redis_cloud_subscription_id: Optional[int],
     redis_cloud_database_id: Optional[int],
     redis_cloud_subscription_type: Optional[str],
@@ -378,6 +473,8 @@ def instances_update(
                 update_data["admin_username"] = admin_username
             if admin_password is not None:
                 update_data["admin_password"] = admin_password
+            if cluster_id is not None:
+                update_data["cluster_id"] = _normalize_cluster_id(cluster_id)
             if redis_cloud_subscription_id is not None:
                 update_data["redis_cloud_subscription_id"] = redis_cloud_subscription_id
             if redis_cloud_database_id is not None:
@@ -396,6 +493,23 @@ def instances_update(
                 update_data["connections"] = connections
             if user_id is not None:
                 update_data["user_id"] = user_id
+
+            effective_instance_type = (
+                update_data["instance_type"]
+                if "instance_type" in update_data and update_data["instance_type"] is not None
+                else current.instance_type
+            )
+            effective_cluster_id = (
+                update_data["cluster_id"] if "cluster_id" in update_data else current.cluster_id
+            )
+            validated_cluster_id = await _validate_instance_cluster_link(
+                cluster_id=effective_cluster_id,
+                instance_type=effective_instance_type,
+            )
+            if "cluster_id" in update_data:
+                update_data["cluster_id"] = validated_cluster_id
+
+            _warn_deprecated_admin_fields_if_used(admin_url, admin_username, admin_password)
 
             # Handle extension_data updates
             if set_extensions or unset_extensions:

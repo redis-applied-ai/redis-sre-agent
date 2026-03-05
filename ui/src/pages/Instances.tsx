@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, Button } from "@radar/ui-kit";
 import sreAgentApi, {
+  RedisCluster as APIRedisCluster,
   RedisInstance as APIRedisInstance,
+  CreateClusterRequest,
   CreateInstanceRequest,
   ListInstancesParams,
 } from "../services/sreAgentApi";
@@ -57,6 +59,7 @@ interface RedisInstance
     | "monitoring_identifier"
     | "logging_identifier"
     | "instance_type"
+    | "cluster_id"
     | "admin_url"
     | "admin_username"
     | "admin_password"
@@ -73,6 +76,7 @@ interface RedisInstance
   monitoringIdentifier?: string;
   loggingIdentifier?: string;
   instanceType?: string;
+  clusterId?: string;
   adminUrl?: string;
   adminUsername?: string;
   adminPassword?: string;
@@ -85,12 +89,14 @@ interface RedisInstance
 
 // Add Instance Form Component
 interface AddInstanceFormProps {
+  clusters: APIRedisCluster[];
   onSubmit: (instance: RedisInstance) => void;
   onCancel: () => void;
   initialData?: RedisInstance;
 }
 
 const AddInstanceForm = ({
+  clusters,
   onSubmit,
   onCancel,
   initialData,
@@ -106,6 +112,22 @@ const AddInstanceForm = ({
   const isCustomUsage =
     initialData?.usage && !predefinedUsageTypes.includes(initialData.usage);
 
+  const getRecommendedClusterType = (
+    instanceType?: string,
+  ): "oss_cluster" | "redis_enterprise" | "redis_cloud" | "unknown" => {
+    if (instanceType === "redis_enterprise") return "redis_enterprise";
+    if (instanceType === "oss_cluster") return "oss_cluster";
+    if (instanceType === "redis_cloud") return "redis_cloud";
+    return "unknown";
+  };
+
+  const getCompatibleClusterTypes = (instanceType?: string): string[] => {
+    if (instanceType === "redis_enterprise") return ["redis_enterprise"];
+    if (instanceType === "oss_cluster") return ["oss_cluster"];
+    if (instanceType === "redis_cloud") return ["redis_cloud"];
+    return ["redis_enterprise", "oss_cluster", "redis_cloud", "unknown"];
+  };
+
   const [formData, setFormData] = useState({
     name: initialData?.name || "",
     connectionUrl: initialData?.connectionUrl || "redis://localhost:6379",
@@ -118,6 +140,7 @@ const AddInstanceForm = ({
     monitoringIdentifier: initialData?.monitoringIdentifier || "",
     loggingIdentifier: initialData?.loggingIdentifier || "",
     instanceType: initialData?.instanceType || "unknown",
+    clusterId: initialData?.clusterId || "",
     adminUrl: (initialData as any)?.adminUrl || "",
     adminUsername: (initialData as any)?.adminUsername || "",
     adminPassword: (initialData as any)?.adminPassword || "",
@@ -138,6 +161,29 @@ const AddInstanceForm = ({
     success: boolean;
     message: string;
   } | null>(null);
+  const [localClusters, setLocalClusters] = useState<APIRedisCluster[]>(clusters);
+  const [showCreateClusterForm, setShowCreateClusterForm] = useState(false);
+  const [isCreatingCluster, setIsCreatingCluster] = useState(false);
+  const [createClusterError, setCreateClusterError] = useState("");
+  const [createClusterResult, setCreateClusterResult] = useState("");
+  const [clusterFormData, setClusterFormData] = useState({
+    name: "",
+    clusterType: getRecommendedClusterType(initialData?.instanceType),
+    environment: initialData?.environment || "development",
+    description: "",
+    adminUrl: "",
+    adminUsername: "",
+    adminPassword: "",
+  });
+
+  useEffect(() => {
+    setLocalClusters(clusters);
+  }, [clusters]);
+
+  const compatibleClusterTypes = getCompatibleClusterTypes(formData.instanceType);
+  const compatibleClusters = localClusters.filter((cluster) =>
+    compatibleClusterTypes.includes(cluster.cluster_type || "unknown"),
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,6 +205,7 @@ const AddInstanceForm = ({
         monitoringIdentifier: formData.monitoringIdentifier || undefined,
         loggingIdentifier: formData.loggingIdentifier || undefined,
         instanceType: formData.instanceType,
+        clusterId: formData.clusterId || undefined,
         status: initialData?.status || "unknown",
         version: initialData?.version,
         memory: initialData?.memory,
@@ -184,6 +231,82 @@ const AddInstanceForm = ({
       console.error("Error saving instance:", error);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    const allowedTypes = getCompatibleClusterTypes(formData.instanceType);
+    if (!formData.clusterId) {
+      return;
+    }
+    const selected = localClusters.find((cluster) => cluster.id === formData.clusterId);
+    if (!selected) {
+      return;
+    }
+    const selectedType = selected.cluster_type || "unknown";
+    if (!allowedTypes.includes(selectedType)) {
+      setFormData((prev) => ({ ...prev, clusterId: "" }));
+    }
+  }, [formData.instanceType, formData.clusterId, localClusters]);
+
+  const handleCreateCluster = async () => {
+    setIsCreatingCluster(true);
+    setCreateClusterError("");
+    setCreateClusterResult("");
+
+    try {
+      if (!clusterFormData.name.trim()) {
+        throw new Error("Cluster name is required");
+      }
+      if (!clusterFormData.description.trim()) {
+        throw new Error("Cluster description is required");
+      }
+      if (
+        clusterFormData.clusterType === "redis_enterprise" &&
+        (!clusterFormData.adminUrl ||
+          !clusterFormData.adminUsername ||
+          !clusterFormData.adminPassword)
+      ) {
+        throw new Error(
+          "Redis Enterprise clusters require admin URL, username, and password",
+        );
+      }
+
+      const payload: CreateClusterRequest = {
+        name: clusterFormData.name.trim(),
+        cluster_type: clusterFormData.clusterType,
+        environment: clusterFormData.environment,
+        description:
+          clusterFormData.description.trim() ||
+          `${clusterFormData.clusterType} cluster for ${formData.name || "instance"}`,
+        ...(clusterFormData.clusterType === "redis_enterprise" && {
+          admin_url: clusterFormData.adminUrl || undefined,
+          admin_username: clusterFormData.adminUsername || undefined,
+          admin_password: clusterFormData.adminPassword || undefined,
+        }),
+      };
+
+      const createdCluster = await sreAgentApi.createCluster(payload);
+      setLocalClusters((prev) => [...prev, createdCluster]);
+      setFormData((prev) => ({ ...prev, clusterId: createdCluster.id }));
+      setCreateClusterResult(
+        `✅ Cluster "${createdCluster.name}" created and linked to this instance.`,
+      );
+      setShowCreateClusterForm(false);
+      setClusterFormData((prev) => ({
+        ...prev,
+        name: "",
+        description: "",
+        adminUrl: "",
+        adminUsername: "",
+        adminPassword: "",
+      }));
+    } catch (error) {
+      setCreateClusterError(
+        error instanceof Error ? error.message : "Failed to create cluster",
+      );
+    } finally {
+      setIsCreatingCluster(false);
     }
   };
 
@@ -434,15 +557,238 @@ const AddInstanceForm = ({
         </p>
       </div>
 
+      {/* Cluster Association */}
+      <div className="space-y-4 p-4 bg-redis-dusk-09 border border-redis-dusk-07 rounded-redis-sm">
+        <h4 className="text-redis-sm font-semibold text-foreground">
+          Cluster Association (Recommended)
+        </h4>
+        <p className="text-redis-xs text-redis-dusk-04">
+          Link this instance to a Redis cluster using <code>cluster_id</code>.
+          Cluster credentials are preferred over instance-level admin fields.
+        </p>
+
+        <div>
+          <label className="block text-redis-sm font-medium mb-1">
+            Linked Cluster
+          </label>
+          <select
+            value={formData.clusterId}
+            onChange={(e) =>
+              setFormData((prev) => ({ ...prev, clusterId: e.target.value }))
+            }
+            className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          >
+            <option value="">No cluster linked</option>
+            {compatibleClusters.map((cluster) => (
+              <option key={cluster.id} value={cluster.id}>
+                {cluster.name} ({cluster.cluster_type || "unknown"}) -{" "}
+                {cluster.environment}
+              </option>
+            ))}
+          </select>
+          <p className="text-redis-xs text-redis-dusk-04 mt-1">
+            Instance type <strong>{formData.instanceType}</strong> is compatible
+            with: {compatibleClusterTypes.join(", ")}.
+          </p>
+        </div>
+
+        {!showCreateClusterForm && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setCreateClusterError("");
+              setCreateClusterResult("");
+              setClusterFormData((prev) => ({
+                ...prev,
+                clusterType: getRecommendedClusterType(formData.instanceType),
+                environment: formData.environment || prev.environment,
+              }));
+              setShowCreateClusterForm(true);
+            }}
+          >
+            Create Cluster and Link
+          </Button>
+        )}
+
+        {createClusterResult && (
+          <div className="p-3 rounded-redis-sm text-redis-sm bg-green-50 text-green-800 border border-green-200">
+            {createClusterResult}
+          </div>
+        )}
+
+        {showCreateClusterForm && (
+          <div className="space-y-3 p-3 bg-white border border-redis-dusk-07 rounded-redis-sm">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-redis-sm font-medium mb-1">
+                  Cluster Name *
+                </label>
+                <input
+                  type="text"
+                  value={clusterFormData.name}
+                  onChange={(e) =>
+                    setClusterFormData((prev) => ({
+                      ...prev,
+                      name: e.target.value,
+                    }))
+                  }
+                  className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                  placeholder="e.g., prod-enterprise-cluster"
+                />
+              </div>
+              <div>
+                <label className="block text-redis-sm font-medium mb-1">
+                  Cluster Type *
+                </label>
+                <select
+                  value={clusterFormData.clusterType}
+                  onChange={(e) =>
+                    setClusterFormData((prev) => ({
+                      ...prev,
+                      clusterType: e.target.value as
+                        | "oss_cluster"
+                        | "redis_enterprise"
+                        | "redis_cloud"
+                        | "unknown",
+                    }))
+                  }
+                  className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                >
+                  <option value="unknown">Unknown</option>
+                  <option value="oss_cluster">Redis OSS Cluster</option>
+                  <option value="redis_enterprise">Redis Enterprise</option>
+                  <option value="redis_cloud">Redis Cloud</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-redis-sm font-medium mb-1">
+                  Environment *
+                </label>
+                <select
+                  value={clusterFormData.environment}
+                  onChange={(e) =>
+                    setClusterFormData((prev) => ({
+                      ...prev,
+                      environment: e.target.value,
+                    }))
+                  }
+                  className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                >
+                  <option value="development">Development</option>
+                  <option value="staging">Staging</option>
+                  <option value="production">Production</option>
+                  <option value="test">Test</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-redis-sm font-medium mb-1">
+                  Description *
+                </label>
+                <input
+                  type="text"
+                  value={clusterFormData.description}
+                  onChange={(e) =>
+                    setClusterFormData((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                  placeholder="What this cluster is used for"
+                />
+              </div>
+            </div>
+
+            {clusterFormData.clusterType === "redis_enterprise" && (
+              <div className="space-y-3 p-3 bg-blue-50 border border-blue-200 rounded-redis-sm">
+                <p className="text-redis-xs text-redis-dusk-04">
+                  Redis Enterprise clusters require admin API credentials.
+                </p>
+                <input
+                  type="url"
+                  value={clusterFormData.adminUrl}
+                  onChange={(e) =>
+                    setClusterFormData((prev) => ({
+                      ...prev,
+                      adminUrl: e.target.value,
+                    }))
+                  }
+                  className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                  placeholder="Admin URL (https://cluster:9443)"
+                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    value={clusterFormData.adminUsername}
+                    onChange={(e) =>
+                      setClusterFormData((prev) => ({
+                        ...prev,
+                        adminUsername: e.target.value,
+                      }))
+                    }
+                    className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    placeholder="Admin username"
+                  />
+                  <input
+                    type="password"
+                    value={clusterFormData.adminPassword}
+                    onChange={(e) =>
+                      setClusterFormData((prev) => ({
+                        ...prev,
+                        adminPassword: e.target.value,
+                      }))
+                    }
+                    className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    placeholder="Admin password"
+                  />
+                </div>
+              </div>
+            )}
+
+            {createClusterError && (
+              <div className="p-3 rounded-redis-sm text-redis-sm bg-red-50 text-red-800 border border-red-200">
+                {createClusterError}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCreateClusterForm(false)}
+                disabled={isCreatingCluster}
+              >
+                Cancel Cluster Create
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleCreateCluster}
+                isLoading={isCreatingCluster}
+                disabled={isCreatingCluster}
+              >
+                {isCreatingCluster ? "Creating..." : "Create and Link Cluster"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Redis Enterprise Admin API Fields */}
       {formData.instanceType === "redis_enterprise" && (
         <div className="space-y-4 p-4 bg-redis-blue-01/5 border border-redis-blue-03/30 rounded-redis-sm">
           <h4 className="text-redis-sm font-semibold text-redis-blue-03">
-            Redis Enterprise Admin API Configuration
+            Deprecated Instance Admin API Configuration (Compatibility Mode)
           </h4>
           <p className="text-redis-xs text-redis-dusk-04">
-            Provide admin API credentials to enable cluster-level diagnostics
-            and monitoring.
+            These fields remain for compatibility only. Prefer linking a
+            RedisCluster and storing admin credentials on the cluster.
           </p>
 
           <div>
@@ -812,6 +1158,7 @@ const AddInstanceForm = ({
 
 const Instances = () => {
   const [instances, setInstances] = useState<RedisInstance[]>([]);
+  const [clusters, setClusters] = useState<APIRedisCluster[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -835,6 +1182,7 @@ const Instances = () => {
     monitoringIdentifier: instance.monitoring_identifier,
     loggingIdentifier: instance.logging_identifier,
     instanceType: instance.instance_type || "unknown",
+    clusterId: instance.cluster_id || "",
     adminUrl: instance.admin_url,
     adminUsername: instance.admin_username,
     adminPassword: instance.admin_password,
@@ -869,12 +1217,25 @@ const Instances = () => {
       setIsLoading(true);
       setError("");
 
-      // Load instances from API with server-side filtering
-      const response = await sreAgentApi.listInstances(buildFilterParams());
+      const [instancesResult, clustersResult] = await Promise.allSettled([
+        sreAgentApi.listInstances(buildFilterParams()),
+        sreAgentApi.listClusters({ limit: 1000 }),
+      ]);
+
+      if (clustersResult.status === "fulfilled") {
+        setClusters(clustersResult.value.clusters || []);
+      } else {
+        console.warn("Failed to load clusters:", clustersResult.reason);
+        setClusters([]);
+      }
+
+      if (instancesResult.status !== "fulfilled") {
+        throw instancesResult.reason;
+      }
 
       // Convert API format to UI format
       const uiInstances: RedisInstance[] =
-        response.instances.map(convertToUIInstance);
+        instancesResult.value.instances.map(convertToUIInstance);
 
       setInstances(uiInstances);
     } catch (err) {
@@ -1032,6 +1393,7 @@ const Instances = () => {
       selectedUsage === "all" || instance.usage === selectedUsage;
     return environmentMatch && usageMatch;
   });
+  const clustersById = new Map(clusters.map((cluster) => [cluster.id, cluster]));
 
   return (
     <div className="space-y-6">
@@ -1178,14 +1540,18 @@ const Instances = () => {
                 </CardContent>
               </Card>
             ) : (
-              filteredInstances.map((instance) => (
-                <Card
-                  key={instance.id}
-                  className="hover:shadow-lg transition-shadow"
-                >
-                  <CardContent>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
+              filteredInstances.map((instance) => {
+                const linkedCluster = instance.clusterId
+                  ? clustersById.get(instance.clusterId)
+                  : undefined;
+                return (
+                  <Card
+                    key={instance.id}
+                    className="hover:shadow-lg transition-shadow"
+                  >
+                    <CardContent>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
                           <span className="text-redis-sm font-mono text-redis-dusk-04">
                             {instance.id}
@@ -1245,6 +1611,14 @@ const Instances = () => {
                                 {instance.connections}
                               </div>
                             )}
+                            {instance.clusterId && (
+                              <div>
+                                <strong>Cluster:</strong>{" "}
+                                {linkedCluster
+                                  ? `${linkedCluster.name} (${linkedCluster.cluster_type || "unknown"})`
+                                  : instance.clusterId}
+                              </div>
+                            )}
                             {instance.lastChecked && (
                               <div>
                                 <strong>Last Checked:</strong>{" "}
@@ -1290,36 +1664,37 @@ const Instances = () => {
                             </span>
                           </div>
                         )}
+                        </div>
+                        <div className="flex gap-2 ml-4">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingInstance(instance)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() =>
+                              handleTestInstanceConnection(instance.id)
+                            }
+                          >
+                            Test Connection
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setDeletingInstance(instance)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex gap-2 ml-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setEditingInstance(instance)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() =>
-                            handleTestInstanceConnection(instance.id)
-                          }
-                        >
-                          Test Connection
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => setDeletingInstance(instance)}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
+                    </CardContent>
+                  </Card>
+                );
+              })
             )}
           </div>
         </>
@@ -1355,6 +1730,7 @@ const Instances = () => {
             </div>
 
             <AddInstanceForm
+              clusters={clusters}
               initialData={editingInstance || undefined}
               onSubmit={async (instance) => {
                 try {
@@ -1371,6 +1747,7 @@ const Instances = () => {
                       monitoring_identifier: instance.monitoringIdentifier,
                       logging_identifier: instance.loggingIdentifier,
                       instance_type: instance.instanceType,
+                      cluster_id: instance.clusterId || undefined,
                       admin_url: instance.adminUrl,
                       admin_username: instance.adminUsername,
                       admin_password: instance.adminPassword,
@@ -1406,6 +1783,7 @@ const Instances = () => {
                       monitoring_identifier: instance.monitoringIdentifier,
                       logging_identifier: instance.loggingIdentifier,
                       instance_type: instance.instanceType,
+                      cluster_id: instance.clusterId || undefined,
                       admin_url: instance.adminUrl,
                       admin_username: instance.adminUsername,
                       admin_password: instance.adminPassword,

@@ -8,6 +8,7 @@ from fastapi.responses import PlainTextResponse
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from redis_sre_agent import __version__
+from redis_sre_agent.api.clusters import router as clusters_router
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
 from redis_sre_agent.api.knowledge import router as knowledge_router
@@ -19,6 +20,9 @@ from redis_sre_agent.api.tasks import router as tasks_api_router
 from redis_sre_agent.api.threads import router as threads_router
 from redis_sre_agent.api.websockets import router as websockets_router
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.migrations.instances_to_clusters import (
+    run_instances_to_clusters_migration,
+)
 from redis_sre_agent.core.redis import initialize_redis
 from redis_sre_agent.observability.tracing import setup_tracing as setup_base_tracing
 from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
@@ -100,6 +104,15 @@ async def lifespan(app: FastAPI):
         # Store startup state for agent status checks
         _app_startup_state = redis_status
 
+        # Startup migration: backfill instance->cluster links (best effort).
+        try:
+            migration_summary = await run_instances_to_clusters_migration(source="api_startup")
+            _app_startup_state["instance_cluster_migration"] = migration_summary.to_dict()
+            logger.info("Instance-cluster backfill summary: %s", migration_summary.to_dict())
+        except Exception as e:
+            logger.warning("Instance-cluster startup migration failed (continuing): %s", e)
+            _app_startup_state["instance_cluster_migration"] = {"error": str(e)}
+
         # Log configuration (mask Redis URL credentials)
         from redis_sre_agent.core.instances import mask_redis_url
 
@@ -164,6 +177,7 @@ async def root_health_check():
 # Include routers
 app.include_router(health_router, prefix="/api/v1", tags=["Health"])
 app.include_router(metrics_router, prefix="/api/v1", tags=["Metrics"])
+app.include_router(clusters_router, prefix="/api/v1", tags=["Clusters"])
 app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
 app.include_router(knowledge_router, tags=["Knowledge"])
 # Mount the Threads/Tasks APIs under /api/v1

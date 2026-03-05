@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 from click.testing import CliRunner
 
 from redis_sre_agent.cli.instance import instance
+from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core import instances as core_instances
 
 
@@ -247,3 +248,205 @@ def test_instance_get_shows_extension_data():
     assert "extension_data" in result.output
     assert "zendesk_organization_id" in result.output
     assert "12345" in result.output
+
+
+def test_instance_create_accepts_cluster_id_when_cluster_exists_and_is_compatible():
+    runner = CliRunner()
+    linked_cluster = core_clusters.RedisCluster(
+        id="cluster-prod-1",
+        name="prod-enterprise",
+        cluster_type=core_clusters.RedisClusterType.redis_enterprise,
+        environment="production",
+        description="Production enterprise cluster",
+        admin_url="https://cluster.example.com:9443",
+        admin_username="admin@example.com",
+        admin_password="secret",
+    )
+
+    with (
+        patch.object(core_instances, "get_instances", new=AsyncMock(return_value=[])),
+        patch.object(
+            core_instances, "save_instances", new=AsyncMock(return_value=True)
+        ) as mock_save,
+        patch.object(
+            core_clusters, "get_cluster_by_id", new=AsyncMock(return_value=linked_cluster)
+        ),
+    ):
+        result = runner.invoke(
+            instance,
+            [
+                "create",
+                "--name",
+                "prod-db",
+                "--connection-url",
+                "redis://localhost:6380/0",
+                "--environment",
+                "production",
+                "--usage",
+                "cache",
+                "--description",
+                "Prod db instance",
+                "--instance-type",
+                "redis_enterprise",
+                "--cluster-id",
+                "cluster-prod-1",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "Created instance" in result.output
+    saved_instances = mock_save.call_args[0][0]
+    assert len(saved_instances) == 1
+    assert saved_instances[0].cluster_id == "cluster-prod-1"
+
+
+def test_instance_create_rejects_missing_cluster_id_reference():
+    runner = CliRunner()
+
+    with (
+        patch.object(core_instances, "get_instances", new=AsyncMock(return_value=[])),
+        patch.object(core_clusters, "get_cluster_by_id", new=AsyncMock(return_value=None)),
+    ):
+        result = runner.invoke(
+            instance,
+            [
+                "create",
+                "--name",
+                "prod-db",
+                "--connection-url",
+                "redis://localhost:6380/0",
+                "--environment",
+                "production",
+                "--usage",
+                "cache",
+                "--description",
+                "Prod db instance",
+                "--instance-type",
+                "redis_enterprise",
+                "--cluster-id",
+                "cluster-does-not-exist",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "Cluster with ID 'cluster-does-not-exist' not found" in result.output
+
+
+def test_instance_create_rejects_incompatible_instance_and_cluster_types():
+    runner = CliRunner()
+    linked_cluster = core_clusters.RedisCluster(
+        id="cluster-dev-1",
+        name="dev-oss-cluster",
+        cluster_type=core_clusters.RedisClusterType.oss_cluster,
+        environment="development",
+        description="Development oss cluster",
+    )
+
+    with (
+        patch.object(core_instances, "get_instances", new=AsyncMock(return_value=[])),
+        patch.object(
+            core_clusters, "get_cluster_by_id", new=AsyncMock(return_value=linked_cluster)
+        ),
+    ):
+        result = runner.invoke(
+            instance,
+            [
+                "create",
+                "--name",
+                "prod-db",
+                "--connection-url",
+                "redis://localhost:6380/0",
+                "--environment",
+                "production",
+                "--usage",
+                "cache",
+                "--description",
+                "Prod db instance",
+                "--instance-type",
+                "redis_enterprise",
+                "--cluster-id",
+                "cluster-dev-1",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "is incompatible with cluster_type 'oss_cluster'" in result.output
+
+
+def test_instance_create_warns_when_deprecated_admin_fields_are_used():
+    runner = CliRunner()
+
+    with (
+        patch.object(core_instances, "get_instances", new=AsyncMock(return_value=[])),
+        patch.object(core_instances, "save_instances", new=AsyncMock(return_value=True)),
+    ):
+        result = runner.invoke(
+            instance,
+            [
+                "create",
+                "--name",
+                "prod-db",
+                "--connection-url",
+                "redis://localhost:6380/0",
+                "--environment",
+                "production",
+                "--usage",
+                "cache",
+                "--description",
+                "Prod db instance",
+                "--instance-type",
+                "redis_enterprise",
+                "--admin-url",
+                "https://cluster.example.com:9443",
+                "--admin-username",
+                "admin@example.com",
+                "--admin-password",
+                "secret",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "DEPRECATED" in result.output
+    assert "admin_*" in result.output
+
+
+def test_instance_update_rejects_incompatible_cluster_type():
+    runner = CliRunner()
+
+    current_instance = core_instances.RedisInstance(
+        id="redis-prod-1",
+        name="prod-db",
+        connection_url="redis://localhost:6380/0",
+        environment="production",
+        usage="cache",
+        description="Prod db instance",
+        instance_type="redis_enterprise",
+    )
+    linked_cluster = core_clusters.RedisCluster(
+        id="cluster-dev-1",
+        name="dev-oss-cluster",
+        cluster_type=core_clusters.RedisClusterType.oss_cluster,
+        environment="development",
+        description="Development oss cluster",
+    )
+
+    with (
+        patch.object(
+            core_instances, "get_instances", new=AsyncMock(return_value=[current_instance])
+        ),
+        patch.object(
+            core_clusters, "get_cluster_by_id", new=AsyncMock(return_value=linked_cluster)
+        ),
+    ):
+        result = runner.invoke(
+            instance,
+            [
+                "update",
+                "redis-prod-1",
+                "--cluster-id",
+                "cluster-dev-1",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "is incompatible with cluster_type 'oss_cluster'" in result.output

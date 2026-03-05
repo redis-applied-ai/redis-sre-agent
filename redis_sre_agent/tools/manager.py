@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from opentelemetry import trace
 
+from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.instances import RedisInstance
 
 from .models import Tool, ToolCapability, ToolDefinition
@@ -112,6 +113,77 @@ class ToolManager:
                 ttl_overrides=cache_ttl_overrides,
             )
 
+    @staticmethod
+    async def resolve_redis_enterprise_admin_instance(
+        redis_instance: RedisInstance,
+    ) -> tuple[RedisInstance, str]:
+        """Resolve effective Redis Enterprise admin credentials for a RedisInstance.
+
+        Resolution order:
+        1. If instance has `cluster_id` and linked RedisCluster is redis_enterprise with
+           admin credentials, use cluster credentials.
+        2. Fallback to deprecated instance-level admin_* fields.
+
+        Returns:
+            Tuple of (effective_instance, credential_source) where credential_source is one of:
+            - "cluster"
+            - "instance"
+            - "missing"
+            - "not_enterprise"
+        """
+        itype = redis_instance.instance_type
+        itype_val = itype.value if hasattr(itype, "value") else str(itype or "").strip().lower()
+        if itype_val != "redis_enterprise":
+            return redis_instance, "not_enterprise"
+
+        cluster_id = (redis_instance.cluster_id or "").strip()
+        if cluster_id:
+            cluster = await core_clusters.get_cluster_by_id(cluster_id)
+            if not cluster:
+                logger.warning(
+                    "Instance '%s' references cluster_id '%s' but cluster was not found. "
+                    "Falling back to deprecated instance admin_* fields.",
+                    redis_instance.name,
+                    cluster_id,
+                )
+            else:
+                ctype = (
+                    cluster.cluster_type.value
+                    if hasattr(cluster.cluster_type, "value")
+                    else str(cluster.cluster_type or "").strip().lower()
+                )
+                if ctype != "redis_enterprise":
+                    logger.warning(
+                        "Instance '%s' references cluster_id '%s' with cluster_type '%s' "
+                        "(expected 'redis_enterprise'). Falling back to deprecated instance admin_* fields.",
+                        redis_instance.name,
+                        cluster_id,
+                        ctype,
+                    )
+                else:
+                    has_cluster_admin_url = bool((cluster.admin_url or "").strip())
+                    if has_cluster_admin_url:
+                        effective_instance = redis_instance.model_copy(
+                            update={
+                                "admin_url": cluster.admin_url,
+                                "admin_username": cluster.admin_username,
+                                "admin_password": cluster.admin_password,
+                            }
+                        )
+                        return effective_instance, "cluster"
+                    logger.warning(
+                        "Cluster '%s' linked from instance '%s' is missing admin_url. "
+                        "Falling back to deprecated instance admin_* fields.",
+                        cluster_id,
+                        redis_instance.name,
+                    )
+
+        has_instance_admin_url = bool((redis_instance.admin_url or "").strip())
+        if has_instance_admin_url:
+            return redis_instance, "instance"
+
+        return redis_instance, "missing"
+
     async def __aenter__(self) -> "ToolManager":
         """Enter context manager and load all providers."""
         self._stack = AsyncExitStack()
@@ -125,12 +197,6 @@ class ToolManager:
         if self.redis_instance:
             logger.info(f"Loading instance-specific providers for: {self.redis_instance.name}")
 
-            # Load configured providers (these require redis_instance)
-            from redis_sre_agent.core.config import settings
-
-            for provider_path in settings.tool_providers:
-                await self._load_provider(provider_path)
-
             # Load additional providers based on instance type
             itype = (
                 self.redis_instance.instance_type.value
@@ -139,6 +205,30 @@ class ToolManager:
             )
             instance_type = itype or "unknown"
             logger.info(f"Instance type: {instance_type}")
+
+            if instance_type == "redis_enterprise":
+                (
+                    self.redis_instance,
+                    enterprise_admin_source,
+                ) = await self.resolve_redis_enterprise_admin_instance(self.redis_instance)
+                if enterprise_admin_source == "cluster":
+                    logger.info(
+                        "Using RedisCluster admin credentials for instance '%s' (cluster_id=%s)",
+                        self.redis_instance.name,
+                        self.redis_instance.cluster_id,
+                    )
+                elif enterprise_admin_source == "instance":
+                    logger.warning(
+                        "Using deprecated instance admin_* fields for Redis Enterprise instance '%s'. "
+                        "Prefer cluster_id + RedisCluster admin credentials.",
+                        self.redis_instance.name,
+                    )
+
+            # Load configured providers (these require redis_instance)
+            from redis_sre_agent.core.config import settings
+
+            for provider_path in settings.tool_providers:
+                await self._load_provider(provider_path)
 
             if instance_type == "redis_enterprise":
                 # Load Redis Enterprise admin API provider
