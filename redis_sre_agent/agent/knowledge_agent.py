@@ -139,6 +139,7 @@ class KnowledgeOnlyAgent:
                 startup_context = await build_startup_knowledge_context(
                     query=str(messages[0].content or ""),
                     version="latest",
+                    available_tool_names=list(tooldefs_by_name.keys()),
                 )
                 system_message = SystemMessage(
                     content=f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"

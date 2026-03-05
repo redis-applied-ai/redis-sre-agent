@@ -45,7 +45,6 @@ class DocumentType(str, Enum):
     SKILL = "skill"
     KNOWLEDGE = "knowledge"
     SUPPORT_TICKET = "support_ticket"
-    TICKET = "ticket"
 
 
 class SeverityLevel(str, Enum):

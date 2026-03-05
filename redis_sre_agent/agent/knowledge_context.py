@@ -25,14 +25,32 @@ def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
     return lines
 
 
-def _tool_instruction_lines() -> List[str]:
-    """Render explicit ADR tool usage instructions."""
+def _resolve_tool_name(available_tool_names: Optional[List[str]], operation: str) -> str:
+    """Resolve full tool name for an operation when hashed provider names are present."""
+    if not available_tool_names:
+        return operation
+
+    suffix = f"_{operation}"
+    for tool_name in available_tool_names:
+        if tool_name == operation or tool_name.endswith(suffix):
+            return tool_name
+    return operation
+
+
+def _tool_instruction_lines_with_names(
+    available_tool_names: Optional[List[str]] = None,
+) -> List[str]:
+    """Render explicit ADR tool usage instructions using concrete tool names."""
+    get_skill_name = _resolve_tool_name(available_tool_names, "get_skill")
+    skills_check_name = _resolve_tool_name(available_tool_names, "skills_check")
+    search_tickets_name = _resolve_tool_name(available_tool_names, "search_support_tickets")
+    get_ticket_name = _resolve_tool_name(available_tool_names, "get_support_ticket")
     return [
         "Tool usage instructions:",
-        '- get-skill("<skill_name>")',
-        '- skills-check("<query>")',
-        '- search-support-tickets("<query>")',
-        '- get-support-ticket("<id>")',
+        f'- {get_skill_name}("<skill_name>")',
+        f'- {skills_check_name}("<query>")',
+        f'- {search_tickets_name}("<query>")',
+        f'- {get_ticket_name}("<id>")',
     ]
 
 
@@ -42,6 +60,7 @@ async def build_startup_knowledge_context(
     pinned_limit: int = 20,
     pinned_content_char_budget: int = 12000,
     skills_limit: int = 20,
+    available_tool_names: Optional[List[str]] = None,
 ) -> str:
     """Build first-turn context in ADR order: pinned, skills, tools."""
     sections: List[str] = []
@@ -83,5 +102,5 @@ async def build_startup_knowledge_context(
         skills_result = {"skills": []}
 
     sections.append("\n".join(_skills_toc_lines(skills_result.get("skills") or [])))
-    sections.append("\n".join(_tool_instruction_lines()))
+    sections.append("\n".join(_tool_instruction_lines_with_names(available_tool_names)))
     return "\n\n".join(section for section in sections if section.strip())

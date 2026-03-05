@@ -68,7 +68,7 @@ class TestSearchKnowledgeBaseHelper:
                     "content": "Redis memory management guide",
                     "source": "docs",
                     "category": "monitoring",
-                    "document_type": "runbook",
+                    "doc_type": "runbook",
                     "version": "latest",
                     "score": 0.95,
                 }
@@ -101,15 +101,15 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["doc_type"] == "runbook"
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_with_document_type_filter(self):
-        """Test document type filtering with legacy and canonical fields."""
+    async def test_search_knowledge_base_with_doc_type_filter(self):
+        """Test document type filtering."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             return_value=[
                 {
                     "id": "doc-1",
                     "title": "Skill Doc",
-                    "document_type": "skill",
+                    "doc_type": "skill",
                     "version": "latest",
                 },
                 {
@@ -137,31 +137,31 @@ class TestSearchKnowledgeBaseHelper:
         ):
             result = await search_knowledge_base_helper(
                 query="documents",
-                document_type="skill",
+                doc_type="skill",
                 limit=10,
                 include_special_document_types=True,
             )
 
-        assert result["document_type"] == "skill"
+        assert result["doc_type"] == "skill"
         assert result["results_count"] == 1
         assert result["results"][0]["id"] == "doc-1"
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_support_ticket_alias_matches_legacy_ticket(self):
-        """`support_ticket` filter should match legacy `ticket` doc_type."""
+    async def test_search_knowledge_base_support_ticket_filter(self):
+        """`support_ticket` filter should match support_ticket docs."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             return_value=[
                 {
                     "id": "doc-ticket",
-                    "title": "Legacy Ticket",
-                    "doc_type": "ticket",
+                    "title": "Support Ticket",
+                    "doc_type": "support_ticket",
                     "version": "latest",
                 },
                 {
                     "id": "doc-runbook",
                     "title": "Runbook",
-                    "document_type": "runbook",
+                    "doc_type": "runbook",
                     "version": "latest",
                 },
             ]
@@ -183,12 +183,12 @@ class TestSearchKnowledgeBaseHelper:
         ):
             result = await search_knowledge_base_helper(
                 query="tickets",
-                document_type="support_ticket",
+                doc_type="support_ticket",
                 limit=10,
                 include_special_document_types=True,
             )
 
-        assert result["document_type"] == "support_ticket"
+        assert result["doc_type"] == "support_ticket"
         assert result["results_count"] == 1
         assert result["results"][0]["id"] == "doc-ticket"
         assert result["results"][0]["doc_type"] == "support_ticket"
@@ -471,7 +471,7 @@ class TestIngestSreDocumentHelper:
         assert result["title"] == "Test Document"
         assert result["source"] == "test"
         assert result["category"] == "runbook"
-        assert result["document_type"] == "knowledge"
+        assert result["doc_type"] == "knowledge"
         assert "document_id" in result
         mock_index.load.assert_called_once()
 
@@ -500,12 +500,12 @@ class TestIngestSreDocumentHelper:
                 content="Redis Cloud content",
                 source="docs",
                 category="guide",
-                document_type="skill",
+                doc_type="skill",
                 product_labels=["redis-cloud", "enterprise"],
             )
 
         assert result["status"] == "ingested"
-        assert result["document_type"] == "skill"
+        assert result["doc_type"] == "skill"
         # Verify the document was loaded with product labels
         call_args = mock_index.load.call_args
         doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
@@ -776,7 +776,7 @@ class TestSkillHelpers:
             result = await get_skill_helper(skill_name="Incident Triage")
 
         assert result["document_hash"] == "hash-skill"
-        assert result["document_type"] == "skill"
+        assert result["doc_type"] == "skill"
         assert result["fragments_count"] == 2
         assert result["full_content"] == "Part 1\n\nPart 2"
         assert result["skill_name"] == "Incident Triage"
@@ -809,5 +809,5 @@ class TestSkillHelpers:
             result = await get_skill_helper(skill_name="Incident Triage")
 
         assert result["document_hash"] == "hash-runbook"
-        assert result["document_type"] == "runbook"
+        assert result["doc_type"] == "runbook"
         assert "not 'skill'" in result["error"]

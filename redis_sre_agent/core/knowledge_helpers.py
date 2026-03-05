@@ -57,21 +57,7 @@ def _normalized_doc_version(doc: Dict[str, Any]) -> str:
 
 def _normalized_doc_type(doc: Dict[str, Any]) -> str:
     """Normalize document type from doc_type fields."""
-    doc_type = (
-        str(
-            doc.get("doc_type")
-            or doc.get("meta_doc_type")
-            or doc.get("document_type")
-            or doc.get("meta_document_type")
-            or ""
-        )
-        .strip()
-        .lower()
-    )
-    if doc_type == "general":
-        return "knowledge"
-    if doc_type == "ticket":
-        return "support_ticket"
+    doc_type = str(doc.get("doc_type") or doc.get("meta_doc_type") or "").strip().lower()
     return doc_type or "knowledge"
 
 
@@ -91,13 +77,10 @@ def _doc_matches_requested_version(doc: Dict[str, Any], requested_version: Optio
 
 
 def _doc_matches_requested_type(doc: Dict[str, Any], requested_type: Optional[str]) -> bool:
-    """Apply document type filtering while supporting legacy fields."""
+    """Apply document type filtering."""
     if requested_type is None:
         return True
-    normalized_requested = requested_type.strip().lower()
-    if normalized_requested == "ticket":
-        normalized_requested = "support_ticket"
-    return _normalized_doc_type(doc) == normalized_requested
+    return _normalized_doc_type(doc) == requested_type.strip().lower()
 
 
 def _parse_bool(value: Any, default: bool = False) -> bool:
@@ -418,7 +401,6 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
             "document_hash": document_hash,
             "error": f"Document type is '{normalized_type}', not 'skill'",
             "doc_type": normalized_type,
-            "document_type": normalized_type,
         }
 
     sorted_fragments = sorted(fragments, key=lambda x: _doc_chunk_index(x))
@@ -430,7 +412,6 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
         "title": result.get("title", ""),
         "source": result.get("source", ""),
         "doc_type": normalized_type,
-        "document_type": normalized_type,
         "fragments_count": len(sorted_fragments),
         "fragments": sorted_fragments,
         "full_content": full_content,
@@ -473,8 +454,6 @@ async def search_support_tickets_helper(
             "results_count": len(tickets),
             "doc_type": "support_ticket",
             "doc_type_filter": "support_ticket",
-            "document_type": "support_ticket",
-            "document_type_filter": "support_ticket",
         }
     )
     return result
@@ -503,7 +482,6 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
             "document_hash": ticket_id,
             "error": f"Document type is '{normalized_type}', not 'support_ticket'",
             "doc_type": normalized_type,
-            "document_type": normalized_type,
         }
 
     sorted_fragments = sorted(fragments, key=lambda x: _doc_chunk_index(x))
@@ -515,7 +493,6 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
         "title": result.get("title", ""),
         "source": result.get("source", ""),
         "doc_type": normalized_type,
-        "document_type": normalized_type,
         "priority": str(metadata.get("priority", "normal")),
         "summary": str(metadata.get("summary", "")),
         "fragments_count": len(sorted_fragments),
@@ -638,7 +615,6 @@ async def search_knowledge_base_helper(
     query: str,
     category: Optional[str] = None,
     doc_type: Optional[str] = None,
-    document_type: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
     distance_threshold: Optional[float] = 0.8,
@@ -664,7 +640,6 @@ async def search_knowledge_base_helper(
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
         doc_type: Optional document type filter
-        document_type: Deprecated alias for doc_type
         limit: Maximum number of results
         offset: Number of results to skip (for pagination)
         distance_threshold: Cosine distance cutoff; None disables threshold
@@ -677,14 +652,9 @@ async def search_knowledge_base_helper(
         Dictionary with search results including task_id, query, results, etc.
     """
     logger.info(f"Searching SRE knowledge: '{query}' (version={version}, offset={offset})")
-    effective_doc_type = doc_type if doc_type is not None else document_type
     normalized_index_type = index_type.strip().lower()
     index = await _get_index_for_type(normalized_index_type, config=config)
-    normalized_doc_type = effective_doc_type.strip().lower() if effective_doc_type else None
-    if normalized_doc_type == "ticket":
-        normalized_doc_type = "support_ticket"
-    if normalized_doc_type == "general":
-        normalized_doc_type = "knowledge"
+    normalized_doc_type = doc_type.strip().lower() if doc_type else None
 
     return_fields = [
         "id",
@@ -882,8 +852,6 @@ async def search_knowledge_base_helper(
         "category_filter": category,
         "doc_type": normalized_doc_type,
         "doc_type_filter": normalized_doc_type,
-        "document_type": normalized_doc_type,
-        "document_type_filter": normalized_doc_type,
         "version": version,
         "index_type": normalized_index_type,
         "offset": offset,
@@ -902,7 +870,6 @@ async def search_knowledge_base_helper(
                 "source": doc.get("source", ""),
                 "category": doc.get("category", ""),
                 "doc_type": _normalized_doc_type(doc),
-                "document_type": _normalized_doc_type(doc),
                 "name": _doc_name(doc),
                 "summary": _doc_summary(doc) or _summary_preview(str(doc.get("content", ""))),
                 "priority": _doc_priority(doc),
@@ -944,7 +911,6 @@ async def ingest_sre_document_helper(
     category: str = "general",
     severity: str = "info",
     doc_type: Optional[str] = None,
-    document_type: Optional[str] = None,
     product_labels: Optional[List[str]] = None,
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
@@ -960,7 +926,6 @@ async def ingest_sre_document_helper(
         category: Document category (incident, runbook, monitoring, etc.)
         severity: Severity level (info, warning, critical)
         doc_type: Optional document type (e.g., skill, support_ticket, runbook)
-        document_type: Deprecated alias for doc_type
         product_labels: Optional list of product labels
         config: Optional Settings for dependency injection (testing)
 
@@ -969,12 +934,7 @@ async def ingest_sre_document_helper(
     """
     logger.info(f"Ingesting SRE document: {title} from {source}")
 
-    effective_doc_type = doc_type if doc_type is not None else document_type
-    normalized_doc_type = (effective_doc_type or "knowledge").lower()
-    if normalized_doc_type == "ticket":
-        normalized_doc_type = "support_ticket"
-    if normalized_doc_type == "general":
-        normalized_doc_type = "knowledge"
+    normalized_doc_type = (doc_type or "knowledge").lower()
     index_type = "knowledge"
     if normalized_doc_type == "skill":
         index = await get_skills_index(config=config)
@@ -1025,7 +985,6 @@ async def ingest_sre_document_helper(
         "source": source,
         "category": category,
         "doc_type": normalized_doc_type,
-        "document_type": normalized_doc_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "ingested",
     }
@@ -1175,7 +1134,6 @@ async def get_all_document_fragments(
             ),
             "metadata": metadata,
         }
-        result["document_type"] = result["doc_type"]
 
         logger.info(f"Retrieved {len(normalized_fragments)} fragments for document {document_hash}")
         return result
@@ -1253,7 +1211,6 @@ async def get_related_document_fragments(
             "source": all_fragments_result.get("source", ""),
             "category": all_fragments_result.get("category", ""),
             "doc_type": all_fragments_result.get("doc_type", "knowledge"),
-            "document_type": all_fragments_result.get("doc_type", "knowledge"),
             "metadata": all_fragments_result.get("metadata", {}),
         }
 

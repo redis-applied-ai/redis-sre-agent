@@ -24,8 +24,7 @@ class SearchRequest(BaseModel):
 
     query: str = Field(..., description="Search query")
     category: Optional[str] = Field(None, description="Filter by category")
-    document_type: Optional[str] = Field(None, description="Filter by document type")
-    doc_type: Optional[str] = Field(None, description="Alias for document_type")
+    doc_type: Optional[str] = Field(None, description="Filter by document type")
     limit: int = Field(10, ge=1, le=50, description="Number of results to return")
     distance_threshold: Optional[float] = Field(
         None,
@@ -45,7 +44,6 @@ class SearchResponse(BaseModel):
     query: str
     category_filter: Optional[str]
     doc_type_filter: Optional[str]
-    document_type_filter: Optional[str]
     results_count: int
     results: List[Dict]
     formatted_output: str
@@ -84,8 +82,7 @@ class DocumentIngestionRequest(BaseModel):
     source: str = Field(..., description="Source system or file")
     category: str = Field("general", description="Document category")
     severity: str = Field("info", description="Severity level")
-    document_type: str = Field("knowledge", description="Document type")
-    doc_type: Optional[str] = Field(None, description="Alias for document_type")
+    doc_type: str = Field("knowledge", description="Document type")
 
 
 class KnowledgeSettings(BaseModel):
@@ -152,7 +149,6 @@ class UpdateKnowledgeSettingsRequest(BaseModel):
 async def search_knowledge(
     query: str = Query(..., description="Search query"),
     category: Optional[str] = Query(None, description="Filter by category"),
-    document_type: Optional[str] = Query(None, description="Filter by document type"),
     doc_type: Optional[str] = Query(None, description="Filter by document type"),
     product_labels: Optional[str] = Query(
         None, description="Comma-separated list of product labels to filter by"
@@ -182,10 +178,8 @@ async def search_knowledge(
         kwargs = {}
         if category is not None:
             kwargs["category"] = category
-        effective_doc_type = doc_type if doc_type is not None else document_type
-        if effective_doc_type is not None:
-            kwargs["doc_type"] = effective_doc_type
-            kwargs["document_type"] = effective_doc_type
+        if doc_type is not None:
+            kwargs["doc_type"] = doc_type
         if distance_threshold is not None:
             kwargs["distance_threshold"] = distance_threshold
         result = await search_knowledge_base(query, limit=limit, **kwargs)
@@ -196,8 +190,7 @@ async def search_knowledge(
             return SearchResponse(
                 query=query,
                 category_filter=category,
-                doc_type_filter=effective_doc_type,
-                document_type_filter=effective_doc_type,
+                doc_type_filter=doc_type,
                 results_count=0,  # Would need to parse from string
                 results=[],
                 formatted_output=result,
@@ -207,8 +200,7 @@ async def search_knowledge(
             return SearchResponse(
                 query=query,
                 category_filter=category,
-                doc_type_filter=effective_doc_type,
-                document_type_filter=effective_doc_type,
+                doc_type_filter=doc_type,
                 results_count=len(result),
                 results=result,
                 formatted_output="",
@@ -218,8 +210,7 @@ async def search_knowledge(
             return SearchResponse(
                 query=result.get("query", query),
                 category_filter=result.get("category_filter"),
-                doc_type_filter=result.get("doc_type_filter", effective_doc_type),
-                document_type_filter=result.get("document_type_filter", effective_doc_type),
+                doc_type_filter=result.get("doc_type_filter", doc_type),
                 results_count=result.get("results_count", 0),
                 results=result.get("results", []),
                 formatted_output=result.get("formatted_output", ""),
@@ -241,7 +232,6 @@ async def search_knowledge_post(request: SearchRequest):
     return await search_knowledge(
         query=request.query,
         category=request.category,
-        document_type=request.document_type,
         doc_type=request.doc_type,
         limit=request.limit,
         distance_threshold=request.distance_threshold,
@@ -256,15 +246,13 @@ async def ingest_single_document(request: DocumentIngestionRequest):
 
         logger.info(f"Ingesting single document: {request.title}")
 
-        effective_doc_type = request.doc_type or request.document_type
         result = await ingest_sre_document(
             title=request.title,
             content=request.content,
             source=request.source,
             category=request.category,
             severity=request.severity,
-            doc_type=effective_doc_type,
-            document_type=effective_doc_type,
+            doc_type=request.doc_type,
         )
 
         return {

@@ -531,11 +531,8 @@ class IngestionPipeline:
         return re.sub(r"[^\w]", "", normalized)
 
     def _normalize_doc_type(self, doc_type_raw: str) -> tuple[DocumentType, str]:
-        """Normalize canonical doc_type values and legacy aliases."""
+        """Normalize canonical doc_type values."""
         normalized = re.sub(r"[\s-]+", "_", (doc_type_raw or "").strip().lower())
-        if normalized == "ticket":
-            normalized = "support_ticket"
-
         if not normalized:
             normalized = "knowledge"
 
@@ -552,25 +549,10 @@ class IngestionPipeline:
             return normalized
         return "normal"
 
-    def _parse_bool(self, value: Any, default: bool = False) -> bool:
-        """Best-effort boolean parser for frontmatter metadata."""
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return default
-        normalized = str(value).strip().lower()
-        if normalized in {"true", "1", "yes", "y", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "n", "off"}:
-            return False
-        return default
-
     def _create_scraped_document_from_markdown(self, md_file: Path) -> ScrapedDocument:
         """Convert a markdown file to a ScrapedDocument for processing."""
         content = md_file.read_text(encoding="utf-8")
         metadata = self._parse_markdown_metadata(content)
-        # Ignore legacy document_type in source metadata; doc_type is canonical.
-        metadata.pop("document_type", None)
 
         # Extract or generate title
         title = metadata.get("title", md_file.stem.replace("-", " ").title())
@@ -595,14 +577,14 @@ class IngestionPipeline:
         severity = severity_map.get(severity_str.lower(), SeverityLevel.MEDIUM)
 
         # Determine document type from canonical front-matter key.
-        # ADR default is `knowledge`, and `ticket` is normalized to `support_ticket`.
+        # ADR default is `knowledge`.
         doc_type_raw = str(metadata.get("doc_type", "knowledge"))
         doc_type, normalized_doc_type = self._normalize_doc_type(doc_type_raw)
 
         name = str(metadata.get("name") or md_file.stem).strip() or md_file.stem
         summary_raw = metadata.get("summary")
         summary = str(summary_raw).strip() if summary_raw is not None else ""
-        pinned = self._parse_bool(metadata.get("pinned"), default=False)
+        pinned = DocumentProcessor._parse_bool(metadata.get("pinned"), default=False)
 
         return ScrapedDocument(
             title=title,

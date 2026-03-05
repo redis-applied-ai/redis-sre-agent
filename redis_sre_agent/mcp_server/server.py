@@ -421,7 +421,6 @@ async def redis_sre_knowledge_search(
     limit: int = 10,
     offset: int = 0,
     category: Optional[str] = None,
-    document_type: Optional[str] = None,
     doc_type: Optional[str] = None,
     version: Optional[str] = "latest",
 ) -> Dict[str, Any]:
@@ -438,7 +437,6 @@ async def redis_sre_knowledge_search(
         limit: Maximum number of results (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
         category: Optional filter by category ('incident', 'maintenance', 'monitoring', etc.)
-        document_type: Deprecated alias for doc_type
         doc_type: Optional filter by document type
         version: Redis documentation version filter. Defaults to "latest".
 
@@ -461,10 +459,8 @@ async def redis_sre_knowledge_search(
         }
         if category:
             kwargs["category"] = category
-        effective_doc_type = doc_type if doc_type is not None else document_type
-        if effective_doc_type:
-            kwargs["doc_type"] = effective_doc_type
-            kwargs["document_type"] = effective_doc_type
+        if doc_type:
+            kwargs["doc_type"] = doc_type
 
         result = await search_knowledge_base_helper(**kwargs)
 
@@ -487,8 +483,7 @@ async def redis_sre_knowledge_search(
             "version": version,
             "offset": offset,
             "limit": limit,
-            "doc_type": effective_doc_type,
-            "document_type": effective_doc_type,
+            "doc_type": doc_type,
             "results": results,
             "total_results": len(results),
             "has_more": len(results) == limit,  # Hint for pagination

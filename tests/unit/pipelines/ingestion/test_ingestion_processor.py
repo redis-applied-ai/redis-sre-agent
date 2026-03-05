@@ -307,7 +307,7 @@ class TestIngestionPipeline:
                 'title: "Front Matter Title"\n'
                 "category: shared\n"
                 "severity: high\n"
-                "doc type: ticket\n"
+                "doc_type: support_ticket\n"
                 "---\n\n"
                 "# Body Heading\n\n"
                 "Some content.\n"
@@ -319,35 +319,8 @@ class TestIngestionPipeline:
 
         assert document.title == "Front Matter Title"
         assert document.doc_type == DocumentType.SUPPORT_TICKET
-        assert document.metadata["original_doc_type"] == "ticket"
+        assert document.metadata["original_doc_type"] == "support_ticket"
         assert document.metadata["doc_type"] == "support_ticket"
-
-    def test_create_scraped_document_from_markdown_ignores_document_type_frontmatter_key(
-        self, pipeline, tmp_path
-    ):
-        """Test legacy document_type front matter key is ignored."""
-        md_file = tmp_path / "test-doc.md"
-        md_file.write_text(
-            (
-                "---\n"
-                'title: "Front Matter Title"\n'
-                "category: shared\n"
-                "severity: high\n"
-                "document type: skill\n"
-                "---\n\n"
-                "# Body Heading\n\n"
-                "Some content.\n"
-            ),
-            encoding="utf-8",
-        )
-
-        document = pipeline._create_scraped_document_from_markdown(md_file)
-
-        assert document.title == "Front Matter Title"
-        assert document.doc_type == DocumentType.KNOWLEDGE
-        assert document.metadata["original_doc_type"] == "knowledge"
-        assert document.metadata["doc_type"] == "knowledge"
-        assert "document_type" not in document.metadata
 
     def test_create_scraped_document_from_markdown_applies_adr_defaults(self, pipeline, tmp_path):
         """Test ADR metadata defaults for source docs without frontmatter."""
@@ -393,12 +366,12 @@ class TestIngestionPipeline:
 
     def test_parse_markdown_metadata_normalizes_spaced_keys(self, pipeline):
         """Test metadata keys with spaces normalize to snake_case."""
-        content = "---\ndocument type: skill\n---\n\n# Test Title\n**Doc Type**: ticket\n"
+        content = "---\npriority level: high\n---\n\n# Test Title\n**Doc Type**: skill\n"
 
         metadata = pipeline._parse_markdown_metadata(content)
 
-        assert metadata["document_type"] == "skill"
-        assert metadata["doc_type"] == "ticket"
+        assert metadata["priority_level"] == "high"
+        assert metadata["doc_type"] == "skill"
         assert metadata["title"] == "Test Title"
 
     @pytest.mark.asyncio

@@ -321,7 +321,6 @@ class TestKnowledgeIngestion:
             assert call_args["content"] == document_data["content"]
             assert call_args["source"] == document_data["source"]
             assert call_args["doc_type"] == "knowledge"
-            assert call_args["document_type"] == "knowledge"
 
     @pytest.mark.asyncio
     async def test_ingest_document_missing_fields(self, test_client):
