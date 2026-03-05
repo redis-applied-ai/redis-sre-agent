@@ -140,9 +140,7 @@ class RedisCloudToolProvider(ToolProvider):
                     self._subscription_type = getattr(
                         redis_instance, "redis_cloud_subscription_type", None
                     )
-                    self._database_name = getattr(
-                        redis_instance, "redis_cloud_database_name", None
-                    )
+                    self._database_name = getattr(redis_instance, "redis_cloud_database_name", None)
             except Exception:
                 # Be defensive; absence of attributes shouldn't break provider init
                 pass

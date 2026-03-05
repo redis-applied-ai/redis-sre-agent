@@ -180,8 +180,10 @@ async def _validate_instance_cluster_link(
 def _uses_deprecated_admin_fields(
     admin_url: Optional[str], admin_username: Optional[str], admin_password: Optional[object]
 ) -> bool:
-    return bool((admin_url or "").strip()) or bool((admin_username or "").strip()) or bool(
-        admin_password
+    return (
+        bool((admin_url or "").strip())
+        or bool((admin_username or "").strip())
+        or bool(admin_password)
     )
 
 
@@ -580,14 +582,18 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
             else current_instance.instance_type
         )
         effective_cluster_id = (
-            update_data["cluster_id"] if "cluster_id" in update_data else current_instance.cluster_id
+            update_data["cluster_id"]
+            if "cluster_id" in update_data
+            else current_instance.cluster_id
         )
         await _validate_instance_cluster_link(
             cluster_id=effective_cluster_id,
             instance_type=effective_instance_type,
         )
         if _uses_deprecated_admin_fields(
-            update_data.get("admin_url"), update_data.get("admin_username"), update_data.get("admin_password")
+            update_data.get("admin_url"),
+            update_data.get("admin_username"),
+            update_data.get("admin_password"),
         ):
             logger.warning(
                 "Deprecated instance admin_* fields updated for instance '%s'. Prefer cluster_id + RedisCluster credentials.",

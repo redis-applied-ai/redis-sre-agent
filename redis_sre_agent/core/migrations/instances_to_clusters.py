@@ -198,7 +198,9 @@ def _build_enterprise_lookup(
         ext_data = cluster.extension_data if isinstance(cluster.extension_data, dict) else {}
         migration_meta = ext_data.get(MIGRATION_METADATA_KEY)
         if isinstance(migration_meta, dict):
-            created_from_id = _normalize_optional_string(migration_meta.get("created_from_instance_id"))
+            created_from_id = _normalize_optional_string(
+                migration_meta.get("created_from_instance_id")
+            )
             if created_from_id:
                 created_from_instance_id_to_cluster_id.setdefault(created_from_id, cluster.id)
 

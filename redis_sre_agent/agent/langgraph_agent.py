@@ -1714,9 +1714,10 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
         # instance admin_* fields for compatibility mode.
         has_admin_url = False
         if target_instance and target_instance.instance_type == "redis_enterprise":
-            target_instance, enterprise_admin_source = (
-                await ToolManager.resolve_redis_enterprise_admin_instance(target_instance)
-            )
+            (
+                target_instance,
+                enterprise_admin_source,
+            ) = await ToolManager.resolve_redis_enterprise_admin_instance(target_instance)
             has_admin_url = bool(target_instance.admin_url and target_instance.admin_url.strip())
             if enterprise_admin_source == "cluster":
                 logger.info(

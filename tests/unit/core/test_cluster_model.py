@@ -24,7 +24,9 @@ class TestRedisClusterModel:
         assert cluster.cluster_type == RedisClusterType.redis_enterprise
 
     def test_enterprise_requires_all_admin_fields(self):
-        with pytest.raises(ValueError, match="requires admin_url, admin_username, and admin_password"):
+        with pytest.raises(
+            ValueError, match="requires admin_url, admin_username, and admin_password"
+        ):
             RedisCluster(
                 id="cluster-1",
                 name="Enterprise Cluster",
@@ -128,4 +130,3 @@ class TestRedisInstanceModelPhase1:
                 instance_type=RedisInstanceType.oss_single,
                 created_by="system",
             )
-

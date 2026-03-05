@@ -171,8 +171,10 @@ def _normalize_cluster_id(cluster_id: Optional[str]) -> Optional[str]:
 def _uses_deprecated_admin_fields(
     admin_url: Optional[str], admin_username: Optional[str], admin_password: Optional[str]
 ) -> bool:
-    return bool((admin_url or "").strip()) or bool((admin_username or "").strip()) or bool(
-        admin_password
+    return (
+        bool((admin_url or "").strip())
+        or bool((admin_username or "").strip())
+        or bool(admin_password)
     )
 
 

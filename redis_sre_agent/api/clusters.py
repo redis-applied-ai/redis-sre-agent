@@ -103,7 +103,9 @@ class CreateClusterRequest(BaseModel):
     status: Optional[str] = "unknown"
     version: Optional[str] = None
     last_checked: Optional[str] = None
-    created_by: str = Field(default="user", description="Who created this cluster: 'user' or 'agent'")
+    created_by: str = Field(
+        default="user", description="Who created this cluster: 'user' or 'agent'"
+    )
     user_id: Optional[str] = Field(default=None, description="User ID who owns this cluster")
 
     @field_validator("environment")
@@ -337,7 +339,8 @@ async def update_cluster(cluster_id: str, request: UpdateClusterRequest):
         if "name" in update_data and update_data["name"] != current_cluster.name:
             if any(c.id != cluster_id and c.name == update_data["name"] for c in clusters):
                 raise HTTPException(
-                    status_code=400, detail=f"Cluster with name '{update_data['name']}' already exists"
+                    status_code=400,
+                    detail=f"Cluster with name '{update_data['name']}' already exists",
                 )
 
         updated_cluster = current_cluster.model_copy(update=update_data)

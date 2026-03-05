@@ -102,6 +102,7 @@ def _validate_worker_process(pid: int, worker_name: str) -> tuple[bool, str]:
 
     return True, "Process validated as legitimate worker"
 
+
 @click.group()
 def worker():
     """Manage the Docket worker.

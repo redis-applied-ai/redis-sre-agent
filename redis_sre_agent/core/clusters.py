@@ -186,7 +186,9 @@ async def get_clusters() -> List[RedisCluster]:
                     raw = raw.decode("utf-8")
                 cluster_data = json.loads(raw)
                 if cluster_data.get("admin_password"):
-                    cluster_data["admin_password"] = get_secret_value(cluster_data["admin_password"])
+                    cluster_data["admin_password"] = get_secret_value(
+                        cluster_data["admin_password"]
+                    )
                 out.append(RedisCluster(**cluster_data))
             except Exception as e:
                 logger.error("Failed to load cluster from search result: %s. Skipping.", e)
@@ -264,7 +266,9 @@ async def query_clusters(
                     raw = raw.decode("utf-8")
                 cluster_data = json.loads(raw)
                 if cluster_data.get("admin_password"):
-                    cluster_data["admin_password"] = get_secret_value(cluster_data["admin_password"])
+                    cluster_data["admin_password"] = get_secret_value(
+                        cluster_data["admin_password"]
+                    )
                 clusters.append(RedisCluster(**cluster_data))
             except Exception as e:
                 logger.error("Failed to load cluster from query result: %s. Skipping.", e)

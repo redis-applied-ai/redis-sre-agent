@@ -223,7 +223,9 @@ class RedisInstance(BaseModel):
             admin_username = self.admin_username.strip()
             self.admin_username = admin_username or None
         admin_password_value = (
-            self.admin_password.get_secret_value() if isinstance(self.admin_password, SecretStr) else None
+            self.admin_password.get_secret_value()
+            if isinstance(self.admin_password, SecretStr)
+            else None
         )
         has_admin_url = bool(self.admin_url)
         has_admin_username = bool(self.admin_username)

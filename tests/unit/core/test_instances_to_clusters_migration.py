@@ -95,8 +95,12 @@ async def test_migration_creates_enterprise_cluster_and_links_instance():
     assert saved_instances[0].admin_username == "admin@example.com"
     assert saved_instances[0].admin_password is not None
 
-    mock_client.set.assert_any_await(MIGRATION_LOCK_KEY, mock_client.set.await_args_list[0].args[1], nx=True, ex=120)
-    mock_client.set.assert_any_await(MIGRATION_DONE_KEY, mock_client.set.await_args_list[-1].args[1])
+    mock_client.set.assert_any_await(
+        MIGRATION_LOCK_KEY, mock_client.set.await_args_list[0].args[1], nx=True, ex=120
+    )
+    mock_client.set.assert_any_await(
+        MIGRATION_DONE_KEY, mock_client.set.await_args_list[-1].args[1]
+    )
 
 
 @pytest.mark.asyncio
