@@ -10,11 +10,11 @@ from redis_sre_agent.core.knowledge_helpers import (
     _doc_matches_requested_version,
     get_all_document_fragments,
     get_related_document_fragments,
-    get_support_ticket_helper,
     get_skill_helper,
+    get_support_ticket_helper,
     ingest_sre_document_helper,
-    search_support_tickets_helper,
     search_knowledge_base_helper,
+    search_support_tickets_helper,
     skills_check_helper,
 )
 
