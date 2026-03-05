@@ -132,10 +132,10 @@ def _build_document_schema(index_name: str, include_pinned: bool) -> dict:
 
 # Schema definitions
 SRE_KNOWLEDGE_SCHEMA = _build_document_schema(SRE_KNOWLEDGE_INDEX, include_pinned=True)
-SRE_SKILLS_SCHEMA = _build_document_schema(SRE_SKILLS_INDEX, include_pinned=False)
+SRE_SKILLS_SCHEMA = _build_document_schema(SRE_SKILLS_INDEX, include_pinned=True)
 SRE_SUPPORT_TICKETS_SCHEMA = _build_document_schema(
     SRE_SUPPORT_TICKETS_INDEX,
-    include_pinned=False,
+    include_pinned=True,
 )
 
 SRE_SCHEDULES_SCHEMA = {

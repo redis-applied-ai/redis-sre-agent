@@ -6,6 +6,8 @@ import pytest
 
 from redis_sre_agent.core.redis import (
     SRE_KNOWLEDGE_SCHEMA,
+    SRE_SKILLS_SCHEMA,
+    SRE_SUPPORT_TICKETS_SCHEMA,
     create_indices,
     get_knowledge_index,
     get_redis_client,
@@ -49,6 +51,12 @@ class TestRedisInfrastructure:
         # Use settings.vector_dim since schema is defined at import time with that value
         assert vector_field["attrs"]["dims"] == settings.vector_dim
         assert vector_field["attrs"]["distance_metric"] == "cosine"
+
+    def test_skills_and_support_ticket_schema_include_pinned_field(self):
+        """Skills and support-ticket indexes should include pinned as a tag field."""
+        for schema in (SRE_SKILLS_SCHEMA, SRE_SUPPORT_TICKETS_SCHEMA):
+            field_names = {field["name"] for field in schema["fields"]}
+            assert "pinned" in field_names
 
     @patch("redis_sre_agent.core.redis.Redis")
     def test_get_redis_client(self, mock_redis):
