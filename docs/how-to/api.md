@@ -1,6 +1,6 @@
 ## Using the API: Core Workflows
 
-This guide shows how to use the HTTP API end-to-end: check health, add an instance, triage using tasks/threads, ingest and search knowledge, schedule recurring checks, and view status. It focuses on concrete workflows rather than a full reference.
+This guide shows how to use the HTTP API end-to-end: check health, create clusters/instances, triage using tasks/threads, ingest and search knowledge, schedule recurring checks, and view status. It focuses on concrete workflows rather than a full reference.
 
 ### Prerequisites
 - Services running (Docker Compose or local uvicorn + worker)
@@ -38,10 +38,35 @@ curl -fsS http://localhost:8080/api/v1/health | jq
 curl -fsS http://localhost:8080/api/v1/metrics | head -n 20
 ```
 
-### 3) Manage Redis instances
-Create the instance the agent will triage, then verify a connection.
+### 3) Manage Redis instances (with optional cluster links)
+You can create an instance without a cluster for any supported `instance_type`.  
+Use `cluster_id` only when you want explicit cluster linkage (recommended for enterprise credentials/routing).
 ```bash
-# Create instance
+# Create instance without cluster_id (valid for all instance types)
+curl -fsS -X POST http://localhost:8080/api/v1/instances \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "prod-cache-no-cluster",
+    "connection_url": "redis://your-redis-host:6379/0",
+    "environment": "production",
+    "usage": "cache",
+    "description": "Primary Redis"
+  }' | jq
+
+# Create cluster (Redis Enterprise example)
+curl -fsS -X POST http://localhost:8080/api/v1/clusters \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "prod-enterprise-cluster",
+    "cluster_type": "redis_enterprise",
+    "environment": "production",
+    "description": "Enterprise control plane for prod",
+    "admin_url": "https://cluster.example.com:9443",
+    "admin_username": "admin@acme.com",
+    "admin_password": "your-admin-password"
+  }' | jq
+
+# Create instance linked to that cluster (cluster_id is optional, but valid here)
 curl -fsS -X POST http://localhost:8080/api/v1/instances \
   -H 'Content-Type: application/json' \
   -d '{
@@ -49,15 +74,21 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances \
     "connection_url": "redis://your-redis-host:6379/0",
     "environment": "production",
     "usage": "cache",
-    "description": "Primary Redis"
+    "description": "Primary Redis",
+    "instance_type": "redis_enterprise",
+    "cluster_id": "<cluster_id>"
   }' | jq
 
-# List & inspect
+# List & inspect clusters
+curl -fsS http://localhost:8080/api/v1/clusters | jq
+curl -fsS http://localhost:8080/api/v1/clusters/<cluster_id> | jq
+
+# List & inspect instances
 curl -fsS http://localhost:8080/api/v1/instances | jq
-curl -fsS http://localhost:8080/api/v1/instances/<id> | jq
+curl -fsS http://localhost:8080/api/v1/instances/<instance_id> | jq
 
 # Test connection (by ID)
-curl -fsS -X POST http://localhost:8080/api/v1/instances/<id>/test-connection | jq
+curl -fsS -X POST http://localhost:8080/api/v1/instances/<instance_id>/test-connection | jq
 
 # Test a raw URL (without saving)
 curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
@@ -67,8 +98,14 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
 
 ### Notes
 - The API masks credentials in returned `connection_url`
+- `cluster_id` is optional; it is only required when linking an instance to an existing cluster
+- `cluster_id` is the preferred credential path when using Redis Enterprise admin credentials
+- Legacy instance `admin_url`, `admin_username`, `admin_password` are still accepted but deprecated
+- If you send deprecated instance admin fields, send all three together
 - Use `PUT /api/v1/instances/{id}` to update fields (masked secrets are preserved)
 - Use `DELETE /api/v1/instances/{id}` to remove
+- Startup runs an automated instance->cluster backfill migration for legacy data
+- Manual backfill is available via CLI: `uv run redis-sre-agent cluster backfill-instance-links --dry-run`
 
 ### 4) Triage with tasks and threads
 Simplest: create a task with your question. The API will create a thread if you omit `thread_id`.

@@ -25,8 +25,9 @@ class RedisEnterpriseAdminConfig(BaseSettings):
     """Configuration for Redis Enterprise admin API provider.
 
     This config is used for default/fallback values only. The actual admin URL,
-    username, and password should come from the RedisInstance object's admin_url,
-    admin_username, and admin_password fields.
+    username, and password are read from the RedisInstance object's admin_url,
+    admin_username, and admin_password fields (which may be cluster-resolved by
+    ToolManager before provider initialization).
 
     Automatically loads from environment variables with TOOLS_REDIS_ENTERPRISE_ADMIN_ prefix:
     - TOOLS_REDIS_ENTERPRISE_ADMIN_VERIFY_SSL
@@ -63,6 +64,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
     - redis_instance.admin_password: Admin password
 
     The RedisInstance must have instance_type='redis_enterprise' and admin_url set.
+    ToolManager may populate these fields from a linked RedisCluster (cluster_id)
+    before this provider is constructed.
     """
 
     def __init__(

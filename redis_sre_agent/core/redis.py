@@ -28,6 +28,8 @@ SRE_THREADS_INDEX = "sre_threads"
 SRE_TASKS_INDEX = "sre_tasks"
 # Instances index
 SRE_INSTANCES_INDEX = "sre_instances"
+# Clusters index
+SRE_CLUSTERS_INDEX = "sre_clusters"
 # Q&A index
 SRE_QA_INDEX = "sre_qa"
 
@@ -238,6 +240,24 @@ SRE_INSTANCES_SCHEMA = {
         {"name": "environment", "type": "tag"},
         {"name": "usage", "type": "tag"},
         {"name": "instance_type", "type": "tag"},
+        {"name": "cluster_id", "type": "tag"},
+        {"name": "user_id", "type": "tag"},
+        {"name": "status", "type": "tag"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "updated_at", "type": "numeric"},
+    ],
+}
+
+SRE_CLUSTERS_SCHEMA = {
+    "index": {
+        "name": SRE_CLUSTERS_INDEX,
+        "prefix": f"{SRE_CLUSTERS_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "name", "type": "tag"},
+        {"name": "environment", "type": "tag"},
+        {"name": "cluster_type", "type": "tag"},
         {"name": "user_id", "type": "tag"},
         {"name": "status", "type": "tag"},
         {"name": "created_at", "type": "numeric"},
@@ -460,6 +480,28 @@ async def get_instances_index(config: Optional[Settings] = None) -> AsyncSearchI
     return index
 
 
+async def get_clusters_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE clusters index (async).
+
+    Args:
+        config: Optional Settings object. If not provided, uses global settings.
+            This enables dependency injection for testing without modifying
+            environment variables.
+
+    Returns:
+        AsyncSearchIndex for clusters.
+    """
+    from redisvl.schema import IndexSchema
+
+    cfg = config or settings
+    redis_url = cfg.redis_url.get_secret_value()
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_CLUSTERS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
 async def get_threads_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
     """Get SRE threads/tasks index (async).
 
@@ -648,6 +690,15 @@ async def create_indices(config: Optional[Settings] = None) -> bool:
         else:
             logger.debug(f"Instances index already exists: {SRE_INSTANCES_INDEX}")
 
+        # Create clusters index
+        clusters_index = await get_clusters_index(config=config)
+        clusters_exists = await clusters_index.exists()
+        if not clusters_exists:
+            await clusters_index.create()
+            logger.debug(f"Created clusters index: {SRE_CLUSTERS_INDEX}")
+        else:
+            logger.debug(f"Clusters index already exists: {SRE_CLUSTERS_INDEX}")
+
         return True
     except Exception as e:
         logger.error(f"Failed to create indices: {e}")
@@ -665,7 +716,7 @@ async def recreate_indices(
     Args:
         index_name: Specific index to recreate ('knowledge', 'skills',
                    'support_tickets', 'schedules', 'threads', 'tasks',
-                   'instances'), or None to recreate all.
+                   'instances', 'clusters'), or None to recreate all.
         config: Optional Settings object. If not provided, uses global settings.
             This enables dependency injection for testing without modifying
             environment variables.
@@ -683,6 +734,7 @@ async def recreate_indices(
         ("threads", SRE_THREADS_INDEX, get_threads_index),
         ("tasks", SRE_TASKS_INDEX, get_tasks_index),
         ("instances", SRE_INSTANCES_INDEX, get_instances_index),
+        ("clusters", SRE_CLUSTERS_INDEX, get_clusters_index),
     ]
 
     for name, idx_name, get_fn in index_configs:

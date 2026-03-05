@@ -230,6 +230,128 @@ class TestInstancesAPI:
 
         assert response.status_code == 422  # Validation error
 
+    def test_create_instance_accepts_deprecated_admin_fields(self, client):
+        """Compatibility mode: create accepts deprecated legacy admin fields."""
+        create_data = {
+            "name": "New Redis Instance",
+            "connection_url": "redis://localhost:6380",
+            "environment": "development",
+            "usage": "session_store",
+            "description": "New test instance",
+            "admin_url": "https://cluster.example.com:9443",
+            "admin_username": "admin@redis.com",
+            "admin_password": "secret",
+        }
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.instances.save_instances") as mock_save,
+        ):
+            mock_get.return_value = []
+            mock_save.return_value = True
+
+            response = client.post("/api/v1/instances", json=create_data)
+
+            assert response.status_code == 201
+            data = response.json()
+            assert data["admin_url"] == "https://cluster.example.com:9443"
+            assert data["admin_username"] == "admin@redis.com"
+            assert data["admin_password"] == "***"
+
+    def test_create_instance_rejects_unknown_cluster_id(self, client):
+        """Create should fail when cluster_id does not exist."""
+        create_data = {
+            "name": "New Redis Instance",
+            "connection_url": "redis://localhost:6380",
+            "environment": "development",
+            "usage": "session_store",
+            "description": "New test instance",
+            "instance_type": "oss_cluster",
+            "cluster_id": "cluster-missing",
+        }
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.clusters.get_cluster_by_id") as mock_get_cluster,
+        ):
+            mock_get.return_value = []
+            mock_get_cluster.return_value = None
+
+            response = client.post("/api/v1/instances", json=create_data)
+
+            assert response.status_code == 400
+            assert "cluster-missing" in response.json()["detail"]
+
+    def test_create_instance_rejects_incompatible_cluster_type(self, client):
+        """Create should fail when instance_type and cluster_type are incompatible."""
+        create_data = {
+            "name": "New Redis Instance",
+            "connection_url": "redis://localhost:6380",
+            "environment": "development",
+            "usage": "session_store",
+            "description": "New test instance",
+            "instance_type": "redis_enterprise",
+            "cluster_id": "cluster-1",
+        }
+
+        from redis_sre_agent.core.clusters import RedisCluster
+
+        cluster = RedisCluster(
+            id="cluster-1",
+            name="OSS Cluster",
+            cluster_type="oss_cluster",
+            environment="development",
+            description="OSS cluster",
+        )
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.clusters.get_cluster_by_id") as mock_get_cluster,
+        ):
+            mock_get.return_value = []
+            mock_get_cluster.return_value = cluster
+
+            response = client.post("/api/v1/instances", json=create_data)
+
+            assert response.status_code == 400
+            assert "incompatible" in response.json()["detail"]
+
+    def test_create_instance_with_valid_cluster_id(self, client):
+        """Create should succeed when cluster_id exists and is compatible."""
+        create_data = {
+            "name": "New Redis Clustered Instance",
+            "connection_url": "redis://localhost:6380",
+            "environment": "development",
+            "usage": "session_store",
+            "description": "New test instance",
+            "instance_type": "oss_cluster",
+            "cluster_id": "cluster-1",
+        }
+
+        from redis_sre_agent.core.clusters import RedisCluster
+
+        cluster = RedisCluster(
+            id="cluster-1",
+            name="OSS Cluster",
+            cluster_type="oss_cluster",
+            environment="development",
+            description="OSS cluster",
+        )
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.instances.save_instances") as mock_save,
+            patch("redis_sre_agent.core.clusters.get_cluster_by_id") as mock_get_cluster,
+        ):
+            mock_get.return_value = []
+            mock_save.return_value = True
+            mock_get_cluster.return_value = cluster
+
+            response = client.post("/api/v1/instances", json=create_data)
+
+            assert response.status_code == 201
+            assert response.json()["cluster_id"] == "cluster-1"
+
     def test_update_instance_success(self, client, sample_instance):
         """Test successful instance update."""
         update_data = {
@@ -266,6 +388,121 @@ class TestInstancesAPI:
             data = response.json()
             assert data["description"] == "Updated description"
             assert data["status"] == "maintenance"
+
+    def test_update_instance_accepts_deprecated_admin_fields(self, client, sample_instance):
+        """Compatibility mode: update accepts deprecated legacy admin fields."""
+        update_data = {
+            "admin_url": "https://cluster.example.com:9443",
+            "admin_username": "admin@example.com",
+            "admin_password": "secret",
+        }
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.instances.save_instances") as mock_save,
+        ):
+            mock_get.return_value = [sample_instance]
+            mock_save.return_value = True
+
+            response = client.put("/api/v1/instances/test-instance-123", json=update_data)
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["admin_url"] == "https://cluster.example.com:9443"
+            assert data["admin_username"] == "admin@example.com"
+            assert data["admin_password"] == "***"
+
+    def test_update_instance_rejects_partial_deprecated_admin_fields(self, client, sample_instance):
+        """Update should enforce that deprecated admin fields are provided together."""
+        update_data = {"admin_url": "https://cluster.example.com:9443"}
+
+        with patch("redis_sre_agent.core.instances.get_instances") as mock_get:
+            mock_get.return_value = [sample_instance]
+
+            response = client.put("/api/v1/instances/test-instance-123", json=update_data)
+
+            assert response.status_code == 400
+            assert "Deprecated admin fields must be provided together" in response.json()["detail"]
+
+    def test_update_instance_rejects_unknown_cluster_id(self, client, sample_instance):
+        """Update should fail when cluster_id does not exist."""
+        update_data = {
+            "instance_type": "oss_cluster",
+            "cluster_id": "cluster-missing",
+        }
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.clusters.get_cluster_by_id") as mock_get_cluster,
+        ):
+            mock_get.return_value = [sample_instance]
+            mock_get_cluster.return_value = None
+
+            response = client.put("/api/v1/instances/test-instance-123", json=update_data)
+
+            assert response.status_code == 400
+            assert "cluster-missing" in response.json()["detail"]
+
+    def test_update_instance_rejects_incompatible_cluster_type(self, client, sample_instance):
+        """Update should fail when linked cluster type is incompatible."""
+        update_data = {
+            "instance_type": "redis_enterprise",
+            "cluster_id": "cluster-1",
+        }
+
+        from redis_sre_agent.core.clusters import RedisCluster
+
+        cluster = RedisCluster(
+            id="cluster-1",
+            name="OSS Cluster",
+            cluster_type="oss_cluster",
+            environment="test",
+            description="OSS cluster",
+        )
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.clusters.get_cluster_by_id") as mock_get_cluster,
+        ):
+            mock_get.return_value = [sample_instance]
+            mock_get_cluster.return_value = cluster
+
+            response = client.put("/api/v1/instances/test-instance-123", json=update_data)
+
+            assert response.status_code == 400
+            assert "incompatible" in response.json()["detail"]
+
+    def test_update_instance_with_valid_cluster_id(self, client, sample_instance):
+        """Update should succeed when cluster_id exists and is compatible."""
+        update_data = {
+            "instance_type": "oss_cluster",
+            "cluster_id": "cluster-1",
+        }
+
+        from redis_sre_agent.core.clusters import RedisCluster
+
+        cluster = RedisCluster(
+            id="cluster-1",
+            name="OSS Cluster",
+            cluster_type="oss_cluster",
+            environment="test",
+            description="OSS cluster",
+        )
+
+        with (
+            patch("redis_sre_agent.core.instances.get_instances") as mock_get,
+            patch("redis_sre_agent.core.instances.save_instances") as mock_save,
+            patch("redis_sre_agent.core.clusters.get_cluster_by_id") as mock_get_cluster,
+        ):
+            mock_get.return_value = [sample_instance]
+            mock_save.return_value = True
+            mock_get_cluster.return_value = cluster
+
+            response = client.put("/api/v1/instances/test-instance-123", json=update_data)
+
+            assert response.status_code == 200
+            assert response.json()["cluster_id"] == "cluster-1"
+            assert response.json()["instance_type"] == "oss_cluster"
 
     def test_update_instance_not_found(self, client):
         """Test instance update when instance not found."""

@@ -126,7 +126,6 @@ services:
     networks:
       sre-network:
         ipv4_address: 172.32.0.20
-
 networks:
   sre-network:
     driver: bridge

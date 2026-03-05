@@ -12,6 +12,7 @@ _COMMANDS = {
     "thread": "redis_sre_agent.cli.threads:thread",
     "schedule": "redis_sre_agent.cli.schedules:schedule",
     "instance": "redis_sre_agent.cli.instance:instance",
+    "cluster": "redis_sre_agent.cli.cluster:cluster",
     "task": "redis_sre_agent.cli.tasks:task",
     "knowledge": "redis_sre_agent.cli.knowledge:knowledge",
     "pipeline": "redis_sre_agent.cli.pipeline:pipeline",

@@ -12,9 +12,9 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator, model_validator
 from redisvl.query import CountQuery, FilterQuery
 from redisvl.query.filter import FilterExpression, Tag
 
@@ -115,17 +115,38 @@ class RedisInstance(BaseModel):
         ...,
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
-    admin_url: Optional[str] = Field(
-        None,
-        description="Redis Enterprise admin API URL (e.g., https://cluster.example.com:9443). Only for instance_type='redis_enterprise'.",
-    )
-    admin_username: Optional[str] = Field(
-        None,
-        description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
-    )
-    admin_password: Optional[SecretStr] = Field(
-        None,
-        description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
+    admin_url: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description=(
+                "DEPRECATED: Redis Enterprise admin API URL. Prefer configuring credentials "
+                "on linked RedisCluster and using cluster_id."
+            ),
+        ),
+    ] = None
+    admin_username: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description=(
+                "DEPRECATED: Redis Enterprise admin API username. Prefer configuring credentials "
+                "on linked RedisCluster and using cluster_id."
+            ),
+        ),
+    ] = None
+    admin_password: Annotated[
+        Optional[SecretStr],
+        Field(
+            deprecated=True,
+            description=(
+                "DEPRECATED: Redis Enterprise admin API password. Prefer configuring credentials "
+                "on linked RedisCluster and using cluster_id."
+            ),
+        ),
+    ] = None
+    cluster_id: Optional[str] = Field(
+        None, description="Associated cluster ID for this database instance (optional)"
     )
     # Redis Cloud identifiers
     redis_cloud_subscription_id: Optional[int] = Field(
@@ -190,6 +211,34 @@ class RedisInstance(BaseModel):
             raise ValueError(f"created_by must be 'user' or 'agent', got: {v}")
         return v
 
+    @model_validator(mode="after")
+    def normalize_cluster_id(self):
+        if isinstance(self.cluster_id, str):
+            cid = self.cluster_id.strip()
+            self.cluster_id = cid or None
+        if isinstance(self.admin_url, str):
+            admin_url = self.admin_url.strip()
+            self.admin_url = admin_url or None
+        if isinstance(self.admin_username, str):
+            admin_username = self.admin_username.strip()
+            self.admin_username = admin_username or None
+        admin_password_value = (
+            self.admin_password.get_secret_value()
+            if isinstance(self.admin_password, SecretStr)
+            else None
+        )
+        has_admin_url = bool(self.admin_url)
+        has_admin_username = bool(self.admin_username)
+        has_admin_password = bool(admin_password_value)
+        has_any_admin_field = has_admin_url or has_admin_username or has_admin_password
+        has_all_admin_fields = has_admin_url and has_admin_username and has_admin_password
+        if has_any_admin_field and not has_all_admin_fields:
+            raise ValueError(
+                "Deprecated admin fields must be provided together: "
+                "admin_url, admin_username, and admin_password."
+            )
+        return self
+
     async def get_bdb_uid(
         self,
         *,
@@ -201,6 +250,7 @@ class RedisInstance(BaseModel):
         """Discover the Redis Enterprise database UID (BDB ID) for this instance.
 
         Strategy:
+        - Uses deprecated instance admin credentials for compatibility mode.
         - If bdb_name is provided: fetch /v1/bdbs and return the uid for an exact name match.
         - Else: parse the port from redis_url or this instance's connection_url and match
                 against 'port' (non-TLS) or 'ssl_port' (TLS/rediss), falling back to
@@ -535,6 +585,7 @@ async def _upsert_instance_index_doc(instance: "RedisInstance") -> bool:
                 "environment": (instance.environment or "").lower(),
                 "usage": (instance.usage or "").lower(),
                 "instance_type": itype_val,
+                "cluster_id": instance.cluster_id or "",
                 "user_id": instance.user_id or "",
                 "status": (instance.status or "unknown").lower(),
                 "created_at": created_ts,
