@@ -756,7 +756,11 @@ JSON payload of analyses artifacts:
                     version="latest",
                     available_tool_names=list(tooldefs_by_name.keys()),
                 )
-                system_prompt = f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
+                system_prompt = (
+                    f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
+                    if startup_context.strip()
+                    else SRE_SYSTEM_PROMPT
+                )
 
                 # Add Redis Cloud-specific context if working with a cloud instance
                 if target_instance and target_instance.instance_type == "redis_cloud":

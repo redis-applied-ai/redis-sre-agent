@@ -159,6 +159,44 @@ class TestSRELangGraphAgent:
             available_tool_names=[],
         )
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_system_prompt_uses_base_prompt_when_startup_context_blank(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Blank startup context should not prepend empty lines to the system prompt."""
+        from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+
+        mock_build_startup_context.return_value = "   "
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="follow-up question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert sent_messages[0].content == SRE_SYSTEM_PROMPT
+
     def test_clear_conversation(self, mock_settings, mock_llm):
         """Test clearing conversation history."""
         with patch.object(SRELangGraphAgent, "__init__", lambda self: None):

@@ -783,6 +783,21 @@ class TestSkillHelpers:
 
     @pytest.mark.asyncio
     async def test_get_skill_helper_returns_full_content_for_skill(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "skill-0",
+                    "document_hash": "hash-skill",
+                    "chunk_index": 0,
+                    "name": "Incident Triage",
+                    "title": "Skill Doc",
+                    "source": "docs/latest/skill",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
         fragments_result = {
             "document_hash": "hash-skill",
             "title": "Skill Doc",
@@ -797,16 +812,14 @@ class TestSkillHelpers:
 
         with (
             patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
                 "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
                 new_callable=AsyncMock,
-                return_value={
-                    "skills": [
-                        {
-                            "name": "Incident Triage",
-                            "document_hash": "hash-skill",
-                        }
-                    ]
-                },
+                side_effect=AssertionError("should not call skills_check_helper on exact match"),
             ),
             patch(
                 "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
@@ -823,18 +836,31 @@ class TestSkillHelpers:
 
     @pytest.mark.asyncio
     async def test_get_skill_helper_rejects_non_skill_document(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "skill-0",
+                    "document_hash": "hash-runbook",
+                    "chunk_index": 0,
+                    "name": "Incident Triage",
+                    "title": "Runbook",
+                    "source": "docs/latest/runbook",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
         with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
             patch(
                 "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
                 new_callable=AsyncMock,
-                return_value={
-                    "skills": [
-                        {
-                            "name": "Incident Triage",
-                            "document_hash": "hash-runbook",
-                        }
-                    ]
-                },
+                side_effect=AssertionError("should not call skills_check_helper on exact match"),
             ),
             patch(
                 "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from opentelemetry import trace
 from redisvl.query import FilterQuery, HybridQuery, VectorQuery, VectorRangeQuery
+from redisvl.query.filter import Tag
 from ulid import ULID
 
 from redis_sre_agent.core.config import Settings
@@ -344,19 +345,79 @@ async def skills_check_helper(
 
 async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -> Dict[str, Any]:
     """Get complete content for a skill document by skill name."""
-    skills_result = await skills_check_helper(query=None, limit=1000, offset=0, version=version)
-    skills = skills_result.get("skills") or []
+    normalized_name = skill_name.strip()
+    if not normalized_name:
+        return {
+            "skill_name": skill_name,
+            "error": "Skill name is required",
+        }
 
+    return_fields = [
+        "id",
+        "document_hash",
+        "chunk_index",
+        "title",
+        "content",
+        "source",
+        "name",
+        "summary",
+        "priority",
+        "pinned",
+        "meta_name",
+        "meta_summary",
+        "meta_priority",
+        "meta_pinned",
+        "doc_type",
+        "version",
+    ]
+
+    async def _query_by_name(index_type: str, *, legacy_filter: Optional[Any] = None) -> list[dict]:
+        index = await _get_index_for_type(index_type)
+        query = FilterQuery(
+            return_fields=return_fields,
+            num_results=50,
+        )
+        filter_expr = Tag("name") == normalized_name
+        if legacy_filter is not None:
+            filter_expr = legacy_filter & filter_expr
+        query.set_filter(filter_expr)
+        rows = await index.query(query)
+        return [{**row, "_index_type": index_type} for row in rows]
+
+    candidates = await _query_by_name("skills")
+    if not candidates:
+        candidates = await _query_by_name("knowledge", legacy_filter=(Tag("doc_type") == "skill"))
+
+    candidates = [
+        doc
+        for doc in _dedupe_docs(candidates)
+        if _doc_matches_requested_version(doc, version) and not _doc_is_pinned(doc)
+    ]
+
+    by_document: Dict[str, Dict[str, Any]] = {}
+    for doc in candidates:
+        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
+        if not key:
+            continue
+        existing = by_document.get(key)
+        if existing is None or _doc_chunk_index(doc) < _doc_chunk_index(existing):
+            by_document[key] = doc
+
+    ordered = sorted(
+        by_document.values(),
+        key=lambda d: (_doc_name(d).lower(), str(d.get("source", "")).lower()),
+    )
     target = next(
-        (
-            skill
-            for skill in skills
-            if str(skill.get("name", "")).strip().lower() == skill_name.strip().lower()
-        ),
-        None,
+        (doc for doc in ordered if _doc_name(doc).strip().lower() == normalized_name.lower()),
+        ordered[0] if ordered else None,
     )
 
     if target is None:
+        # Fallback only for the not-found path: provide a short list of nearby skills.
+        skills_result = await skills_check_helper(
+            query=skill_name, limit=50, offset=0, version=version
+        )
+        skills = skills_result.get("skills") or []
         return {
             "skill_name": skill_name,
             "error": "Skill not found",

@@ -149,7 +149,11 @@ class KnowledgeOnlyAgent:
                     available_tool_names=list(tooldefs_by_name.keys()),
                 )
                 system_message = SystemMessage(
-                    content=f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
+                    content=(
+                        f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
+                        if startup_context.strip()
+                        else KNOWLEDGE_SYSTEM_PROMPT
+                    )
                 )
                 messages = [system_message] + messages
 
