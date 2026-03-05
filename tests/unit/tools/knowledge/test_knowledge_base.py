@@ -245,8 +245,6 @@ async def test_search_support_tickets_allows_threshold_disable_with_none():
     ) as mock_search:
         mock_search.return_value = {"results": []}
 
-        await provider.search_support_tickets(
-            query="connection reset", distance_threshold=None
-        )
+        await provider.search_support_tickets(query="connection reset", distance_threshold=None)
 
         assert mock_search.call_args.kwargs["distance_threshold"] is None
