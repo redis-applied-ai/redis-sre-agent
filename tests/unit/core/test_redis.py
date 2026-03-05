@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch
 import pytest
 
 from redis_sre_agent.core.redis import (
-    SRE_INSTANCES_SCHEMA,
     SRE_KNOWLEDGE_SCHEMA,
     create_indices,
     get_knowledge_index,

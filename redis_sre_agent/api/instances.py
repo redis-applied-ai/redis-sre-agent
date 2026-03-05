@@ -6,7 +6,15 @@ from typing import Annotated, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_serializer,
+    field_validator,
+)
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core import instances as core_instances
@@ -602,14 +610,21 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
 
         # Create updated instance
         updated_instance = current_instance.model_copy(update=update_data)
-        instances[instance_index] = updated_instance
+        try:
+            # Enforce final domain validation after merging partial updates.
+            validated_instance = core_instances.RedisInstance(
+                **updated_instance.model_dump(mode="json")
+            )
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        instances[instance_index] = validated_instance
 
         # Save to Redis
         if not await core_instances.save_instances(instances):
             raise HTTPException(status_code=500, detail="Failed to save updated instance")
 
-        logger.info(f"Updated Redis instance: {updated_instance.name} ({updated_instance.id})")
-        return to_response(updated_instance)
+        logger.info(f"Updated Redis instance: {validated_instance.name} ({validated_instance.id})")
+        return to_response(validated_instance)
 
     except HTTPException:
         raise
