@@ -8,12 +8,12 @@ For interactive docs, see http://localhost:8000/docs
 
 - GET / — root_health_check
 - GET /api/v1/ — root_health_check
-- GET /api/v1/health — detailed_health_check
 - GET /api/v1/clusters — list_clusters
 - POST /api/v1/clusters — create_cluster
 - DELETE /api/v1/clusters/{cluster_id} — delete_cluster
 - GET /api/v1/clusters/{cluster_id} — get_cluster
 - PUT /api/v1/clusters/{cluster_id} — update_cluster
+- GET /api/v1/health — detailed_health_check
 - GET /api/v1/instances — list_instances
 - POST /api/v1/instances — create_instance
 - POST /api/v1/instances/test-admin-api — test_admin_api_connection
@@ -63,11 +63,3 @@ For interactive docs, see http://localhost:8000/docs
 - GET /docs/oauth2-redirect — swagger_ui_redirect
 - GET /openapi.json — openapi
 - GET /redoc — redoc_html
-
-
-### Compatibility Notes
-
-- `RedisInstance.cluster_id` is optional; it is only required when an instance is explicitly linked to a cluster.
-- `RedisInstance.admin_url`, `admin_username`, and `admin_password` are still accepted but deprecated.
-- Prefer creating `RedisCluster` records and linking instances with `cluster_id`.
-- API/worker startup runs an automatic backfill migration to create/link clusters from legacy instance data.
