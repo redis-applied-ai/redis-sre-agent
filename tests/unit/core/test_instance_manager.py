@@ -192,7 +192,7 @@ class TestRedisInstanceModel:
         assert dumped["connection_url"] == "redis://secret:pass@localhost:6379"
 
     def test_admin_password_serialization(self):
-        """Test admin_password serialization with SecretStr."""
+        """Legacy admin_password remains available in compatibility mode."""
         inst = RedisInstance(
             id="redis-1",
             name="Test",
@@ -201,11 +201,69 @@ class TestRedisInstanceModel:
             usage="cache",
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
+            admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
             admin_password=SecretStr("admin-secret"),
         )
         # The serializer should return the secret value when dumping to JSON
         dumped = inst.model_dump(mode="json")
         assert dumped["admin_password"] == "admin-secret"
+
+    def test_deprecated_admin_fields_all_or_none_accepts_all(self):
+        inst = RedisInstance(
+            id="redis-1",
+            name="Test",
+            connection_url="redis://localhost:6379",
+            environment="dev",
+            usage="cache",
+            description="Test",
+            instance_type=RedisInstanceType.redis_enterprise,
+            admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("admin-secret"),
+        )
+        assert inst.admin_url == "https://cluster.example.com:9443"
+        assert inst.admin_username == "admin"
+        assert inst.admin_password is not None
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"admin_url": "https://cluster.example.com:9443"},
+            {"admin_username": "admin"},
+            {"admin_password": SecretStr("admin-secret")},
+            {
+                "admin_url": "https://cluster.example.com:9443",
+                "admin_username": "admin",
+            },
+            {
+                "admin_url": "https://cluster.example.com:9443",
+                "admin_password": SecretStr("admin-secret"),
+            },
+            {
+                "admin_username": "admin",
+                "admin_password": SecretStr("admin-secret"),
+            },
+        ],
+    )
+    def test_deprecated_admin_fields_all_or_none_rejects_partial(self, kwargs):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Deprecated admin fields must be provided together: "
+                "admin_url, admin_username, and admin_password"
+            ),
+        ):
+            RedisInstance(
+                id="redis-1",
+                name="Test",
+                connection_url="redis://localhost:6379",
+                environment="dev",
+                usage="cache",
+                description="Test",
+                instance_type=RedisInstanceType.redis_enterprise,
+                **kwargs,
+            )
 
 
 class TestGetBdbUid:
@@ -286,6 +344,8 @@ class TestGetBdbUid:
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
             admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("password"),
         )
 
         mock_response = MagicMock()
@@ -316,6 +376,8 @@ class TestGetBdbUid:
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
             admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("password"),
         )
 
         mock_response = MagicMock()
@@ -345,6 +407,8 @@ class TestGetBdbUid:
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
             admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("password"),
         )
 
         with patch("httpx.AsyncClient", side_effect=Exception("Connection error")):
@@ -1520,6 +1584,8 @@ class TestGetInstanceByIdEdgeCases:
             "usage": "cache",
             "description": "Test",
             "instance_type": "redis_enterprise",
+            "admin_url": "https://cluster.example.com:9443",
+            "admin_username": "admin",
             "admin_password": "encrypted-password",
         }
         mock_redis.hget = AsyncMock(return_value=json.dumps(inst_data))
@@ -1547,6 +1613,8 @@ class TestGetBdbUidEdgeCases:
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
             admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("password"),
         )
 
         mock_response = MagicMock()
@@ -1581,6 +1649,8 @@ class TestGetBdbUidEdgeCases:
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
             admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("password"),
         )
 
         mock_response = MagicMock()
@@ -1609,6 +1679,8 @@ class TestGetBdbUidEdgeCases:
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
             admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("password"),
         )
 
         mock_response = MagicMock()
@@ -1640,6 +1712,8 @@ class TestGetBdbUidEdgeCases:
             description="Test",
             instance_type=RedisInstanceType.redis_enterprise,
             admin_url="https://cluster.example.com:9443",
+            admin_username="admin",
+            admin_password=SecretStr("password"),
         )
 
         mock_response = MagicMock()
@@ -1727,6 +1801,8 @@ class TestGetInstancesWithAdminPassword:
             "usage": "cache",
             "description": "Test",
             "instance_type": "redis_enterprise",
+            "admin_url": "https://cluster.example.com:9443",
+            "admin_username": "admin",
             "admin_password": "encrypted-password",
         }
         mock_index.query = AsyncMock(return_value=[{"data": json.dumps(inst_data)}])

@@ -8,6 +8,11 @@ For interactive docs, see http://localhost:8000/docs
 
 - GET / — root_health_check
 - GET /api/v1/ — root_health_check
+- GET /api/v1/clusters — list_clusters
+- POST /api/v1/clusters — create_cluster
+- DELETE /api/v1/clusters/{cluster_id} — delete_cluster
+- GET /api/v1/clusters/{cluster_id} — get_cluster
+- PUT /api/v1/clusters/{cluster_id} — update_cluster
 - GET /api/v1/health — detailed_health_check
 - GET /api/v1/instances — list_instances
 - POST /api/v1/instances — create_instance

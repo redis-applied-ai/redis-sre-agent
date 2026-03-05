@@ -37,6 +37,13 @@ Generated from the Click command tree.
 - instance test — Test connection to a configured instance by ID.
 - instance test-url — Test a Redis connection URL without creating an instance.
 - instance update — Update fields of an existing instance.
+- cluster — Manage Redis clusters
+- cluster backfill-instance-links — Backfill cluster links for existing instance records.
+- cluster create — Create a new Redis cluster.
+- cluster delete — Delete a cluster by ID.
+- cluster get — Get a single cluster by ID.
+- cluster list — List configured Redis clusters.
+- cluster update — Update fields of an existing cluster.
 - task — Task management commands.
 - task delete — Delete a single task by TASK_ID.
 - task get — Get a task by TASK_ID and show details.

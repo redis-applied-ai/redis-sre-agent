@@ -1709,11 +1709,28 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
                 except Exception as e:
                     logger.error(f"Failed to save updated instance type: {e}")
 
-        # Validate Redis Enterprise instances have required admin credentials
-        # Check for None, empty string, or whitespace-only strings
-        has_admin_url = (
-            target_instance and target_instance.admin_url and target_instance.admin_url.strip()
-        )
+        # Validate Redis Enterprise instances have required admin credentials.
+        # Resolve cluster-linked credentials first and fallback to deprecated
+        # instance admin_* fields for compatibility mode.
+        has_admin_url = False
+        if target_instance and target_instance.instance_type == "redis_enterprise":
+            (
+                target_instance,
+                enterprise_admin_source,
+            ) = await ToolManager.resolve_redis_enterprise_admin_instance(target_instance)
+            has_admin_url = bool(target_instance.admin_url and target_instance.admin_url.strip())
+            if enterprise_admin_source == "cluster":
+                logger.info(
+                    "Resolved Redis Enterprise admin credentials from cluster_id '%s' for instance '%s'",
+                    target_instance.cluster_id,
+                    target_instance.name,
+                )
+            elif enterprise_admin_source == "instance":
+                logger.warning(
+                    "Using deprecated instance admin_* fields for Redis Enterprise instance '%s'. "
+                    "Prefer cluster_id + RedisCluster admin credentials.",
+                    target_instance.name,
+                )
 
         if (
             target_instance
@@ -1733,6 +1750,10 @@ To enable Redis Enterprise cluster monitoring and diagnostics, please provide:
 1. **Admin API URL** (typically port 9443)
 2. **Admin Username** (e.g., `admin@redis.com`)
 3. **Admin Password**
+
+You can provide these either:
+- on a linked **RedisCluster** (recommended), then set the instance `cluster_id`, or
+- on deprecated instance-level `admin_*` fields (compatibility mode)
 
 **For example, if you're using the agen'ts Docker Compose setup**:
 - Admin URL: `https://redis-enterprise:9443`

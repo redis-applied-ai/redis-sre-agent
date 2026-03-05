@@ -76,8 +76,12 @@ export interface RedisInstance {
   monitoring_identifier?: string;
   logging_identifier?: string;
   instance_type?: string;
+  cluster_id?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_url?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_username?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_password?: string;
   // Redis Cloud identifiers
   redis_cloud_subscription_id?: number;
@@ -123,8 +127,12 @@ export interface CreateInstanceRequest {
   monitoring_identifier?: string;
   logging_identifier?: string;
   instance_type?: string;
+  cluster_id?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_url?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_username?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_password?: string;
   // Redis Cloud identifiers
   redis_cloud_subscription_id?: number;
@@ -145,8 +153,12 @@ export interface UpdateInstanceRequest {
   monitoring_identifier?: string;
   logging_identifier?: string;
   instance_type?: string;
+  cluster_id?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_url?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_username?: string;
+  /** @deprecated Prefer using cluster_id + RedisCluster credentials. */
   admin_password?: string;
   // Redis Cloud identifiers
   redis_cloud_subscription_id?: number;
@@ -167,6 +179,74 @@ export interface ConnectionTestResult {
   host?: string;
   port?: number;
   tested_at: string;
+}
+
+export interface RedisCluster {
+  id: string;
+  name: string;
+  cluster_type?: "oss_cluster" | "redis_enterprise" | "redis_cloud" | "unknown";
+  environment: string;
+  description: string;
+  notes?: string;
+  admin_url?: string;
+  admin_username?: string;
+  admin_password?: string;
+  status?: string;
+  version?: string;
+  last_checked?: string;
+  created_at: string;
+  updated_at: string;
+  created_by?: "user" | "agent";
+  user_id?: string;
+}
+
+export interface ListClustersParams {
+  environment?: string;
+  status?: string;
+  cluster_type?: string;
+  user_id?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ClusterListResponse {
+  clusters: RedisCluster[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CreateClusterRequest {
+  name: string;
+  cluster_type?: "oss_cluster" | "redis_enterprise" | "redis_cloud" | "unknown";
+  environment: string;
+  description: string;
+  notes?: string;
+  admin_url?: string;
+  admin_username?: string;
+  admin_password?: string;
+  status?: string;
+  version?: string;
+  last_checked?: string;
+  created_by?: "user" | "agent";
+  user_id?: string;
+}
+
+export interface UpdateClusterRequest {
+  name?: string;
+  cluster_type?: "oss_cluster" | "redis_enterprise" | "redis_cloud" | "unknown";
+  environment?: string;
+  description?: string;
+  notes?: string;
+  admin_url?: string;
+  admin_username?: string;
+  admin_password?: string;
+  status?: string;
+  version?: string;
+  last_checked?: string;
+  created_by?: "user" | "agent";
+  user_id?: string;
 }
 
 export interface TestConnectionUrlRequest {
@@ -747,6 +827,95 @@ class SREAgentAPI {
       instanceId,
     );
     return triageResponse.thread_id;
+  }
+
+  // Cluster Management Methods
+  async listClusters(params?: ListClustersParams): Promise<ClusterListResponse> {
+    const url = new URL(`${this.tasksBaseUrl}/clusters`);
+
+    if (params) {
+      if (params.environment)
+        url.searchParams.set("environment", params.environment);
+      if (params.status) url.searchParams.set("status", params.status);
+      if (params.cluster_type)
+        url.searchParams.set("cluster_type", params.cluster_type);
+      if (params.user_id) url.searchParams.set("user_id", params.user_id);
+      if (params.search) url.searchParams.set("search", params.search);
+      if (params.limit !== undefined)
+        url.searchParams.set("limit", params.limit.toString());
+      if (params.offset !== undefined)
+        url.searchParams.set("offset", params.offset.toString());
+    }
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      throw new Error(`Failed to list clusters: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async createCluster(request: CreateClusterRequest): Promise<RedisCluster> {
+    const response = await fetch(`${this.tasksBaseUrl}/clusters`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        error.detail || `Failed to create cluster: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async getCluster(clusterId: string): Promise<RedisCluster> {
+    const response = await fetch(`${this.tasksBaseUrl}/clusters/${clusterId}`);
+    if (!response.ok) {
+      throw new Error(`Failed to get cluster: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async updateCluster(
+    clusterId: string,
+    request: UpdateClusterRequest,
+  ): Promise<RedisCluster> {
+    const response = await fetch(`${this.tasksBaseUrl}/clusters/${clusterId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        error.detail || `Failed to update cluster: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async deleteCluster(clusterId: string): Promise<{ message: string }> {
+    const response = await fetch(`${this.tasksBaseUrl}/clusters/${clusterId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        error.detail || `Failed to delete cluster: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
   }
 
   // Instance Management Methods

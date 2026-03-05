@@ -639,8 +639,8 @@ class TestYamlConfigLoading:
     def test_yaml_with_simple_settings(self):
         """Test loading simple settings from YAML.
 
-        Note: We test app_name and debug which don't have values in the
-        workspace's config.yaml or .env files.
+        Note: Instantiate Settings with _env_file=None so local .env values
+        cannot override YAML in this test.
         """
         yaml_content = {
             "app_name": "test-app-from-yaml",
@@ -660,7 +660,7 @@ class TestYamlConfigLoading:
             ):
                 from redis_sre_agent.core.config import Settings
 
-                settings = Settings()
+                settings = Settings(_env_file=None)
 
                 # These values should come from our test YAML
                 assert settings.app_name == "test-app-from-yaml"

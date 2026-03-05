@@ -1,7 +1,10 @@
 """Tests for ToolManager."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
+from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
@@ -304,3 +307,95 @@ class TestToolDefinitionRepresentation:
         repr_str = repr(tool)
         assert "ToolDefinition(name=empty_params_tool" in repr_str
         assert "parameters=[]" in repr_str
+
+
+class TestEnterpriseCredentialResolution:
+    """Tests for Redis Enterprise cluster-first credential resolution in ToolManager."""
+
+    @pytest.mark.asyncio
+    async def test_loads_re_admin_tools_from_linked_cluster_credentials(self):
+        """Redis Enterprise instance should load re_admin tools from linked cluster creds."""
+        from redis_sre_agent.core.instances import RedisInstance
+
+        instance = RedisInstance(
+            id="re-inst-1",
+            name="enterprise-db",
+            connection_url="redis://localhost:12000",
+            environment="test",
+            usage="cache",
+            description="enterprise instance",
+            instance_type="redis_enterprise",
+            cluster_id="cluster-1",
+        )
+        cluster = RedisCluster(
+            id="cluster-1",
+            name="enterprise-cluster",
+            cluster_type=RedisClusterType.redis_enterprise,
+            environment="test",
+            description="cluster creds",
+            admin_url="https://cluster.example.com:9443",
+            admin_username="admin@redis.com",
+            admin_password="secret",
+        )
+
+        with patch(
+            "redis_sre_agent.core.clusters.get_cluster_by_id",
+            new=AsyncMock(return_value=cluster),
+        ):
+            async with ToolManager(redis_instance=instance) as mgr:
+                tool_names = [t.name for t in mgr.get_tools()]
+                assert any(name.startswith("re_admin_") for name in tool_names)
+                assert mgr.redis_instance.admin_url == "https://cluster.example.com:9443"
+                assert mgr.redis_instance.admin_username == "admin@redis.com"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_deprecated_instance_admin_fields(self):
+        """If linked cluster is unavailable, fallback to deprecated instance admin fields."""
+        from redis_sre_agent.core.instances import RedisInstance
+
+        instance = RedisInstance(
+            id="re-inst-2",
+            name="enterprise-db-fallback",
+            connection_url="redis://localhost:12001",
+            environment="test",
+            usage="cache",
+            description="enterprise instance fallback",
+            instance_type="redis_enterprise",
+            cluster_id="missing-cluster",
+            admin_url="https://legacy-instance.example.com:9443",
+            admin_username="legacy-admin@redis.com",
+            admin_password="legacy-secret",
+        )
+
+        with patch(
+            "redis_sre_agent.core.clusters.get_cluster_by_id",
+            new=AsyncMock(return_value=None),
+        ):
+            async with ToolManager(redis_instance=instance) as mgr:
+                tool_names = [t.name for t in mgr.get_tools()]
+                assert any(name.startswith("re_admin_") for name in tool_names)
+                assert mgr.redis_instance.admin_url == "https://legacy-instance.example.com:9443"
+
+    @pytest.mark.asyncio
+    async def test_skips_re_admin_tools_when_no_cluster_or_instance_admin_credentials(self):
+        """Without cluster or instance admin URL, re_admin tools should not load."""
+        from redis_sre_agent.core.instances import RedisInstance
+
+        instance = RedisInstance(
+            id="re-inst-3",
+            name="enterprise-db-no-admin",
+            connection_url="redis://localhost:12002",
+            environment="test",
+            usage="cache",
+            description="enterprise instance no admin creds",
+            instance_type="redis_enterprise",
+            cluster_id="missing-cluster",
+        )
+
+        with patch(
+            "redis_sre_agent.core.clusters.get_cluster_by_id",
+            new=AsyncMock(return_value=None),
+        ):
+            async with ToolManager(redis_instance=instance) as mgr:
+                tool_names = [t.name for t in mgr.get_tools()]
+                assert not any(name.startswith("re_admin_") for name in tool_names)

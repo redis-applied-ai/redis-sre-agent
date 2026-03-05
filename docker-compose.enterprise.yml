@@ -36,7 +36,7 @@ services:
       start_period: 60s
     networks:
       sre-network:
-        ipv4_address: 172.28.0.10
+        ipv4_address: 172.32.0.10
         aliases:
           - redis-enterprise  # Add alias for backward compatibility
 
@@ -68,7 +68,7 @@ services:
       start_period: 60s
     networks:
       sre-network:
-        ipv4_address: 172.28.0.11
+        ipv4_address: 172.32.0.11
     depends_on:
       - redis-enterprise-node1
 
@@ -100,7 +100,7 @@ services:
       start_period: 60s
     networks:
       sre-network:
-        ipv4_address: 172.28.0.12
+        ipv4_address: 172.32.0.12
     depends_on:
       - redis-enterprise-node1
 
@@ -125,7 +125,7 @@ services:
       - redis-enterprise-node1
     networks:
       sre-network:
-        ipv4_address: 172.28.0.20
+        ipv4_address: 172.32.0.20
 
 volumes:
   redis_enterprise_node1_data:

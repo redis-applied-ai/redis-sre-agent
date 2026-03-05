@@ -2,12 +2,21 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_serializer,
+    field_validator,
+)
 
+from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core import instances as core_instances
 
 logger = logging.getLogger(__name__)
@@ -43,6 +52,7 @@ def to_response(instance: "core_instances.RedisInstance") -> "RedisInstanceRespo
         admin_url=instance.admin_url,
         admin_username=instance.admin_username,
         admin_password="***" if admin_pwd else None,
+        cluster_id=instance.cluster_id,
         status=instance.status,
         version=instance.version,
         memory=instance.memory,
@@ -73,9 +83,28 @@ class RedisInstanceResponse(BaseModel):
     monitoring_identifier: Optional[str] = None
     logging_identifier: Optional[str] = None
     instance_type: Optional[str] = "unknown"
-    admin_url: Optional[str] = None
-    admin_username: Optional[str] = None
-    admin_password: Optional[str] = None  # Always masked as "***"
+    admin_url: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin URL on RedisCluster.",
+        ),
+    ] = None
+    admin_username: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin username on RedisCluster.",
+        ),
+    ] = None
+    admin_password: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin password on RedisCluster.",
+        ),
+    ] = None
+    cluster_id: Optional[str] = None
     status: Optional[str] = "unknown"
     version: Optional[str] = None
     memory: Optional[str] = None
@@ -102,8 +131,74 @@ class InstanceListResponse(BaseModel):
     offset: int = Field(..., description="Number of results skipped")
 
 
+def _normalize_instance_type(instance_type: Optional[str]) -> str:
+    return (instance_type or "unknown").strip().lower()
+
+
+def _normalize_cluster_id(cluster_id: Optional[str]) -> Optional[str]:
+    if cluster_id is None:
+        return None
+    if isinstance(cluster_id, str):
+        normalized = cluster_id.strip()
+        return normalized or None
+    return str(cluster_id)
+
+
+async def _validate_instance_cluster_link(
+    *,
+    cluster_id: Optional[str],
+    instance_type: Optional[str],
+) -> None:
+    """Validate cluster existence and type compatibility for an instance link."""
+    normalized_cluster_id = _normalize_cluster_id(cluster_id)
+    if normalized_cluster_id is None:
+        return
+
+    cluster = await core_clusters.get_cluster_by_id(normalized_cluster_id)
+    if not cluster:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cluster with ID '{normalized_cluster_id}' not found",
+        )
+
+    normalized_instance_type = _normalize_instance_type(instance_type)
+    cluster_type = (
+        cluster.cluster_type.value
+        if hasattr(cluster.cluster_type, "value")
+        else str(cluster.cluster_type).strip().lower()
+    )
+
+    compatible_cluster_types = {
+        "redis_enterprise": {"redis_enterprise"},
+        "oss_cluster": {"oss_cluster"},
+        "redis_cloud": {"redis_cloud"},
+    }
+    allowed_cluster_types = compatible_cluster_types.get(normalized_instance_type)
+    if allowed_cluster_types and cluster_type not in allowed_cluster_types:
+        allowed_list = ", ".join(sorted(allowed_cluster_types))
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"instance_type '{normalized_instance_type}' is incompatible with cluster_type "
+                f"'{cluster_type}'. Allowed cluster_type(s): {allowed_list}"
+            ),
+        )
+
+
+def _uses_deprecated_admin_fields(
+    admin_url: Optional[str], admin_username: Optional[str], admin_password: Optional[object]
+) -> bool:
+    return (
+        bool((admin_url or "").strip())
+        or bool((admin_username or "").strip())
+        or bool(admin_password)
+    )
+
+
 class CreateInstanceRequest(BaseModel):
     """Request model for creating a Redis instance."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     connection_url: SecretStr = Field(
@@ -124,17 +219,29 @@ class CreateInstanceRequest(BaseModel):
         "unknown",
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
-    admin_url: Optional[str] = Field(
-        None,
-        description="Redis Enterprise admin API URL. Only for instance_type='redis_enterprise'.",
-    )
-    admin_username: Optional[str] = Field(
-        None,
-        description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
-    )
-    admin_password: Optional[SecretStr] = Field(
-        None,
-        description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
+    admin_url: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin URL on RedisCluster.",
+        ),
+    ] = None
+    admin_username: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin username on RedisCluster.",
+        ),
+    ] = None
+    admin_password: Annotated[
+        Optional[SecretStr],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin password on RedisCluster.",
+        ),
+    ] = None
+    cluster_id: Optional[str] = Field(
+        None, description="Associated cluster ID for this database instance (optional)."
     )
     # Redis Cloud identifiers (optional)
     redis_cloud_subscription_id: Optional[int] = Field(
@@ -197,9 +304,16 @@ class CreateInstanceRequest(BaseModel):
             raise ValueError(f"Environment must be one of: {', '.join(allowed_environments)}")
         return v
 
+    @field_validator("cluster_id")
+    @classmethod
+    def validate_cluster_id(cls, v: Optional[str]) -> Optional[str]:
+        return _normalize_cluster_id(v)
+
 
 class UpdateInstanceRequest(BaseModel):
     """Request model for updating a Redis instance."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
     connection_url: Optional[SecretStr] = Field(
@@ -242,17 +356,29 @@ class UpdateInstanceRequest(BaseModel):
         None,
         description="Redis instance type: oss_single, oss_cluster, redis_enterprise, redis_cloud, unknown",
     )
-    admin_url: Optional[str] = Field(
-        None,
-        description="Redis Enterprise admin API URL. Only for instance_type='redis_enterprise'.",
-    )
-    admin_username: Optional[str] = Field(
-        None,
-        description="Redis Enterprise admin API username. Only for instance_type='redis_enterprise'.",
-    )
-    admin_password: Optional[SecretStr] = Field(
-        None,
-        description="Redis Enterprise admin API password. Only for instance_type='redis_enterprise'.",
+    admin_url: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin URL on RedisCluster.",
+        ),
+    ] = None
+    admin_username: Annotated[
+        Optional[str],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin username on RedisCluster.",
+        ),
+    ] = None
+    admin_password: Annotated[
+        Optional[SecretStr],
+        Field(
+            deprecated=True,
+            description="DEPRECATED: Prefer configuring Redis Enterprise admin password on RedisCluster.",
+        ),
+    ] = None
+    cluster_id: Optional[str] = Field(
+        None, description="Associated cluster ID for this database instance (optional)."
     )
     # Redis Cloud identifiers (optional)
     redis_cloud_subscription_id: Optional[int] = Field(
@@ -275,6 +401,11 @@ class UpdateInstanceRequest(BaseModel):
     version: Optional[str] = None
     memory: Optional[str] = None
     connections: Optional[int] = None
+
+    @field_validator("cluster_id")
+    @classmethod
+    def validate_cluster_id(cls, v: Optional[str]) -> Optional[str]:
+        return _normalize_cluster_id(v)
 
 
 @router.get("/instances", response_model=InstanceListResponse)
@@ -337,6 +468,18 @@ async def create_instance(request: CreateInstanceRequest):
                 status_code=400, detail=f"Instance with name '{request.name}' already exists"
             )
 
+        await _validate_instance_cluster_link(
+            cluster_id=request.cluster_id,
+            instance_type=request.instance_type,
+        )
+        if _uses_deprecated_admin_fields(
+            request.admin_url, request.admin_username, request.admin_password
+        ):
+            logger.warning(
+                "Deprecated instance admin_* fields used for instance '%s'. Prefer cluster_id + RedisCluster credentials.",
+                request.name,
+            )
+
         # Create new instance
         instance_id = f"redis-{request.environment}-{int(datetime.now().timestamp())}"
         new_instance = core_instances.RedisInstance(
@@ -354,6 +497,7 @@ async def create_instance(request: CreateInstanceRequest):
             admin_url=request.admin_url,
             admin_username=request.admin_username,
             admin_password=request.admin_password,
+            cluster_id=request.cluster_id,
             # Redis Cloud identifiers
             redis_cloud_subscription_id=request.redis_cloud_subscription_id,
             redis_cloud_database_id=request.redis_cloud_database_id,
@@ -440,16 +584,47 @@ async def update_instance(instance_id: str, request: UpdateInstanceRequest):
                 logger.info(f"Skipping masked admin_password in update for {current_instance.name}")
                 del update_data["admin_password"]
 
+        effective_instance_type = (
+            update_data["instance_type"]
+            if "instance_type" in update_data and update_data["instance_type"] is not None
+            else current_instance.instance_type
+        )
+        effective_cluster_id = (
+            update_data["cluster_id"]
+            if "cluster_id" in update_data
+            else current_instance.cluster_id
+        )
+        await _validate_instance_cluster_link(
+            cluster_id=effective_cluster_id,
+            instance_type=effective_instance_type,
+        )
+        if _uses_deprecated_admin_fields(
+            update_data.get("admin_url"),
+            update_data.get("admin_username"),
+            update_data.get("admin_password"),
+        ):
+            logger.warning(
+                "Deprecated instance admin_* fields updated for instance '%s'. Prefer cluster_id + RedisCluster credentials.",
+                current_instance.name,
+            )
+
         # Create updated instance
         updated_instance = current_instance.model_copy(update=update_data)
-        instances[instance_index] = updated_instance
+        try:
+            # Enforce final domain validation after merging partial updates.
+            validated_instance = core_instances.RedisInstance(
+                **updated_instance.model_dump(mode="json")
+            )
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        instances[instance_index] = validated_instance
 
         # Save to Redis
         if not await core_instances.save_instances(instances):
             raise HTTPException(status_code=500, detail="Failed to save updated instance")
 
-        logger.info(f"Updated Redis instance: {updated_instance.name} ({updated_instance.id})")
-        return to_response(updated_instance)
+        logger.info(f"Updated Redis instance: {validated_instance.name} ({validated_instance.id})")
+        return to_response(validated_instance)
 
     except HTTPException:
         raise
