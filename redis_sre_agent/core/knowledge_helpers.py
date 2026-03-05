@@ -1053,6 +1053,7 @@ async def get_all_document_fragments(
                 "priority",
                 "pinned",
                 "product_labels",
+                "version",
             ],
             num_results=1000,  # Set high limit to get all chunks
         )

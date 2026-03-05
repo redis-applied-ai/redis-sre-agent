@@ -592,6 +592,45 @@ class TestGetAllDocumentFragments:
         assert "error" in result
         assert "Connection error" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_get_all_fragments_version_filter_uses_version_tag(self):
+        """Version filtering should work when source URL does not encode version."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "chunk_index": "0",
+                    "content": "Version 7.4 content",
+                    "title": "Doc",
+                    "source": "docs/path/no-version",
+                    "version": "7.4",
+                },
+                {
+                    "chunk_index": "1",
+                    "content": "Version 7.2 content",
+                    "title": "Doc",
+                    "source": "docs/path/no-version",
+                    "version": "7.2",
+                },
+            ]
+        )
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+            new_callable=AsyncMock,
+            return_value=mock_index,
+        ):
+            result = await get_all_document_fragments(
+                document_hash="test-hash-versioned",
+                include_metadata=False,
+                version="7.4",
+            )
+
+        query_obj = mock_index.query.call_args.args[0]
+        assert "version" in query_obj._return_fields
+        assert result["fragments_count"] == 1
+        assert result["fragments"][0]["content"] == "Version 7.4 content"
+
 
 class TestGetRelatedDocumentFragments:
     """Test get_related_document_fragments function."""
