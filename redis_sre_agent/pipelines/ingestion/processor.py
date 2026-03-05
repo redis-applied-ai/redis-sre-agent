@@ -520,6 +520,9 @@ class IngestionPipeline:
         metadata_pattern = r"^\*\*([^*]+)\*\*:\s*(.+)$"
         for match in re.finditer(metadata_pattern, content, re.MULTILINE):
             key = self._normalize_metadata_key(match.group(1))
+            # Frontmatter is canonical. Do not let body metadata override it.
+            if key in metadata:
+                continue
             value = match.group(2).strip()
             metadata[key] = value
 

@@ -374,6 +374,23 @@ class TestIngestionPipeline:
         assert metadata["doc_type"] == "skill"
         assert metadata["title"] == "Test Title"
 
+    def test_parse_markdown_metadata_frontmatter_takes_precedence(self, pipeline):
+        """Frontmatter values should not be overridden by body metadata lines."""
+        content = (
+            "---\n"
+            "priority: critical\n"
+            "doc_type: skill\n"
+            "---\n\n"
+            "# Test Title\n"
+            "**Priority**: low\n"
+            "**Doc Type**: support_ticket\n"
+        )
+
+        metadata = pipeline._parse_markdown_metadata(content)
+
+        assert metadata["priority"] == "critical"
+        assert metadata["doc_type"] == "skill"
+
     @pytest.mark.asyncio
     async def test_ingest_batch_missing_manifest(self, pipeline):
         """Test ingestion fails gracefully with missing manifest."""

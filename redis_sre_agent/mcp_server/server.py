@@ -53,6 +53,8 @@ After calling any of these, you MUST:
 | Tool | Purpose |
 |------|---------|
 | `redis_sre_knowledge_search()` | Direct search of docs (raw results) |
+| `redis_sre_search_support_tickets()` | Search support-ticket docs only |
+| `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
 | `redis_sre_list_instances()` | List available Redis instances |
 | `redis_sre_list_threads()` | List conversation threads (find previous chats) |
 | `redis_sre_get_task_status()` | Check task progress |
@@ -98,6 +100,7 @@ while True:
 
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
+- Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
 - Use `redis_sre_list_instances()` to find instance IDs before calling other tools
 - Check the `updates` array to show users what the agent is doing""",
 )
@@ -496,6 +499,104 @@ async def redis_sre_knowledge_search(
             "query": query,
             "results": [],
             "total_results": 0,
+        }
+
+
+@mcp.tool()
+async def redis_sre_search_support_tickets(
+    query: str,
+    limit: int = 10,
+    offset: int = 0,
+    version: Optional[str] = "latest",
+    distance_threshold: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Search support-ticket documents only.
+
+    Uses the dedicated support-ticket index and returns ticket-scoped results.
+
+    Args:
+        query: Search query text
+        limit: Maximum results to return (1-50, default 10)
+        offset: Number of results to skip for pagination (default 0)
+        version: Redis documentation version filter. Defaults to "latest".
+        distance_threshold: Optional cosine distance threshold
+
+    Returns:
+        Ticket search results and pagination metadata.
+    """
+    from redis_sre_agent.core.knowledge_helpers import search_support_tickets_helper
+
+    logger.info(
+        "MCP support_ticket_search: %s... (version=%s, offset=%s)",
+        query[:100],
+        version,
+        offset,
+    )
+
+    try:
+        limit = max(1, min(50, limit))
+        offset = max(0, offset)
+
+        result = await search_support_tickets_helper(
+            query=query,
+            limit=limit,
+            offset=offset,
+            version=version,
+            distance_threshold=distance_threshold,
+        )
+
+        return {
+            "query": query,
+            "version": version,
+            "offset": offset,
+            "limit": limit,
+            "tickets": result.get("tickets", []),
+            "results": result.get("results", []),
+            "ticket_count": result.get("ticket_count", 0),
+            "total_results": result.get("results_count", 0),
+            "has_more": len(result.get("results", [])) == limit,
+        }
+
+    except Exception as e:
+        logger.error(f"Support ticket search failed: {e}")
+        return {
+            "error": str(e),
+            "query": query,
+            "tickets": [],
+            "results": [],
+            "ticket_count": 0,
+            "total_results": 0,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_support_ticket(ticket_id: str) -> Dict[str, Any]:
+    """Retrieve complete support-ticket content by ticket id.
+
+    Args:
+        ticket_id: Ticket/document id from redis_sre_search_support_tickets results
+
+    Returns:
+        Full ticket content and metadata, or an error payload.
+    """
+    from redis_sre_agent.core.knowledge_helpers import get_support_ticket_helper
+
+    logger.info("MCP get_support_ticket: %s", ticket_id)
+
+    try:
+        result = await get_support_ticket_helper(ticket_id=ticket_id)
+        if result.get("error"):
+            return {
+                "ticket_id": ticket_id,
+                "error": result["error"],
+                "doc_type": result.get("doc_type"),
+            }
+        return result
+    except Exception as e:
+        logger.error(f"Get support ticket failed: {e}")
+        return {
+            "ticket_id": ticket_id,
+            "error": str(e),
         }
 
 
