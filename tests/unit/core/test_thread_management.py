@@ -508,6 +508,9 @@ class TestGenerateThreadSubject:
 
             assert subject == "Redis memory at 95%"
             mock_client.chat.completions.create.assert_called_once()
+            call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+            assert call_kwargs.get("max_completion_tokens") == 20
+            assert "max_tokens" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_generate_thread_subject_strips_quotes(self, thread_manager):

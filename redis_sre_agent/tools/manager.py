@@ -8,6 +8,7 @@ This module provides the ToolManager class which handles:
 """
 
 import logging
+import shutil
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -26,6 +27,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _command_is_available(command: Optional[str]) -> bool:
+    """Return True when an executable command is available."""
+    if not command:
+        return True
+
+    cmd = command.strip()
+    if not cmd:
+        return False
+
+    # If command includes a path separator, resolve as path.
+    if "/" in cmd:
+        return Path(cmd).exists()
+
+    return shutil.which(cmd) is not None
 
 
 class ToolManager:
@@ -280,6 +297,15 @@ class ToolManager:
                 if isinstance(server_config, dict):
                     server_config = MCPServerConfig.model_validate(server_config)
 
+                if server_config.command and not _command_is_available(server_config.command):
+                    logger.warning(
+                        "Skipping MCP provider '%s': command '%s' not found in PATH. "
+                        "Configure a valid command or URL transport instead.",
+                        server_name,
+                        server_config.command,
+                    )
+                    continue
+
                 # Skip if already loaded (use a synthetic path for tracking)
                 mcp_provider_path = f"mcp:{server_name}"
                 if mcp_provider_path in self._loaded_provider_paths:
@@ -336,8 +362,11 @@ class ToolManager:
                 else:
                     logger.info(f"Loaded MCP provider '{server_name}' with {included_count} tools")
 
-            except Exception:
-                logger.exception(f"Failed to load MCP provider '{server_name}'")
+            except FileNotFoundError as e:
+                logger.warning(f"Failed to load MCP provider '{server_name}': {e}")
+                # Don't fail entire manager if one MCP provider fails
+            except Exception as e:
+                logger.error(f"Failed to load MCP provider '{server_name}': {e}")
                 # Don't fail entire manager if one MCP provider fails
 
     async def _load_support_package_provider(self) -> None:

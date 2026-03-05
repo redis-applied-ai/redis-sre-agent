@@ -51,6 +51,11 @@ def _tool_instruction_lines_with_names(
         f'- {skills_check_name}("<query>")',
         f'- {search_tickets_name}("<query>")',
         f'- {get_ticket_name}("<id>")',
+        (
+            "Support-ticket workflow: when investigating incidents, ask for concrete identifiers "
+            "(for example cluster name or cluster host), search tickets with those identifiers, "
+            "then fetch the best matching ticket by id."
+        ),
     ]
 
 

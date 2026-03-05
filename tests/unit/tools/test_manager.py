@@ -1,8 +1,12 @@
 """Tests for ToolManager."""
 
+from contextlib import AsyncExitStack
+from unittest.mock import patch
+
 import pytest
 
-from redis_sre_agent.tools.manager import ToolManager
+from redis_sre_agent.core.config import MCPServerConfig
+from redis_sre_agent.tools.manager import ToolManager, _command_is_available
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
 
@@ -266,6 +270,32 @@ class TestToolManagerGetStatusUpdate:
                 # May return None or a string depending on tool
                 result = mgr.get_status_update(tool_name, {})
                 assert result is None or isinstance(result, str)
+
+
+class TestToolManagerMcpConfigValidation:
+    """Test MCP provider loading guardrails."""
+
+    def test_command_is_available_handles_missing_path(self):
+        """Absolute/relative command paths should return False when missing."""
+        assert _command_is_available("/definitely/not/a/real/command") is False
+
+    @pytest.mark.asyncio
+    async def test_load_mcp_providers_skips_missing_command(self, caplog):
+        """Missing MCP command should be skipped without raising or stack traces."""
+        mgr = ToolManager()
+        mgr._stack = AsyncExitStack()
+        await mgr._stack.__aenter__()
+        try:
+            with patch("redis_sre_agent.core.config.settings") as mock_settings:
+                mock_settings.mcp_servers = {
+                    "github": MCPServerConfig(command="definitely-missing-mcp-command-xyz")
+                }
+                await mgr._load_mcp_providers()
+
+            assert "mcp:github" not in mgr._loaded_provider_paths
+            assert "Skipping MCP provider 'github'" in caplog.text
+        finally:
+            await mgr._stack.__aexit__(None, None, None)
 
 
 class TestToolDefinitionRepresentation:

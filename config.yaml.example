@@ -85,11 +85,16 @@ mcp_servers:
 
           {original}
 
-  # GitHub MCP server for repository operations
-  # Pre-installed in Docker image via npm install -g
-  # For local development without Docker, use: npx -y @modelcontextprotocol/server-github
+  # GitHub MCP server for repository operations (Docker image)
   github:
-    command: mcp-server-github
+    command: docker
+    args:
+      - run
+      - -i
+      - --rm
+      - -e
+      - GITHUB_PERSONAL_ACCESS_TOKEN
+      - ghcr.io/github/github-mcp-server
     env:
       # Set your GitHub Personal Access Token here or via environment variable
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}

@@ -10,8 +10,10 @@ from redis_sre_agent.core.knowledge_helpers import (
     _doc_matches_requested_version,
     get_all_document_fragments,
     get_related_document_fragments,
+    get_support_ticket_helper,
     get_skill_helper,
     ingest_sre_document_helper,
+    search_support_tickets_helper,
     search_knowledge_base_helper,
     skills_check_helper,
 )
@@ -814,11 +816,10 @@ class TestSkillHelpers:
         ):
             result = await get_skill_helper(skill_name="Incident Triage")
 
-        assert result["document_hash"] == "hash-skill"
-        assert result["doc_type"] == "skill"
-        assert result["fragments_count"] == 2
-        assert result["full_content"] == "Part 1\n\nPart 2"
         assert result["skill_name"] == "Incident Triage"
+        assert result["full_content"] == "Part 1\n\nPart 2"
+        assert "fragments" not in result
+        assert "fragments_count" not in result
 
     @pytest.mark.asyncio
     async def test_get_skill_helper_rejects_non_skill_document(self):
@@ -850,3 +851,48 @@ class TestSkillHelpers:
         assert result["document_hash"] == "hash-runbook"
         assert result["doc_type"] == "runbook"
         assert "not 'skill'" in result["error"]
+
+
+class TestSupportTicketHelpers:
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_normalizes_ticket_id_from_chunk_key(self):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+            new_callable=AsyncMock,
+            return_value={
+                "results": [
+                    {
+                        "id": "sre_support_tickets:abc123def456:chunk:0",
+                        "title": "Ticket A",
+                        "doc_type": "support_ticket",
+                    }
+                ]
+            },
+        ):
+            result = await search_support_tickets_helper(query="cache-prod-1 failover")
+
+        assert result["tickets"][0]["ticket_id"] == "abc123def456"
+
+    @pytest.mark.asyncio
+    async def test_get_support_ticket_helper_normalizes_chunk_key_input(self):
+        mock_fragments = {
+            "document_hash": "abc123def456",
+            "doc_type": "support_ticket",
+            "title": "Ticket A",
+            "source": "source",
+            "fragments": [{"chunk_index": 0, "content": "body", "doc_type": "support_ticket"}],
+            "metadata": {},
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+            return_value=mock_fragments,
+        ) as mock_get_fragments:
+            result = await get_support_ticket_helper(
+                ticket_id="sre_support_tickets:abc123def456:chunk:0"
+            )
+
+        call_kwargs = mock_get_fragments.await_args.kwargs
+        assert call_kwargs["document_hash"] == "abc123def456"
+        assert result["document_hash"] == "abc123def456"

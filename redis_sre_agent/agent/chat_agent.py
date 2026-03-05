@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from .helpers import build_result_envelope
+from .knowledge_context import build_startup_knowledge_context
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,10 @@ For code/repo investigation:
 For metrics/logs:
 - Be specific with queries - broad queries return too much data
 - Fetch one metric or log query at a time
+
+For historical incident context:
+- Use `search_support_tickets` with concrete identifiers (cluster name/host, error strings)
+- Then use `get_support_ticket` for the most relevant ticket details
 
 ## What NOT to Do
 
@@ -583,8 +588,19 @@ class ChatAgent:
             checkpointer = MemorySaver()
             app = workflow.compile(checkpointer=checkpointer)
 
-            # Build initial messages with instance context
-            initial_messages: List[BaseMessage] = [SystemMessage(content=CHAT_SYSTEM_PROMPT)]
+            # Build initial messages with shared startup context (pinned docs, skills, tool usage)
+            available_tool_names = [tool.name for tool in tools if getattr(tool, "name", None)]
+            startup_context = await build_startup_knowledge_context(
+                query=query,
+                version="latest",
+                available_tool_names=available_tool_names,
+            )
+            system_prompt = (
+                f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"
+                if startup_context.strip()
+                else CHAT_SYSTEM_PROMPT
+            )
+            initial_messages: List[BaseMessage] = [SystemMessage(content=system_prompt)]
 
             # Add instance context to the query if available
             enhanced_query = query

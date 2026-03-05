@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
 from redis_sre_agent.core.knowledge_helpers import (
@@ -271,6 +271,57 @@ class TestKnowledgeAgentMethods:
         state_iter_1 = {**state_iter_0, "iteration_count": 1}
         await compiled.nodes["agent"].ainvoke(state_iter_1)
         mock_llm.bind.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_system_prompt_injected_with_conversation_history(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        """Startup context should still be injected on follow-up turns."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                HumanMessage(content="previous question"),
+                AIMessage(content="previous answer"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = bound_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once_with(
+            query="follow-up question",
+            version="latest",
+            available_tool_names=[],
+        )
 
 
 class TestSafeToolNodeErrorHandling:

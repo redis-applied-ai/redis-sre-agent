@@ -38,6 +38,7 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 
 ## Your Capabilities:
 - Search and retrieve information from the SRE knowledge base
+- Search and retrieve relevant historical support tickets
 - Provide general SRE best practices and guidance
 - Help with troubleshooting methodologies and approaches
 - Explain SRE concepts and principles
@@ -48,6 +49,7 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 2. **Educational**: Explain concepts clearly and provide context for your recommendations
 3. **Practical**: Focus on actionable advice and real-world applications
 4. **Comprehensive**: Use multiple knowledge base searches if needed to provide complete answers
+5. **Historical Context**: Search support tickets when prior incidents may be relevant
 
 ## Important Guidelines:
 - You do NOT have access to specific Redis instances or live system data
@@ -134,10 +136,15 @@ class KnowledgeOnlyAgent:
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
 
-            # Add system message if this is the first interaction
-            if len(messages) == 1 and isinstance(messages[0], HumanMessage):
+            # Ensure startup system context is always present, including thread follow-ups.
+            if not messages or not isinstance(messages[0], SystemMessage):
+                context_query = ""
+                for message in reversed(messages):
+                    if isinstance(message, HumanMessage):
+                        context_query = str(message.content or "")
+                        break
                 startup_context = await build_startup_knowledge_context(
-                    query=str(messages[0].content or ""),
+                    query=context_query,
                     version="latest",
                     available_tool_names=list(tooldefs_by_name.keys()),
                 )

@@ -408,14 +408,7 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
 
     return {
         "skill_name": _doc_name({"name": target.get("name"), "title": result.get("title", "")}),
-        "document_hash": document_hash,
-        "title": result.get("title", ""),
-        "source": result.get("source", ""),
-        "doc_type": normalized_type,
-        "fragments_count": len(sorted_fragments),
-        "fragments": sorted_fragments,
         "full_content": full_content,
-        "metadata": result.get("metadata", {}),
     }
 
 
@@ -443,7 +436,9 @@ async def search_support_tickets_helper(
     tickets = []
     for ticket in result.get("results", []):
         ticket_with_id = dict(ticket)
-        ticket_with_id["ticket_id"] = str(ticket.get("document_hash") or ticket.get("id") or "")
+        ticket_with_id["ticket_id"] = _normalize_support_ticket_id(
+            str(ticket.get("document_hash") or ticket.get("id") or "")
+        )
         tickets.append(ticket_with_id)
 
     result.update(
@@ -459,10 +454,27 @@ async def search_support_tickets_helper(
     return result
 
 
+def _normalize_support_ticket_id(ticket_id: str) -> str:
+    """Normalize support ticket identifiers to document_hash form when possible."""
+    raw_id = str(ticket_id or "").strip()
+    if not raw_id:
+        return raw_id
+
+    # Convert indexed chunk keys like:
+    #   sre_support_tickets:<document_hash>:chunk:<n>
+    # to the canonical document hash expected by get_all_document_fragments().
+    parts = raw_id.split(":")
+    if len(parts) >= 4 and parts[0] == "sre_support_tickets" and parts[-2] == "chunk":
+        return parts[1]
+
+    return raw_id
+
+
 async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     """Get complete content for a support ticket by ticket id."""
+    normalized_ticket_id = _normalize_support_ticket_id(ticket_id)
     result = await get_all_document_fragments(
-        document_hash=ticket_id,
+        document_hash=normalized_ticket_id,
         include_metadata=True,
         index_type="support_tickets",
     )
@@ -470,6 +482,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     if not fragments:
         return {
             "ticket_id": ticket_id,
+            "normalized_ticket_id": normalized_ticket_id,
             **result,
         }
 
@@ -479,7 +492,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     if normalized_type != "support_ticket":
         return {
             "ticket_id": ticket_id,
-            "document_hash": ticket_id,
+            "document_hash": normalized_ticket_id,
             "error": f"Document type is '{normalized_type}', not 'support_ticket'",
             "doc_type": normalized_type,
         }
@@ -489,7 +502,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     metadata = result.get("metadata", {}) or {}
     return {
         "ticket_id": ticket_id,
-        "document_hash": ticket_id,
+        "document_hash": normalized_ticket_id,
         "title": result.get("title", ""),
         "source": result.get("source", ""),
         "doc_type": normalized_type,

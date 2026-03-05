@@ -744,10 +744,15 @@ JSON payload of analyses artifacts:
             iteration_count = state.get("iteration_count", 0)
             # max_iterations = state.get("max_iterations", 10)  # Not used in this function
 
-            # Add system message if this is the first interaction
-            if len(messages) == 1 and isinstance(messages[0], HumanMessage):
+            # Ensure startup system context is always present, including thread follow-ups.
+            if not messages or not isinstance(messages[0], SystemMessage):
+                context_query = ""
+                for message in reversed(messages):
+                    if isinstance(message, HumanMessage):
+                        context_query = str(message.content or "")
+                        break
                 startup_context = await build_startup_knowledge_context(
-                    query=str(messages[0].content or ""),
+                    query=context_query,
                     version="latest",
                     available_tool_names=list(tooldefs_by_name.keys()),
                 )

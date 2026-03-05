@@ -1,6 +1,9 @@
 """Unit tests for the lightweight Chat Agent."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from langchain_core.messages import AIMessage
 
 from redis_sre_agent.agent.chat_agent import (
     CHAT_SYSTEM_PROMPT,
@@ -473,3 +476,67 @@ class TestChatAgentCreateSummarizedToolMessage:
 
         assert "results: [5 items]" in result.content
         assert "metadata: {...}" in result.content
+
+
+class TestChatAgentStartupContext:
+    """Test startup context injection in chat agent."""
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_includes_shared_startup_context(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        """Chat agent should prepend pinned/skills/tool startup context like other agents."""
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        mock_tool = MagicMock()
+        mock_tool.name = "knowledge_test_skills_check"
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = [mock_tool]
+
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [AIMessage(content="final answer")],
+            "signals_envelopes": [],
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch("redis_sre_agent.agent.chat_agent.ToolManager", return_value=mock_tool_manager),
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value="Pinned documents:\n- Acronyms"),
+            ) as mock_startup_context,
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Who runs AOP?",
+                session_id="test-session",
+                user_id="test-user",
+            )
+
+        assert response.response == "final answer"
+
+        initial_state = fake_app.ainvoke.await_args.args[0]
+        system_message = initial_state["messages"][0]
+        assert "Pinned documents:" in str(system_message.content)
+        assert CHAT_SYSTEM_PROMPT in str(system_message.content)
+
+        mock_startup_context.assert_awaited_once()
+        startup_kwargs = mock_startup_context.await_args.kwargs
+        assert startup_kwargs["query"] == "Who runs AOP?"
+        assert startup_kwargs["available_tool_names"] == ["knowledge_test_skills_check"]

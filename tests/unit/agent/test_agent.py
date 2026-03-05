@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
 
@@ -113,6 +113,51 @@ class TestSRELangGraphAgent:
             assert history[0]["content"] == "Hello"
             assert history[1]["role"] == "assistant"
             assert history[1]["content"] == "Hi there!"
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_system_prompt_injected_with_conversation_history(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Startup context should be injected even for follow-up turns."""
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                HumanMessage(content="previous question"),
+                AIMessage(content="previous answer"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once_with(
+            query="follow-up question",
+            version="latest",
+            available_tool_names=[],
+        )
 
     def test_clear_conversation(self, mock_settings, mock_llm):
         """Test clearing conversation history."""
