@@ -239,8 +239,9 @@ class KnowledgeOnlyAgent:
                 # Update iteration count
                 state["iteration_count"] = iteration_count + 1
 
-                # Add response to messages
-                state["messages"] = messages + [response]
+                # Persist only original state messages plus response.
+                # Keep invocation-only injected SystemMessage ephemeral.
+                state["messages"] = list(state["messages"]) + [response]
 
                 # Store tool calls for potential execution
                 if response.tool_calls:
@@ -264,7 +265,7 @@ class KnowledgeOnlyAgent:
                 error_message = AIMessage(
                     content=f"I encountered an error while processing your request: {str(e)}. Please try rephrasing your question or ask for general SRE guidance."
                 )
-                state["messages"] = messages + [error_message]
+                state["messages"] = list(state["messages"]) + [error_message]
                 state["current_tool_calls"] = []
                 state["startup_system_prompt"] = startup_system_prompt
                 return state
