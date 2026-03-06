@@ -63,7 +63,7 @@ def _normalized_doc_type(doc: Dict[str, Any]) -> str:
 
 
 def _doc_matches_requested_version(doc: Dict[str, Any], requested_version: Optional[str]) -> bool:
-    """Apply source-aware version matching for compatibility with legacy indexed docs."""
+    """Apply source-aware version matching."""
     if requested_version is None:
         return True
 
@@ -757,9 +757,7 @@ async def search_knowledge_base_helper(
     ]
 
     # Build version filter expression if version is specified.
-    # NOTE: legacy indices may have incorrect version tags; we apply
-    # source-aware filtering post-query and can fall back to an unfiltered
-    # query if the tag-filtered query is too restrictive.
+    # Source-aware filtering still runs post-query for canonical matching.
     from redisvl.query.filter import Tag
 
     filter_expr = None
@@ -827,7 +825,6 @@ async def search_knowledge_base_helper(
 
     # Perform vector search
     _t2 = time.monotonic()
-    desired_results = limit + offset
     query_obj = _build_query(filter_expr, fetch_limit)
     with tracer.start_as_current_span("knowledge.index.query") as _span:
         _span.set_attribute("limit", int(limit))
@@ -853,42 +850,6 @@ async def search_knowledge_base_helper(
             or _doc_is_general_knowledge(doc)
         )
     ]
-
-    if version not in (None, "latest") and len(filtered_results) < desired_results:
-        fallback_fetch_limit = min(max(desired_results * 8, fetch_limit), 500)
-        logger.debug(
-            "Version-filter fallback query triggered for version=%s; "
-            "primary_count=%s desired=%s fallback_fetch_limit=%s",
-            version,
-            len(filtered_results),
-            desired_results,
-            fallback_fetch_limit,
-        )
-        fallback_query = _build_query(None, fallback_fetch_limit)
-        with tracer.start_as_current_span("knowledge.index.query") as _span:
-            _span.set_attribute("limit", int(limit))
-            _span.set_attribute("offset", int(offset))
-            _span.set_attribute("hybrid_search", bool(hybrid_search))
-            _span.set_attribute("version", version or "all")
-            _span.set_attribute(
-                "distance_threshold",
-                float(distance_threshold) if distance_threshold is not None else -1.0,
-            )
-            _span.set_attribute("query.filtered", False)
-            fallback_results = await index.query(fallback_query)
-
-        fallback_filtered = [
-            doc
-            for doc in fallback_results
-            if _doc_matches_requested_version(doc, version)
-            and _doc_matches_requested_type(doc, normalized_doc_type)
-            and (
-                normalized_index_type != "knowledge"
-                or include_special_document_types
-                or _doc_is_general_knowledge(doc)
-            )
-        ]
-        filtered_results = _dedupe_docs(filtered_results + fallback_filtered)
 
     # Category fallback: if a category filter returns nothing, retry without category
     # while preserving other filters such as version/doc_type.

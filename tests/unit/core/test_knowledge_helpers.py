@@ -227,7 +227,7 @@ class TestSearchKnowledgeBaseHelper:
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_latest_filters_versioned_source_paths(self):
-        """Test latest filtering excludes versioned source paths from legacy docs."""
+        """Test latest filtering excludes versioned source paths."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             return_value=[
@@ -271,28 +271,10 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["version"] == "latest"
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_specific_version_uses_fallback(self):
-        """Test fallback query can recover versioned docs from legacy-tagged data."""
+    async def test_search_knowledge_base_specific_version_does_not_use_unfiltered_fallback(self):
+        """Versioned searches should not run an unfiltered second query."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(
-            side_effect=[
-                [],
-                [
-                    {
-                        "id": "doc-7-22",
-                        "title": "Versioned doc",
-                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/7.22/references/a.md",
-                        "version": "latest",
-                    },
-                    {
-                        "id": "doc-latest",
-                        "title": "Latest doc",
-                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/references/a.md",
-                        "version": "latest",
-                    },
-                ],
-            ]
-        )
+        mock_index.query = AsyncMock(return_value=[])
 
         mock_vectorizer = MagicMock()
         mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
@@ -314,10 +296,8 @@ class TestSearchKnowledgeBaseHelper:
                 limit=5,
             )
 
-        assert mock_index.query.call_count == 2
-        assert result["results_count"] == 1
-        assert result["results"][0]["id"] == "doc-7-22"
-        assert result["results"][0]["version"] == "7.22"
+        assert mock_index.query.call_count == 1
+        assert result["results_count"] == 0
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_hybrid_search(self):
@@ -1021,8 +1001,8 @@ class TestPinnedDocumentsHelper:
                     "chunk_index": 0,
                     "name": "Pinned Skill",
                     "title": "Pinned Skill",
-                    "content": "Legacy skill content",
-                    "source": "docs/latest/legacy-skill",
+                    "content": "Pinned skill content",
+                    "source": "docs/latest/pinned-skill",
                     "priority": "critical",
                     "pinned": "true",
                     "doc_type": "skill",
