@@ -365,6 +365,55 @@ class TestKnowledgeAgentMethods:
         assert isinstance(sent_messages[0], SystemMessage)
         assert sent_messages[0].content == KNOWLEDGE_SYSTEM_PROMPT
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_startup_context_built_once_across_agent_iterations(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        """Startup context should be built once per workflow and then reused."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="turn-1", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        base_llm.ainvoke = AsyncMock(return_value=AIMessage(content="turn-2", tool_calls=[]))
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="follow-up question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        state_after_first = await compiled.nodes["agent"].ainvoke(state)
+        state_after_first["messages"] = [
+            m for m in state_after_first["messages"] if not isinstance(m, SystemMessage)
+        ]
+        state_after_first["iteration_count"] = 1
+        await compiled.nodes["agent"].ainvoke(state_after_first)
+
+        assert mock_build_startup_context.await_count == 1
+        sent_messages_second = base_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages_second[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages_second[0].content
+
 
 class TestSafeToolNodeErrorHandling:
     """Test that safe_tool_node reports errors to LLM instead of user."""
