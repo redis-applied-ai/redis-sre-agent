@@ -25,10 +25,13 @@ def test_knowledge_provider_tool_schemas():
     # Should have all knowledge tools
     assert len(schemas) == 8
 
-    # All should be ToolDefinition objects
+    # All should be ToolDefinition objects with correct capabilities
     for schema in schemas:
         assert isinstance(schema, ToolDefinition)
-        assert schema.capability == ToolCapability.KNOWLEDGE
+        if "search_support_tickets" in schema.name or "get_support_ticket" in schema.name:
+            assert schema.capability == ToolCapability.TICKETS
+        else:
+            assert schema.capability == ToolCapability.KNOWLEDGE
 
     # Check tool names
     tool_names = [s.name for s in schemas]
@@ -197,13 +200,16 @@ class TestKnowledgeProviderSkillSchemas:
 class TestKnowledgeProviderToolCapabilities:
     """Test knowledge tool capabilities."""
 
-    def test_all_tools_have_knowledge_capability(self):
-        """Test all tools have KNOWLEDGE capability."""
+    def test_tools_have_expected_capabilities(self):
+        """Test tools expose expected KNOWLEDGE vs TICKETS capabilities."""
         provider = KnowledgeBaseToolProvider()
         schemas = provider.create_tool_schemas()
 
         for schema in schemas:
-            assert schema.capability == ToolCapability.KNOWLEDGE
+            if "search_support_tickets" in schema.name or "get_support_ticket" in schema.name:
+                assert schema.capability == ToolCapability.TICKETS
+            else:
+                assert schema.capability == ToolCapability.KNOWLEDGE
 
     def test_tool_count_is_eight(self):
         """Test there are exactly 8 tools."""

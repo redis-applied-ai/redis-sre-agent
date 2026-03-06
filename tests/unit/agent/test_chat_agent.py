@@ -694,3 +694,47 @@ class TestChatAgentStartupContext:
         sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
         assert "CTX_ONE" in sent_messages_first[0].content
         assert "CTX_TWO" in sent_messages_second[0].content
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_agent_node_rebuilds_prompt_on_first_step_when_cached_prompt_is_stale(
+        self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_startup_context.return_value = "FRESH_CONTEXT"
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(
+            tool_mgr=mock_tool_mgr,
+            llm_with_tools=mock_llm,
+            adapters=[],
+            emitter=None,
+        )
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "STALE_CONTEXT",
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "FRESH_CONTEXT" in sent_messages[0].content
+        assert "STALE_CONTEXT" not in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once()

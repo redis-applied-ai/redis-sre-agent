@@ -150,7 +150,7 @@ class KnowledgeOnlyAgent:
 
             # Ensure startup system context is always present, including thread follow-ups.
             if not messages or not isinstance(messages[0], SystemMessage):
-                if startup_system_prompt is None:
+                if startup_system_prompt is None or iteration_count == 0:
                     context_query = ""
                     for message in reversed(messages):
                         if isinstance(message, HumanMessage):
@@ -166,6 +166,7 @@ class KnowledgeOnlyAgent:
                         if startup_context.strip()
                         else KNOWLEDGE_SYSTEM_PROMPT
                     )
+                startup_system_prompt = startup_system_prompt or KNOWLEDGE_SYSTEM_PROMPT
                 system_message = SystemMessage(content=startup_system_prompt)
                 messages = [system_message] + messages
 

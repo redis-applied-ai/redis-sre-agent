@@ -54,6 +54,11 @@ async def test_tool_manager_knowledge_tools():
         assert any("search_support_tickets" in n for n in knowledge_tools)
         assert any("get_support_ticket" in n for n in knowledge_tools)
 
+        tickets_tools = mgr.get_tools_for_capability(ToolCapability.TICKETS)
+        ticket_tool_names = [t.name for t in tickets_tools]
+        assert any("search_support_tickets" in n for n in ticket_tool_names)
+        assert any("get_support_ticket" in n for n in ticket_tool_names)
+
         # Instance-specific tools should NOT be loaded without an instance
         assert len(prometheus_tools) == 0
         assert len(redis_command_tools) == 0

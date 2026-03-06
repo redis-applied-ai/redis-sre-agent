@@ -415,7 +415,7 @@ class ChatAgent:
                 startup_system_prompt = str(messages[0].content or "")
 
             if not messages or not isinstance(messages[0], SystemMessage):
-                if startup_system_prompt is None:
+                if startup_system_prompt is None or iteration_count == 0:
                     context_query = ""
                     for message in reversed(messages):
                         if isinstance(message, HumanMessage):
@@ -432,6 +432,7 @@ class ChatAgent:
                         if startup_context.strip()
                         else CHAT_SYSTEM_PROMPT
                     )
+                startup_system_prompt = startup_system_prompt or CHAT_SYSTEM_PROMPT
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             with tracer.start_as_current_span("chat_agent_node"):
