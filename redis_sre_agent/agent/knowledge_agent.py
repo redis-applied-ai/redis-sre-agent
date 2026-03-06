@@ -9,7 +9,7 @@ knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus
 """
 
 import logging
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -83,6 +83,7 @@ class KnowledgeAgentState(TypedDict):
     iteration_count: int
     max_iterations: int
     startup_system_prompt: Optional[str]
+    startup_prompt_initialized: NotRequired[bool]
     tool_calls_executed: int
     # Accumulated search results for citation tracking
     knowledge_search_results: List[Dict[str, Any]]
@@ -138,6 +139,7 @@ class KnowledgeOnlyAgent:
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
+            startup_prompt_initialized = state.get("startup_prompt_initialized", False)
 
             # Cache and reuse startup prompt for this workflow execution to avoid repeated
             # knowledge-context lookups in tool-call loops.
@@ -147,10 +149,13 @@ class KnowledgeOnlyAgent:
                 and isinstance(messages[0], SystemMessage)
             ):
                 startup_system_prompt = str(messages[0].content or "")
+                startup_prompt_initialized = True
 
             # Ensure startup system context is always present, including thread follow-ups.
             if not messages or not isinstance(messages[0], SystemMessage):
-                if startup_system_prompt is None or iteration_count == 0:
+                if startup_system_prompt is None or (
+                    iteration_count == 0 and not startup_prompt_initialized
+                ):
                     context_query = ""
                     for message in reversed(messages):
                         if isinstance(message, HumanMessage):
@@ -166,6 +171,7 @@ class KnowledgeOnlyAgent:
                         if startup_context.strip()
                         else KNOWLEDGE_SYSTEM_PROMPT
                     )
+                    startup_prompt_initialized = True
                 startup_system_prompt = startup_system_prompt or KNOWLEDGE_SYSTEM_PROMPT
                 system_message = SystemMessage(content=startup_system_prompt)
                 messages = [system_message] + messages
@@ -258,6 +264,7 @@ class KnowledgeOnlyAgent:
 
                 # No per-iteration progress message; providers will emit status updates
                 state["startup_system_prompt"] = startup_system_prompt
+                state["startup_prompt_initialized"] = startup_prompt_initialized
                 return state
 
             except Exception as e:
@@ -268,6 +275,7 @@ class KnowledgeOnlyAgent:
                 state["messages"] = list(state["messages"]) + [error_message]
                 state["current_tool_calls"] = []
                 state["startup_system_prompt"] = startup_system_prompt
+                state["startup_prompt_initialized"] = startup_prompt_initialized
                 return state
 
         async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
@@ -535,6 +543,7 @@ class KnowledgeOnlyAgent:
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
                 "startup_system_prompt": None,
+                "startup_prompt_initialized": False,
                 "tool_calls_executed": 0,
                 "knowledge_search_results": [],
                 "signals_envelopes": [],

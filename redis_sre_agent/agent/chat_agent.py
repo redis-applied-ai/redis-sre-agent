@@ -10,7 +10,7 @@ or safety-evaluation chains.
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
@@ -110,6 +110,7 @@ class ChatAgentState(TypedDict):
     iteration_count: int
     max_iterations: int
     startup_system_prompt: Optional[str]
+    startup_prompt_initialized: NotRequired[bool]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -406,6 +407,7 @@ class ChatAgent:
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
+            startup_prompt_initialized = state.get("startup_prompt_initialized", False)
 
             if (
                 startup_system_prompt is None
@@ -413,9 +415,12 @@ class ChatAgent:
                 and isinstance(messages[0], SystemMessage)
             ):
                 startup_system_prompt = str(messages[0].content or "")
+                startup_prompt_initialized = True
 
             if not messages or not isinstance(messages[0], SystemMessage):
-                if startup_system_prompt is None or iteration_count == 0:
+                if startup_system_prompt is None or (
+                    iteration_count == 0 and not startup_prompt_initialized
+                ):
                     context_query = ""
                     for message in reversed(messages):
                         if isinstance(message, HumanMessage):
@@ -432,6 +437,7 @@ class ChatAgent:
                         if startup_context.strip()
                         else CHAT_SYSTEM_PROMPT
                     )
+                    startup_prompt_initialized = True
                 startup_system_prompt = startup_system_prompt or CHAT_SYSTEM_PROMPT
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
@@ -445,6 +451,7 @@ class ChatAgent:
                 "messages": new_messages,
                 "iteration_count": iteration_count + 1,
                 "startup_system_prompt": startup_system_prompt,
+                "startup_prompt_initialized": startup_prompt_initialized,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -670,6 +677,7 @@ User Query: {query}"""
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
                 "startup_system_prompt": system_prompt,
+                "startup_prompt_initialized": True,
                 "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
             }
 

@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -305,6 +305,7 @@ class AgentState(TypedDict):
     iteration_count: int
     max_iterations: int
     startup_system_prompt: Optional[str]  # Per-workflow cached startup prompt
+    startup_prompt_initialized: NotRequired[bool]
     instance_context: Optional[Dict[str, Any]]  # For Redis instance context
     signals_envelopes: List[Dict[str, Any]]  # Accumulated tool result envelopes across steps
 
@@ -764,8 +765,10 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 4. Provide recommendations based on ACTUAL configuration, not INFO output
 
 **Remember: Redis Cloud manages persistence, replication, clustering, and modules automatically. Use the REST API to see the real configuration!**
-"""
+                    """
                     prompt += redis_cloud_context
+                # Redis Cloud is mutually exclusive with Redis Enterprise context.
+                # Always return from the cloud branch, even when marker already exists.
                 return prompt
 
             if target_instance and target_instance.instance_type == "redis_enterprise":
@@ -847,6 +850,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
+            startup_prompt_initialized = state.get("startup_prompt_initialized", False)
             # max_iterations = state.get("max_iterations", 10)  # Not used in this function
 
             if (
@@ -858,10 +862,13 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 startup_system_prompt = _augment_with_instance_context(existing_system_prompt)
                 if startup_system_prompt != existing_system_prompt:
                     messages = [SystemMessage(content=startup_system_prompt), *messages[1:]]
+                startup_prompt_initialized = True
 
             # Ensure startup system context is always present, including thread follow-ups.
             if not messages or not isinstance(messages[0], SystemMessage):
-                if startup_system_prompt is None or iteration_count == 0:
+                if startup_system_prompt is None or (
+                    iteration_count == 0 and not startup_prompt_initialized
+                ):
                     context_query = ""
                     for message in reversed(messages):
                         if isinstance(message, HumanMessage):
@@ -878,6 +885,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         else SRE_SYSTEM_PROMPT
                     )
                     startup_system_prompt = _augment_with_instance_context(system_prompt)
+                    startup_prompt_initialized = True
                 startup_system_prompt = startup_system_prompt or _augment_with_instance_context(
                     SRE_SYSTEM_PROMPT
                 )
@@ -995,6 +1003,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 state["current_tool_calls"] = []
 
             state["startup_system_prompt"] = startup_system_prompt
+            state["startup_prompt_initialized"] = startup_prompt_initialized
             return state
 
         async def tool_node(state: AgentState) -> AgentState:
@@ -1714,6 +1723,7 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
             "iteration_count": 0,
             "max_iterations": max_iterations,
             "startup_system_prompt": None,
+            "startup_prompt_initialized": False,
             "instance_context": None,
             "signals_envelopes": [],
         }

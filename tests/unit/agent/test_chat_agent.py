@@ -738,3 +738,46 @@ class TestChatAgentStartupContext:
         assert "FRESH_CONTEXT" in sent_messages[0].content
         assert "STALE_CONTEXT" not in sent_messages[0].content
         mock_build_startup_context.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_agent_node_reuses_initialized_prompt_without_rebuild(
+        self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(
+            tool_mgr=mock_tool_mgr,
+            llm_with_tools=mock_llm,
+            adapters=[],
+            emitter=None,
+        )
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "FRESH_CONTEXT",
+            "startup_prompt_initialized": True,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert sent_messages[0].content == "FRESH_CONTEXT"
+        mock_build_startup_context.assert_not_awaited()

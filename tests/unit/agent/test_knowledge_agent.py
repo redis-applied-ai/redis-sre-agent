@@ -522,6 +522,48 @@ class TestKnowledgeAgentMethods:
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
     @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_agent_node_reuses_initialized_prompt_without_rebuild(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "FRESH_CONTEXT",
+            "startup_prompt_initialized": True,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = bound_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert sent_messages[0].content == "FRESH_CONTEXT"
+        mock_build_startup_context.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
     async def test_agent_node_does_not_persist_injected_system_message(
         self, mock_create_llm, mock_build_startup_context
     ):
