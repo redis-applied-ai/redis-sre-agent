@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.agent.chat_agent import (
     CHAT_SYSTEM_PROMPT,
@@ -188,6 +188,7 @@ class TestChatAgentState:
             "current_tool_calls": [],
             "iteration_count": 0,
             "max_iterations": 10,
+            "startup_system_prompt": None,
             "signals_envelopes": [],
         }
 
@@ -197,6 +198,7 @@ class TestChatAgentState:
         assert "current_tool_calls" in state
         assert "iteration_count" in state
         assert "max_iterations" in state
+        assert "startup_system_prompt" in state
         assert "signals_envelopes" in state
 
 
@@ -540,3 +542,109 @@ class TestChatAgentStartupContext:
         startup_kwargs = mock_startup_context.await_args.kwargs
         assert startup_kwargs["query"] == "Who runs AOP?"
         assert startup_kwargs["available_tool_names"] == ["knowledge_test_skills_check"]
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_agent_node_reinjects_startup_context_for_follow_ups(
+        self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(
+            tool_mgr=mock_tool_mgr,
+            llm_with_tools=mock_llm,
+            adapters=[],
+            emitter=None,
+        )
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                HumanMessage(content="first question"),
+                AIMessage(content="first answer"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once_with(
+            query="follow-up question",
+            version="latest",
+            available_tool_names=[],
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_startup_context_not_shared_between_independent_invocations(
+        self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_startup_context.side_effect = ["CTX_ONE", "CTX_TWO"]
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(
+            tool_mgr=mock_tool_mgr,
+            llm_with_tools=mock_llm,
+            adapters=[],
+            emitter=None,
+        )
+        compiled = workflow.compile()
+
+        state_one = {
+            "messages": [HumanMessage(content="first question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "signals_envelopes": [],
+        }
+        state_two = {
+            "messages": [HumanMessage(content="second question")],
+            "session_id": "session-2",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state_one)
+        await compiled.nodes["agent"].ainvoke(state_two)
+
+        assert mock_build_startup_context.await_count == 2
+        sent_messages_first = mock_llm.ainvoke.call_args_list[0].args[0]
+        sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
+        assert "CTX_ONE" in sent_messages_first[0].content
+        assert "CTX_TWO" in sent_messages_second[0].content

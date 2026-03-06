@@ -107,6 +107,7 @@ class ChatAgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    startup_system_prompt: Optional[str]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -402,6 +403,34 @@ class ChatAgent:
             """Main agent node - invokes LLM with tools."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
+            startup_system_prompt = state.get("startup_system_prompt")
+
+            if (
+                startup_system_prompt is None
+                and messages
+                and isinstance(messages[0], SystemMessage)
+            ):
+                startup_system_prompt = str(messages[0].content or "")
+
+            if not messages or not isinstance(messages[0], SystemMessage):
+                if startup_system_prompt is None:
+                    context_query = ""
+                    for message in reversed(messages):
+                        if isinstance(message, HumanMessage):
+                            context_query = str(message.content or "")
+                            break
+
+                    startup_context = await build_startup_knowledge_context(
+                        query=context_query,
+                        version="latest",
+                        available_tool_names=list(tooldefs_by_name.keys()),
+                    )
+                    startup_system_prompt = (
+                        f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"
+                        if startup_context.strip()
+                        else CHAT_SYSTEM_PROMPT
+                    )
+                messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             with tracer.start_as_current_span("chat_agent_node"):
                 response = await llm_with_expand.ainvoke(messages)
@@ -410,6 +439,7 @@ class ChatAgent:
             return {
                 "messages": new_messages,
                 "iteration_count": iteration_count + 1,
+                "startup_system_prompt": startup_system_prompt,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -635,6 +665,7 @@ User Query: {query}"""
                 "current_tool_calls": [],
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
+                "startup_system_prompt": system_prompt,
                 "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
             }
 
