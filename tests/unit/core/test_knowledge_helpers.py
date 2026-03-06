@@ -819,6 +819,69 @@ class TestSkillHelpers:
         assert [skill["document_hash"] for skill in result["skills"]] == ["hash-a", "hash-b"]
 
     @pytest.mark.asyncio
+    async def test_skills_check_helper_legacy_query_uses_common_return_fields(self):
+        class _QueryStub:
+            def __init__(self, *, vector, vector_field_name, return_fields, num_results, **kwargs):
+                self.vector = vector
+                self.vector_field_name = vector_field_name
+                self.return_fields = return_fields
+                self.num_results = num_results
+                self.kwargs = kwargs
+                self.filter = None
+
+            def set_filter(self, filter_expr):
+                self.filter = filter_expr
+
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(return_value=[])
+        legacy_index = AsyncMock()
+        legacy_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "legacy-0",
+                    "document_hash": "legacy-hash",
+                    "chunk_index": 0,
+                    "title": "Legacy Skill",
+                    "content": "Legacy content",
+                    "source": "docs/latest/legacy",
+                    "name": "Legacy Skill",
+                    "summary": "Legacy summary",
+                    "priority": "normal",
+                    "pinned": "false",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+        vectorizer = MagicMock()
+        vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=legacy_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=vectorizer,
+            ),
+            patch("redis_sre_agent.core.knowledge_helpers.VectorQuery", _QueryStub),
+            patch("redis_sre_agent.core.knowledge_helpers.VectorRangeQuery", _QueryStub),
+        ):
+            result = await skills_check_helper(query="memory issue", limit=10, offset=0)
+
+        legacy_query = legacy_index.query.await_args.args[0]
+        assert "meta_name" not in legacy_query.return_fields
+        assert "meta_summary" not in legacy_query.return_fields
+        assert result["results_count"] == 1
+
+    @pytest.mark.asyncio
     async def test_get_skill_helper_returns_full_content_for_skill(self):
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(

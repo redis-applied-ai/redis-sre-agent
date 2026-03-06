@@ -244,6 +244,59 @@ class TestSRELangGraphAgent:
         assert isinstance(sent_messages_second[0], SystemMessage)
         assert "STARTUP_CONTEXT" in sent_messages_second[0].content
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_cached_system_prompt_preserves_instance_context_when_reinjected(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(content="turn-1", tool_calls=[]),
+                AIMessage(content="turn-2", tool_calls=[]),
+            ]
+        )
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        target_instance = MagicMock()
+        target_instance.instance_type = "redis_cloud"
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=target_instance)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                SystemMessage(content="PREBUILT_SYSTEM_PROMPT"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        state_after_first = await compiled.nodes["agent"].ainvoke(state)
+        sent_messages_first = mock_llm.ainvoke.call_args_list[0].args[0]
+        assert "CRITICAL REDIS CLOUD CONTEXT" in sent_messages_first[0].content
+
+        state_after_first["messages"] = [
+            m for m in state_after_first["messages"] if not isinstance(m, SystemMessage)
+        ]
+        state_after_first["iteration_count"] = 1
+        await compiled.nodes["agent"].ainvoke(state_after_first)
+
+        sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
+        assert isinstance(sent_messages_second[0], SystemMessage)
+        assert "CRITICAL REDIS CLOUD CONTEXT" in sent_messages_second[0].content
+        assert mock_build_startup_context.await_count == 0
+
     def test_clear_conversation(self, mock_settings, mock_llm):
         """Test clearing conversation history."""
         with patch.object(SRELangGraphAgent, "__init__", lambda self: None):

@@ -202,7 +202,7 @@ async def skills_check_helper(
     index = await get_skills_index(config=config)
 
     fetch_limit = min(max(limit + offset, 1) * 8, 1000)
-    return_fields = [
+    common_return_fields = [
         "id",
         "document_hash",
         "chunk_index",
@@ -213,28 +213,32 @@ async def skills_check_helper(
         "summary",
         "priority",
         "pinned",
-        "meta_name",
-        "meta_summary",
-        "meta_priority",
-        "meta_pinned",
         "doc_type",
         "version",
         "score",
         "vector_distance",
         "distance",
     ]
+    skills_return_fields = [
+        *common_return_fields,
+        "meta_name",
+        "meta_summary",
+        "meta_priority",
+        "meta_pinned",
+    ]
+    legacy_return_fields = common_return_fields
 
     if query:
         vectorizer = get_vectorizer()
         vectors = await vectorizer.aembed_many([query])
         query_vector = vectors[0] if vectors else []
 
-        def _skill_vector_query():
+        def _skill_vector_query(query_return_fields: list[str]):
             if distance_threshold is not None:
                 q = VectorRangeQuery(
                     vector=query_vector,
                     vector_field_name="vector",
-                    return_fields=return_fields,
+                    return_fields=query_return_fields,
                     num_results=fetch_limit,
                     distance_threshold=distance_threshold,
                 )
@@ -242,17 +246,17 @@ async def skills_check_helper(
                 q = VectorQuery(
                     vector=query_vector,
                     vector_field_name="vector",
-                    return_fields=return_fields,
+                    return_fields=query_return_fields,
                     num_results=fetch_limit,
                 )
             return q
 
-        candidates = await index.query(_skill_vector_query())
+        candidates = await index.query(_skill_vector_query(skills_return_fields))
     else:
         candidates = await index.query(
             FilterQuery(
                 filter_expression="*",
-                return_fields=return_fields,
+                return_fields=skills_return_fields,
                 num_results=fetch_limit,
             )
         )
@@ -265,14 +269,14 @@ async def skills_check_helper(
         if query:
             from redisvl.query.filter import Tag
 
-            legacy_query = _skill_vector_query()
+            legacy_query = _skill_vector_query(legacy_return_fields)
             legacy_query.set_filter(Tag("doc_type") == "skill")
             legacy_rows = await legacy_index.query(legacy_query)
         else:
             legacy_rows = await legacy_index.query(
                 FilterQuery(
                     filter_expression='@doc_type:{"skill"}',
-                    return_fields=return_fields,
+                    return_fields=legacy_return_fields,
                     num_results=fetch_limit,
                 )
             )

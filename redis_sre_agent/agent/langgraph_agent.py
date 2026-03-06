@@ -722,59 +722,14 @@ JSON payload of analyses artifacts:
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
         startup_system_prompt: Optional[str] = None
 
-        # Lightweight OTel wrapper to trace per-node execution
-        def _trace_node(node_name: str):
-            def _decorator(fn):
-                async def _wrapped(state: AgentState) -> AgentState:
-                    with tracer.start_as_current_span(
-                        "langgraph.node",
-                        attributes={
-                            "langgraph.graph": "sre_agent",
-                            "langgraph.node": node_name,
-                        },
-                    ):
-                        return await fn(state)
+        def _augment_with_instance_context(base_prompt: str) -> str:
+            """Ensure instance-type specific guidance is present exactly once."""
+            prompt = base_prompt or ""
 
-                return _wrapped
-
-            return _decorator
-
-        async def agent_node(state: AgentState) -> AgentState:
-            """Main agent node that processes user input and decides on tool calls."""
-            nonlocal startup_system_prompt
-            messages = state["messages"]
-            iteration_count = state.get("iteration_count", 0)
-            # max_iterations = state.get("max_iterations", 10)  # Not used in this function
-
-            if (
-                startup_system_prompt is None
-                and messages
-                and isinstance(messages[0], SystemMessage)
-            ):
-                startup_system_prompt = str(messages[0].content or "")
-
-            # Ensure startup system context is always present, including thread follow-ups.
-            if not messages or not isinstance(messages[0], SystemMessage):
-                if startup_system_prompt is None:
-                    context_query = ""
-                    for message in reversed(messages):
-                        if isinstance(message, HumanMessage):
-                            context_query = str(message.content or "")
-                            break
-                    startup_context = await build_startup_knowledge_context(
-                        query=context_query,
-                        version="latest",
-                        available_tool_names=list(tooldefs_by_name.keys()),
-                    )
-                    system_prompt = (
-                        f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
-                        if startup_context.strip()
-                        else SRE_SYSTEM_PROMPT
-                    )
-
-                    # Add Redis Cloud-specific context if working with a cloud instance
-                    if target_instance and target_instance.instance_type == "redis_cloud":
-                        redis_cloud_context = """
+            if target_instance and target_instance.instance_type == "redis_cloud":
+                marker = "## CRITICAL REDIS CLOUD CONTEXT"
+                if marker not in prompt:
+                    redis_cloud_context = """
 
 ## CRITICAL REDIS CLOUD CONTEXT
 
@@ -810,11 +765,13 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 
 **Remember: Redis Cloud manages persistence, replication, clustering, and modules automatically. Use the REST API to see the real configuration!**
 """
-                        system_prompt += redis_cloud_context
+                    prompt += redis_cloud_context
+                return prompt
 
-                    # Add Redis Enterprise-specific context if working with an enterprise instance
-                    elif target_instance and target_instance.instance_type == "redis_enterprise":
-                        redis_enterprise_context = """
+            if target_instance and target_instance.instance_type == "redis_enterprise":
+                marker = "## CRITICAL REDIS ENTERPRISE CONTEXT"
+                if marker not in prompt:
+                    redis_enterprise_context = """
 
 ## CRITICAL REDIS ENTERPRISE CONTEXT
 
@@ -864,8 +821,63 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 - Prefer the Admin REST API tools available to you (`get_cluster_info`, `get_database`, `list_nodes`, `list_shards`). Do NOT turn tool names into CLI commands.
 - If you cannot find a documented rladmin command for the task, omit CLI suggestions and stick to Admin REST API guidance.
 """
-                        system_prompt += redis_enterprise_context
-                    startup_system_prompt = system_prompt
+                    prompt += redis_enterprise_context
+
+            return prompt
+
+        # Lightweight OTel wrapper to trace per-node execution
+        def _trace_node(node_name: str):
+            def _decorator(fn):
+                async def _wrapped(state: AgentState) -> AgentState:
+                    with tracer.start_as_current_span(
+                        "langgraph.node",
+                        attributes={
+                            "langgraph.graph": "sre_agent",
+                            "langgraph.node": node_name,
+                        },
+                    ):
+                        return await fn(state)
+
+                return _wrapped
+
+            return _decorator
+
+        async def agent_node(state: AgentState) -> AgentState:
+            """Main agent node that processes user input and decides on tool calls."""
+            nonlocal startup_system_prompt
+            messages = state["messages"]
+            iteration_count = state.get("iteration_count", 0)
+            # max_iterations = state.get("max_iterations", 10)  # Not used in this function
+
+            if (
+                startup_system_prompt is None
+                and messages
+                and isinstance(messages[0], SystemMessage)
+            ):
+                existing_system_prompt = str(messages[0].content or "")
+                startup_system_prompt = _augment_with_instance_context(existing_system_prompt)
+                if startup_system_prompt != existing_system_prompt:
+                    messages = [SystemMessage(content=startup_system_prompt), *messages[1:]]
+
+            # Ensure startup system context is always present, including thread follow-ups.
+            if not messages or not isinstance(messages[0], SystemMessage):
+                if startup_system_prompt is None:
+                    context_query = ""
+                    for message in reversed(messages):
+                        if isinstance(message, HumanMessage):
+                            context_query = str(message.content or "")
+                            break
+                    startup_context = await build_startup_knowledge_context(
+                        query=context_query,
+                        version="latest",
+                        available_tool_names=list(tooldefs_by_name.keys()),
+                    )
+                    system_prompt = (
+                        f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
+                        if startup_context.strip()
+                        else SRE_SYSTEM_PROMPT
+                    )
+                    startup_system_prompt = _augment_with_instance_context(system_prompt)
 
                 system_message = SystemMessage(content=startup_system_prompt)
                 messages = [system_message] + messages
