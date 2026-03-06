@@ -9,6 +9,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     _dedupe_docs,
     _doc_matches_requested_version,
     get_all_document_fragments,
+    get_pinned_documents_helper,
     get_related_document_fragments,
     get_skill_helper,
     get_support_ticket_helper,
@@ -961,6 +962,49 @@ class TestSkillHelpers:
         first_call_kwargs = mock_get_all.await_args_list[0].kwargs
         assert first_call_kwargs["index_type"] == "knowledge"
 
+    @pytest.mark.asyncio
+    async def test_get_skill_helper_filter_query_supports_required_filter_expression(self):
+        """Guard against redisvl versions requiring filter_expression in FilterQuery."""
+
+        class _StrictFilterQuery:
+            def __init__(self, *, filter_expression, return_fields, num_results):
+                self.filter_expression = filter_expression
+                self.return_fields = return_fields
+                self.num_results = num_results
+
+            def set_filter(self, _filter):
+                self._filter = _filter
+
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(return_value=[])
+        knowledge_index = AsyncMock()
+        knowledge_index.query = AsyncMock(return_value=[])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.FilterQuery",
+                _StrictFilterQuery,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=knowledge_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+                new_callable=AsyncMock,
+                return_value={"skills": []},
+            ),
+        ):
+            result = await get_skill_helper(skill_name="Not Found")
+
+        assert result["error"] == "Skill not found"
+
 
 class TestSupportTicketHelpers:
     @pytest.mark.asyncio
@@ -1005,3 +1049,101 @@ class TestSupportTicketHelpers:
         call_kwargs = mock_get_fragments.await_args.kwargs
         assert call_kwargs["document_hash"] == "abc123def456"
         assert result["document_hash"] == "abc123def456"
+
+
+class TestPinnedDocumentsHelper:
+    @pytest.mark.asyncio
+    async def test_get_pinned_documents_includes_skills_and_support_tickets(self):
+        knowledge_index = AsyncMock()
+        knowledge_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "knowledge:doc-1:chunk:0",
+                    "document_hash": "doc-1",
+                    "chunk_index": 0,
+                    "name": "Pinned KB",
+                    "title": "Pinned KB",
+                    "content": "Pinned KB content",
+                    "source": "docs/latest/kb",
+                    "priority": "high",
+                    "pinned": "true",
+                    "doc_type": "runbook",
+                    "version": "latest",
+                },
+                {
+                    "id": "knowledge:skill-1:chunk:0",
+                    "document_hash": "skill-1",
+                    "chunk_index": 0,
+                    "name": "Pinned Skill",
+                    "title": "Pinned Skill",
+                    "content": "Legacy skill content",
+                    "source": "docs/latest/legacy-skill",
+                    "priority": "critical",
+                    "pinned": "true",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+            ]
+        )
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "skills:skill-1:chunk:0",
+                    "document_hash": "skill-1",
+                    "chunk_index": 0,
+                    "name": "Pinned Skill",
+                    "title": "Pinned Skill",
+                    "content": "Dedicated skill content",
+                    "source": "source_documents/shared/skills/pinned-skill",
+                    "priority": "critical",
+                    "pinned": "true",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+        tickets_index = AsyncMock()
+        tickets_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "tickets:ticket-1:chunk:0",
+                    "document_hash": "ticket-1",
+                    "chunk_index": 0,
+                    "name": "Pinned Ticket",
+                    "title": "Pinned Ticket",
+                    "content": "Pinned ticket content",
+                    "source": "source_documents/shared/support/ticket-1",
+                    "priority": "high",
+                    "pinned": "true",
+                    "doc_type": "support_ticket",
+                    "version": "latest",
+                }
+            ]
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=knowledge_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=tickets_index,
+            ),
+        ):
+            result = await get_pinned_documents_helper(version="latest", limit=10)
+
+        assert result["results_count"] == 3
+        by_name = {doc["name"]: doc for doc in result["pinned_documents"]}
+        assert by_name["Pinned Skill"]["doc_type"] == "skill"
+        assert by_name["Pinned Skill"]["full_content"] == "Dedicated skill content"
+        assert by_name["Pinned Ticket"]["doc_type"] == "support_ticket"
+        assert by_name["Pinned KB"]["doc_type"] == "runbook"

@@ -374,6 +374,7 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
     async def _query_by_name(index_type: str, *, legacy_filter: Optional[Any] = None) -> list[dict]:
         index = await _get_index_for_type(index_type)
         query = FilterQuery(
+            filter_expression="*",
             return_fields=return_fields,
             num_results=50,
         )
@@ -584,7 +585,6 @@ async def get_pinned_documents_helper(
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Return pinned documents in deterministic priority order."""
-    index = await get_knowledge_index(config=config)
     return_fields = [
         "id",
         "document_hash",
@@ -604,13 +604,23 @@ async def get_pinned_documents_helper(
         "version",
     ]
 
-    rows = await index.query(
-        FilterQuery(
-            filter_expression='@pinned:{"true"}',
-            return_fields=return_fields,
-            num_results=2000,
+    async def _query_pinned_rows(index_type: str) -> List[Dict[str, Any]]:
+        index = await _get_index_for_type(index_type, config=config)
+        rows = await index.query(
+            FilterQuery(
+                filter_expression='@pinned:{"true"}',
+                return_fields=return_fields,
+                num_results=2000,
+            )
         )
-    )
+        return [{**row, "_index_type": index_type} for row in rows]
+
+    rows: List[Dict[str, Any]] = []
+    for index_type in ("knowledge", "skills", "support_tickets"):
+        try:
+            rows.extend(await _query_pinned_rows(index_type))
+        except Exception as exc:
+            logger.warning("Failed to load pinned docs from %s index: %s", index_type, exc)
 
     candidates = [
         row
@@ -618,15 +628,36 @@ async def get_pinned_documents_helper(
         if _doc_is_pinned(row) and _doc_matches_requested_version(row, version)
     ]
 
-    by_document: Dict[str, List[Dict[str, Any]]] = {}
+    def _index_rank(doc_type: str, index_type: str) -> int:
+        if doc_type == "skill" and index_type == "skills":
+            return 0
+        if doc_type == "support_ticket" and index_type == "support_tickets":
+            return 0
+        if doc_type not in _SPECIAL_DOCUMENT_TYPES and index_type == "knowledge":
+            return 0
+        return 1
+
+    by_document: Dict[str, Dict[str, Any]] = {}
     for row in candidates:
         doc_hash = str(row.get("document_hash") or row.get("id") or "").strip()
         if not doc_hash:
             continue
-        by_document.setdefault(doc_hash, []).append(row)
+        doc_type = _normalized_doc_type(row)
+        key = f"{doc_type}:{doc_hash}"
+        index_type = str(row.get("_index_type", "knowledge"))
+        rank = _index_rank(doc_type, index_type)
+        existing = by_document.get(key)
+        if existing is None or rank < int(existing.get("rank", 99)):
+            by_document[key] = {"rank": rank, "rows": [row]}
+        elif rank == int(existing.get("rank", 99)):
+            existing_rows = list(existing.get("rows") or [])
+            existing_rows.append(row)
+            existing["rows"] = existing_rows
 
     docs = []
-    for doc_hash, chunks in by_document.items():
+    for key, doc_info in by_document.items():
+        chunks = list(doc_info.get("rows") or [])
+        doc_hash = key.split(":", 1)[1] if ":" in key else key
         sorted_chunks = sorted(chunks, key=_doc_chunk_index)
         sample = sorted_chunks[0]
         full_content = "\n\n".join(

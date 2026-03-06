@@ -25,6 +25,14 @@ def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
     return lines
 
 
+def _pinned_doc_preamble(doc_type: str) -> str:
+    normalized = str(doc_type or "").strip().lower()
+    if normalized in {"skill", "support_ticket"}:
+        label = normalized.replace("_", " ")
+        return f"Memorize this pinned {label} by heart and apply it directly when relevant."
+    return ""
+
+
 def _resolve_tool_name(available_tool_names: Optional[List[str]], operation: str) -> str:
     """Resolve full tool name for an operation when hashed provider names are present."""
     if not available_tool_names:
@@ -91,7 +99,11 @@ async def build_startup_knowledge_context(
                 or str(document.get("document_hash", "")).strip()
             )
             priority = str(document.get("priority", "normal")).strip().lower()
+            doc_type = str(document.get("doc_type", "")).strip().lower()
             pinned_lines.append(f"### {name} (priority: {priority})")
+            preamble = _pinned_doc_preamble(doc_type)
+            if preamble:
+                pinned_lines.append(preamble)
             pinned_lines.append(str(document.get("full_content", "")).strip())
     sections.append("\n".join(pinned_lines))
 
