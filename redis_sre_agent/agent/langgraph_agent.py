@@ -965,7 +965,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 )
 
             # Update state
-            new_messages = messages + [response]
+            # Persist only original workflow messages plus response.
+            # Keep invocation-only injected/augmented SystemMessage ephemeral.
+            new_messages = list(state["messages"]) + [response]
             state["messages"] = new_messages
             state["iteration_count"] = iteration_count + 1
 

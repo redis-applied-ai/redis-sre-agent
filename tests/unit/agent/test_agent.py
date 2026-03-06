@@ -466,6 +466,43 @@ class TestSRELangGraphAgent:
         assert "CRITICAL REDIS ENTERPRISE CONTEXT" not in sent_messages[0].content
         assert mock_build_startup_context.await_count == 0
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_agent_node_does_not_persist_injected_system_message(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        output_state = await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert isinstance(output_state["messages"][0], HumanMessage)
+        assert all(not isinstance(msg, SystemMessage) for msg in output_state["messages"])
+
     def test_clear_conversation(self, mock_settings, mock_llm):
         """Test clearing conversation history."""
         with patch.object(SRELangGraphAgent, "__init__", lambda self: None):
