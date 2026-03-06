@@ -1706,33 +1706,9 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
                 except Exception as e:
                     logger.error(f"Failed to check available instances: {e}")
 
-        # Create initial state with conversation history
-        # If conversation_history is provided, include it before the new query
-        initial_messages = []
-        if conversation_history:
-            initial_messages = list(conversation_history)
-            logger.info(f"Including {len(conversation_history)} messages from conversation history")
-            for i, msg in enumerate(conversation_history):
-                logger.info(f"  History[{i}]: {type(msg).__name__} - {str(msg.content)[:100]}")
-        initial_messages.append(HumanMessage(content=enhanced_query))
-        logger.info(f"Total messages in initial_state: {len(initial_messages)}")
-
-        initial_state: AgentState = {
-            "messages": initial_messages,
-            "session_id": session_id,
-            "user_id": user_id,
-            "current_tool_calls": [],
-            "iteration_count": 0,
-            "max_iterations": max_iterations,
-            "startup_system_prompt": None,
-            "startup_prompt_initialized": False,
-            "instance_context": None,
-            "signals_envelopes": [],
-        }
-
-        # Store instance context in the state for tool execution
-        if context and context.get("instance_id"):
-            initial_state["instance_context"] = context
+        # Defer initial state construction until tools are loaded so startup context
+        # can include the actual tool instructions available for this query.
+        initial_instance_context = context if context and context.get("instance_id") else None
 
         # INSTANCE TYPE TRIAGE: Detect and validate instance type before loading tools
         if target_instance and target_instance.instance_type in ["unknown", None]:
@@ -1895,6 +1871,43 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             logger.info(f"Loaded {len(tools)} tools for this query")
             for tool in tools:
                 logger.debug(f"  - {tool.name}")
+
+            startup_context = await build_startup_knowledge_context(
+                query=enhanced_query,
+                version="latest",
+                available_tools=tools,
+            )
+            seeded_system_prompt = (
+                f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
+                if startup_context.strip()
+                else SRE_SYSTEM_PROMPT
+            )
+
+            # Create initial state with conversation history and seeded startup context.
+            initial_messages = [SystemMessage(content=seeded_system_prompt)]
+            if conversation_history:
+                initial_messages.extend(list(conversation_history))
+                logger.info(
+                    f"Including {len(conversation_history)} messages from conversation history"
+                )
+                for i, msg in enumerate(conversation_history):
+                    logger.info(f"  History[{i}]: {type(msg).__name__} - {str(msg.content)[:100]}")
+            initial_messages.append(HumanMessage(content=enhanced_query))
+            logger.info(f"Total messages in initial_state: {len(initial_messages)}")
+
+            initial_state: AgentState = {
+                "messages": initial_messages,
+                "session_id": session_id,
+                "user_id": user_id,
+                "current_tool_calls": [],
+                "iteration_count": 0,
+                "max_iterations": max_iterations,
+                # Keep unset so agent_node can augment with instance-specific context.
+                "startup_system_prompt": None,
+                "startup_prompt_initialized": False,
+                "instance_context": initial_instance_context,
+                "signals_envelopes": [],
+            }
 
             adapters = await _build_adapters(tool_mgr, tools)
 
