@@ -39,7 +39,7 @@ curl -fsS http://localhost:8080/api/v1/metrics | head -n 20
 ```
 
 ### 3) Manage Redis instances (with optional cluster links)
-You can create an instance without a cluster for any supported `instance_type`.  
+You can create an instance without a cluster for any supported `instance_type`.
 Use `cluster_id` only when you want explicit cluster linkage (recommended for enterprise credentials/routing).
 ```bash
 # Create instance without cluster_id (valid for all instance types)

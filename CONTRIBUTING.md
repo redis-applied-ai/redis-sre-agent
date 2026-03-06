@@ -118,12 +118,18 @@ open htmlcov/index.html
 ## Code Quality
 
 ```bash
-# Run linting and formatting (same as CI)
+# Install repository pre-commit hook (root config)
+make hooks-install
+
+# Run linting and formatting (exact CI parity)
+make lint
+
+# Run all local pre-commit hooks
 uv run pre-commit run -a
 
 # Individual tools
+uv run ruff format --check .
 uv run ruff check .
-uv run ruff format .
 uv run mypy redis_sre_agent/
 ```
 
@@ -184,9 +190,10 @@ version = "0.2.3"
 
 1. Create a feature branch from `main`
 2. Run tests locally: `make test`
-3. Run linting: `uv run pre-commit run -a`
-4. Push and create a PR
-5. Ensure CI passes before requesting review
+3. Run linting: `make lint`
+4. Run hooks: `uv run pre-commit run -a`
+5. Push and create a PR
+6. Ensure CI passes before requesting review
 
 ## Project Structure
 
