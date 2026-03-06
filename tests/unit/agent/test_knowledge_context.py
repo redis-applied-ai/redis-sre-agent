@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from redis_sre_agent.agent.knowledge_context import build_startup_knowledge_context
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
 
 @pytest.mark.asyncio
@@ -73,3 +74,39 @@ async def test_startup_context_is_empty_without_pinned_docs_or_skills():
         context = await build_startup_knowledge_context(query="memory issue", version="latest")
 
     assert context == ""
+
+
+@pytest.mark.asyncio
+async def test_startup_context_includes_tool_instructions_without_pinned_or_skills():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(return_value={"skills": []}),
+        ),
+    ):
+        context = await build_startup_knowledge_context(
+            query="memory issue",
+            version="latest",
+            available_tools=[
+                ToolDefinition(
+                    name="diag_test_health",
+                    description="Health check",
+                    capability=ToolCapability.DIAGNOSTICS,
+                    parameters={"type": "object", "properties": {}, "required": []},
+                ),
+                ToolDefinition(
+                    name="tickets_test_search",
+                    description="Search tickets",
+                    capability=ToolCapability.TICKETS,
+                    parameters={"type": "object", "properties": {}, "required": []},
+                ),
+            ],
+        )
+
+    assert "Tool usage instructions:" in context
+    assert "Available tool categories: diagnostics, tickets." in context
+    assert "Support-ticket workflow:" in context

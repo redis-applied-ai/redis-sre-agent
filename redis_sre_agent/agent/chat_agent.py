@@ -60,14 +60,14 @@ This iterative approach prevents overwhelming context limits and produces better
 **Per turn, call at most 3-4 tools.** Analyze results before calling more.
 
 For Redis diagnostics:
-- Start with `get_detailed_redis_diagnostics` - it gives a comprehensive overview
-- Add `get_database` or `get_cluster_info` for Redis Enterprise/Cloud config details
-- Check `search_knowledge_base` if you need troubleshooting guidance
+- Start with diagnostics-category tools for a comprehensive overview
+- Add diagnostics/admin-api category tools for Redis Enterprise/Cloud configuration details
+- Add knowledge-category tools when you need troubleshooting guidance
 
 For code/repo investigation:
-- **First:** One targeted search (e.g., `search_code` with specific query)
+- **First:** One targeted repos-category search with a specific query
 - **Analyze:** Look at search results, identify the most relevant file
-- **Then:** Fetch that one file with `get_file_contents`
+- **Then:** Fetch one relevant file from repos-category tools
 - **Repeat:** If needed, fetch another file based on what you learned
 
 For metrics/logs:
@@ -95,7 +95,7 @@ Only call categories that are available in your current tool list.
 
 ## Redis Enterprise / Redis Cloud Notes
 - For managed Redis, INFO output can be misleading
-- Use the Admin REST API tools for accurate configuration details
+- Use available diagnostics/admin-api tools for accurate configuration details
 - Don't suggest CONFIG SET for managed deployments
 """
 
@@ -437,7 +437,9 @@ class ChatAgent:
             with tracer.start_as_current_span("chat_agent_node"):
                 response = await llm_with_expand.ainvoke(messages)
 
-            new_messages = list(messages) + [response]
+            # Persist only the original workflow state messages plus response.
+            # If we injected a SystemMessage just for this invocation, keep it ephemeral.
+            new_messages = list(state["messages"]) + [response]
             return {
                 "messages": new_messages,
                 "iteration_count": iteration_count + 1,

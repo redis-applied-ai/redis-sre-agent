@@ -154,9 +154,8 @@ async def build_startup_knowledge_context(
     if skills_lines:
         sections.append("\n".join(skills_lines))
 
-    if pinned_docs or skills_lines:
-        tool_lines = _tool_instruction_lines_for_categories(available_tools)
-        if tool_lines:
-            sections.append("\n".join(tool_lines))
+    tool_lines = _tool_instruction_lines_for_categories(available_tools)
+    if tool_lines:
+        sections.append("\n".join(tool_lines))
 
     return "\n\n".join(section for section in sections if section.strip())
