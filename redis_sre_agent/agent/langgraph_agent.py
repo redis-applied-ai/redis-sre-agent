@@ -721,6 +721,7 @@ JSON payload of analyses artifacts:
         """
         # Build a quick lookup for ToolDefinition by name for envelopes
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
+
         def _augment_with_instance_context(base_prompt: str) -> str:
             """Ensure instance-type specific guidance is present exactly once."""
             prompt = base_prompt or ""

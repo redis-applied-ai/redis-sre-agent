@@ -131,6 +131,7 @@ class KnowledgeOnlyAgent:
         # Build tool definitions lookup for envelope building (captured by tool_node closure)
         tooldefs = tool_mgr.get_tools()
         tooldefs_by_name = {t.name: t for t in tooldefs}
+
         async def agent_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
             """Main agent node for knowledge queries."""
             messages = state["messages"]
