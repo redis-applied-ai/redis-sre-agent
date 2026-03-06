@@ -57,6 +57,8 @@ class TestRedisInfrastructure:
         for schema in (SRE_SKILLS_SCHEMA, SRE_SUPPORT_TICKETS_SCHEMA):
             field_names = {field["name"] for field in schema["fields"]}
             assert "pinned" in field_names
+            ordered_field_names = [field["name"] for field in schema["fields"]]
+            assert ordered_field_names.index("pinned") < ordered_field_names.index("chunk_index")
 
     @patch("redis_sre_agent.core.redis.Redis")
     def test_get_redis_client(self, mock_redis):

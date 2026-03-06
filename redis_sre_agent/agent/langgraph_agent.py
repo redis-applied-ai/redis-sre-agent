@@ -304,6 +304,7 @@ class AgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    startup_system_prompt: Optional[str]  # Per-workflow cached startup prompt
     instance_context: Optional[Dict[str, Any]]  # For Redis instance context
     signals_envelopes: List[Dict[str, Any]]  # Accumulated tool result envelopes across steps
 
@@ -720,8 +721,6 @@ JSON payload of analyses artifacts:
         """
         # Build a quick lookup for ToolDefinition by name for envelopes
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
-        startup_system_prompt: Optional[str] = None
-
         def _augment_with_instance_context(base_prompt: str) -> str:
             """Ensure instance-type specific guidance is present exactly once."""
             prompt = base_prompt or ""
@@ -844,9 +843,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
         async def agent_node(state: AgentState) -> AgentState:
             """Main agent node that processes user input and decides on tool calls."""
-            nonlocal startup_system_prompt
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
+            startup_system_prompt = state.get("startup_system_prompt")
             # max_iterations = state.get("max_iterations", 10)  # Not used in this function
 
             if (
@@ -991,6 +990,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             else:
                 state["current_tool_calls"] = []
 
+            state["startup_system_prompt"] = startup_system_prompt
             return state
 
         async def tool_node(state: AgentState) -> AgentState:
@@ -1709,6 +1709,7 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
             "current_tool_calls": [],
             "iteration_count": 0,
             "max_iterations": max_iterations,
+            "startup_system_prompt": None,
             "instance_context": None,
             "signals_envelopes": [],
         }

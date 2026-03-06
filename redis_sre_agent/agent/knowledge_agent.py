@@ -81,6 +81,7 @@ class KnowledgeAgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    startup_system_prompt: Optional[str]
     tool_calls_executed: int
     # Accumulated search results for citation tracking
     knowledge_search_results: List[Dict[str, Any]]
@@ -130,13 +131,11 @@ class KnowledgeOnlyAgent:
         # Build tool definitions lookup for envelope building (captured by tool_node closure)
         tooldefs = tool_mgr.get_tools()
         tooldefs_by_name = {t.name: t for t in tooldefs}
-        startup_system_prompt: Optional[str] = None
-
         async def agent_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
             """Main agent node for knowledge queries."""
-            nonlocal startup_system_prompt
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
+            startup_system_prompt = state.get("startup_system_prompt")
 
             # Cache and reuse startup prompt for this workflow execution to avoid repeated
             # knowledge-context lookups in tool-call loops.
@@ -254,6 +253,7 @@ class KnowledgeOnlyAgent:
                     state["current_tool_calls"] = []
 
                 # No per-iteration progress message; providers will emit status updates
+                state["startup_system_prompt"] = startup_system_prompt
                 return state
 
             except Exception as e:
@@ -263,6 +263,7 @@ class KnowledgeOnlyAgent:
                 )
                 state["messages"] = messages + [error_message]
                 state["current_tool_calls"] = []
+                state["startup_system_prompt"] = startup_system_prompt
                 return state
 
         async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
@@ -529,6 +530,7 @@ class KnowledgeOnlyAgent:
                 "current_tool_calls": [],
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
+                "startup_system_prompt": None,
                 "tool_calls_executed": 0,
                 "knowledge_search_results": [],
                 "signals_envelopes": [],

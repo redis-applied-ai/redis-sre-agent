@@ -414,6 +414,63 @@ class TestKnowledgeAgentMethods:
         assert isinstance(sent_messages_second[0], SystemMessage)
         assert "STARTUP_CONTEXT" in sent_messages_second[0].content
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_startup_context_not_shared_between_independent_invocations(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.side_effect = ["CTX_ONE", "CTX_TWO"]
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state_one = {
+            "messages": [HumanMessage(content="first question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+        state_two = {
+            "messages": [HumanMessage(content="second question")],
+            "session_id": "session-2",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state_one)
+        await compiled.nodes["agent"].ainvoke(state_two)
+
+        assert mock_build_startup_context.await_count == 2
+        sent_messages_first = bound_llm.ainvoke.call_args_list[0].args[0]
+        sent_messages_second = bound_llm.ainvoke.call_args_list[1].args[0]
+        assert "CTX_ONE" in sent_messages_first[0].content
+        assert "CTX_TWO" in sent_messages_second[0].content
+
 
 class TestSafeToolNodeErrorHandling:
     """Test that safe_tool_node reports errors to LLM instead of user."""

@@ -246,6 +246,56 @@ class TestSRELangGraphAgent:
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_startup_context_not_shared_between_independent_invocations(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.side_effect = ["CTX_ONE", "CTX_TWO"]
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state_one = {
+            "messages": [HumanMessage(content="first question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+        state_two = {
+            "messages": [HumanMessage(content="second question")],
+            "session_id": "session-2",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state_one)
+        await compiled.nodes["agent"].ainvoke(state_two)
+
+        assert mock_build_startup_context.await_count == 2
+        sent_messages_first = mock_llm.ainvoke.call_args_list[0].args[0]
+        sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
+        assert "CTX_ONE" in sent_messages_first[0].content
+        assert "CTX_TWO" in sent_messages_second[0].content
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
     async def test_cached_system_prompt_preserves_instance_context_when_reinjected(
         self, mock_build_startup_context, mock_settings, mock_llm
     ):
@@ -368,6 +418,7 @@ class TestAgentWorkflow:
             "current_tool_calls",
             "iteration_count",
             "max_iterations",
+            "startup_system_prompt",
             "instance_context",  # Added in the new implementation
             "signals_envelopes",
         ]

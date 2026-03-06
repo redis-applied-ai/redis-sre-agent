@@ -113,13 +113,16 @@ def _build_document_schema(index_name: str, include_pinned: bool) -> dict:
         },
     ]
     if include_pinned:
-        fields.insert(
-            10,
-            {
-                "name": "pinned",
-                "type": "tag",
-            },
+        pinned_field = {"name": "pinned", "type": "tag"}
+        chunk_index_position = next(
+            (
+                idx
+                for idx, field in enumerate(fields)
+                if isinstance(field, dict) and field.get("name") == "chunk_index"
+            ),
+            len(fields),
         )
+        fields.insert(chunk_index_position, pinned_field)
     return {
         "index": {
             "name": index_name,
