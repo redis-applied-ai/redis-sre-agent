@@ -74,9 +74,11 @@ For metrics/logs:
 - Be specific with queries - broad queries return too much data
 - Fetch one metric or log query at a time
 
-For historical incident context:
-- Use `search_support_tickets` with concrete identifiers (cluster name/host, error strings)
-- Then use `get_support_ticket` for the most relevant ticket details
+For historical incident context (if `tickets` tools are available):
+- Search support tickets with concrete identifiers (cluster name/host, error strings)
+- Fetch the most relevant ticket record for full details
+
+Only call categories that are available in your current tool list.
 
 ## What NOT to Do
 
@@ -423,7 +425,7 @@ class ChatAgent:
                     startup_context = await build_startup_knowledge_context(
                         query=context_query,
                         version="latest",
-                        available_tool_names=list(tooldefs_by_name.keys()),
+                        available_tools=list(tooldefs_by_name.values()),
                     )
                     startup_system_prompt = (
                         f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"
@@ -619,11 +621,10 @@ class ChatAgent:
             app = workflow.compile(checkpointer=checkpointer)
 
             # Build initial messages with shared startup context (pinned docs, skills, tool usage)
-            available_tool_names = [tool.name for tool in tools if getattr(tool, "name", None)]
             startup_context = await build_startup_knowledge_context(
                 query=query,
                 version="latest",
-                available_tool_names=available_tool_names,
+                available_tools=tools,
             )
             system_prompt = (
                 f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"

@@ -156,7 +156,7 @@ class TestSRELangGraphAgent:
         mock_build_startup_context.assert_awaited_once_with(
             query="follow-up question",
             version="latest",
-            available_tool_names=[],
+            available_tools=[],
         )
 
     @pytest.mark.asyncio

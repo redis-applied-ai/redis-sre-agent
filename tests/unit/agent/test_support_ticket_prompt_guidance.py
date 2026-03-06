@@ -2,22 +2,56 @@
 
 from redis_sre_agent.agent.chat_agent import CHAT_SYSTEM_PROMPT
 from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
-from redis_sre_agent.agent.knowledge_context import _tool_instruction_lines_with_names
+from redis_sre_agent.agent.knowledge_context import _tool_instruction_lines_for_categories
 from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
 
 def test_startup_context_includes_support_ticket_tool_instructions():
-    lines = _tool_instruction_lines_with_names()
+    lines = _tool_instruction_lines_for_categories(
+        [
+            ToolDefinition(
+                name="knowledge_test_skills_check",
+                description="Skills lookup",
+                capability=ToolCapability.KNOWLEDGE,
+                parameters={"type": "object", "properties": {}, "required": []},
+            ),
+            ToolDefinition(
+                name="knowledge_test_search_support_tickets",
+                description="Support ticket search",
+                capability=ToolCapability.TICKETS,
+                parameters={"type": "object", "properties": {}, "required": []},
+            ),
+        ]
+    )
     joined = "\n".join(lines)
-    assert "search_support_tickets" in joined
-    assert "get_support_ticket" in joined
+    assert "available tool categories: knowledge, tickets." in joined.lower()
+    assert "tickets tools for historical incidents" in joined.lower()
     assert "cluster name or cluster host" in joined
+    assert "search_support_tickets" not in joined
+    assert "get_support_ticket" not in joined
+
+
+def test_startup_context_omits_ticket_workflow_when_tickets_category_unavailable():
+    lines = _tool_instruction_lines_for_categories(
+        [
+            ToolDefinition(
+                name="knowledge_test_skills_check",
+                description="Skills lookup",
+                capability=ToolCapability.KNOWLEDGE,
+                parameters={"type": "object", "properties": {}, "required": []},
+            ),
+        ]
+    )
+    joined = "\n".join(lines)
+    assert "support-ticket workflow" not in joined.lower()
 
 
 def test_chat_prompt_mentions_support_ticket_usage():
     prompt = CHAT_SYSTEM_PROMPT.lower()
-    assert "support_tickets" in prompt
-    assert "get_support_ticket" in prompt
+    assert "tools are available" in prompt
+    assert "tickets" in prompt
+    assert "support tickets" in prompt
 
 
 def test_knowledge_prompt_mentions_support_tickets():
@@ -27,5 +61,5 @@ def test_knowledge_prompt_mentions_support_tickets():
 
 def test_sre_prompt_mentions_support_ticket_usage():
     prompt = SRE_SYSTEM_PROMPT.lower()
-    assert "search_support_tickets" in prompt
-    assert "get_support_ticket" in prompt
+    assert "category tools in your batch" in prompt
+    assert "support tickets" in prompt

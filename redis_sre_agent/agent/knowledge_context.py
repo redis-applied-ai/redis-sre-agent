@@ -32,38 +32,73 @@ def _pinned_doc_preamble(doc_type: str) -> str:
     return ""
 
 
-def _resolve_tool_name(available_tool_names: Optional[List[str]], operation: str) -> str:
-    """Resolve full tool name for an operation when hashed provider names are present."""
-    if not available_tool_names:
-        return operation
+def _extract_tool_categories(available_tools: Optional[List[Any]] = None) -> List[str]:
+    """Return normalized, de-duplicated capability categories for available tools."""
+    if not available_tools:
+        return []
 
-    suffix = f"_{operation}"
-    for tool_name in available_tool_names:
-        if tool_name == operation or tool_name.endswith(suffix):
-            return tool_name
-    return operation
+    categories: set[str] = set()
+    for tool in available_tools:
+        capability = getattr(tool, "capability", None)
+        if capability is None:
+            metadata = getattr(tool, "metadata", None)
+            capability = getattr(metadata, "capability", None)
+        if capability is None:
+            continue
 
+        normalized = str(getattr(capability, "value", capability)).strip().lower()
+        if normalized:
+            categories.add(normalized)
 
-def _tool_instruction_lines_with_names(
-    available_tool_names: Optional[List[str]] = None,
-) -> List[str]:
-    """Render explicit ADR tool usage instructions using concrete tool names."""
-    get_skill_name = _resolve_tool_name(available_tool_names, "get_skill")
-    skills_check_name = _resolve_tool_name(available_tool_names, "skills_check")
-    search_tickets_name = _resolve_tool_name(available_tool_names, "search_support_tickets")
-    get_ticket_name = _resolve_tool_name(available_tool_names, "get_support_ticket")
-    return [
-        "Tool usage instructions:",
-        f'- {get_skill_name}("<skill_name>")',
-        f'- {skills_check_name}("<query>")',
-        f'- {search_tickets_name}("<query>")',
-        f'- {get_ticket_name}("<id>")',
-        (
-            "Support-ticket workflow: when investigating incidents, ask for concrete identifiers "
-            "(for example cluster name or cluster host), search tickets with those identifiers, "
-            "then fetch the best matching ticket by id."
-        ),
+    ordered = [
+        "diagnostics",
+        "metrics",
+        "logs",
+        "knowledge",
+        "tickets",
+        "repos",
+        "traces",
+        "utilities",
     ]
+    return [category for category in ordered if category in categories]
+
+
+def _tool_instruction_lines_for_categories(
+    available_tools: Optional[List[Any]] = None,
+) -> List[str]:
+    """Render ADR tool usage instructions using capability categories."""
+    categories = _extract_tool_categories(available_tools)
+    if not categories:
+        return []
+
+    lines = [
+        "Tool usage instructions:",
+        "- Only call tools that are available in this session.",
+        f"- Available tool categories: {', '.join(categories)}.",
+    ]
+
+    category_guidance = {
+        "diagnostics": "- Use diagnostics tools for instance-level health checks and Redis command inspection.",
+        "metrics": "- Use metrics tools for time-series signals and trend validation.",
+        "logs": "- Use logs tools for event timelines and error correlation.",
+        "knowledge": "- Use knowledge tools for runbooks, skills, and documentation retrieval.",
+        "tickets": "- Use tickets tools for historical incidents and prior remediation patterns.",
+        "repos": "- Use repos tools for code and configuration investigation.",
+        "traces": "- Use traces tools for distributed request-path analysis.",
+        "utilities": "- Use utilities tools for safe helper operations (time conversion, lightweight formatting, etc.).",
+    }
+    for category in categories:
+        guidance_line = category_guidance.get(category)
+        if guidance_line:
+            lines.append(guidance_line)
+
+    if "tickets" in categories:
+        lines.append(
+            "Support-ticket workflow: ask for concrete identifiers (for example cluster name or cluster host), "
+            "search with those identifiers, then fetch the best matching ticket."
+        )
+
+    return lines
 
 
 async def build_startup_knowledge_context(
@@ -72,7 +107,7 @@ async def build_startup_knowledge_context(
     pinned_limit: int = 20,
     pinned_content_char_budget: int = 12000,
     skills_limit: int = 20,
-    available_tool_names: Optional[List[str]] = None,
+    available_tools: Optional[List[Any]] = None,
 ) -> str:
     """Build first-turn context in ADR order: pinned, skills, tools."""
     sections: List[str] = []
@@ -120,6 +155,8 @@ async def build_startup_knowledge_context(
         sections.append("\n".join(skills_lines))
 
     if pinned_docs or skills_lines:
-        sections.append("\n".join(_tool_instruction_lines_with_names(available_tool_names)))
+        tool_lines = _tool_instruction_lines_for_categories(available_tools)
+        if tool_lines:
+            sections.append("\n".join(tool_lines))
 
     return "\n\n".join(section for section in sections if section.strip())

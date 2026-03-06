@@ -55,6 +55,7 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 - You do NOT have access to specific Redis instances or live system data
 - For instance-specific troubleshooting, recommend using the full SRE agent with instance context
 - Focus on general principles, methodologies, and documented best practices
+- Only call tool categories that are available in your current tool list
 - Always cite knowledge base sources when available
 - If you don't find relevant information in the knowledge base, provide general SRE guidance based on industry best practices
 
@@ -158,7 +159,7 @@ class KnowledgeOnlyAgent:
                     startup_context = await build_startup_knowledge_context(
                         query=context_query,
                         version="latest",
-                        available_tool_names=list(tooldefs_by_name.keys()),
+                        available_tools=list(tooldefs_by_name.values()),
                     )
                     startup_system_prompt = (
                         f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"

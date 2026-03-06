@@ -541,7 +541,7 @@ class TestChatAgentStartupContext:
         mock_startup_context.assert_awaited_once()
         startup_kwargs = mock_startup_context.await_args.kwargs
         assert startup_kwargs["query"] == "Who runs AOP?"
-        assert startup_kwargs["available_tool_names"] == ["knowledge_test_skills_check"]
+        assert startup_kwargs["available_tools"] == [mock_tool]
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
@@ -591,7 +591,7 @@ class TestChatAgentStartupContext:
         mock_build_startup_context.assert_awaited_once_with(
             query="follow-up question",
             version="latest",
-            available_tool_names=[],
+            available_tools=[],
         )
 
     @pytest.mark.asyncio

@@ -870,7 +870,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                     startup_context = await build_startup_knowledge_context(
                         query=context_query,
                         version="latest",
-                        available_tool_names=list(tooldefs_by_name.keys()),
+                        available_tools=list(tooldefs_by_name.values()),
                     )
                     system_prompt = (
                         f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"

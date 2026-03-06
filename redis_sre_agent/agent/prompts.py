@@ -37,9 +37,11 @@ Turn 1: Call get_detailed_redis_diagnostics, get_cluster_info, list_nodes, searc
 
 Think about what information you'll need upfront and request it all in one turn. This significantly speeds up analysis.
 
-When incidents may have happened before, include support-ticket tools in your batch:
-- `search_support_tickets` with concrete identifiers (cluster name/host, error strings)
-- `get_support_ticket` for the most relevant ticket id
+When incidents may have happened before, include `tickets` category tools in your batch (if available):
+- Search support tickets with concrete identifiers (cluster name/host, error strings)
+- Fetch the most relevant ticket record
+
+Only call categories that are available in your current tool list.
 
 ## Writing Style
 
