@@ -56,3 +56,20 @@ async def test_startup_context_memorizes_pinned_skills_and_tickets():
     assert "Ticket finding: cluster-a had memory pressure" in context
     assert "Skills you know:" in context
     assert "General Memory Investigation: Use diagnostics then confirm workload." in context
+
+
+@pytest.mark.asyncio
+async def test_startup_context_is_empty_without_pinned_docs_or_skills():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(return_value={"skills": []}),
+        ),
+    ):
+        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+
+    assert context == ""

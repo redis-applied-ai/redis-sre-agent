@@ -13,11 +13,10 @@ logger = logging.getLogger(__name__)
 
 def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
     """Render the ADR skills table of contents lines."""
-    lines = ["Skills you know:"]
     if not skills:
-        lines.append("- (none)")
-        return lines
+        return []
 
+    lines = ["Skills you know:"]
     for skill in skills:
         name = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
         summary = str(skill.get("summary", "")).strip()
@@ -89,10 +88,8 @@ async def build_startup_knowledge_context(
         pinned_result = {"pinned_documents": []}
 
     pinned_docs = pinned_result.get("pinned_documents") or []
-    pinned_lines = ["Pinned documents:"]
-    if not pinned_docs:
-        pinned_lines.append("- (none)")
-    else:
+    if pinned_docs:
+        pinned_lines = ["Pinned documents:"]
         for document in pinned_docs:
             name = (
                 str(document.get("name", "")).strip()
@@ -105,7 +102,7 @@ async def build_startup_knowledge_context(
             if preamble:
                 pinned_lines.append(preamble)
             pinned_lines.append(str(document.get("full_content", "")).strip())
-    sections.append("\n".join(pinned_lines))
+        sections.append("\n".join(pinned_lines))
 
     try:
         skills_result = await skills_check_helper(
@@ -118,6 +115,11 @@ async def build_startup_knowledge_context(
         logger.warning("Failed to run startup skills check: %s", exc)
         skills_result = {"skills": []}
 
-    sections.append("\n".join(_skills_toc_lines(skills_result.get("skills") or [])))
-    sections.append("\n".join(_tool_instruction_lines_with_names(available_tool_names)))
+    skills_lines = _skills_toc_lines(skills_result.get("skills") or [])
+    if skills_lines:
+        sections.append("\n".join(skills_lines))
+
+    if pinned_docs or skills_lines:
+        sections.append("\n".join(_tool_instruction_lines_with_names(available_tool_names)))
+
     return "\n\n".join(section for section in sections if section.strip())
