@@ -513,6 +513,42 @@ class TestIngestSreDocumentHelper:
         doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert doc_data[0]["product_labels"] == "redis-cloud,enterprise"
         assert doc_data[0]["doc_type"] == "skill"
+        assert doc_data[0]["pinned"] == "false"
+
+    @pytest.mark.asyncio
+    async def test_ingest_support_ticket_defaults_pinned_false(self):
+        """Support tickets should store pinned=false to support tag filters."""
+        mock_index = AsyncMock()
+        mock_index.load = AsyncMock()
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed = AsyncMock(return_value=b"vector_bytes")
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await ingest_sre_document_helper(
+                title="Ticket 123",
+                content="Customer incident details",
+                source="support",
+                category="incident",
+                severity="warning",
+                doc_type="support_ticket",
+            )
+
+        assert result["status"] == "ingested"
+        assert result["doc_type"] == "support_ticket"
+        call_args = mock_index.load.call_args
+        doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        assert doc_data[0]["pinned"] == "false"
 
 
 class TestGetAllDocumentFragments:
@@ -877,6 +913,53 @@ class TestSkillHelpers:
         assert result["document_hash"] == "hash-runbook"
         assert result["doc_type"] == "runbook"
         assert "not 'skill'" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_skill_helper_uses_legacy_knowledge_index_type(self):
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(return_value=[])
+        legacy_index = AsyncMock()
+        legacy_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "legacy-skill-0",
+                    "document_hash": "hash-legacy",
+                    "chunk_index": 0,
+                    "name": "Legacy Skill",
+                    "title": "Legacy Skill",
+                    "source": "docs/latest/legacy-skill",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=legacy_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value={
+                    "document_hash": "hash-legacy",
+                    "doc_type": "skill",
+                    "fragments": [{"chunk_index": 0, "content": "Legacy content"}],
+                },
+            ) as mock_get_all,
+        ):
+            result = await get_skill_helper(skill_name="Legacy Skill")
+
+        assert result["skill_name"] == "Legacy Skill"
+        first_call_kwargs = mock_get_all.await_args_list[0].kwargs
+        assert first_call_kwargs["index_type"] == "knowledge"
 
 
 class TestSupportTicketHelpers:

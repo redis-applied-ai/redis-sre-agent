@@ -430,14 +430,15 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
             "skill_name": skill_name,
             "error": "Skill document hash is missing",
         }
+    target_index_type = str(target.get("_index_type") or target.get("index_type") or "skills")
 
     result = await get_all_document_fragments(
         document_hash=document_hash,
         include_metadata=True,
-        index_type=str(target.get("index_type", "skills")),
+        index_type=target_index_type,
         version=version,
     )
-    if result.get("error") and str(target.get("index_type", "skills")) != "knowledge":
+    if result.get("error") and target_index_type != "knowledge":
         result = await get_all_document_fragments(
             document_hash=document_hash,
             include_metadata=True,
@@ -1045,9 +1046,8 @@ async def ingest_sre_document_helper(
         "vector": content_vector,
         "product_labels": product_labels_str,
         "product_label_tags": product_labels_str,  # Duplicate for tag searching
+        "pinned": "false",
     }
-    if normalized_doc_type not in {"skill", "support_ticket"}:
-        document["pinned"] = "false"
 
     # Store in vector index
     await index.load(data=[document], id_field="id", keys=[doc_key])
