@@ -73,6 +73,62 @@ class TestKnowledgeAgent:
         assert "retry" not in params
 
     @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_seeds_startup_context_into_initial_state(
+        self, mock_create_llm, mock_tool_manager_cls, mock_build_startup_context
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "knowledge_search_results": [],
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = KnowledgeOnlyAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(query="who runs AOP?", session_id="s1", user_id="u1")
+
+        initial_state = captured["initial_state"]
+        assert isinstance(initial_state["messages"][0], SystemMessage)
+        assert "STARTUP_CONTEXT" in initial_state["messages"][0].content
+        assert initial_state["startup_prompt_initialized"] is True
+        assert "STARTUP_CONTEXT" in (initial_state["startup_system_prompt"] or "")
+        mock_build_startup_context.assert_awaited_once_with(
+            query="who runs AOP?",
+            version="latest",
+            available_tools=[],
+        )
+
+    @pytest.mark.asyncio
     async def test_ingest_sre_document_wrapper(self):
         """Test that ingest_sre_document wrapper works correctly."""
         import inspect

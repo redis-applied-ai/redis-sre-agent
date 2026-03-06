@@ -526,10 +526,22 @@ class KnowledgeOnlyAgent:
             # Build workflow with tools and bound LLM
             workflow = self._build_workflow(tool_mgr, llm_with_tools, emitter)
 
+            # Build startup context once per query and seed initial SystemMessage.
+            startup_context = await build_startup_knowledge_context(
+                query=query,
+                version="latest",
+                available_tools=tools,
+            )
+            system_prompt = (
+                f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
+                if startup_context.strip()
+                else KNOWLEDGE_SYSTEM_PROMPT
+            )
+
             # Create initial state with conversation history
-            initial_messages = []
+            initial_messages = [SystemMessage(content=system_prompt)]
             if conversation_history:
-                initial_messages = list(conversation_history)
+                initial_messages.extend(conversation_history)
                 logger.info(
                     f"Including {len(conversation_history)} messages from conversation history"
                 )
@@ -542,8 +554,8 @@ class KnowledgeOnlyAgent:
                 "current_tool_calls": [],
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
-                "startup_system_prompt": None,
-                "startup_prompt_initialized": False,
+                "startup_system_prompt": system_prompt,
+                "startup_prompt_initialized": True,
                 "tool_calls_executed": 0,
                 "knowledge_search_results": [],
                 "signals_envelopes": [],
