@@ -226,7 +226,6 @@ async def skills_check_helper(
         "meta_priority",
         "meta_pinned",
     ]
-    legacy_return_fields = common_return_fields
 
     if query:
         vectorizer = get_vectorizer()
@@ -262,25 +261,6 @@ async def skills_check_helper(
         )
 
     candidates = [{**doc, "_index_type": "skills"} for doc in candidates]
-    if not candidates:
-        # Backward-compatibility fallback for deployments still storing skills
-        # in the legacy knowledge index.
-        legacy_index = await get_knowledge_index(config=config)
-        if query:
-            from redisvl.query.filter import Tag
-
-            legacy_query = _skill_vector_query(legacy_return_fields)
-            legacy_query.set_filter(Tag("doc_type") == "skill")
-            legacy_rows = await legacy_index.query(legacy_query)
-        else:
-            legacy_rows = await legacy_index.query(
-                FilterQuery(
-                    filter_expression='@doc_type:{"skill"}',
-                    return_fields=legacy_return_fields,
-                    num_results=fetch_limit,
-                )
-            )
-        candidates = [{**doc, "_index_type": "knowledge"} for doc in legacy_rows]
 
     candidates = [
         doc
@@ -375,7 +355,7 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
         "version",
     ]
 
-    async def _query_by_name(index_type: str, *, legacy_filter: Optional[Any] = None) -> list[dict]:
+    async def _query_by_name(index_type: str) -> list[dict]:
         index = await _get_index_for_type(index_type)
         query = FilterQuery(
             filter_expression="*",
@@ -383,15 +363,11 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
             num_results=50,
         )
         filter_expr = Tag("name") == normalized_name
-        if legacy_filter is not None:
-            filter_expr = legacy_filter & filter_expr
         query.set_filter(filter_expr)
         rows = await index.query(query)
         return [{**row, "_index_type": index_type} for row in rows]
 
     candidates = await _query_by_name("skills")
-    if not candidates:
-        candidates = await _query_by_name("knowledge", legacy_filter=(Tag("doc_type") == "skill"))
 
     candidates = [
         doc
@@ -443,13 +419,6 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
         index_type=target_index_type,
         version=version,
     )
-    if result.get("error") and target_index_type != "knowledge":
-        result = await get_all_document_fragments(
-            document_hash=document_hash,
-            include_metadata=True,
-            index_type="knowledge",
-            version=version,
-        )
 
     fragments = result.get("fragments") or []
     if not fragments:
