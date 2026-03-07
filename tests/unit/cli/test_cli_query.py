@@ -251,6 +251,63 @@ def test_query_with_cluster_uses_linked_instance_context(mock_thread_manager, mo
     assert kwargs.get("context") == {"instance_id": instance.id, "cluster_id": cluster.id}
 
 
+def test_query_with_cluster_without_linked_instance_uses_cluster_context_only(
+    mock_thread_manager, mock_redis_client
+):
+    runner = CliRunner()
+
+    cluster = MagicMock()
+    cluster.id = "cluster-prod-123"
+    cluster.name = "Prod Cluster"
+
+    mock_knowledge_agent = MagicMock()
+    mock_knowledge_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
+
+    from redis_sre_agent.agent.router import AgentType
+
+    with (
+        patch(
+            "redis_sre_agent.cli.query.get_cluster_by_id",
+            new=AsyncMock(return_value=cluster),
+        ) as mock_get_cluster,
+        patch(
+            "redis_sre_agent.cli.query.get_preferred_instance_by_cluster_id",
+            new=AsyncMock(return_value=None),
+        ) as mock_get_instance,
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
+        ),
+        patch(
+            "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_knowledge_agent
+        ) as mock_get_knowledge,
+        patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+    ):
+        result = runner.invoke(
+            query,
+            [
+                "Check this cluster",
+                "--redis-cluster-id",
+                cluster.id,
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "No linked Redis instance found for this cluster" in result.output
+    mock_get_cluster.assert_awaited_once_with(cluster.id)
+    mock_get_instance.assert_awaited_once_with(cluster.id)
+    mock_get_knowledge.assert_called_once()
+    mock_get_sre.assert_not_called()
+
+    mock_knowledge_agent.process_query.assert_awaited_once()
+    _, kwargs = mock_knowledge_agent.process_query.call_args
+    assert kwargs.get("context") == {"cluster_id": cluster.id}
+
+
 def test_query_with_unknown_cluster_exits_with_error_and_skips_agents(
     mock_thread_manager, mock_redis_client
 ):

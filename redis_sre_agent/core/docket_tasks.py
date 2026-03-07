@@ -771,10 +771,9 @@ async def process_agent_turn(
             else:
                 await task_manager.add_task_update(
                     task_id,
-                    f"Cluster {active_cluster_id} has no linked Redis instances",
+                    (f"Using Redis cluster: {active_cluster_id} (no linked Redis instance found)"),
                     "instance_context",
                 )
-                raise ValueError(f"No instances linked to cluster: {active_cluster_id}")
 
             await thread_manager.update_thread_context(thread_id, context_update, merge=True)
 
@@ -813,10 +812,12 @@ async def process_agent_turn(
             else:
                 await task_manager.add_task_update(
                     task_id,
-                    f"Cluster {active_cluster_id} has no linked Redis instances",
+                    (
+                        f"Continuing with Redis cluster: {active_cluster_id} "
+                        "(no linked Redis instance found)"
+                    ),
                     "instance_context",
                 )
-                raise ValueError(f"No instances linked to cluster: {active_cluster_id}")
 
         else:
             # No instance/cluster context - attempt to create one from message

@@ -113,11 +113,12 @@ def query(
                 exit(1)
 
             instance = await get_preferred_instance_by_cluster_id(active_cluster_id)
-            if not instance:
-                console.print(f"[red]❌ No instances linked to cluster: {active_cluster_id}[/red]")
-                exit(1)
-
             console.print(f"[dim] Redis cluster: {cluster.name}[/dim]")
+            if not instance:
+                console.print(
+                    "[dim] No linked Redis instance found for this cluster; "
+                    "continuing with cluster context only.[/dim]"
+                )
 
         # Resolve support package if provided
         support_package_path = None
