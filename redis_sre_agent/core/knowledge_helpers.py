@@ -254,7 +254,7 @@ async def skills_check_helper(
     else:
         candidates = await index.query(
             FilterQuery(
-                filter_expression="*",
+                filter_expression=Tag("document_hash") != "",
                 return_fields=skills_return_fields,
                 num_results=fetch_limit,
             )
@@ -358,12 +358,10 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
     async def _query_by_name(index_type: str) -> list[dict]:
         index = await _get_index_for_type(index_type)
         query = FilterQuery(
-            filter_expression="*",
+            filter_expression=Tag("name") == normalized_name,
             return_fields=return_fields,
             num_results=50,
         )
-        filter_expr = Tag("name") == normalized_name
-        query.set_filter(filter_expr)
         rows = await index.query(query)
         return [{**row, "_index_type": index_type} for row in rows]
 
@@ -581,7 +579,7 @@ async def get_pinned_documents_helper(
         index = await _get_index_for_type(index_type, config=config)
         rows = await index.query(
             FilterQuery(
-                filter_expression='@pinned:{"true"}',
+                filter_expression=Tag("pinned") == "true",
                 return_fields=return_fields,
                 num_results=2000,
             )

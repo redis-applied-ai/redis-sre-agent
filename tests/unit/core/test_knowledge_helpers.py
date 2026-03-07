@@ -930,6 +930,35 @@ class TestSkillHelpers:
 
         assert result["error"] == "Skill not found"
 
+    @pytest.mark.asyncio
+    async def test_skills_check_helper_uses_filter_expression_object(self):
+        """Guard against redisvl versions that reject raw string filter expressions."""
+
+        class _StrictFilterQuery:
+            def __init__(self, *, filter_expression, return_fields, num_results):
+                if isinstance(filter_expression, str):
+                    raise TypeError("filter_expression must be a FilterExpression")
+                self.filter_expression = filter_expression
+                self.return_fields = return_fields
+                self.num_results = num_results
+
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(return_value=[])
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.FilterQuery",
+                _StrictFilterQuery,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+        ):
+            result = await skills_check_helper(query=None, limit=10, offset=0, version="latest")
+
+        assert result["results_count"] == 0
+
 
 class TestSupportTicketHelpers:
     @pytest.mark.asyncio
@@ -1072,3 +1101,42 @@ class TestPinnedDocumentsHelper:
         assert by_name["Pinned Skill"]["full_content"] == "Dedicated skill content"
         assert by_name["Pinned Ticket"]["doc_type"] == "support_ticket"
         assert by_name["Pinned KB"]["doc_type"] == "runbook"
+
+    @pytest.mark.asyncio
+    async def test_get_pinned_documents_uses_filter_expression_object(self):
+        """Guard against redisvl versions that reject raw string filter expressions."""
+
+        class _StrictFilterQuery:
+            def __init__(self, *, filter_expression, return_fields, num_results):
+                if isinstance(filter_expression, str):
+                    raise TypeError("filter_expression must be a FilterExpression")
+                self.filter_expression = filter_expression
+                self.return_fields = return_fields
+                self.num_results = num_results
+
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[])
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.FilterQuery",
+                _StrictFilterQuery,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+        ):
+            result = await get_pinned_documents_helper(version="latest", limit=10)
+
+        assert result["results_count"] == 0

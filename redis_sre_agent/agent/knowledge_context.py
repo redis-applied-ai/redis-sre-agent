@@ -41,6 +41,9 @@ def _extract_tool_categories(available_tools: Optional[List[Any]] = None) -> Lis
     for tool in available_tools:
         capability = getattr(tool, "capability", None)
         if capability is None:
+            definition = getattr(tool, "definition", None)
+            capability = getattr(definition, "capability", None)
+        if capability is None:
             metadata = getattr(tool, "metadata", None)
             capability = getattr(metadata, "capability", None)
         if capability is None:

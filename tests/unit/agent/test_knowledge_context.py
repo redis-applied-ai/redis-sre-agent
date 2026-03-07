@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from redis_sre_agent.agent.knowledge_context import build_startup_knowledge_context
-from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 
 
 @pytest.mark.asyncio
@@ -110,3 +110,40 @@ async def test_startup_context_includes_tool_instructions_without_pinned_or_skil
     assert "Tool usage instructions:" in context
     assert "Available tool categories: diagnostics, tickets." in context
     assert "Support-ticket workflow:" in context
+
+
+@pytest.mark.asyncio
+async def test_startup_context_extracts_capability_from_tool_definition():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(return_value={"skills": []}),
+        ),
+    ):
+        wrapped_tool = Tool(
+            metadata=ToolMetadata(
+                name="wrapped_tool",
+                description="Wrapped tool",
+                capability=ToolCapability.DIAGNOSTICS,
+                provider_name="provider",
+                requires_instance=False,
+            ),
+            definition=ToolDefinition(
+                name="tickets_wrapped_tool",
+                description="Ticket search tool",
+                capability=ToolCapability.TICKETS,
+                parameters={"type": "object", "properties": {}, "required": []},
+            ),
+            invoke=AsyncMock(return_value={}),
+        )
+        context = await build_startup_knowledge_context(
+            query="memory issue",
+            version="latest",
+            available_tools=[wrapped_tool],
+        )
+
+    assert "Available tool categories: tickets." in context

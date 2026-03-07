@@ -364,6 +364,36 @@ class TestIngestionPipeline:
         assert document.metadata["name"] == "Incident Triage"
         assert document.metadata["summary"] == "Step-by-step triage process."
 
+    def test_create_scraped_document_from_markdown_reserved_metadata_cannot_be_overridden(
+        self, pipeline, tmp_path
+    ):
+        """Computed ingestion metadata should not be overridden by frontmatter."""
+        md_file = tmp_path / "reserved-keys.md"
+        md_file.write_text(
+            (
+                "---\n"
+                "doc_type: support_ticket\n"
+                "file_path: injected-path\n"
+                "file_size: 1\n"
+                "original_category: injected-category\n"
+                "original_severity: injected-severity\n"
+                "original_doc_type: injected-doc-type\n"
+                "determined_category: injected-determined-category\n"
+                "---\n\n"
+                "# Test Title\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.metadata["file_path"] == str(md_file)
+        assert document.metadata["file_size"] == md_file.stat().st_size
+        assert document.metadata["original_category"] == "shared"
+        assert document.metadata["original_severity"] == "normal"
+        assert document.metadata["original_doc_type"] == "support_ticket"
+        assert document.metadata["determined_category"] == "shared"
+
     def test_parse_markdown_metadata_normalizes_spaced_keys(self, pipeline):
         """Test metadata keys with spaces normalize to snake_case."""
         content = "---\npriority level: high\n---\n\n# Test Title\n**Doc Type**: skill\n"

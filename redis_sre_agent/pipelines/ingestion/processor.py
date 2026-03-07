@@ -588,6 +588,22 @@ class IngestionPipeline:
         summary_raw = metadata.get("summary")
         summary = str(summary_raw).strip() if summary_raw is not None else ""
         pinned = DocumentProcessor._parse_bool(metadata.get("pinned"), default=False)
+        reserved_metadata_keys = {
+            "file_path",
+            "file_size",
+            "original_category",
+            "original_severity",
+            "original_doc_type",
+            "determined_category",
+            "doc_type",
+            "name",
+            "summary",
+            "priority",
+            "pinned",
+        }
+        passthrough_metadata = {
+            key: value for key, value in metadata.items() if key not in reserved_metadata_keys
+        }
 
         return ScrapedDocument(
             title=title,
@@ -597,7 +613,7 @@ class IngestionPipeline:
             doc_type=doc_type,
             severity=severity,
             metadata={
-                **metadata,
+                **passthrough_metadata,
                 "file_path": str(md_file),
                 "file_size": md_file.stat().st_size,
                 "original_category": metadata.get("category", "shared").lower(),
