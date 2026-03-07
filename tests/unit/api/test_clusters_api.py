@@ -1,5 +1,6 @@
 """Unit tests for clusters API endpoints."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -105,6 +106,73 @@ class TestClustersAPI:
             assert data["name"] == "New Enterprise Cluster"
             assert data["admin_password"] == "***"
 
+    def test_create_cluster_success_with_env_defaults(self, client):
+        """Enterprise create should use REDIS_ENTERPRISE_ADMIN_* defaults."""
+        create_data = {
+            "name": "New Enterprise Cluster",
+            "cluster_type": "redis_enterprise",
+            "environment": "development",
+            "description": "New test enterprise cluster",
+        }
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "REDIS_ENTERPRISE_ADMIN_URL": "https://env-cluster.example.com:9443",
+                    "REDIS_ENTERPRISE_ADMIN_USERNAME": "env-admin@example.com",
+                    "REDIS_ENTERPRISE_ADMIN_PASSWORD": "env-secret",
+                },
+                clear=False,
+            ),
+            patch("redis_sre_agent.core.clusters.get_clusters") as mock_get,
+            patch("redis_sre_agent.core.clusters.save_clusters") as mock_save,
+        ):
+            mock_get.return_value = []
+            mock_save.return_value = True
+
+            response = client.post("/api/v1/clusters", json=create_data)
+
+            assert response.status_code == 201
+            data = response.json()
+            assert data["admin_url"] == "https://env-cluster.example.com:9443"
+            assert data["admin_username"] == "env-admin@example.com"
+            assert data["admin_password"] == "***"
+
+    def test_create_cluster_success_with_mixed_explicit_and_env(self, client):
+        """Explicit request values should override env defaults per field."""
+        create_data = {
+            "name": "New Enterprise Cluster",
+            "cluster_type": "redis_enterprise",
+            "environment": "development",
+            "description": "New test enterprise cluster",
+            "admin_url": "https://explicit-cluster.example.com:9443",
+        }
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "REDIS_ENTERPRISE_ADMIN_URL": "https://env-cluster.example.com:9443",
+                    "REDIS_ENTERPRISE_ADMIN_USERNAME": "env-admin@example.com",
+                    "REDIS_ENTERPRISE_ADMIN_PASSWORD": "env-secret",
+                },
+                clear=False,
+            ),
+            patch("redis_sre_agent.core.clusters.get_clusters") as mock_get,
+            patch("redis_sre_agent.core.clusters.save_clusters") as mock_save,
+        ):
+            mock_get.return_value = []
+            mock_save.return_value = True
+
+            response = client.post("/api/v1/clusters", json=create_data)
+
+            assert response.status_code == 201
+            data = response.json()
+            assert data["admin_url"] == "https://explicit-cluster.example.com:9443"
+            assert data["admin_username"] == "env-admin@example.com"
+            assert data["admin_password"] == "***"
+
     def test_create_cluster_missing_enterprise_admin_fields(self, client):
         """Test enterprise cluster create validation."""
         invalid_data = {
@@ -118,7 +186,9 @@ class TestClustersAPI:
 
         response = client.post("/api/v1/clusters", json=invalid_data)
 
-        assert response.status_code == 422
+        assert response.status_code == 400
+        assert "requires admin_url, admin_username, and admin_password" in response.json()["detail"]
+        assert "REDIS_ENTERPRISE_ADMIN_URL" in response.json()["detail"]
 
     def test_create_cluster_non_enterprise_rejects_admin_fields(self, client):
         """Test non-enterprise cluster rejects admin fields."""
@@ -134,7 +204,8 @@ class TestClustersAPI:
 
         response = client.post("/api/v1/clusters", json=invalid_data)
 
-        assert response.status_code == 422
+        assert response.status_code == 400
+        assert "admin_url/admin_username/admin_password are only valid" in response.json()["detail"]
 
     def test_update_cluster_success(self, client, sample_cluster):
         """Test successful cluster update."""

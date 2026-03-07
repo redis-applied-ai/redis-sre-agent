@@ -339,7 +339,14 @@ class SREAgentAPI {
     priority: number = 0,
     tags?: string[],
     instanceId?: string,
+    clusterId?: string,
   ): Promise<TriageResponse> {
+    if (instanceId && clusterId) {
+      throw new Error(
+        "submitTriageRequest accepts either instanceId or clusterId, not both",
+      );
+    }
+
     const response = await fetch(`${this.tasksBaseUrl}/tasks`, {
       method: "POST",
       headers: {
@@ -353,6 +360,7 @@ class SREAgentAPI {
           priority,
           tags,
           ...(instanceId && { instance_id: instanceId }),
+          ...(clusterId && { cluster_id: clusterId }),
         },
       }),
     });
@@ -817,6 +825,7 @@ class SREAgentAPI {
     priority: number = 0,
     tags?: string[],
     instanceId?: string,
+    clusterId?: string,
   ): Promise<string> {
     const triageResponse = await this.submitTriageRequest(
       message,
@@ -825,6 +834,7 @@ class SREAgentAPI {
       priority,
       tags,
       instanceId,
+      clusterId,
     );
     return triageResponse.thread_id;
   }

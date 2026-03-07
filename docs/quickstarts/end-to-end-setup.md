@@ -157,19 +157,24 @@ You can query the agent via CLI, UI, or API.
 
 **Note:** When using Docker Compose, CLI commands should be run inside the container to access Docker-internal hostnames like `redis-demo`. Use `docker compose exec` as shown below. Alternatively, for local development with `uv run`, update instance connection URLs to use `localhost` ports.
 
-### Knowledge queries (no instance required)
+### Query target rules
 
-Ask general Redis questions without specifying an instance:
+New `query` turns must include exactly one target: `-r <instance-id>` or `-c <cluster-id>`.  
+When continuing with `-t <thread-id>`, you can omit the target (reuse thread context) or pass a matching compatible target.
+
+For unscoped documentation lookups, use:
 
 ```bash
-# Via Docker (recommended with Docker Compose)
-docker compose exec sre-agent redis-sre-agent query "What are Redis eviction policies?"
+docker compose exec sre-agent redis-sre-agent knowledge search --query "Redis eviction policies"
+```
 
-# Via local uv (requires local Python environment)
-uv run redis-sre-agent query "What are Redis eviction policies?"
+### Knowledge-style queries (target scoped)
 
+Ask general Redis questions through the knowledge agent while still scoping the thread:
+
+```bash
 # Explicitly use the knowledge agent
-docker compose exec sre-agent redis-sre-agent query --agent knowledge "How do I configure Redis persistence?"
+docker compose exec sre-agent redis-sre-agent query -r <instance-id> --agent knowledge "How do I configure Redis persistence?"
 ```
 
 ### Instance-specific queries
@@ -203,19 +208,19 @@ docker compose exec sre-agent redis-sre-agent query -r <instance-id> "What's the
 # Output includes: Thread ID: abc123...
 
 # Continue the conversation
-docker compose exec sre-agent redis-sre-agent query -r <instance-id> -t abc123 "What about CPU?"
+docker compose exec sre-agent redis-sre-agent query -t abc123 "What about CPU?"
 ```
 
 ### Agent selection
 
 The agent is auto-selected based on your query, or specify explicitly:
 
-| Agent | Use case | Instance required |
-|-------|----------|-------------------|
-| `knowledge` | General Redis questions, best practices | No |
-| `chat` | Quick instance diagnostics | Yes |
-| `triage` | Full health checks, deep analysis | Yes |
-| `auto` | Let the router decide (default) | Depends on query |
+| Agent | Use case | Target required for new turns |
+|-------|----------|-------------------------------|
+| `knowledge` | General Redis questions, best practices | Yes (`instance_id` or `cluster_id`) |
+| `chat` | Quick instance diagnostics | Yes (`instance_id` or `cluster_id`) |
+| `triage` | Full health checks, deep analysis | Yes (`instance_id` or `cluster_id`) |
+| `auto` | Let the router decide (default) | Yes (`instance_id` or `cluster_id`) |
 
 ## Summary
 

@@ -21,7 +21,10 @@ class TestTasksAPI:
         """POST /api/v1/tasks returns 500 when redis client creation fails."""
         with patch("redis_sre_agent.api.tasks.get_redis_client") as mock_get:
             mock_get.side_effect = Exception("Redis connection failed")
-            resp = client.post("/api/v1/tasks", json={"message": "help"})
+            resp = client.post(
+                "/api/v1/tasks",
+                json={"message": "help", "context": {"instance_id": "inst-1"}},
+            )
         assert resp.status_code == 500
         assert "Redis connection failed" in resp.json()["detail"]
 
@@ -45,12 +48,188 @@ class TestTasksAPI:
         with (
             patch("redis_sre_agent.api.tasks.get_redis_client"),
             patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
         ):
-            resp = client.post("/api/v1/tasks", json={"message": "help"})
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            docket_instance.add = MagicMock(return_value=AsyncMock())
+            mock_docket.return_value = docket_instance
+            resp = client.post(
+                "/api/v1/tasks",
+                json={"message": "help", "context": {"instance_id": "inst-1"}},
+            )
             assert resp.status_code == 202
             data = resp.json()
             assert data["task_id"] == "t1"
             assert data["thread_id"] == "th1"
+
+    def test_create_task_rejects_new_thread_without_target(self, client):
+        """New turns must provide exactly one target identifier."""
+        with patch("redis_sre_agent.api.tasks.get_redis_client"):
+            resp = client.post("/api/v1/tasks", json={"message": "help"})
+        assert resp.status_code == 400
+        assert "require exactly one target" in resp.json()["detail"]
+
+    def test_create_task_rejects_new_thread_with_both_targets(self, client):
+        """New turns cannot provide both instance_id and cluster_id."""
+        with patch("redis_sre_agent.api.tasks.get_redis_client"):
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "help",
+                    "context": {"instance_id": "inst-1", "cluster_id": "cluster-1"},
+                },
+            )
+        assert resp.status_code == 400
+        assert "Provide only one target" in resp.json()["detail"]
+
+    def test_create_task_continue_thread_accepts_matching_instance(self, client):
+        """Continuation may include matching instance_id."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        thread = MagicMock()
+        thread.context = {"instance_id": "inst-1"}
+        thread.messages = [{"role": "user", "content": "hello"}]
+
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=thread)
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            docket_instance.add = MagicMock(return_value=AsyncMock())
+            mock_docket.return_value = docket_instance
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "follow-up",
+                    "thread_id": "th1",
+                    "context": {"instance_id": "inst-1"},
+                },
+            )
+        assert resp.status_code == 202
+
+    def test_create_task_continue_thread_rejects_mismatched_instance(self, client):
+        """Continuation rejects instance_id that does not match thread target."""
+        thread = MagicMock()
+        thread.context = {"instance_id": "inst-1"}
+        thread.messages = [{"role": "user", "content": "hello"}]
+
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=thread)
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
+        ):
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "follow-up",
+                    "thread_id": "th1",
+                    "context": {"instance_id": "inst-2"},
+                },
+            )
+        assert resp.status_code == 400
+        assert "Thread target mismatch" in resp.json()["detail"]
+
+    def test_create_task_continue_thread_accepts_instance_for_thread_cluster(self, client):
+        """Continuation accepts instance_id if it belongs to thread cluster_id."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        thread = MagicMock()
+        thread.context = {"cluster_id": "cluster-1"}
+        thread.messages = [{"role": "user", "content": "hello"}]
+
+        instance = MagicMock()
+        instance.cluster_id = "cluster-1"
+
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=thread)
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.tasks.get_instance_by_id", new=AsyncMock(return_value=instance)),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            docket_instance.add = MagicMock(return_value=AsyncMock())
+            mock_docket.return_value = docket_instance
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "follow-up",
+                    "thread_id": "th1",
+                    "context": {"instance_id": "inst-9"},
+                },
+            )
+        assert resp.status_code == 202
+
+    def test_create_task_continue_thread_accepts_cluster_for_thread_instance(self, client):
+        """Continuation accepts cluster_id if it matches thread instance's cluster."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        thread = MagicMock()
+        thread.context = {"instance_id": "inst-1"}
+        thread.messages = [{"role": "user", "content": "hello"}]
+
+        thread_instance = MagicMock()
+        thread_instance.cluster_id = "cluster-1"
+
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=thread)
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
+            patch(
+                "redis_sre_agent.api.tasks.get_instance_by_id",
+                new=AsyncMock(return_value=thread_instance),
+            ),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            docket_instance.add = MagicMock(return_value=AsyncMock())
+            mock_docket.return_value = docket_instance
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "follow-up",
+                    "thread_id": "th1",
+                    "context": {"cluster_id": "cluster-1"},
+                },
+            )
+        assert resp.status_code == 202
 
     def test_get_task_success(self, client):
         """GET /api/v1/tasks/{task_id} returns 200 with state."""

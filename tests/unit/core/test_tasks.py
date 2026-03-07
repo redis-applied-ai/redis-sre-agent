@@ -858,6 +858,9 @@ class TestProcessAgentTurn:
         mock_knowledge_agent = AsyncMock()
         mock_response = AgentResponse(response="Knowledge response", search_results=[])
         mock_knowledge_agent.process_query = AsyncMock(return_value=mock_response)
+        mock_instance = MagicMock()
+        mock_instance.id = "redis-prod-1"
+        mock_instance.cluster_id = "cluster-prod-1"
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
@@ -865,6 +868,10 @@ class TestProcessAgentTurn:
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_instance_by_id",
+                new=AsyncMock(return_value=mock_instance),
+            ),
             patch(
                 "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
                 return_value=None,
@@ -883,6 +890,7 @@ class TestProcessAgentTurn:
             _ = await process_agent_turn(
                 thread_id="thread-123",
                 message="What are Redis best practices?",
+                context={"instance_id": "redis-prod-1"},
                 task_id="provided-task-123",  # Provide task_id
             )
 
@@ -891,6 +899,154 @@ class TestProcessAgentTurn:
         mock_task_manager.update_task_status.assert_any_call(
             "provided-task-123", TaskStatus.IN_PROGRESS
         )
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_resolves_cluster_context_to_instance(self):
+        """Test process_agent_turn resolves cluster_id context into active instance_id."""
+        from redis_sre_agent.agent.router import AgentType
+
+        mock_redis = AsyncMock()
+
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.metadata.session_id = "session-1"
+        mock_thread.metadata.subject = "Initial subject"
+        mock_thread.messages = []
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager._save_thread_state = AsyncMock()
+        mock_thread_manager.set_thread_subject = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="new-task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+
+        mock_instance = MagicMock()
+        mock_instance.id = "redis-cluster-db-1"
+        mock_instance.cluster_id = "cluster-prod-1"
+
+        mock_knowledge_agent = MagicMock()
+        mock_knowledge_agent.process_query = AsyncMock(
+            return_value=AgentResponse(response="Knowledge response", search_results=[])
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_preferred_instance_by_cluster_id",
+                new=AsyncMock(return_value=mock_instance),
+            ) as mock_get_cluster_instance,
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
+            ) as mock_router,
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_knowledge_agent",
+                return_value=mock_knowledge_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_span.get_span_context = MagicMock(return_value=MagicMock(is_valid=False))
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            result = await process_agent_turn(
+                thread_id="thread-123",
+                message="Check this cluster",
+                context={"cluster_id": "cluster-prod-1"},
+                task_id="provided-task-123",
+            )
+
+        assert result["response"] == "Knowledge response"
+        mock_get_cluster_instance.assert_awaited_once_with("cluster-prod-1")
+        mock_thread_manager.update_thread_context.assert_any_call(
+            "thread-123",
+            {"cluster_id": "cluster-prod-1", "instance_id": "redis-cluster-db-1"},
+            merge=True,
+        )
+
+        _, router_kwargs = mock_router.call_args
+        assert router_kwargs["context"]["cluster_id"] == "cluster-prod-1"
+        assert router_kwargs["context"]["instance_id"] == "redis-cluster-db-1"
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_rejects_target_switch_for_existing_thread(self):
+        """Continuing a thread with a different target should fail."""
+        mock_redis = AsyncMock()
+
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {"instance_id": "redis-old"}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.metadata.session_id = "session-1"
+        mock_thread.metadata.subject = "Initial subject"
+        mock_thread.messages = [MagicMock(role="user", content="previous")]
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager._save_thread_state = AsyncMock()
+        mock_thread_manager.set_thread_subject = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="new-task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(),
+            ) as mock_router,
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.record_exception = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            with pytest.raises(ValueError, match="Thread target mismatch"):
+                await process_agent_turn(
+                    thread_id="thread-123",
+                    message="follow-up question",
+                    context={"instance_id": "redis-new"},
+                    task_id="provided-task-123",
+                )
+
+        mock_router.assert_not_awaited()
+        mock_task_manager.set_task_error.assert_awaited()
 
 
 class TestRunAgentWithProgress:

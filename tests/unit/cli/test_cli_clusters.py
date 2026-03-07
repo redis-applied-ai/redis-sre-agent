@@ -1,5 +1,6 @@
 """Tests for the `cluster` CLI command group."""
 
+import os
 from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
@@ -89,6 +90,82 @@ def test_cluster_create_redis_enterprise_success():
     saved_clusters = mock_save.call_args[0][0]
     assert len(saved_clusters) == 1
     assert saved_clusters[0].cluster_type == core_clusters.RedisClusterType.redis_enterprise
+
+
+def test_cluster_create_redis_enterprise_success_with_env_defaults():
+    runner = CliRunner()
+
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "REDIS_ENTERPRISE_ADMIN_URL": "https://env-cluster.example.com:9443",
+                "REDIS_ENTERPRISE_ADMIN_USERNAME": "env-admin@example.com",
+                "REDIS_ENTERPRISE_ADMIN_PASSWORD": "env-secret",
+            },
+            clear=False,
+        ),
+        patch.object(core_clusters, "get_clusters", new=AsyncMock(return_value=[])),
+        patch.object(core_clusters, "save_clusters", new=AsyncMock(return_value=True)) as mock_save,
+    ):
+        result = runner.invoke(
+            cluster,
+            [
+                "create",
+                "--name",
+                "prod-enterprise",
+                "--cluster-type",
+                "redis_enterprise",
+                "--environment",
+                "production",
+                "--description",
+                "Production enterprise cluster",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "Created cluster" in result.output
+    saved_clusters = mock_save.call_args[0][0]
+    assert len(saved_clusters) == 1
+    assert saved_clusters[0].admin_url == "https://env-cluster.example.com:9443"
+    assert saved_clusters[0].admin_username == "env-admin@example.com"
+    assert saved_clusters[0].admin_password is not None
+    assert saved_clusters[0].admin_password.get_secret_value() == "env-secret"
+
+
+def test_cluster_create_redis_enterprise_missing_admin_fields_shows_env_hint():
+    runner = CliRunner()
+
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "REDIS_ENTERPRISE_ADMIN_URL": "",
+                "REDIS_ENTERPRISE_ADMIN_USERNAME": "",
+                "REDIS_ENTERPRISE_ADMIN_PASSWORD": "",
+            },
+            clear=False,
+        ),
+        patch.object(core_clusters, "get_clusters", new=AsyncMock(return_value=[])),
+    ):
+        result = runner.invoke(
+            cluster,
+            [
+                "create",
+                "--name",
+                "prod-enterprise",
+                "--cluster-type",
+                "redis_enterprise",
+                "--environment",
+                "production",
+                "--description",
+                "Production enterprise cluster",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "requires admin_url, admin_username, and admin_password" in result.output
+    assert "REDIS_ENTERPRISE_ADMIN_URL" in result.output
 
 
 def test_cluster_create_rejects_non_enterprise_with_admin_credentials():

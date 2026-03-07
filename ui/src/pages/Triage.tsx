@@ -4,7 +4,10 @@ import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
 import { ConfirmDialog } from "../components/Modal";
 import ReactMarkdown from "react-markdown";
 import TaskMonitor from "../components/TaskMonitor";
-import sreAgentApi, { RedisInstance } from "../services/sreAgentApi";
+import sreAgentApi, {
+  RedisCluster,
+  RedisInstance,
+} from "../services/sreAgentApi";
 
 // Simple fallback components for missing UI kit components
 const Loader = ({ size = "md" }: { size?: "sm" | "md" | "lg" }) => (
@@ -58,6 +61,8 @@ interface ChatThread {
   isScheduled?: boolean;
   instanceId?: string;
   instanceName?: string;
+  clusterId?: string;
+  clusterName?: string;
 }
 
 const Triage = () => {
@@ -78,7 +83,9 @@ const Triage = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [threadToDelete, setThreadToDelete] = useState<string | null>(null);
   const [instances, setInstances] = useState<RedisInstance[]>([]);
+  const [clusters, setClusters] = useState<RedisCluster[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
+  const [selectedClusterId, setSelectedClusterId] = useState<string>("");
   const [isThinking, setIsThinking] = useState(false);
   const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
   const [isThreadBusy, setIsThreadBusy] = useState(false);
@@ -129,6 +136,7 @@ const Triage = () => {
 
         // Load available instances
         await loadInstances();
+        await loadClusters();
       } catch {
         setAgentStatus("unavailable");
       }
@@ -143,6 +151,16 @@ const Triage = () => {
       setInstances(response.instances);
     } catch (err) {
       console.error("Failed to load instances:", err);
+      // Don't show error to user, just log it
+    }
+  };
+
+  const loadClusters = async () => {
+    try {
+      const response = await sreAgentApi.listClusters({ limit: 200, offset: 0 });
+      setClusters(response.clusters || []);
+    } catch (err) {
+      console.error("Failed to load clusters:", err);
       // Don't show error to user, just log it
     }
   };
@@ -191,31 +209,39 @@ const Triage = () => {
       // Prefer native threads listing; gracefully handle backends without it
       const summaries = await sreAgentApi.listThreads(undefined, 50, 0);
 
-      const threadList: ChatThread[] = summaries.map((t) => {
-        const subject = t.subject && t.subject.trim() ? t.subject : "Untitled";
-        const tags = Array.isArray((t as any).tags)
-          ? ((t as any).tags as string[])
-          : [];
-        const isScheduled =
-          tags.includes("scheduled") || t.user_id === "scheduler";
-        return {
-          id: t.thread_id,
-          name: subject,
-          subject,
-          lastMessage: t.latest_message || "No updates",
-          timestamp: t.updated_at || t.created_at,
-          messageCount:
-            typeof (t as any).message_count === "number"
-              ? (t as any).message_count
-              : 0,
-          status: "unknown", // precise status derived when the thread is loaded in the monitor
-          isScheduled,
-          instanceId: t.instance_id,
-          instanceName: undefined,
-        };
-      });
+      setThreads((prevThreads) => {
+        const previousById = new Map(prevThreads.map((thread) => [thread.id, thread]));
 
-      setThreads(threadList);
+        const threadList: ChatThread[] = summaries.map((t) => {
+          const subject = t.subject && t.subject.trim() ? t.subject : "Untitled";
+          const tags = Array.isArray((t as any).tags)
+            ? ((t as any).tags as string[])
+            : [];
+          const isScheduled =
+            tags.includes("scheduled") || t.user_id === "scheduler";
+          const previous = previousById.get(t.thread_id);
+
+          return {
+            id: t.thread_id,
+            name: subject,
+            subject,
+            lastMessage: t.latest_message || "No updates",
+            timestamp: t.updated_at || t.created_at,
+            messageCount:
+              typeof (t as any).message_count === "number"
+                ? (t as any).message_count
+                : 0,
+            status: "unknown", // precise status derived when the thread is loaded in the monitor
+            isScheduled,
+            instanceId: t.instance_id || previous?.instanceId,
+            instanceName: previous?.instanceName,
+            clusterId: previous?.clusterId,
+            clusterName: previous?.clusterName,
+          };
+        });
+
+        return threadList;
+      });
     } catch (err) {
       console.error("Failed to load threads:", err);
     }
@@ -532,6 +558,30 @@ const Triage = () => {
         ),
       );
 
+      const resolvedInstanceId = status.context?.instance_id;
+      const resolvedClusterId = status.context?.cluster_id;
+      if (resolvedInstanceId || resolvedClusterId) {
+        setThreads((prev) =>
+          prev.map((t) =>
+            t.id === threadId
+              ? {
+                  ...t,
+                  instanceId: resolvedInstanceId || t.instanceId,
+                  instanceName:
+                    (resolvedInstanceId &&
+                      instances.find((i) => i.id === resolvedInstanceId)?.name) ||
+                    t.instanceName,
+                  clusterId: resolvedClusterId || t.clusterId,
+                  clusterName:
+                    (resolvedClusterId &&
+                      clusters.find((c) => c.id === resolvedClusterId)?.name) ||
+                    t.clusterName,
+                }
+              : t,
+          ),
+        );
+      }
+
       const active = ["queued", "in_progress", "running"].includes(
         status.status as any,
       );
@@ -576,6 +626,7 @@ const Triage = () => {
           0,
           undefined,
           selectedInstanceId || undefined,
+          selectedClusterId || undefined,
         );
         threadId = triageResponse;
 
@@ -593,6 +644,9 @@ const Triage = () => {
           ? instances.find((i) => i.id === selectedInstanceId)?.name ||
             undefined
           : undefined;
+        const resolvedClusterName = selectedClusterId
+          ? clusters.find((c) => c.id === selectedClusterId)?.name || undefined
+          : undefined;
         const newThread: ChatThread = {
           id: threadId,
           name:
@@ -607,6 +661,8 @@ const Triage = () => {
           status: "queued",
           instanceId: selectedInstanceId || undefined,
           instanceName: resolvedInstanceName,
+          clusterId: selectedClusterId || undefined,
+          clusterName: resolvedClusterName,
         };
         setThreads((prev) => [newThread, ...prev]);
 
@@ -887,7 +943,11 @@ const Triage = () => {
                         <>
                           <span>•</span>
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 max-w-[140px] truncate">
-                            {thread.instanceName ||
+                            {thread.clusterName ||
+                              clusters.find((c) => c.id === thread.clusterId)
+                                ?.name ||
+                              thread.clusterId ||
+                              thread.instanceName ||
                               instances.find((i) => i.id === thread.instanceId)
                                 ?.name ||
                               "General Q&A"}
@@ -917,42 +977,63 @@ const Triage = () => {
           <Card className="flex-1 flex flex-col h-full">
             {activeThreadId ? (
               <>
-                {/* Chat Header with Instance Info */}
-                {threads.find((t) => t.id === activeThreadId)?.instanceId &&
-                  instances.find(
-                    (i) =>
-                      i.id ===
-                      threads.find((t) => t.id === activeThreadId)?.instanceId,
-                  ) && (
+                {/* Chat Header with Target Info */}
+                {(() => {
+                  const activeThread = threads.find(
+                    (t) => t.id === activeThreadId,
+                  );
+                  if (!activeThread) return null;
+
+                  const activeClusterMeta = activeThread.clusterId
+                    ? clusters.find((c) => c.id === activeThread.clusterId)
+                    : undefined;
+                  const activeClusterName =
+                    activeThread.clusterName ||
+                    activeClusterMeta?.name ||
+                    activeThread.clusterId;
+                  const activeInstance = activeThread.instanceId
+                    ? instances.find((i) => i.id === activeThread.instanceId)
+                    : undefined;
+                  if (!activeClusterName && !activeInstance) return null;
+
+                  return (
                     <div className="px-4 py-3 border-b border-redis-dusk-08 bg-redis-dusk-09">
                       <div className="flex items-center gap-2 text-redis-sm">
-                        <span className="text-redis-dusk-04">
-                          Redis Instance:
-                        </span>
-                        <span className="font-medium text-foreground">
-                          {
-                            instances.find(
-                              (i) =>
-                                i.id ===
-                                threads.find((t) => t.id === activeThreadId)
-                                  ?.instanceId,
-                            )?.name
-                          }
-                        </span>
-                        <span className="text-redis-dusk-05">•</span>
-                        <span className="text-redis-dusk-04">
-                          {
-                            instances.find(
-                              (i) =>
-                                i.id ===
-                                threads.find((t) => t.id === activeThreadId)
-                                  ?.instanceId,
-                            )?.environment
-                          }
-                        </span>
+                        {activeClusterName ? (
+                          <>
+                            <span className="text-redis-dusk-04">
+                              Redis Cluster:
+                            </span>
+                            <span className="font-medium text-foreground">
+                              {activeClusterName}
+                            </span>
+                            {activeClusterMeta?.environment && (
+                              <>
+                                <span className="text-redis-dusk-05">•</span>
+                                <span className="text-redis-dusk-04">
+                                  {activeClusterMeta.environment}
+                                </span>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-redis-dusk-04">
+                              Redis Instance:
+                            </span>
+                            <span className="font-medium text-foreground">
+                              {activeInstance?.name}
+                            </span>
+                            <span className="text-redis-dusk-05">•</span>
+                            <span className="text-redis-dusk-04">
+                              {activeInstance?.environment}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
-                  )}
+                  );
+                })()}
 
                 {/* Chat Content Area: WebSocket monitor for live threads, static transcript for completed */}
                 <CardContent className="flex-1 overflow-hidden">
@@ -1209,26 +1290,68 @@ const Triage = () => {
 
                 {/* Input Area */}
                 <div className="p-4 border-t border-redis-dusk-08">
-                  {/* Instance Selection */}
-                  {instances.length > 0 && (
-                    <div className="mb-3">
-                      <select
-                        value={selectedInstanceId}
-                        onChange={(e) => setSelectedInstanceId(e.target.value)}
-                        className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-                        disabled={isLoading || agentStatus !== "available"}
-                      >
-                        <option value="">
-                          No specific instance (general troubleshooting)
-                        </option>
-                        {instances.map((instance) => (
-                          <option key={instance.id} value={instance.id}>
-                            {instance.name} - {instance.environment}
+                  {/* Target Selection */}
+                  {(instances.length > 0 || clusters.length > 0) && (
+                    <div className="mb-3 space-y-2">
+                      {instances.length > 0 && (
+                        <select
+                          value={selectedInstanceId}
+                          onChange={(e) => {
+                            const nextValue = e.target.value;
+                            setSelectedInstanceId(nextValue);
+                            if (nextValue) {
+                              setSelectedClusterId("");
+                            }
+                          }}
+                          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                          disabled={
+                            isLoading ||
+                            agentStatus !== "available" ||
+                            Boolean(selectedClusterId)
+                          }
+                        >
+                          <option value="">
+                            No specific instance (general troubleshooting)
                           </option>
-                        ))}
-                      </select>
+                          {instances.map((instance) => (
+                            <option key={instance.id} value={instance.id}>
+                              {instance.name} - {instance.environment}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {clusters.length > 0 && (
+                        <select
+                          value={selectedClusterId}
+                          onChange={(e) => {
+                            const nextValue = e.target.value;
+                            setSelectedClusterId(nextValue);
+                            if (nextValue) {
+                              setSelectedInstanceId("");
+                            }
+                          }}
+                          className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                          disabled={
+                            isLoading ||
+                            agentStatus !== "available" ||
+                            Boolean(selectedInstanceId)
+                          }
+                        >
+                          <option value="">
+                            No specific cluster (general troubleshooting)
+                          </option>
+                          {clusters.map((cluster) => (
+                            <option key={cluster.id} value={cluster.id}>
+                              {cluster.name} - {cluster.environment}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
                       <p className="text-redis-xs text-redis-dusk-04 mt-1">
-                        Select a Redis instance for troubleshooting.{" "}
+                        Choose either a Redis instance or a Redis cluster for
+                        troubleshooting.
                       </p>
                     </div>
                   )}

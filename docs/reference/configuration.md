@@ -8,6 +8,8 @@ Key environment variables and pointers. For step-by-step setup, see: how-to/conf
 - `REDIS_SRE_MASTER_KEY`: 32-byte base64 master key for envelope encryption
 - `TOOLS_PROMETHEUS_URL`, `TOOLS_LOKI_URL`: Provider endpoints
 - `REDIS_URL`: Agent storage Redis URL (for local/dev)
+- `REDIS_ENTERPRISE_ADMIN_URL`, `REDIS_ENTERPRISE_ADMIN_USERNAME`, `REDIS_ENTERPRISE_ADMIN_PASSWORD`:
+  Optional defaults for Redis Enterprise cluster creation (used when `admin_*` fields are omitted)
 - `SRE_AGENT_CONFIG`: Path to YAML config file (optional)
 - `TOOL_CACHE_ENABLED`: Enable/disable tool caching (default: `true`)
 - `TOOL_CACHE_DEFAULT_TTL`: Default cache TTL in seconds (default: `60`)

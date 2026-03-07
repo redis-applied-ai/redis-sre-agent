@@ -20,7 +20,11 @@ from redis_sre_agent.core.citation_message import (
     should_include_citations,
 )
 from redis_sre_agent.core.config import Settings, settings
-from redis_sre_agent.core.instances import create_instance, get_instance_by_id
+from redis_sre_agent.core.instances import (
+    create_instance,
+    get_instance_by_id,
+    get_preferred_instance_by_cluster_id,
+)
 from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
     search_knowledge_base_helper,
@@ -31,6 +35,12 @@ from redis_sre_agent.core.redis import (
     get_redis_client,
 )
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
+from redis_sre_agent.core.target_context import (
+    extract_turn_target,
+    require_at_most_one_target,
+    require_continuation_target_compatibility,
+    require_exactly_one_target_for_new_turn,
+)
 from redis_sre_agent.core.threads import Message, ThreadManager
 
 logger = logging.getLogger(__name__)
@@ -672,41 +682,109 @@ async def process_agent_turn(
             raise ValueError(f"Thread {thread_id} not found")
 
         # ============================================================================
-        # Instance ID Management Logic
+        # Instance/Cluster Context Management Logic
         # ============================================================================
-        # Determine the instance_id to use for this turn:
-        # 1. If client provides instance_id in context, use it and update thread
-        # 2. If no instance_id from client, check thread context for saved instance_id
-        # 3. If no instance_id anywhere, attempt to create one from user message
-        # 4. If still no instance_id, route to knowledge agent
+        # Rules:
+        # - At most one target may be provided in a request (instance_id XOR cluster_id).
+        # - New turns (first message in thread) require exactly one target.
+        # - Continuations may provide a target only if it matches the saved thread target.
         # ============================================================================
 
-        instance_id_from_client = context.get("instance_id") if context else None
-        instance_id_from_thread = thread.context.get("instance_id")
+        provided_target = extract_turn_target(context)
+        thread_target = extract_turn_target(thread.context)
+        require_at_most_one_target(provided_target)
 
-        # Determine which instance_id to use
+        is_initial_turn = len(thread.messages) == 0
+        if is_initial_turn:
+            require_exactly_one_target_for_new_turn(provided_target)
+        else:
+            await require_continuation_target_compatibility(
+                provided_target=provided_target,
+                thread_target=thread_target,
+                get_instance_by_id=get_instance_by_id,
+            )
+
+        instance_id_from_client = provided_target.instance_id
+        cluster_id_from_client = provided_target.cluster_id
+        instance_id_from_thread = thread_target.instance_id
+        cluster_id_from_thread = thread_target.cluster_id
+
+        # For continuation overrides that are compatible aliases, pin execution
+        # to the saved thread target to avoid accidental target switching.
+        if not is_initial_turn and provided_target.has_any():
+            if instance_id_from_thread:
+                instance_id_from_client = instance_id_from_thread
+                if not cluster_id_from_client:
+                    cluster_id_from_client = cluster_id_from_thread
+            elif cluster_id_from_thread:
+                cluster_id_from_client = cluster_id_from_thread
+                if provided_target.instance_id:
+                    instance_id_from_client = provided_target.instance_id
+
         active_instance_id = None
+        active_cluster_id = None
 
         if instance_id_from_client:
-            # Client provided instance_id - use it and update thread
+            # Client/saved context provided instance_id - use it and derive cluster when possible.
             active_instance_id = instance_id_from_client
+            active_cluster_id = cluster_id_from_client
+            active_instance = await get_instance_by_id(active_instance_id)
+            if not active_instance:
+                raise ValueError(f"Instance not found: {active_instance_id}")
+            if not active_cluster_id:
+                active_cluster_id = active_instance.cluster_id
             logger.info(
                 f"Using instance_id from client: {active_instance_id} (will update thread context)"
             )
 
-            # Update thread context with new instance_id
-            await thread_manager.update_thread_context(
-                thread_id, {"instance_id": active_instance_id}, merge=True
-            )
+            context_update = {"instance_id": active_instance_id}
+            if active_cluster_id:
+                context_update["cluster_id"] = active_cluster_id
+            await thread_manager.update_thread_context(thread_id, context_update, merge=True)
             await task_manager.add_task_update(
                 task_id,
                 f"Using Redis instance: {active_instance_id}",
                 "instance_context",
             )
 
+        elif cluster_id_from_client:
+            # Client provided cluster_id - resolve preferred linked instance
+            active_cluster_id = cluster_id_from_client
+            logger.info(
+                f"Using cluster_id from client: {active_cluster_id} (will resolve linked instance)"
+            )
+            target_instance = await get_preferred_instance_by_cluster_id(active_cluster_id)
+
+            context_update = {"cluster_id": active_cluster_id}
+            if target_instance:
+                active_instance_id = target_instance.id
+                context_update["instance_id"] = active_instance_id
+                await task_manager.add_task_update(
+                    task_id,
+                    f"Using Redis cluster {active_cluster_id} via instance {active_instance_id}",
+                    "instance_context",
+                )
+            else:
+                await task_manager.add_task_update(
+                    task_id,
+                    f"Cluster {active_cluster_id} has no linked Redis instances",
+                    "instance_context",
+                )
+                raise ValueError(f"No instances linked to cluster: {active_cluster_id}")
+
+            await thread_manager.update_thread_context(thread_id, context_update, merge=True)
+
         elif instance_id_from_thread:
-            # No instance_id from client, but we have one saved in thread
+            # No explicit client context, reuse saved thread instance
             active_instance_id = instance_id_from_thread
+            active_cluster_id = cluster_id_from_thread
+            if not active_cluster_id:
+                thread_instance = await get_instance_by_id(active_instance_id)
+                if thread_instance and thread_instance.cluster_id:
+                    active_cluster_id = thread_instance.cluster_id
+                    await thread_manager.update_thread_context(
+                        thread_id, {"cluster_id": active_cluster_id}, merge=True
+                    )
             logger.info(f"Using instance_id from thread context: {active_instance_id}")
             await task_manager.add_task_update(
                 task_id,
@@ -714,15 +792,34 @@ async def process_agent_turn(
                 "instance_context",
             )
 
+        elif cluster_id_from_thread:
+            # Reuse saved thread cluster and resolve preferred linked instance
+            active_cluster_id = cluster_id_from_thread
+            target_instance = await get_preferred_instance_by_cluster_id(active_cluster_id)
+            if target_instance:
+                active_instance_id = target_instance.id
+                await thread_manager.update_thread_context(
+                    thread_id, {"instance_id": active_instance_id}, merge=True
+                )
+                await task_manager.add_task_update(
+                    task_id,
+                    f"Continuing with Redis cluster {active_cluster_id} via instance {active_instance_id}",
+                    "instance_context",
+                )
+            else:
+                await task_manager.add_task_update(
+                    task_id,
+                    f"Cluster {active_cluster_id} has no linked Redis instances",
+                    "instance_context",
+                )
+                raise ValueError(f"No instances linked to cluster: {active_cluster_id}")
+
         else:
-            # No instance_id from client or thread - attempt to create one from message
+            # No instance/cluster context - attempt to create one from message
             logger.info("No instance_id found, attempting to extract from user message")
 
-            # Try to extract connection details from the message
             instance_details = _extract_instance_details_from_message(message)
-
             if instance_details:
-                # User provided connection details - create instance
                 try:
                     logger.info("Creating instance from user-provided connection details")
                     new_instance = await create_instance(
@@ -738,12 +835,13 @@ async def process_agent_turn(
                     )
 
                     active_instance_id = new_instance.id
+                    active_cluster_id = new_instance.cluster_id
                     logger.info(f"Created new instance: {new_instance.name} ({active_instance_id})")
 
-                    # Save instance_id to thread context
-                    await thread_manager.update_thread_context(
-                        thread_id, {"instance_id": active_instance_id}, merge=True
-                    )
+                    context_update = {"instance_id": active_instance_id}
+                    if active_cluster_id:
+                        context_update["cluster_id"] = active_cluster_id
+                    await thread_manager.update_thread_context(thread_id, context_update, merge=True)
                     await task_manager.add_task_update(
                         task_id,
                         f"Created Redis instance: {new_instance.name} ({active_instance_id})",
@@ -767,6 +865,8 @@ async def process_agent_turn(
         # Ensure active_instance_id is in routing context
         if active_instance_id:
             routing_context["instance_id"] = active_instance_id
+        if active_cluster_id:
+            routing_context["cluster_id"] = active_cluster_id
 
         agent_type = await route_to_appropriate_agent(
             query=message,

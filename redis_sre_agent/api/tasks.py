@@ -16,9 +16,17 @@ from redis_sre_agent.api.schemas import (
     TaskResponse,
 )
 from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
+from redis_sre_agent.core.instances import get_instance_by_id
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager, create_task
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
+from redis_sre_agent.core.target_context import (
+    extract_turn_target,
+    require_at_most_one_target,
+    require_continuation_target_compatibility,
+    require_exactly_one_target_for_new_turn,
+)
+from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +37,23 @@ router = APIRouter()
 async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
     try:
         redis_client = get_redis_client()
+        provided_target = extract_turn_target(req.context)
+        require_at_most_one_target(provided_target)
+
+        thread_manager = ThreadManager(redis_client=redis_client)
+        if req.thread_id:
+            thread = await thread_manager.get_thread(req.thread_id)
+            if not thread:
+                raise HTTPException(status_code=404, detail=f"Thread {req.thread_id} not found")
+            thread_target = extract_turn_target(thread.context)
+            await require_continuation_target_compatibility(
+                provided_target=provided_target,
+                thread_target=thread_target,
+                get_instance_by_id=get_instance_by_id,
+            )
+        else:
+            require_exactly_one_target_for_new_turn(provided_target)
+
         data = await create_task(
             message=req.message,
             thread_id=req.thread_id,
@@ -52,6 +77,10 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
             )
 
         return task
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create task: {e}")
         raise HTTPException(status_code=500, detail=str(e))

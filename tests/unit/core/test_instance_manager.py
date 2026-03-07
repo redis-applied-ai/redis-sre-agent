@@ -21,6 +21,7 @@ from redis_sre_agent.core.instances import (
     get_instance_map,
     get_instance_name,
     get_instances,
+    get_preferred_instance_by_cluster_id,
     get_session_instances,
     mask_redis_url,
     query_instances,
@@ -860,6 +861,52 @@ class TestGetInstanceByName:
         ):
             inst = await get_instance_by_name("Non-existent")
             assert inst is None
+
+
+class TestGetPreferredInstanceByClusterId:
+    """Test get_preferred_instance_by_cluster_id function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_instance_for_cluster(self):
+        """Returns the first (most-recent) instance from query results."""
+        mock_instance = RedisInstance(
+            id="redis-1",
+            name="Cluster DB",
+            connection_url="redis://localhost:6379",
+            environment="production",
+            usage="cache",
+            description="Test",
+            instance_type=RedisInstanceType.redis_enterprise,
+            cluster_id="cluster-prod-1",
+        )
+
+        with patch(
+            "redis_sre_agent.core.instances.query_instances",
+            new=AsyncMock(
+                return_value=InstanceQueryResult(
+                    instances=[mock_instance], total=1, limit=1, offset=0
+                )
+            ),
+        ) as mock_query:
+            result = await get_preferred_instance_by_cluster_id("cluster-prod-1")
+
+        assert result is not None
+        assert result.id == "redis-1"
+        mock_query.assert_awaited_once_with(cluster_id="cluster-prod-1", limit=1, offset=0)
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_cluster_has_no_instances(self):
+        with patch(
+            "redis_sre_agent.core.instances.query_instances",
+            new=AsyncMock(return_value=InstanceQueryResult(instances=[], total=0, limit=1, offset=0)),
+        ):
+            result = await get_preferred_instance_by_cluster_id("cluster-empty")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_blank_cluster_id(self):
+        result = await get_preferred_instance_by_cluster_id("   ")
+        assert result is None
 
 
 class TestGetInstanceMap:

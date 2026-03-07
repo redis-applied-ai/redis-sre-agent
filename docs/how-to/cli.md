@@ -42,14 +42,26 @@ uv run redis-sre-agent instance test --id <id>
 ```
 
 ### 3) Triage with queries
-- Without an instance: quick questions (general guidance)
-  ```bash
-  uv run redis-sre-agent query "Explain high memory usage signals in Redis"
-  ```
-- With an instance: targeted triage (the agent will fetch metrics/logs if configured)
-  ```bash
-  uv run redis-sre-agent query "Check memory pressure and slow ops" -r <id>
-  ```
+All new `query` turns must be target-scoped:
+- Pass exactly one target: `-r/--redis-instance-id` or `-c/--redis-cluster-id`
+- For `--thread-id` continuations, pass no target or one compatible target
+- Passing both `-r` and `-c` is always invalid
+
+```bash
+# New turn, instance-scoped
+uv run redis-sre-agent query -r <instance_id> "Check memory pressure and slow ops"
+
+# New turn, cluster-scoped
+uv run redis-sre-agent query -c <cluster_id> "Summarize cluster health"
+
+# Continue thread (reuse saved target context)
+uv run redis-sre-agent query -t <thread_id> "What should we do next?"
+
+# Continue thread with matching target (allowed)
+uv run redis-sre-agent query -r <same_instance_id_as_thread> -t <thread_id> "Check CPU now"
+```
+
+For unscoped document lookups, use `knowledge search` instead of `query`.
 
 ### 4) Prepare knowledge for better answers (ingest a batch)
 Load docs so the agent can cite internal knowledge.
@@ -119,7 +131,7 @@ uv run redis-sre-agent support-package list
 uv run redis-sre-agent support-package info <package_id>
 
 # Query with a support package (agent gets access to INFO, SLOWLOG, CLIENT LIST, logs)
-uv run redis-sre-agent query -p <package_id> "What databases are in this package?"
+uv run redis-sre-agent query -r <instance_id> -p <package_id> "What databases are in this package?"
 
 # Combine instance + support package (compare live vs snapshot)
 uv run redis-sre-agent query -r <instance_id> -p <package_id> "Compare current memory with the snapshot"
@@ -140,7 +152,7 @@ docker compose exec -T sre-agent uv run redis-sre-agent support-package upload /
 
 # List/query from Docker
 docker compose exec -T sre-agent uv run redis-sre-agent support-package list
-docker compose exec -T sre-agent uv run redis-sre-agent query -p <package_id> "Show database memory usage"
+docker compose exec -T sre-agent uv run redis-sre-agent query -r <instance_id> -p <package_id> "Show database memory usage"
 ```
 
 ### 8) See task status and thread contents
