@@ -13,6 +13,11 @@ from rich.console import Console
 from rich.table import Table
 
 from redis_sre_agent.core import clusters as core_clusters
+from redis_sre_agent.core.cluster_admin_defaults import (
+    build_enterprise_admin_missing_fields_error,
+    missing_enterprise_admin_fields,
+    resolve_enterprise_admin_fields,
+)
 from redis_sre_agent.core.migrations.instances_to_clusters import (
     run_instances_to_clusters_migration,
 )
@@ -197,17 +202,33 @@ def clusters_create(
             if any(c.name == name for c in clusters):
                 raise RuntimeError(f"Cluster with name '{name}' already exists")
 
+            normalized_cluster_type = cluster_type.lower() if cluster_type else "unknown"
+            resolved_admin = resolve_enterprise_admin_fields(
+                cluster_type=normalized_cluster_type,
+                admin_url=admin_url,
+                admin_username=admin_username,
+                admin_password=admin_password,
+            )
+            if normalized_cluster_type == "redis_enterprise":
+                missing_fields = missing_enterprise_admin_fields(
+                    admin_url=resolved_admin.admin_url,
+                    admin_username=resolved_admin.admin_username,
+                    admin_password=resolved_admin.admin_password,
+                )
+                if missing_fields:
+                    raise RuntimeError(build_enterprise_admin_missing_fields_error(missing_fields))
+
             cluster_id = f"cluster-{environment.lower()}-{int(datetime.now().timestamp())}"
             new_cluster = core_clusters.RedisCluster(
                 id=cluster_id,
                 name=name,
-                cluster_type=cluster_type.lower() if cluster_type else "unknown",
+                cluster_type=normalized_cluster_type,
                 environment=environment.lower(),
                 description=description,
                 notes=notes,
-                admin_url=admin_url,
-                admin_username=admin_username,
-                admin_password=SecretStr(admin_password) if admin_password else None,
+                admin_url=resolved_admin.admin_url,
+                admin_username=resolved_admin.admin_username,
+                admin_password=resolved_admin.admin_password,
                 status=status,
                 version=version,
                 last_checked=last_checked,

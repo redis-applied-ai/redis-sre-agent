@@ -19,9 +19,19 @@ from redis_sre_agent.core.citation_message import (
     format_citation_message,
     should_include_citations,
 )
+from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.core.instances import get_instance_by_id
+from redis_sre_agent.core.instances import (
+    get_instance_by_id,
+    get_preferred_instance_by_cluster_id,
+)
 from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.target_context import (
+    TurnTarget,
+    extract_turn_target,
+    require_at_most_one_target,
+    require_continuation_target_compatibility,
+)
 from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
@@ -30,6 +40,7 @@ logger = logging.getLogger(__name__)
 @click.command()
 @click.argument("query")
 @click.option("--redis-instance-id", "-r", help="Redis instance ID to investigate")
+@click.option("--redis-cluster-id", "-c", help="Redis cluster ID to investigate")
 @click.option("--support-package-id", "-p", help="Support package ID to analyze")
 @click.option("--thread-id", "-t", help="Thread ID to continue an existing conversation")
 @click.option(
@@ -42,6 +53,7 @@ logger = logging.getLogger(__name__)
 def query(
     query: str,
     redis_instance_id: Optional[str],
+    redis_cluster_id: Optional[str],
     support_package_id: Optional[str],
     thread_id: Optional[str],
     agent: str,
@@ -53,7 +65,7 @@ def query(
 
     \b
     The agent is automatically selected based on the query, or use --agent:
-      - knowledge: General Redis questions (no instance needed)
+      - knowledge: General Redis questions (target-scoped thread)
       - chat: Quick questions with a Redis instance
       - triage: Full health checks and diagnostics
       - auto: Let the router decide (default)
@@ -71,13 +83,42 @@ def query(
         mcp_pool = MCPConnectionPool.get_instance()
         await mcp_pool.start()
 
-        # Resolve instance if provided
+        provided_instance_id = redis_instance_id.strip() if redis_instance_id else None
+        provided_cluster_id = redis_cluster_id.strip() if redis_cluster_id else None
+        provided_target = TurnTarget(
+            instance_id=provided_instance_id,
+            cluster_id=provided_cluster_id,
+        )
+        try:
+            require_at_most_one_target(provided_target)
+        except ValueError as e:
+            console.print(f"[red]❌ {e}[/red]")
+            exit(1)
+
+        # Resolve instance/cluster if provided
         instance = None
-        if redis_instance_id:
-            instance = await get_instance_by_id(redis_instance_id)
+        active_cluster_id = provided_cluster_id
+        if provided_instance_id:
+            instance = await get_instance_by_id(provided_instance_id)
             if not instance:
-                console.print(f"[red]❌ Instance not found: {redis_instance_id}[/red]")
+                console.print(f"[red]❌ Instance not found: {provided_instance_id}[/red]")
                 exit(1)
+            if not active_cluster_id:
+                active_cluster_id = instance.cluster_id
+
+        elif active_cluster_id:
+            cluster = await get_cluster_by_id(active_cluster_id)
+            if not cluster:
+                console.print(f"[red]❌ Cluster not found: {active_cluster_id}[/red]")
+                exit(1)
+
+            instance = await get_preferred_instance_by_cluster_id(active_cluster_id)
+            console.print(f"[dim] Redis cluster: {cluster.name}[/dim]")
+            if not instance:
+                console.print(
+                    "[dim] No linked Redis instance found for this cluster; "
+                    "continuing with cluster context only.[/dim]"
+                )
 
         # Resolve support package if provided
         support_package_path = None
@@ -104,6 +145,48 @@ def query(
 
             console.print(f"[dim]📎 Continuing thread: {thread_id}[/dim]")
 
+            thread_target = extract_turn_target(thread.context)
+            thread_instance_id = thread_target.instance_id
+            thread_cluster_id = thread_target.cluster_id
+            try:
+                is_initial_turn = len(thread.messages or []) == 0
+                if not (is_initial_turn and not thread_target.has_any()):
+                    await require_continuation_target_compatibility(
+                        provided_target=provided_target,
+                        thread_target=thread_target,
+                        get_instance_by_id=get_instance_by_id,
+                    )
+            except ValueError as e:
+                console.print(f"[red]❌ {e}[/red]")
+                exit(1)
+
+            # For compatible continuation aliases, keep execution pinned to
+            # the saved thread target whenever thread instance_id exists.
+            if provided_target.has_any():
+                if thread_instance_id:
+                    if not instance or instance.id != thread_instance_id:
+                        instance = await get_instance_by_id(thread_instance_id)
+                        if not instance:
+                            console.print(
+                                "[red]❌ Thread target is locked to an instance that no longer "
+                                f"exists: {thread_instance_id}[/red]"
+                            )
+                            exit(1)
+                    active_cluster_id = (
+                        thread_cluster_id or instance.cluster_id or active_cluster_id
+                    )
+                elif thread_cluster_id:
+                    active_cluster_id = thread_cluster_id
+                    if provided_instance_id and (
+                        not instance or instance.id != provided_instance_id
+                    ):
+                        instance = await get_instance_by_id(provided_instance_id)
+                        if not instance:
+                            console.print(
+                                f"[red]❌ Instance not found: {provided_instance_id}[/red]"
+                            )
+                            exit(1)
+
             # Load conversation history
             for msg in thread.messages:
                 if msg.role == "user":
@@ -116,12 +199,23 @@ def query(
                 instance = await get_instance_by_id(thread.context["instance_id"])
                 if instance:
                     console.print(f"[dim]🔗 Using instance from thread: {instance.name}[/dim]")
+                    active_cluster_id = active_cluster_id or instance.cluster_id
+
+            if not instance and not active_cluster_id and thread.context.get("cluster_id"):
+                active_cluster_id = thread.context["cluster_id"]
+                instance = await get_preferred_instance_by_cluster_id(active_cluster_id)
+                if instance:
+                    console.print(
+                        f"[dim]🔗 Using instance from thread cluster: {instance.name}[/dim]"
+                    )
 
         else:
             # Create new thread
             initial_context = {}
             if instance:
                 initial_context["instance_id"] = instance.id
+            if active_cluster_id:
+                initial_context["cluster_id"] = active_cluster_id
             if support_package_id:
                 initial_context["support_package_id"] = support_package_id
                 initial_context["support_package_path"] = str(support_package_path)
@@ -144,6 +238,8 @@ def query(
         routing_context = {}
         if instance:
             routing_context["instance_id"] = instance.id
+        if active_cluster_id:
+            routing_context["cluster_id"] = active_cluster_id
         if support_package_path:
             routing_context["support_package_path"] = str(support_package_path)
 
@@ -185,6 +281,8 @@ def query(
             context = {}
             if instance:
                 context["instance_id"] = instance.id
+            if active_cluster_id:
+                context["cluster_id"] = active_cluster_id
             if support_package_path:
                 context["support_package_path"] = str(support_package_path)
 

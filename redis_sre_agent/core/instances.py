@@ -416,6 +416,7 @@ async def query_instances(
     usage: Optional[str] = None,
     status: Optional[str] = None,
     instance_type: Optional[str] = None,
+    cluster_id: Optional[str] = None,
     user_id: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 100,
@@ -428,6 +429,7 @@ async def query_instances(
         usage: Filter by usage type (cache, analytics, session, queue, custom)
         status: Filter by status (healthy, unhealthy, unknown)
         instance_type: Filter by type (oss_single, oss_cluster, redis_enterprise, redis_cloud)
+        cluster_id: Filter by linked Redis cluster ID
         user_id: Filter by user ID
         search: Text search on instance name
         limit: Maximum number of results (default 100, max 1000)
@@ -458,6 +460,10 @@ async def query_instances(
         if instance_type:
             type_filter = Tag("instance_type") == instance_type.lower()
             filter_expr = type_filter if filter_expr is None else (filter_expr & type_filter)
+
+        if cluster_id and cluster_id.strip():
+            cluster_filter = Tag("cluster_id") == cluster_id.strip()
+            filter_expr = cluster_filter if filter_expr is None else (filter_expr & cluster_filter)
 
         if user_id:
             user_filter = Tag("user_id") == user_id
@@ -868,6 +874,22 @@ async def get_instance_by_name(instance_name: str) -> Optional[RedisInstance]:
     except Exception as e:
         logger.error("Failed to get instance by name %s: %s", instance_name, e)
         return None
+
+
+async def get_preferred_instance_by_cluster_id(cluster_id: str) -> Optional[RedisInstance]:
+    """Get a deterministic query target instance for a cluster.
+
+    Returns the most recently updated linked instance, which keeps behavior
+    predictable when a cluster has multiple database instances.
+    """
+    normalized_cluster_id = (cluster_id or "").strip()
+    if not normalized_cluster_id:
+        return None
+
+    result = await query_instances(cluster_id=normalized_cluster_id, limit=1, offset=0)
+    if result.instances:
+        return result.instances[0]
+    return None
 
 
 async def get_instance_map() -> Dict[str, RedisInstance]:

@@ -511,7 +511,7 @@ uv run redis-sre-agent pipeline scrape --scrapers runbook_generator
 uv run redis-sre-agent pipeline ingest
 
 # Test retrieval via API or CLI
-uv run redis-sre-agent query "How do I troubleshoot memory pressure?"
+uv run redis-sre-agent query -r <instance_id> "How do I troubleshoot memory pressure?"
 
 # If quality is good, add more sources
 ```

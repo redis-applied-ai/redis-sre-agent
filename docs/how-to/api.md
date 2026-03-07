@@ -108,21 +108,48 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
 - Manual backfill is available via CLI: `uv run redis-sre-agent cluster backfill-instance-links --dry-run`
 
 ### 4) Triage with tasks and threads
-Simplest: create a task with your question. The API will create a thread if you omit `thread_id`.
+Create a task with your question and exactly one target (`instance_id` or `cluster_id`). The API creates a thread if you omit `thread_id`.
+
+`POST /api/v1/tasks` target rules:
+- Always provide at most one target in `context`: `instance_id` XOR `cluster_id`
+- New turn (`thread_id` omitted): provide exactly one target
+- Continuation (`thread_id` provided): provide zero targets, or one target that matches thread context
+- Continuation compatibility allows equivalent mapping (`instance_id` in same `cluster_id`, or `cluster_id` linked to thread `instance_id`)
+- Any request with both IDs is rejected with `400`
 
 > **Note**: Triage performs comprehensive analysis (metrics, logs, knowledge base, multi-topic recommendations) and typically takes **2-10 minutes** to complete. Poll the task status or use WebSocket for real-time updates.
 ```bash
-# Create a task (no instance)
-curl -fsS -X POST http://localhost:8080/api/v1/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{"message": "Explain high memory usage signals in Redis"}' | jq
-
-# Create a task (target a specific instance)
+# Create a task targeting an instance
 curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   -H 'Content-Type: application/json' \
   -d '{
-    "message": "Check memory pressure and slow ops",
+    "message": "Explain high memory usage signals in Redis",
     "context": {"instance_id": "<instance_id>"}
+  }' | jq
+
+# Create a task targeting a cluster
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "Check cluster health",
+    "context": {"cluster_id": "<cluster_id>"}
+  }' | jq
+
+# Continue a thread without resending target (uses saved thread context)
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "thread_id": "<thread_id>",
+    "message": "What changed in the last 15 minutes?"
+  }' | jq
+
+# Continue a thread with a matching target (allowed)
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "thread_id": "<thread_id>",
+    "message": "Focus on memory now",
+    "context": {"instance_id": "<same_instance_id_as_thread>"}
   }' | jq
 ```
 Poll task or inspect the thread:
@@ -144,18 +171,21 @@ wscat -c ws://localhost:8080/api/v1/ws/tasks/<thread_id>
 
 Alternative flow: create a thread first, then submit a task on that thread.
 ```bash
-# Create thread
+# Create thread with target context
 curl -fsS -X POST http://localhost:8080/api/v1/threads \
   -H 'Content-Type: application/json' \
-  -d '{"user_id": "u1", "subject": "Prod triage"}' | jq
+  -d '{
+    "user_id": "u1",
+    "subject": "Prod triage",
+    "context": {"instance_id": "<instance_id>"}
+  }' | jq
 
-# Submit a task to that thread
+# Submit a task to that thread (no target needed on continuation)
 curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   -H 'Content-Type: application/json' \
   -d '{
     "thread_id": "<thread_id>",
-    "message": "Check for memory fragmentation",
-    "context": {"instance_id": "<instance_id>"}
+    "message": "Check for memory fragmentation"
   }' | jq
 ```
 

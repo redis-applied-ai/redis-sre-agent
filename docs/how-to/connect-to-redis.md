@@ -151,6 +151,20 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-admin-api \
   }'
 ```
 
+### Redis Enterprise Cluster Creation Defaults (API/CLI)
+
+When creating a Redis Enterprise **cluster** (`/api/v1/clusters` or `redis-sre-agent cluster create`), you can omit `admin_url`, `admin_username`, and `admin_password` if these environment variables are set:
+
+- `REDIS_ENTERPRISE_ADMIN_URL`
+- `REDIS_ENTERPRISE_ADMIN_USERNAME`
+- `REDIS_ENTERPRISE_ADMIN_PASSWORD`
+
+Precedence is field-by-field:
+1. Explicit request/CLI value
+2. Environment variable default
+
+The env fallback is applied only for `cluster_type=redis_enterprise`.
+
 ### Redis Enterprise: Checking Cluster Health
 
 For Redis Enterprise troubleshooting, configure `admin_url` (and credentials) on the instance.
