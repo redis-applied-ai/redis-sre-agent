@@ -30,6 +30,18 @@ async def get_knowledge_index():
     return await _get_knowledge_index()
 
 
+async def get_skills_index():
+    from ...core.redis import get_skills_index as _get_skills_index
+
+    return await _get_skills_index()
+
+
+async def get_support_tickets_index():
+    from ...core.redis import get_support_tickets_index as _get_support_tickets_index
+
+    return await _get_support_tickets_index()
+
+
 def get_vectorizer():
     from ...core.redis import get_vectorizer as _get_vectorizer
 
@@ -177,6 +189,12 @@ class DocumentProcessor:
 
         # Extract version from metadata, default to "latest"
         version = document.metadata.get("version", "latest")
+        doc_type = document.doc_type.value
+        name = str(document.metadata.get("name") or document.title or "").strip()
+        summary = document.metadata.get("summary")
+        summary_str = str(summary).strip() if summary is not None else ""
+        priority = str(document.metadata.get("priority") or "normal").strip().lower() or "normal"
+        pinned = self._parse_bool(document.metadata.get("pinned"), default=False)
 
         return {
             "id": chunk_id,
@@ -185,7 +203,11 @@ class DocumentProcessor:
             "content": content,
             "source": document.source_url,
             "category": document.category.value,
-            "doc_type": document.doc_type.value,
+            "doc_type": doc_type,
+            "name": name,
+            "summary": summary_str,
+            "priority": priority,
+            "pinned": "true" if pinned else "false",
             "severity": document.severity.value,
             "version": version,
             "chunk_index": chunk_index,
@@ -196,6 +218,20 @@ class DocumentProcessor:
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             },
         }
+
+    @staticmethod
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        """Best-effort boolean parser for chunk metadata fields."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        normalized = str(value).strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+        return default
 
     def _strip_yaml_front_matter(self, text: str) -> tuple[str, bool]:
         """Remove YAML front-matter delimited by leading --- blocks.
@@ -263,11 +299,19 @@ class IngestionPipeline:
 
         try:
             # Get Redis components (via patchable wrappers)
-            index = await get_knowledge_index()
+            knowledge_index = await get_knowledge_index()
+            skills_index = await get_skills_index()
+            support_tickets_index = await get_support_tickets_index()
             vectorizer = get_vectorizer()
 
-            # Initialize deduplicator
-            deduplicator = DocumentDeduplicator(index)
+            deduplicators = {
+                "knowledge": DocumentDeduplicator(knowledge_index, key_prefix="sre_knowledge"),
+                "skill": DocumentDeduplicator(skills_index, key_prefix="sre_skills"),
+                "support_ticket": DocumentDeduplicator(
+                    support_tickets_index,
+                    key_prefix="sre_support_tickets",
+                ),
+            }
 
             # Process each category
             for category in ["oss", "enterprise", "shared"]:
@@ -276,7 +320,10 @@ class IngestionPipeline:
                     continue
 
                 category_stats = await self._process_category(
-                    category_path, category, index, vectorizer, deduplicator
+                    category_path,
+                    category,
+                    vectorizer,
+                    deduplicators,
                 )
 
                 ingestion_stats["categories_processed"][category] = category_stats
@@ -305,9 +352,8 @@ class IngestionPipeline:
         self,
         category_path: Path,
         category: str,
-        index: Any,
         vectorizer: Any,
-        deduplicator: DocumentDeduplicator,
+        deduplicators: Dict[str, DocumentDeduplicator],
     ) -> Dict[str, Any]:
         """Process all documents in a category folder."""
         logger.info(f"Processing category: {category}")
@@ -367,6 +413,9 @@ class IngestionPipeline:
 
                 # Process document into chunks
                 chunks = self.processor.chunk_document(document)
+
+                doc_type_key = str(document.doc_type.value).strip().lower() or "knowledge"
+                deduplicator = deduplicators.get(doc_type_key) or deduplicators["knowledge"]
 
                 # Index chunks with deduplication
                 indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
@@ -449,21 +498,59 @@ class IngestionPipeline:
 
     def _parse_markdown_metadata(self, content: str) -> Dict[str, str]:
         """Extract metadata from markdown document."""
-        metadata = {}
+        metadata: Dict[str, str] = {}
 
-        # Extract title (first # heading)
+        # Extract optional YAML front matter at top of file.
+        front_matter_match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
+        if front_matter_match:
+            front_matter = front_matter_match.group(1)
+            for line in front_matter.splitlines():
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                normalized_key = self._normalize_metadata_key(key)
+                metadata[normalized_key] = value.strip().strip('"').strip("'")
+
+        # Extract title (first # heading) if front matter did not define one.
         title_match = re.search(r"^# (.+)", content, re.MULTILINE)
-        if title_match:
+        if title_match and "title" not in metadata:
             metadata["title"] = title_match.group(1).strip()
 
         # Extract metadata lines (**Key**: value)
-        metadata_pattern = r"^\*\*(\w+)\*\*:\s*(.+)$"
+        metadata_pattern = r"^\*\*([^*]+)\*\*:\s*(.+)$"
         for match in re.finditer(metadata_pattern, content, re.MULTILINE):
-            key = match.group(1).lower()
+            key = self._normalize_metadata_key(match.group(1))
+            # Frontmatter is canonical. Do not let body metadata override it.
+            if key in metadata:
+                continue
             value = match.group(2).strip()
             metadata[key] = value
 
         return metadata
+
+    def _normalize_metadata_key(self, key: str) -> str:
+        """Normalize metadata keys into snake_case aliases."""
+        normalized = re.sub(r"[\s-]+", "_", key.strip().lower())
+        return re.sub(r"[^\w]", "", normalized)
+
+    def _normalize_doc_type(self, doc_type_raw: str) -> tuple[DocumentType, str]:
+        """Normalize canonical doc_type values."""
+        normalized = re.sub(r"[\s-]+", "_", (doc_type_raw or "").strip().lower())
+        if not normalized:
+            normalized = "knowledge"
+
+        try:
+            return DocumentType(normalized), normalized
+        except ValueError:
+            logger.debug("Unknown document type '%s'; defaulting to knowledge", doc_type_raw)
+            return DocumentType.KNOWLEDGE, "knowledge"
+
+    def _normalize_priority(self, priority_raw: Any) -> str:
+        """Normalize priority values to the ADR enum."""
+        normalized = str(priority_raw or "").strip().lower()
+        if normalized in {"low", "normal", "high", "critical"}:
+            return normalized
+        return "normal"
 
     def _create_scraped_document_from_markdown(self, md_file: Path) -> ScrapedDocument:
         """Convert a markdown file to a ScrapedDocument for processing."""
@@ -476,32 +563,68 @@ class IngestionPipeline:
         # Determine category from explicit metadata or directory structure
         category = self._determine_document_category(md_file, metadata)
 
+        priority = self._normalize_priority(metadata.get("priority"))
+        # Support legacy `severity` while allowing ADR `priority`-based severity defaults.
+        severity_str = str(metadata.get("severity") or priority).strip().lower()
+
         # Map severity strings to SeverityLevel enum
-        severity_str = metadata.get("severity", "medium")
         severity_map = {
             "critical": SeverityLevel.CRITICAL,
             "high": SeverityLevel.HIGH,
             "warning": SeverityLevel.MEDIUM,
             "medium": SeverityLevel.MEDIUM,
+            "normal": SeverityLevel.MEDIUM,
             "low": SeverityLevel.LOW,
             "info": SeverityLevel.LOW,
         }
         severity = severity_map.get(severity_str.lower(), SeverityLevel.MEDIUM)
+
+        # Determine document type from canonical front-matter key.
+        # ADR default is `knowledge`.
+        doc_type_raw = str(metadata.get("doc_type", "knowledge"))
+        doc_type, normalized_doc_type = self._normalize_doc_type(doc_type_raw)
+
+        name = str(metadata.get("name") or md_file.stem).strip() or md_file.stem
+        summary_raw = metadata.get("summary")
+        summary = str(summary_raw).strip() if summary_raw is not None else ""
+        pinned = DocumentProcessor._parse_bool(metadata.get("pinned"), default=False)
+        reserved_metadata_keys = {
+            "file_path",
+            "file_size",
+            "original_category",
+            "original_severity",
+            "original_doc_type",
+            "determined_category",
+            "doc_type",
+            "name",
+            "summary",
+            "priority",
+            "pinned",
+        }
+        passthrough_metadata = {
+            key: value for key, value in metadata.items() if key not in reserved_metadata_keys
+        }
 
         return ScrapedDocument(
             title=title,
             source_url=f"file://{md_file.absolute()}",
             content=content,
             category=category,
-            doc_type=DocumentType.RUNBOOK,
+            doc_type=doc_type,
             severity=severity,
             metadata={
+                **passthrough_metadata,
                 "file_path": str(md_file),
                 "file_size": md_file.stat().st_size,
                 "original_category": metadata.get("category", "shared").lower(),
                 "original_severity": severity_str,
+                "original_doc_type": doc_type_raw,
                 "determined_category": category.value,
-                **metadata,
+                "doc_type": normalized_doc_type,
+                "name": name,
+                "summary": summary or None,
+                "priority": priority,
+                "pinned": pinned,
             },
         )
 
@@ -556,11 +679,19 @@ class IngestionPipeline:
         logger.info(f"Found {len(markdown_files)} markdown files to process")
 
         # Get Redis components (via patchable wrappers)
-        index = await get_knowledge_index()
+        knowledge_index = await get_knowledge_index()
+        skills_index = await get_skills_index()
+        support_tickets_index = await get_support_tickets_index()
         vectorizer = get_vectorizer()
 
-        # Initialize deduplicator
-        deduplicator = DocumentDeduplicator(index)
+        deduplicators = {
+            "knowledge": DocumentDeduplicator(knowledge_index, key_prefix="sre_knowledge"),
+            "skill": DocumentDeduplicator(skills_index, key_prefix="sre_skills"),
+            "support_ticket": DocumentDeduplicator(
+                support_tickets_index,
+                key_prefix="sre_support_tickets",
+            ),
+        }
 
         results = []
 
@@ -573,6 +704,9 @@ class IngestionPipeline:
 
                 # Process document into chunks
                 chunks = self.processor.chunk_document(document)
+
+                doc_type_key = str(document.doc_type.value).strip().lower() or "knowledge"
+                deduplicator = deduplicators.get(doc_type_key) or deduplicators["knowledge"]
 
                 # Index chunks with deduplication
                 indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)

@@ -212,6 +212,8 @@ uv run redis-sre-agent pipeline prepare-sources \
 
 The document will be chunked, embedded, and indexed in Redis.
 
+For front matter fields and behavior for pinned docs, skills, and support-ticket documents, see [Source document features](./source-document-features.md).
+
 ---
 
 ## Pipeline Commands Reference

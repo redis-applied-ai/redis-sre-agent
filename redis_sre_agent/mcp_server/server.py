@@ -53,6 +53,8 @@ After calling any of these, you MUST:
 | Tool | Purpose |
 |------|---------|
 | `redis_sre_knowledge_search()` | Direct search of docs (raw results) |
+| `redis_sre_search_support_tickets()` | Search support-ticket docs only |
+| `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
 | `redis_sre_list_instances()` | List available Redis instances |
 | `redis_sre_list_threads()` | List conversation threads (find previous chats) |
 | `redis_sre_get_task_status()` | Check task progress |
@@ -98,6 +100,7 @@ while True:
 
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
+- Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
 - Use `redis_sre_list_instances()` to find instance IDs before calling other tools
 - Check the `updates` array to show users what the agent is doing""",
 )
@@ -421,6 +424,7 @@ async def redis_sre_knowledge_search(
     limit: int = 10,
     offset: int = 0,
     category: Optional[str] = None,
+    doc_type: Optional[str] = None,
     version: Optional[str] = "latest",
 ) -> Dict[str, Any]:
     """Search the Redis SRE knowledge base (returns raw results).
@@ -436,6 +440,7 @@ async def redis_sre_knowledge_search(
         limit: Maximum number of results (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
         category: Optional filter by category ('incident', 'maintenance', 'monitoring', etc.)
+        doc_type: Optional filter by document type
         version: Redis documentation version filter. Defaults to "latest".
 
     Returns:
@@ -457,6 +462,8 @@ async def redis_sre_knowledge_search(
         }
         if category:
             kwargs["category"] = category
+        if doc_type:
+            kwargs["doc_type"] = doc_type
 
         result = await search_knowledge_base_helper(**kwargs)
 
@@ -468,6 +475,7 @@ async def redis_sre_knowledge_search(
                     "content": item.get("content", ""),
                     "source": item.get("source"),
                     "category": item.get("category"),
+                    "doc_type": item.get("doc_type", "knowledge"),
                     "version": item.get("version", "latest"),
                     "score": item.get("score"),
                 }
@@ -478,6 +486,7 @@ async def redis_sre_knowledge_search(
             "version": version,
             "offset": offset,
             "limit": limit,
+            "doc_type": doc_type,
             "results": results,
             "total_results": len(results),
             "has_more": len(results) == limit,  # Hint for pagination
@@ -490,6 +499,105 @@ async def redis_sre_knowledge_search(
             "query": query,
             "results": [],
             "total_results": 0,
+        }
+
+
+@mcp.tool()
+async def redis_sre_search_support_tickets(
+    query: str,
+    limit: int = 10,
+    offset: int = 0,
+    version: Optional[str] = "latest",
+    distance_threshold: Optional[float] = 0.8,
+) -> Dict[str, Any]:
+    """Search support-ticket documents only.
+
+    Uses the dedicated support-ticket index and returns ticket-scoped results.
+
+    Args:
+        query: Search query text
+        limit: Maximum results to return (1-50, default 10)
+        offset: Number of results to skip for pagination (default 0)
+        version: Redis documentation version filter. Defaults to "latest".
+        distance_threshold: Optional cosine distance threshold (default: 0.8).
+            Set to null to disable threshold and use pure KNN.
+
+    Returns:
+        Ticket search results and pagination metadata.
+    """
+    from redis_sre_agent.core.knowledge_helpers import search_support_tickets_helper
+
+    logger.info(
+        "MCP support_ticket_search: %s... (version=%s, offset=%s)",
+        query[:100],
+        version,
+        offset,
+    )
+
+    try:
+        limit = max(1, min(50, limit))
+        offset = max(0, offset)
+
+        result = await search_support_tickets_helper(
+            query=query,
+            limit=limit,
+            offset=offset,
+            version=version,
+            distance_threshold=distance_threshold,
+        )
+
+        return {
+            "query": query,
+            "version": version,
+            "offset": offset,
+            "limit": limit,
+            "tickets": result.get("tickets", []),
+            "results": result.get("results", []),
+            "ticket_count": result.get("ticket_count", 0),
+            "total_results": result.get("results_count", 0),
+            "has_more": len(result.get("results", [])) == limit,
+        }
+
+    except Exception as e:
+        logger.error(f"Support ticket search failed: {e}")
+        return {
+            "error": str(e),
+            "query": query,
+            "tickets": [],
+            "results": [],
+            "ticket_count": 0,
+            "total_results": 0,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_support_ticket(ticket_id: str) -> Dict[str, Any]:
+    """Retrieve complete support-ticket content by ticket id.
+
+    Args:
+        ticket_id: Ticket/document id from redis_sre_search_support_tickets results
+
+    Returns:
+        Full ticket content and metadata, or an error payload.
+    """
+    from redis_sre_agent.core.knowledge_helpers import get_support_ticket_helper
+
+    logger.info("MCP get_support_ticket: %s", ticket_id)
+
+    try:
+        result = await get_support_ticket_helper(ticket_id=ticket_id)
+        if result.get("error"):
+            return {
+                "ticket_id": ticket_id,
+                "error": result["error"],
+                "doc_type": result.get("doc_type"),
+            }
+        return result
+    except Exception as e:
+        logger.error(f"Get support ticket failed: {e}")
+        return {
+            "ticket_id": ticket_id,
+            "error": str(e),
         }
 
 

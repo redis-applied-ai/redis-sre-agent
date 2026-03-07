@@ -1,5 +1,7 @@
 """Tests for KnowledgeBaseToolProvider."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from redis_sre_agent.tools.knowledge.knowledge_base import KnowledgeBaseToolProvider
@@ -20,18 +22,25 @@ def test_knowledge_provider_tool_schemas():
     provider = KnowledgeBaseToolProvider()
     schemas = provider.create_tool_schemas()
 
-    # Should have 2 tools
-    assert len(schemas) == 4  # search, ingest, get_all_fragments, get_related_fragments
+    # Should have all knowledge tools
+    assert len(schemas) == 8
 
-    # All should be ToolDefinition objects
+    # All should be ToolDefinition objects with correct capabilities
     for schema in schemas:
         assert isinstance(schema, ToolDefinition)
-        assert schema.capability == ToolCapability.KNOWLEDGE
+        if "search_support_tickets" in schema.name or "get_support_ticket" in schema.name:
+            assert schema.capability == ToolCapability.TICKETS
+        else:
+            assert schema.capability == ToolCapability.KNOWLEDGE
 
     # Check tool names
     tool_names = [s.name for s in schemas]
     assert any("search" in name for name in tool_names)
     assert any("ingest" in name for name in tool_names)
+    assert any("skills_check" in name for name in tool_names)
+    assert any("get_skill" in name for name in tool_names)
+    assert any("search_support_tickets" in name for name in tool_names)
+    assert any("get_support_ticket" in name for name in tool_names)
 
     # All tool names should include provider name and hash
     for name in tool_names:
@@ -52,6 +61,7 @@ def test_knowledge_provider_search_schema():
     # Check optional fields
     props = search_schema.parameters["properties"]
     assert "category" not in props
+    assert "doc_type" not in props
     assert "limit" in props
     assert "distance_threshold" in props
 
@@ -69,6 +79,7 @@ def test_knowledge_provider_ingest_schema():
     assert "content" in required
     assert "source" in required
     assert "category" in required
+    assert "doc_type" in ingest_schema.parameters["properties"]
 
 
 def test_knowledge_provider_tool_name_uniqueness():
@@ -100,7 +111,7 @@ async def test_knowledge_provider_context_manager():
 
         # Should be able to create schemas
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 4  # search, ingest, get_all_fragments, get_related_fragments
+        assert len(schemas) == 8
 
 
 class TestKnowledgeProviderProperties:
@@ -168,19 +179,78 @@ class TestKnowledgeProviderGetRelatedFragmentsSchema:
         assert "chunk_index" in schema.parameters["required"]
 
 
+class TestKnowledgeProviderSkillSchemas:
+    """Test skills_check/get_skill tool schemas."""
+
+    def test_skills_check_schema_exists(self):
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        skill_schemas = [s for s in schemas if "skills_check" in s.name]
+        assert len(skill_schemas) == 1
+
+    def test_get_skill_schema_requires_document_hash(self):
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        schema = next(s for s in schemas if "get_skill" in s.name)
+        assert "skill_name" in schema.parameters["required"]
+
+
 class TestKnowledgeProviderToolCapabilities:
     """Test knowledge tool capabilities."""
 
-    def test_all_tools_have_knowledge_capability(self):
-        """Test all tools have KNOWLEDGE capability."""
+    def test_tools_have_expected_capabilities(self):
+        """Test tools expose expected KNOWLEDGE vs TICKETS capabilities."""
         provider = KnowledgeBaseToolProvider()
         schemas = provider.create_tool_schemas()
 
         for schema in schemas:
-            assert schema.capability == ToolCapability.KNOWLEDGE
+            if "search_support_tickets" in schema.name or "get_support_ticket" in schema.name:
+                assert schema.capability == ToolCapability.TICKETS
+            else:
+                assert schema.capability == ToolCapability.KNOWLEDGE
 
-    def test_tool_count_is_four(self):
-        """Test there are exactly 4 tools."""
+    def test_tool_count_is_eight(self):
+        """Test there are exactly 8 tools."""
         provider = KnowledgeBaseToolProvider()
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 4
+        assert len(schemas) == 8
+
+
+def test_knowledge_provider_resolve_operation_for_multi_word_tool_name():
+    """Multi-word operations should resolve correctly from generated tool names."""
+    provider = KnowledgeBaseToolProvider()
+    tool_name = provider._make_tool_name("search_support_tickets")
+
+    assert provider.resolve_operation(tool_name, {}) == "search_support_tickets"
+
+
+@pytest.mark.asyncio
+async def test_search_support_tickets_uses_default_distance_threshold():
+    """Provider should preserve helper default threshold behavior."""
+    provider = KnowledgeBaseToolProvider()
+    with patch(
+        "redis_sre_agent.tools.knowledge.knowledge_base.search_support_tickets_helper",
+        new_callable=AsyncMock,
+    ) as mock_search:
+        mock_search.return_value = {"results": []}
+
+        await provider.search_support_tickets(query="connection reset")
+
+        assert mock_search.call_args.kwargs["distance_threshold"] == pytest.approx(0.8)
+
+
+@pytest.mark.asyncio
+async def test_search_support_tickets_allows_threshold_disable_with_none():
+    """Explicit None should disable threshold for pure KNN behavior."""
+    provider = KnowledgeBaseToolProvider()
+    with patch(
+        "redis_sre_agent.tools.knowledge.knowledge_base.search_support_tickets_helper",
+        new_callable=AsyncMock,
+    ) as mock_search:
+        mock_search.return_value = {"results": []}
+
+        await provider.search_support_tickets(query="connection reset", distance_threshold=None)
+
+        assert mock_search.call_args.kwargs["distance_threshold"] is None

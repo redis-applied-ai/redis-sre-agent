@@ -9,7 +9,7 @@ knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus
 """
 
 import logging
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -26,6 +26,7 @@ from redis_sre_agent.core.progress import (
 from redis_sre_agent.tools.manager import ToolManager
 
 from .helpers import build_result_envelope
+from .knowledge_context import build_startup_knowledge_context
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 
 ## Your Capabilities:
 - Search and retrieve information from the SRE knowledge base
+- Search and retrieve relevant historical support tickets
 - Provide general SRE best practices and guidance
 - Help with troubleshooting methodologies and approaches
 - Explain SRE concepts and principles
@@ -47,11 +49,13 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 2. **Educational**: Explain concepts clearly and provide context for your recommendations
 3. **Practical**: Focus on actionable advice and real-world applications
 4. **Comprehensive**: Use multiple knowledge base searches if needed to provide complete answers
+5. **Historical Context**: Search support tickets when prior incidents may be relevant
 
 ## Important Guidelines:
 - You do NOT have access to specific Redis instances or live system data
 - For instance-specific troubleshooting, recommend using the full SRE agent with instance context
 - Focus on general principles, methodologies, and documented best practices
+- Only call tool categories that are available in your current tool list
 - Always cite knowledge base sources when available
 - If you don't find relevant information in the knowledge base, provide general SRE guidance based on industry best practices
 
@@ -78,6 +82,8 @@ class KnowledgeAgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    startup_system_prompt: Optional[str]
+    startup_prompt_initialized: NotRequired[bool]
     tool_calls_executed: int
     # Accumulated search results for citation tracking
     knowledge_search_results: List[Dict[str, Any]]
@@ -132,10 +138,42 @@ class KnowledgeOnlyAgent:
             """Main agent node for knowledge queries."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
+            startup_system_prompt = state.get("startup_system_prompt")
+            startup_prompt_initialized = state.get("startup_prompt_initialized", False)
 
-            # Add system message if this is the first interaction
-            if len(messages) == 1 and isinstance(messages[0], HumanMessage):
-                system_message = SystemMessage(content=KNOWLEDGE_SYSTEM_PROMPT)
+            # Cache and reuse startup prompt for this workflow execution to avoid repeated
+            # knowledge-context lookups in tool-call loops.
+            if (
+                startup_system_prompt is None
+                and messages
+                and isinstance(messages[0], SystemMessage)
+            ):
+                startup_system_prompt = str(messages[0].content or "")
+                startup_prompt_initialized = True
+
+            # Ensure startup system context is always present, including thread follow-ups.
+            if not messages or not isinstance(messages[0], SystemMessage):
+                if startup_system_prompt is None or (
+                    iteration_count == 0 and not startup_prompt_initialized
+                ):
+                    context_query = ""
+                    for message in reversed(messages):
+                        if isinstance(message, HumanMessage):
+                            context_query = str(message.content or "")
+                            break
+                    startup_context = await build_startup_knowledge_context(
+                        query=context_query,
+                        version="latest",
+                        available_tools=list(tooldefs_by_name.values()),
+                    )
+                    startup_system_prompt = (
+                        f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
+                        if startup_context.strip()
+                        else KNOWLEDGE_SYSTEM_PROMPT
+                    )
+                    startup_prompt_initialized = True
+                startup_system_prompt = startup_system_prompt or KNOWLEDGE_SYSTEM_PROMPT
+                system_message = SystemMessage(content=startup_system_prompt)
                 messages = [system_message] + messages
 
             # Generate response with knowledge tools
@@ -207,8 +245,9 @@ class KnowledgeOnlyAgent:
                 # Update iteration count
                 state["iteration_count"] = iteration_count + 1
 
-                # Add response to messages
-                state["messages"] = messages + [response]
+                # Persist only original state messages plus response.
+                # Keep invocation-only injected SystemMessage ephemeral.
+                state["messages"] = list(state["messages"]) + [response]
 
                 # Store tool calls for potential execution
                 if response.tool_calls:
@@ -224,6 +263,8 @@ class KnowledgeOnlyAgent:
                     state["current_tool_calls"] = []
 
                 # No per-iteration progress message; providers will emit status updates
+                state["startup_system_prompt"] = startup_system_prompt
+                state["startup_prompt_initialized"] = startup_prompt_initialized
                 return state
 
             except Exception as e:
@@ -231,8 +272,10 @@ class KnowledgeOnlyAgent:
                 error_message = AIMessage(
                     content=f"I encountered an error while processing your request: {str(e)}. Please try rephrasing your question or ask for general SRE guidance."
                 )
-                state["messages"] = messages + [error_message]
+                state["messages"] = list(state["messages"]) + [error_message]
                 state["current_tool_calls"] = []
+                state["startup_system_prompt"] = startup_system_prompt
+                state["startup_prompt_initialized"] = startup_prompt_initialized
                 return state
 
         async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
@@ -483,10 +526,22 @@ class KnowledgeOnlyAgent:
             # Build workflow with tools and bound LLM
             workflow = self._build_workflow(tool_mgr, llm_with_tools, emitter)
 
+            # Build startup context once per query and seed initial SystemMessage.
+            startup_context = await build_startup_knowledge_context(
+                query=query,
+                version="latest",
+                available_tools=tools,
+            )
+            system_prompt = (
+                f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
+                if startup_context.strip()
+                else KNOWLEDGE_SYSTEM_PROMPT
+            )
+
             # Create initial state with conversation history
-            initial_messages = []
+            initial_messages = [SystemMessage(content=system_prompt)]
             if conversation_history:
-                initial_messages = list(conversation_history)
+                initial_messages.extend(conversation_history)
                 logger.info(
                     f"Including {len(conversation_history)} messages from conversation history"
                 )
@@ -499,6 +554,8 @@ class KnowledgeOnlyAgent:
                 "current_tool_calls": [],
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
+                "startup_system_prompt": system_prompt,
+                "startup_prompt_initialized": True,
                 "tool_calls_executed": 0,
                 "knowledge_search_results": [],
                 "signals_envelopes": [],

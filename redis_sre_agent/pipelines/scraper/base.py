@@ -21,7 +21,19 @@ class DocumentCategory(str, Enum):
 
 
 class DocumentType(str, Enum):
-    """Document type classification."""
+    """
+    Document type classification.
+
+    RUNBOOK: step-by-step operational procedures used during incidents
+    and maintenance.
+    TROUBLESHOOTING: diagnostic guidance for identifying likely causes.
+    SKILL: capability instruction documents consumed by the agent's
+    skills workflow rather than general operator runbooks.
+    KNOWLEDGE: default long-form knowledge documents used for
+    general vector retrieval.
+    SUPPORT_TICKET: historical support records that are retrieved
+    through dedicated support-ticket tooling.
+    """
 
     RUNBOOK = "runbook"
     DOCUMENTATION = "documentation"
@@ -30,6 +42,9 @@ class DocumentType(str, Enum):
     TROUBLESHOOTING = "troubleshooting"
     REFERENCE = "reference"
     API_DOC = "api_doc"
+    SKILL = "skill"
+    KNOWLEDGE = "knowledge"
+    SUPPORT_TICKET = "support_ticket"
 
 
 class SeverityLevel(str, Enum):

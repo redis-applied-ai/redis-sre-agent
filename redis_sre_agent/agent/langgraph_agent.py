@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -42,6 +42,7 @@ from ..core.redis import get_redis_client
 from ..tools.manager import ToolManager
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
+from .knowledge_context import build_startup_knowledge_context
 from .models import AgentResponse
 from .prompts import SRE_SYSTEM_PROMPT
 from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
@@ -303,6 +304,8 @@ class AgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    startup_system_prompt: Optional[str]  # Per-workflow cached startup prompt
+    startup_prompt_initialized: NotRequired[bool]
     instance_context: Optional[Dict[str, Any]]  # For Redis instance context
     signals_envelopes: List[Dict[str, Any]]  # Accumulated tool result envelopes across steps
 
@@ -720,35 +723,13 @@ JSON payload of analyses artifacts:
         # Build a quick lookup for ToolDefinition by name for envelopes
         tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
 
-        # Lightweight OTel wrapper to trace per-node execution
-        def _trace_node(node_name: str):
-            def _decorator(fn):
-                async def _wrapped(state: AgentState) -> AgentState:
-                    with tracer.start_as_current_span(
-                        "langgraph.node",
-                        attributes={
-                            "langgraph.graph": "sre_agent",
-                            "langgraph.node": node_name,
-                        },
-                    ):
-                        return await fn(state)
+        def _augment_with_instance_context(base_prompt: str) -> str:
+            """Ensure instance-type specific guidance is present exactly once."""
+            prompt = base_prompt or ""
 
-                return _wrapped
-
-            return _decorator
-
-        async def agent_node(state: AgentState) -> AgentState:
-            """Main agent node that processes user input and decides on tool calls."""
-            messages = state["messages"]
-            iteration_count = state.get("iteration_count", 0)
-            # max_iterations = state.get("max_iterations", 10)  # Not used in this function
-
-            # Add system message if this is the first interaction
-            if len(messages) == 1 and isinstance(messages[0], HumanMessage):
-                system_prompt = SRE_SYSTEM_PROMPT
-
-                # Add Redis Cloud-specific context if working with a cloud instance
-                if target_instance and target_instance.instance_type == "redis_cloud":
+            if target_instance and target_instance.instance_type == "redis_cloud":
+                marker = "## CRITICAL REDIS CLOUD CONTEXT"
+                if marker not in prompt:
                     redis_cloud_context = """
 
 ## CRITICAL REDIS CLOUD CONTEXT
@@ -784,11 +765,15 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 4. Provide recommendations based on ACTUAL configuration, not INFO output
 
 **Remember: Redis Cloud manages persistence, replication, clustering, and modules automatically. Use the REST API to see the real configuration!**
-"""
-                    system_prompt += redis_cloud_context
+                    """
+                    prompt += redis_cloud_context
+                # Redis Cloud is mutually exclusive with Redis Enterprise context.
+                # Always return from the cloud branch, even when marker already exists.
+                return prompt
 
-                # Add Redis Enterprise-specific context if working with an enterprise instance
-                elif target_instance and target_instance.instance_type == "redis_enterprise":
+            if target_instance and target_instance.instance_type == "redis_enterprise":
+                marker = "## CRITICAL REDIS ENTERPRISE CONTEXT"
+                if marker not in prompt:
                     redis_enterprise_context = """
 
 ## CRITICAL REDIS ENTERPRISE CONTEXT
@@ -839,9 +824,73 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 - Prefer the Admin REST API tools available to you (`get_cluster_info`, `get_database`, `list_nodes`, `list_shards`). Do NOT turn tool names into CLI commands.
 - If you cannot find a documented rladmin command for the task, omit CLI suggestions and stick to Admin REST API guidance.
 """
-                    system_prompt += redis_enterprise_context
+                    prompt += redis_enterprise_context
 
-                system_message = SystemMessage(content=system_prompt)
+            return prompt
+
+        # Lightweight OTel wrapper to trace per-node execution
+        def _trace_node(node_name: str):
+            def _decorator(fn):
+                async def _wrapped(state: AgentState) -> AgentState:
+                    with tracer.start_as_current_span(
+                        "langgraph.node",
+                        attributes={
+                            "langgraph.graph": "sre_agent",
+                            "langgraph.node": node_name,
+                        },
+                    ):
+                        return await fn(state)
+
+                return _wrapped
+
+            return _decorator
+
+        async def agent_node(state: AgentState) -> AgentState:
+            """Main agent node that processes user input and decides on tool calls."""
+            messages = state["messages"]
+            iteration_count = state.get("iteration_count", 0)
+            startup_system_prompt = state.get("startup_system_prompt")
+            startup_prompt_initialized = state.get("startup_prompt_initialized", False)
+            # max_iterations = state.get("max_iterations", 10)  # Not used in this function
+
+            if (
+                startup_system_prompt is None
+                and messages
+                and isinstance(messages[0], SystemMessage)
+            ):
+                existing_system_prompt = str(messages[0].content or "")
+                startup_system_prompt = _augment_with_instance_context(existing_system_prompt)
+                if startup_system_prompt != existing_system_prompt:
+                    messages = [SystemMessage(content=startup_system_prompt), *messages[1:]]
+                startup_prompt_initialized = True
+
+            # Ensure startup system context is always present, including thread follow-ups.
+            if not messages or not isinstance(messages[0], SystemMessage):
+                if startup_system_prompt is None or (
+                    iteration_count == 0 and not startup_prompt_initialized
+                ):
+                    context_query = ""
+                    for message in reversed(messages):
+                        if isinstance(message, HumanMessage):
+                            context_query = str(message.content or "")
+                            break
+                    startup_context = await build_startup_knowledge_context(
+                        query=context_query,
+                        version="latest",
+                        available_tools=list(tooldefs_by_name.values()),
+                    )
+                    system_prompt = (
+                        f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
+                        if startup_context.strip()
+                        else SRE_SYSTEM_PROMPT
+                    )
+                    startup_system_prompt = _augment_with_instance_context(system_prompt)
+                    startup_prompt_initialized = True
+                startup_system_prompt = startup_system_prompt or _augment_with_instance_context(
+                    SRE_SYSTEM_PROMPT
+                )
+
+                system_message = SystemMessage(content=startup_system_prompt)
                 messages = [system_message] + messages
 
             # Generate response with tool calling capability using retry logic
@@ -916,7 +965,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 )
 
             # Update state
-            new_messages = messages + [response]
+            # Persist only original workflow messages plus response.
+            # Keep invocation-only injected/augmented SystemMessage ephemeral.
+            new_messages = list(state["messages"]) + [response]
             state["messages"] = new_messages
             state["iteration_count"] = iteration_count + 1
 
@@ -953,6 +1004,8 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             else:
                 state["current_tool_calls"] = []
 
+            state["startup_system_prompt"] = startup_system_prompt
+            state["startup_prompt_initialized"] = startup_prompt_initialized
             return state
 
         async def tool_node(state: AgentState) -> AgentState:
@@ -1653,31 +1706,9 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
                 except Exception as e:
                     logger.error(f"Failed to check available instances: {e}")
 
-        # Create initial state with conversation history
-        # If conversation_history is provided, include it before the new query
-        initial_messages = []
-        if conversation_history:
-            initial_messages = list(conversation_history)
-            logger.info(f"Including {len(conversation_history)} messages from conversation history")
-            for i, msg in enumerate(conversation_history):
-                logger.info(f"  History[{i}]: {type(msg).__name__} - {str(msg.content)[:100]}")
-        initial_messages.append(HumanMessage(content=enhanced_query))
-        logger.info(f"Total messages in initial_state: {len(initial_messages)}")
-
-        initial_state: AgentState = {
-            "messages": initial_messages,
-            "session_id": session_id,
-            "user_id": user_id,
-            "current_tool_calls": [],
-            "iteration_count": 0,
-            "max_iterations": max_iterations,
-            "instance_context": None,
-            "signals_envelopes": [],
-        }
-
-        # Store instance context in the state for tool execution
-        if context and context.get("instance_id"):
-            initial_state["instance_context"] = context
+        # Defer initial state construction until tools are loaded so startup context
+        # can include the actual tool instructions available for this query.
+        initial_instance_context = context if context and context.get("instance_id") else None
 
         # INSTANCE TYPE TRIAGE: Detect and validate instance type before loading tools
         if target_instance and target_instance.instance_type in ["unknown", None]:
@@ -1840,6 +1871,43 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             logger.info(f"Loaded {len(tools)} tools for this query")
             for tool in tools:
                 logger.debug(f"  - {tool.name}")
+
+            startup_context = await build_startup_knowledge_context(
+                query=enhanced_query,
+                version="latest",
+                available_tools=tools,
+            )
+            seeded_system_prompt = (
+                f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
+                if startup_context.strip()
+                else SRE_SYSTEM_PROMPT
+            )
+
+            # Create initial state with conversation history and seeded startup context.
+            initial_messages = [SystemMessage(content=seeded_system_prompt)]
+            if conversation_history:
+                initial_messages.extend(list(conversation_history))
+                logger.info(
+                    f"Including {len(conversation_history)} messages from conversation history"
+                )
+                for i, msg in enumerate(conversation_history):
+                    logger.info(f"  History[{i}]: {type(msg).__name__} - {str(msg.content)[:100]}")
+            initial_messages.append(HumanMessage(content=enhanced_query))
+            logger.info(f"Total messages in initial_state: {len(initial_messages)}")
+
+            initial_state: AgentState = {
+                "messages": initial_messages,
+                "session_id": session_id,
+                "user_id": user_id,
+                "current_tool_calls": [],
+                "iteration_count": 0,
+                "max_iterations": max_iterations,
+                # Keep unset so agent_node can augment with instance-specific context.
+                "startup_system_prompt": None,
+                "startup_prompt_initialized": False,
+                "instance_context": initial_instance_context,
+                "signals_envelopes": [],
+            }
 
             adapters = await _build_adapters(tool_mgr, tools)
 

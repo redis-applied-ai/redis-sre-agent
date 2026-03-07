@@ -274,12 +274,20 @@ class TestIngestionPipeline:
             "redis_sre_agent.pipelines.ingestion.processor.get_knowledge_index"
         ) as mock_get_index:
             with patch(
-                "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer"
-            ) as mock_get_vectorizer:
-                mock_get_index.return_value = mock_index
-                mock_get_vectorizer.return_value = mock_vectorizer
+                "redis_sre_agent.pipelines.ingestion.processor.get_skills_index"
+            ) as mock_get_skills_index:
+                with patch(
+                    "redis_sre_agent.pipelines.ingestion.processor.get_support_tickets_index"
+                ) as mock_get_support_tickets_index:
+                    with patch(
+                        "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer"
+                    ) as mock_get_vectorizer:
+                        mock_get_index.return_value = mock_index
+                        mock_get_skills_index.return_value = mock_index
+                        mock_get_support_tickets_index.return_value = mock_index
+                        mock_get_vectorizer.return_value = mock_vectorizer
 
-                yield mock_index, mock_vectorizer
+                        yield mock_index, mock_vectorizer
 
     def test_init(self, pipeline, storage):
         """Test pipeline initialization."""
@@ -287,6 +295,131 @@ class TestIngestionPipeline:
         assert isinstance(pipeline.processor, DocumentProcessor)
         assert pipeline.processor.config["chunk_size"] == 300
         assert pipeline.processor.config["min_chunk_size"] == 50
+
+    def test_create_scraped_document_from_markdown_uses_doc_type_frontmatter_key(
+        self, pipeline, tmp_path
+    ):
+        """Test canonical doc_type front matter key is used for document type."""
+        md_file = tmp_path / "test-doc.md"
+        md_file.write_text(
+            (
+                "---\n"
+                'title: "Front Matter Title"\n'
+                "category: shared\n"
+                "severity: high\n"
+                "doc_type: support_ticket\n"
+                "---\n\n"
+                "# Body Heading\n\n"
+                "Some content.\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.title == "Front Matter Title"
+        assert document.doc_type == DocumentType.SUPPORT_TICKET
+        assert document.metadata["original_doc_type"] == "support_ticket"
+        assert document.metadata["doc_type"] == "support_ticket"
+
+    def test_create_scraped_document_from_markdown_applies_adr_defaults(self, pipeline, tmp_path):
+        """Test ADR metadata defaults for source docs without frontmatter."""
+        md_file = tmp_path / "no-frontmatter.md"
+        md_file.write_text("# Test Title\n\nSome content.\n", encoding="utf-8")
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.doc_type == DocumentType.KNOWLEDGE
+        assert document.metadata["doc_type"] == "knowledge"
+        assert document.metadata["priority"] == "normal"
+        assert document.metadata["pinned"] is False
+        assert document.metadata["name"] == "no-frontmatter"
+        assert document.metadata["summary"] is None
+
+    def test_create_scraped_document_from_markdown_parses_adr_frontmatter_fields(
+        self, pipeline, tmp_path
+    ):
+        """Test pinned/priority/name/summary frontmatter fields are preserved."""
+        md_file = tmp_path / "with-frontmatter.md"
+        md_file.write_text(
+            (
+                "---\n"
+                "doc_type: support_ticket\n"
+                "priority: critical\n"
+                "pinned: true\n"
+                "name: Incident Triage\n"
+                "summary: Step-by-step triage process.\n"
+                "---\n\n"
+                "# Test Title\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.doc_type == DocumentType.SUPPORT_TICKET
+        assert document.metadata["doc_type"] == "support_ticket"
+        assert document.metadata["priority"] == "critical"
+        assert document.metadata["pinned"] is True
+        assert document.metadata["name"] == "Incident Triage"
+        assert document.metadata["summary"] == "Step-by-step triage process."
+
+    def test_create_scraped_document_from_markdown_reserved_metadata_cannot_be_overridden(
+        self, pipeline, tmp_path
+    ):
+        """Computed ingestion metadata should not be overridden by frontmatter."""
+        md_file = tmp_path / "reserved-keys.md"
+        md_file.write_text(
+            (
+                "---\n"
+                "doc_type: support_ticket\n"
+                "file_path: injected-path\n"
+                "file_size: 1\n"
+                "original_category: injected-category\n"
+                "original_severity: injected-severity\n"
+                "original_doc_type: injected-doc-type\n"
+                "determined_category: injected-determined-category\n"
+                "---\n\n"
+                "# Test Title\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = pipeline._create_scraped_document_from_markdown(md_file)
+
+        assert document.metadata["file_path"] == str(md_file)
+        assert document.metadata["file_size"] == md_file.stat().st_size
+        assert document.metadata["original_category"] == "shared"
+        assert document.metadata["original_severity"] == "normal"
+        assert document.metadata["original_doc_type"] == "support_ticket"
+        assert document.metadata["determined_category"] == "shared"
+
+    def test_parse_markdown_metadata_normalizes_spaced_keys(self, pipeline):
+        """Test metadata keys with spaces normalize to snake_case."""
+        content = "---\npriority level: high\n---\n\n# Test Title\n**Doc Type**: skill\n"
+
+        metadata = pipeline._parse_markdown_metadata(content)
+
+        assert metadata["priority_level"] == "high"
+        assert metadata["doc_type"] == "skill"
+        assert metadata["title"] == "Test Title"
+
+    def test_parse_markdown_metadata_frontmatter_takes_precedence(self, pipeline):
+        """Frontmatter values should not be overridden by body metadata lines."""
+        content = (
+            "---\n"
+            "priority: critical\n"
+            "doc_type: skill\n"
+            "---\n\n"
+            "# Test Title\n"
+            "**Priority**: low\n"
+            "**Doc Type**: support_ticket\n"
+        )
+
+        metadata = pipeline._parse_markdown_metadata(content)
+
+        assert metadata["priority"] == "critical"
+        assert metadata["doc_type"] == "skill"
 
     @pytest.mark.asyncio
     async def test_ingest_batch_missing_manifest(self, pipeline):
@@ -391,19 +524,17 @@ class TestIngestionPipeline:
             with open(doc_path, "w") as f:
                 json.dump(doc_data, f)
 
-        # Create mock deduplicator
-        with patch(
-            "redis_sre_agent.pipelines.ingestion.processor.DocumentDeduplicator"
-        ) as mock_dedup_class:
-            mock_deduplicator = AsyncMock()
-            mock_deduplicator.replace_document_chunks.return_value = (
-                3  # Return number of chunks indexed
-            )
-            mock_dedup_class.return_value = mock_deduplicator
+        mock_deduplicator = AsyncMock()
+        mock_deduplicator.replace_document_chunks.return_value = (
+            3  # Return number of chunks indexed
+        )
 
-            result = await pipeline._process_category(
-                category_path, category, mock_index, mock_vectorizer, mock_deduplicator
-            )
+        result = await pipeline._process_category(
+            category_path,
+            category,
+            mock_vectorizer,
+            {"knowledge": mock_deduplicator},
+        )
 
         assert result["category"] == category
         assert result["documents_processed"] == 3
@@ -438,19 +569,17 @@ class TestIngestionPipeline:
         with open(category_path / "invalid_doc.json", "w") as f:
             json.dump({"incomplete": "data"}, f)
 
-        # Create mock deduplicator
-        with patch(
-            "redis_sre_agent.pipelines.ingestion.processor.DocumentDeduplicator"
-        ) as mock_dedup_class:
-            mock_deduplicator = AsyncMock()
-            mock_deduplicator.replace_document_chunks.return_value = (
-                1  # Return number of chunks indexed
-            )
-            mock_dedup_class.return_value = mock_deduplicator
+        mock_deduplicator = AsyncMock()
+        mock_deduplicator.replace_document_chunks.return_value = (
+            1  # Return number of chunks indexed
+        )
 
-            result = await pipeline._process_category(
-                category_path, category, mock_index, mock_vectorizer, mock_deduplicator
-            )
+        result = await pipeline._process_category(
+            category_path,
+            category,
+            mock_vectorizer,
+            {"knowledge": mock_deduplicator},
+        )
 
         assert result["documents_processed"] == 1  # Only valid document
         assert len(result["errors"]) == 1  # One error for invalid document

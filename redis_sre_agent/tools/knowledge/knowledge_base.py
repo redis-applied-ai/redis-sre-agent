@@ -15,7 +15,11 @@ from redis_sre_agent.core.docket_tasks import (
 from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
+    get_skill_helper,
+    get_support_ticket_helper,
     search_knowledge_base_helper,
+    search_support_tickets_helper,
+    skills_check_helper,
 )
 from redis_sre_agent.tools.decorators import status_update
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
@@ -48,11 +52,12 @@ class KnowledgeBaseToolProvider(ToolProvider):
             ToolDefinition(
                 name=self._make_tool_name("search"),
                 description=(
-                    "Search the comprehensive knowledge base for relevant information including "
+                    "Search the general knowledge base for relevant information including "
                     "runbooks, Redis documentation, troubleshooting guides, and SRE procedures. "
                     "Use this to find solutions to problems, understand Redis features, or get "
                     "guidance on SRE best practices. Always cite the source document and title "
-                    "when using information from search results. By default, returns only the "
+                    "when using information from search results. This search excludes pinned "
+                    "documents, skills, and support tickets. By default, returns only the "
                     "latest version of documentation to avoid duplicates."
                 ),
                 capability=ToolCapability.KNOWLEDGE,
@@ -138,6 +143,13 @@ class KnowledgeBaseToolProvider(ToolProvider):
                             "description": "Severity level (for incidents/alerts)",
                             "enum": ["critical", "high", "medium", "low", "info"],
                         },
+                        "doc_type": {
+                            "type": "string",
+                            "description": (
+                                "Document type (e.g., 'skill', 'support_ticket', 'runbook', "
+                                "'documentation')."
+                            ),
+                        },
                         "product_labels": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -199,16 +211,128 @@ class KnowledgeBaseToolProvider(ToolProvider):
                     "required": ["document_hash", "chunk_index"],
                 },
             ),
+            ToolDefinition(
+                name=self._make_tool_name("skills_check"),
+                description=(
+                    "Run a skills check to list relevant skills from the knowledge base. "
+                    "Use query context whenever possible and then request a full skill "
+                    "with get_skill."
+                ),
+                capability=ToolCapability.KNOWLEDGE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Optional task query for relevance-ranked skill matching. "
+                                "If omitted, returns a deterministic skills table of contents."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of skills to return (default: 20)",
+                            "default": 20,
+                            "minimum": 1,
+                            "maximum": 100,
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Number of skills to skip for pagination (default: 0)",
+                            "default": 0,
+                            "minimum": 0,
+                        },
+                        "version": {
+                            "type": "string",
+                            "description": (
+                                "Optional Redis documentation version filter. "
+                                "Defaults to 'latest'. Set to null to include all versions."
+                            ),
+                            "default": "latest",
+                        },
+                    },
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_skill"),
+                description=(
+                    "Retrieve the complete content of a skill by skill name. "
+                    "Use the name returned by skills_check."
+                ),
+                capability=ToolCapability.KNOWLEDGE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {
+                            "type": "string",
+                            "description": "Skill name from skills_check results",
+                        },
+                    },
+                    "required": ["skill_name"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("search_support_tickets"),
+                description=(
+                    "Search support tickets only. "
+                    "Use this for historical or active support-case context."
+                ),
+                capability=ToolCapability.TICKETS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Support ticket search query",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return (default: 10)",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Number of results to skip for pagination (default: 0)",
+                            "default": 0,
+                            "minimum": 0,
+                        },
+                        "version": {
+                            "type": "string",
+                            "description": (
+                                "Redis documentation version filter. Defaults to 'latest'. "
+                                "Set to null to include all versions."
+                            ),
+                            "default": "latest",
+                        },
+                        "distance_threshold": {
+                            "type": "number",
+                            "description": (
+                                "Optional cosine distance threshold. Set to null for pure KNN."
+                            ),
+                            "default": 0.8,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_support_ticket"),
+                description="Retrieve the complete content of a support ticket by ticket id.",
+                capability=ToolCapability.TICKETS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "ticket_id": {
+                            "type": "string",
+                            "description": "Ticket id from search_support_tickets results",
+                        }
+                    },
+                    "required": ["ticket_id"],
+                },
+            ),
         ]
-
-    def _operation_from_tool(self, tool_name: str) -> str:
-        parts = tool_name.split("_")
-        if len(parts) >= 3:
-            return "_".join(parts[2:])
-        return tool_name
-
-    def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
-        return self._operation_from_tool(tool_name)
 
     @status_update("I'm searching the knowledge base for {query}.")
     async def search(
@@ -270,6 +394,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
         source: str,
         category: str,
         severity: Optional[str] = None,
+        doc_type: Optional[str] = None,
         product_labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Ingest a document into the knowledge base.
@@ -294,6 +419,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         }
         if severity:
             kwargs["severity"] = severity
+        if doc_type:
+            kwargs["doc_type"] = doc_type
         if product_labels:
             kwargs["product_labels"] = product_labels
 
@@ -303,6 +430,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
             attributes={
                 "title.len": len(title or ""),
                 "category": str(category or ""),
+                "doc_type": str(doc_type or ""),
                 "has.labels": bool(product_labels),
                 "has.severity": bool(severity),
             },
@@ -348,3 +476,88 @@ class KnowledgeBaseToolProvider(ToolProvider):
             },
         ):
             return await get_related_document_fragments(document_hash, chunk_index, limit)
+
+    @status_update("I'm checking the available skills in the knowledge base.")
+    async def skills_check(
+        self,
+        query: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+        version: Optional[str] = "latest",
+    ) -> Dict[str, Any]:
+        """List available skills from the knowledge base."""
+        logger.info(
+            "Checking skills (query=%s, limit=%s, offset=%s, version=%s)",
+            bool(query),
+            limit,
+            offset,
+            version,
+        )
+        with tracer.start_as_current_span(
+            "tool.knowledge.skills_check",
+            attributes={
+                "query.len": len(query or ""),
+                "limit": int(limit),
+                "offset": int(offset),
+                "version": version or "all",
+            },
+        ):
+            return await skills_check_helper(
+                query=query,
+                limit=limit,
+                offset=offset,
+                version=version,
+            )
+
+    async def get_skill(self, skill_name: str) -> Dict[str, Any]:
+        """Get complete content for a single skill document."""
+        logger.info("Getting full skill document by name: %s", skill_name)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_skill",
+            attributes={"skill_name.len": len(skill_name or "")},
+        ):
+            return await get_skill_helper(skill_name=skill_name)
+
+    @status_update("I'm searching support tickets for {query}.")
+    async def search_support_tickets(
+        self,
+        query: str,
+        limit: int = 10,
+        offset: int = 0,
+        version: Optional[str] = "latest",
+        distance_threshold: Optional[float] = 0.8,
+    ) -> Dict[str, Any]:
+        """Search support tickets only."""
+        logger.info(
+            "Searching support tickets: %s (limit=%s, offset=%s, version=%s)",
+            query,
+            limit,
+            offset,
+            version,
+        )
+        with tracer.start_as_current_span(
+            "tool.knowledge.search_support_tickets",
+            attributes={
+                "query.len": len(query or ""),
+                "limit": int(limit),
+                "offset": int(offset),
+                "version": version or "all",
+                "distance_threshold.set": distance_threshold is not None,
+            },
+        ):
+            return await search_support_tickets_helper(
+                query=query,
+                limit=limit,
+                offset=offset,
+                version=version,
+                distance_threshold=distance_threshold,
+            )
+
+    async def get_support_ticket(self, ticket_id: str) -> Dict[str, Any]:
+        """Get complete content for a support ticket."""
+        logger.info("Getting support ticket: %s", ticket_id)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_support_ticket",
+            attributes={"ticket_id": str(ticket_id)[:32]},
+        ):
+            return await get_support_ticket_helper(ticket_id=ticket_id)

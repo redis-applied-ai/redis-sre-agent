@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
 
@@ -114,6 +114,469 @@ class TestSRELangGraphAgent:
             assert history[1]["role"] == "assistant"
             assert history[1]["content"] == "Hi there!"
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_seeds_startup_context_into_initial_state(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_instance = MagicMock()
+        mock_instance.id = "inst-1"
+        mock_instance.name = "test-instance"
+        mock_instance.connection_url = MagicMock()
+        mock_instance.connection_url.get_secret_value.return_value = "redis://localhost:6379"
+        mock_instance.environment = "development"
+        mock_instance.usage = "cache"
+        mock_instance.instance_type = "oss_single"
+        mock_instance.repo_url = None
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.get_instance_by_id",
+                AsyncMock(return_value=mock_instance),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="memory question",
+                session_id="s1",
+                user_id="u1",
+                context={"instance_id": "inst-1"},
+                conversation_history=[SystemMessage(content="OLD_SYSTEM")],
+            )
+
+        initial_state = captured["initial_state"]
+        assert isinstance(initial_state["messages"][0], SystemMessage)
+        assert "STARTUP_CONTEXT" in initial_state["messages"][0].content
+        assert initial_state["startup_system_prompt"] is None
+        assert initial_state["startup_prompt_initialized"] is False
+
+        mock_build_startup_context.assert_awaited_once()
+        call_kwargs = mock_build_startup_context.await_args.kwargs
+        assert call_kwargs["version"] == "latest"
+        assert call_kwargs["available_tools"] == []
+        assert "memory question" in call_kwargs["query"]
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_system_prompt_injected_with_conversation_history(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Startup context should be injected even for follow-up turns."""
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                HumanMessage(content="previous question"),
+                AIMessage(content="previous answer"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once_with(
+            query="follow-up question",
+            version="latest",
+            available_tools=[],
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_system_prompt_uses_base_prompt_when_startup_context_blank(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Blank startup context should not prepend empty lines to the system prompt."""
+        from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+
+        mock_build_startup_context.return_value = "   "
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="follow-up question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert sent_messages[0].content == SRE_SYSTEM_PROMPT
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_startup_context_built_once_across_agent_iterations(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Startup context should be built once per workflow and then reused."""
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(content="turn-1", tool_calls=[]),
+                AIMessage(content="turn-2", tool_calls=[]),
+            ]
+        )
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="follow-up question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        state_after_first = await compiled.nodes["agent"].ainvoke(state)
+        state_after_first["messages"] = [
+            m for m in state_after_first["messages"] if not isinstance(m, SystemMessage)
+        ]
+        state_after_first["iteration_count"] = 1
+        await compiled.nodes["agent"].ainvoke(state_after_first)
+
+        assert mock_build_startup_context.await_count == 1
+        sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
+        assert isinstance(sent_messages_second[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages_second[0].content
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_startup_context_not_shared_between_independent_invocations(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.side_effect = ["CTX_ONE", "CTX_TWO"]
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state_one = {
+            "messages": [HumanMessage(content="first question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+        state_two = {
+            "messages": [HumanMessage(content="second question")],
+            "session_id": "session-2",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state_one)
+        await compiled.nodes["agent"].ainvoke(state_two)
+
+        assert mock_build_startup_context.await_count == 2
+        sent_messages_first = mock_llm.ainvoke.call_args_list[0].args[0]
+        sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
+        assert "CTX_ONE" in sent_messages_first[0].content
+        assert "CTX_TWO" in sent_messages_second[0].content
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_agent_node_rebuilds_prompt_on_first_step_when_cached_prompt_is_stale(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "FRESH_CONTEXT"
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "STALE_CONTEXT",
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "FRESH_CONTEXT" in sent_messages[0].content
+        assert "STALE_CONTEXT" not in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once_with(
+            query="new question",
+            version="latest",
+            available_tools=[],
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_agent_node_reuses_initialized_prompt_without_rebuild(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "FRESH_CONTEXT",
+            "startup_prompt_initialized": True,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert sent_messages[0].content == "FRESH_CONTEXT"
+        mock_build_startup_context.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_cached_system_prompt_preserves_instance_context_when_reinjected(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(content="turn-1", tool_calls=[]),
+                AIMessage(content="turn-2", tool_calls=[]),
+            ]
+        )
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        target_instance = MagicMock()
+        target_instance.instance_type = "redis_cloud"
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=target_instance)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                SystemMessage(content="PREBUILT_SYSTEM_PROMPT"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        state_after_first = await compiled.nodes["agent"].ainvoke(state)
+        sent_messages_first = mock_llm.ainvoke.call_args_list[0].args[0]
+        assert "CRITICAL REDIS CLOUD CONTEXT" in sent_messages_first[0].content
+
+        state_after_first["messages"] = [
+            m for m in state_after_first["messages"] if not isinstance(m, SystemMessage)
+        ]
+        state_after_first["iteration_count"] = 1
+        await compiled.nodes["agent"].ainvoke(state_after_first)
+
+        sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
+        assert isinstance(sent_messages_second[0], SystemMessage)
+        assert "CRITICAL REDIS CLOUD CONTEXT" in sent_messages_second[0].content
+        assert mock_build_startup_context.await_count == 0
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_cloud_context_does_not_fall_through_to_enterprise_context(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        target_instance = MagicMock()
+        target_instance.instance_type = "redis_cloud"
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=target_instance)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                SystemMessage(content="BASE\n\n## CRITICAL REDIS CLOUD CONTEXT\npresent"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert "CRITICAL REDIS CLOUD CONTEXT" in sent_messages[0].content
+        assert "CRITICAL REDIS ENTERPRISE CONTEXT" not in sent_messages[0].content
+        assert mock_build_startup_context.await_count == 0
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_agent_node_does_not_persist_injected_system_message(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        output_state = await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert isinstance(output_state["messages"][0], HumanMessage)
+        assert all(not isinstance(msg, SystemMessage) for msg in output_state["messages"])
+
     def test_clear_conversation(self, mock_settings, mock_llm):
         """Test clearing conversation history."""
         with patch.object(SRELangGraphAgent, "__init__", lambda self: None):
@@ -185,6 +648,8 @@ class TestAgentWorkflow:
             "current_tool_calls",
             "iteration_count",
             "max_iterations",
+            "startup_system_prompt",
+            "startup_prompt_initialized",
             "instance_context",  # Added in the new implementation
             "signals_envelopes",
         ]

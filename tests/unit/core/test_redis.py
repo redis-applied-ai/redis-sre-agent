@@ -6,6 +6,8 @@ import pytest
 
 from redis_sre_agent.core.redis import (
     SRE_KNOWLEDGE_SCHEMA,
+    SRE_SKILLS_SCHEMA,
+    SRE_SUPPORT_TICKETS_SCHEMA,
     create_indices,
     get_knowledge_index,
     get_redis_client,
@@ -49,6 +51,14 @@ class TestRedisInfrastructure:
         # Use settings.vector_dim since schema is defined at import time with that value
         assert vector_field["attrs"]["dims"] == settings.vector_dim
         assert vector_field["attrs"]["distance_metric"] == "cosine"
+
+    def test_skills_and_support_ticket_schema_include_pinned_field(self):
+        """Skills and support-ticket indexes should include pinned as a tag field."""
+        for schema in (SRE_SKILLS_SCHEMA, SRE_SUPPORT_TICKETS_SCHEMA):
+            field_names = {field["name"] for field in schema["fields"]}
+            assert "pinned" in field_names
+            ordered_field_names = [field["name"] for field in schema["fields"]]
+            assert ordered_field_names.index("pinned") < ordered_field_names.index("chunk_index")
 
     @patch("redis_sre_agent.core.redis.Redis")
     def test_get_redis_client(self, mock_redis):
@@ -171,6 +181,11 @@ class TestRedisInfrastructure:
 
         with (
             patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_skills_index", return_value=mock_search_index),
+            patch(
+                "redis_sre_agent.core.redis.get_support_tickets_index",
+                return_value=mock_search_index,
+            ),
             patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_threads_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
@@ -180,9 +195,10 @@ class TestRedisInfrastructure:
             result = await create_indices()
 
         assert result is True
-        # Should be called six times - knowledge, schedules, threads, tasks, instances, clusters
-        assert mock_search_index.exists.call_count == 6
-        assert mock_search_index.create.call_count == 6
+        # Should be called eight times - knowledge, skills, support_tickets,
+        # schedules, threads, tasks, instances, clusters
+        assert mock_search_index.exists.call_count == 8
+        assert mock_search_index.create.call_count == 8
 
     @pytest.mark.asyncio
     async def test_create_indices_existing_index(self, mock_search_index):
@@ -191,6 +207,11 @@ class TestRedisInfrastructure:
 
         with (
             patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_skills_index", return_value=mock_search_index),
+            patch(
+                "redis_sre_agent.core.redis.get_support_tickets_index",
+                return_value=mock_search_index,
+            ),
             patch("redis_sre_agent.core.redis.get_schedules_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_threads_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
@@ -200,8 +221,9 @@ class TestRedisInfrastructure:
             result = await create_indices()
 
         assert result is True
-        # Should be called six times - knowledge, schedules, threads, tasks, instances, clusters
-        assert mock_search_index.exists.call_count == 6
+        # Should be called eight times - knowledge, skills, support_tickets,
+        # schedules, threads, tasks, instances, clusters
+        assert mock_search_index.exists.call_count == 8
         mock_search_index.create.assert_not_called()
 
     @pytest.mark.asyncio

@@ -26,6 +26,7 @@ def knowledge():
 @knowledge.command("search")
 @click.argument("query", nargs=-1)
 @click.option("--category", "-c", type=str, help="Filter by category")
+@click.option("--doc-type", "--document-type", "-t", type=str, help="Filter by document type")
 @click.option("--limit", "-l", default=10, help="Number of results to return")
 @click.option("--offset", "-o", default=0, help="Offset for pagination")
 @click.option("--distance-threshold", "-d", type=float, help="Cosine distance threshold")
@@ -39,6 +40,7 @@ def knowledge():
 @click.option("--version", "-v", type=str, default="latest", help="Redis version filter")
 def knowledge_search(
     category: Optional[str],
+    doc_type: Optional[str],
     limit: int,
     offset: int,
     distance_threshold: Optional[float],
@@ -61,6 +63,9 @@ def knowledge_search(
         if category:
             kwargs["category"] = category
             click.echo(f"📂 Category filter: {category}")
+        if doc_type:
+            kwargs["doc_type"] = doc_type
+            click.echo(f"🗂️ Document type filter: {doc_type}")
         if distance_threshold:
             click.echo(f"📏 Distance threshold: {distance_threshold}")
         if version:
@@ -81,6 +86,7 @@ def knowledge_search(
                     click.echo(f"Title: {doc.get('title', 'Unknown')}")
                     click.echo(f"Source: {doc.get('source', 'Unknown')}")
                     click.echo(f"Category: {doc.get('category', 'general')}")
+                    click.echo(f"Document Type: {doc.get('doc_type', 'knowledge')}")
                     click.echo(f"Version: {doc.get('version', 'None')}")
                     content = doc.get("content", "")
                     if len(content) > 1000:

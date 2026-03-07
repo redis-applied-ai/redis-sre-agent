@@ -112,7 +112,7 @@ Subject:"""
             response = await client.chat.completions.create(
                 model=settings.openai_model_nano,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=20,
+                max_completion_tokens=20,
             )
 
             subject = response.choices[0].message.content.strip()

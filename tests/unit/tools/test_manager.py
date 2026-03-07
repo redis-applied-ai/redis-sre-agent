@@ -1,11 +1,13 @@
 """Tests for ToolManager."""
 
+from contextlib import AsyncExitStack
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
-from redis_sre_agent.tools.manager import ToolManager
+from redis_sre_agent.core.config import MCPServerConfig
+from redis_sre_agent.tools.manager import ToolManager, _command_is_available
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
 
@@ -42,11 +44,20 @@ async def test_tool_manager_knowledge_tools():
         redis_command_tools = [n for n in tool_names if "redis_command_" in n]
 
         # Knowledge tools (always loaded)
-        assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
+        assert len(knowledge_tools) == 8
         assert any("search" in n for n in knowledge_tools)
         assert any("ingest" in n for n in knowledge_tools)
         assert any("get_all_fragments" in n for n in knowledge_tools)
         assert any("get_related_fragments" in n for n in knowledge_tools)
+        assert any("skills_check" in n for n in knowledge_tools)
+        assert any("get_skill" in n for n in knowledge_tools)
+        assert any("search_support_tickets" in n for n in knowledge_tools)
+        assert any("get_support_ticket" in n for n in knowledge_tools)
+
+        tickets_tools = mgr.get_tools_for_capability(ToolCapability.TICKETS)
+        ticket_tool_names = [t.name for t in tickets_tools]
+        assert any("search_support_tickets" in n for n in ticket_tool_names)
+        assert any("get_support_ticket" in n for n in ticket_tool_names)
 
         # Instance-specific tools should NOT be loaded without an instance
         assert len(prometheus_tools) == 0
@@ -79,7 +90,7 @@ async def test_tool_manager_with_instance():
         redis_command_tools = [n for n in tool_names if "redis_command_" in n]
 
         # Knowledge tools (always loaded)
-        assert len(knowledge_tools) == 4  # search, ingest, get_all_fragments, get_related_fragments
+        assert len(knowledge_tools) == 8
 
         # Instance-specific tools should be loaded
         assert len(prometheus_tools) == 3  # query, query_range, search_metrics
@@ -265,6 +276,32 @@ class TestToolManagerGetStatusUpdate:
                 # May return None or a string depending on tool
                 result = mgr.get_status_update(tool_name, {})
                 assert result is None or isinstance(result, str)
+
+
+class TestToolManagerMcpConfigValidation:
+    """Test MCP provider loading guardrails."""
+
+    def test_command_is_available_handles_missing_path(self):
+        """Absolute/relative command paths should return False when missing."""
+        assert _command_is_available("/definitely/not/a/real/command") is False
+
+    @pytest.mark.asyncio
+    async def test_load_mcp_providers_skips_missing_command(self, caplog):
+        """Missing MCP command should be skipped without raising or stack traces."""
+        mgr = ToolManager()
+        mgr._stack = AsyncExitStack()
+        await mgr._stack.__aenter__()
+        try:
+            with patch("redis_sre_agent.core.config.settings") as mock_settings:
+                mock_settings.mcp_servers = {
+                    "github": MCPServerConfig(command="definitely-missing-mcp-command-xyz")
+                }
+                await mgr._load_mcp_providers()
+
+            assert "mcp:github" not in mgr._loaded_provider_paths
+            assert "Skipping MCP provider 'github'" in caplog.text
+        finally:
+            await mgr._stack.__aexit__(None, None, None)
 
 
 class TestToolDefinitionRepresentation:
