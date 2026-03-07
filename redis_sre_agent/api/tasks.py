@@ -46,11 +46,15 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
             if not thread:
                 raise HTTPException(status_code=404, detail=f"Thread {req.thread_id} not found")
             thread_target = extract_turn_target(thread.context)
-            await require_continuation_target_compatibility(
-                provided_target=provided_target,
-                thread_target=thread_target,
-                get_instance_by_id=get_instance_by_id,
-            )
+            is_initial_turn = len(thread.messages or []) == 0
+            if is_initial_turn and not thread_target.has_any():
+                require_exactly_one_target_for_new_turn(provided_target)
+            else:
+                await require_continuation_target_compatibility(
+                    provided_target=provided_target,
+                    thread_target=thread_target,
+                    get_instance_by_id=get_instance_by_id,
+                )
         else:
             require_exactly_one_target_for_new_turn(provided_target)
 

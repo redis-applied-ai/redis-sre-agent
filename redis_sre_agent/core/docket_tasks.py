@@ -693,7 +693,7 @@ async def process_agent_turn(
         # ============================================================================
         # Rules:
         # - At most one target may be provided in a request (instance_id XOR cluster_id).
-        # - New turns (first message in thread) require exactly one target.
+        # - Initial turns without saved thread target require exactly one target.
         # - Continuations may provide a target only if it matches the saved thread target.
         # ============================================================================
 
@@ -701,8 +701,8 @@ async def process_agent_turn(
         thread_target = extract_turn_target(thread.context)
         require_at_most_one_target(provided_target)
 
-        is_initial_turn = len(thread.messages) == 0
-        if is_initial_turn:
+        is_initial_turn = len(thread.messages or []) == 0
+        if is_initial_turn and not thread_target.has_any():
             require_exactly_one_target_for_new_turn(provided_target)
         else:
             await require_continuation_target_compatibility(

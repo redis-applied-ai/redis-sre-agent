@@ -88,6 +88,71 @@ class TestTasksAPI:
         assert resp.status_code == 400
         assert "Provide only one target" in resp.json()["detail"]
 
+    def test_create_task_continue_empty_thread_with_saved_target_accepts_missing_turn_target(
+        self, client
+    ):
+        """First turn on a pre-scoped thread can omit turn-level target context."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        thread = MagicMock()
+        thread.context = {"instance_id": "inst-1"}
+        thread.messages = []
+
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=thread)
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            docket_instance.add = MagicMock(return_value=AsyncMock())
+            mock_docket.return_value = docket_instance
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "follow-up",
+                    "thread_id": "th1",
+                },
+            )
+        assert resp.status_code == 202
+
+    def test_create_task_continue_empty_unscoped_thread_requires_target(self, client):
+        """First turn on an unscoped thread still requires exactly one target."""
+        thread = MagicMock()
+        thread.context = {}
+        thread.messages = []
+
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=thread)
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
+        ):
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "follow-up",
+                    "thread_id": "th1",
+                },
+            )
+
+        assert resp.status_code == 400
+        assert "require exactly one target" in resp.json()["detail"]
+
     def test_create_task_continue_thread_accepts_matching_instance(self, client):
         """Continuation may include matching instance_id."""
         fake = {
