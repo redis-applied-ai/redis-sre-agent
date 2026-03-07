@@ -275,6 +275,7 @@ class TestIngestSreDocument:
             source="test.md",
             category="incident",
             severity="critical",
+            doc_type=None,
             product_labels=["redis", "cache"],
         )
         assert result["status"] == "success"

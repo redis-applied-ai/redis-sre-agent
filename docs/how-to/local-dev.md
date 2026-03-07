@@ -86,7 +86,13 @@ uv run pytest --cov=redis_sre_agent --cov-report=html
 
 ### 7) Useful commands
 ```bash
-# Lint + format via pre-commit (same hooks as CI)
+# Install repo pre-commit hook (root config)
+make hooks-install
+
+# Run exact CI lint checks locally
+make lint
+
+# Run all local pre-commit hooks
 uv run pre-commit run -a
 
 # Build docs

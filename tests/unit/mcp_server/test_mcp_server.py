@@ -11,12 +11,14 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_deep_triage,
     redis_sre_delete_task,
     redis_sre_general_chat,
+    redis_sre_get_support_ticket,
     redis_sre_get_task_status,
     redis_sre_get_thread,
     redis_sre_knowledge_query,
     redis_sre_knowledge_search,
     redis_sre_list_instances,
     redis_sre_list_threads,
+    redis_sre_search_support_tickets,
 )
 
 
@@ -39,6 +41,8 @@ class TestMCPServerSetup:
         assert "redis_sre_general_chat" in tool_names
         assert "redis_sre_database_chat" in tool_names
         assert "redis_sre_knowledge_search" in tool_names
+        assert "redis_sre_search_support_tickets" in tool_names
+        assert "redis_sre_get_support_ticket" in tool_names
         assert "redis_sre_knowledge_query" in tool_names
         assert "redis_sre_get_thread" in tool_names
         assert "redis_sre_list_threads" in tool_names
@@ -321,6 +325,130 @@ class TestKnowledgeQueryTool:
             result = await redis_sre_knowledge_query(query="Test query")
 
             assert result["status"] == "failed"
+            assert "error" in result
+
+
+class TestSupportTicketTools:
+    """Test support-ticket MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_success(self):
+        """Support-ticket search returns ticket-scoped results."""
+        mock_result = {
+            "tickets": [
+                {
+                    "ticket_id": "ticket-123",
+                    "title": "Connection reset incidents",
+                    "summary": "Intermittent resets under load",
+                }
+            ],
+            "results": [
+                {
+                    "ticket_id": "ticket-123",
+                    "title": "Connection reset incidents",
+                    "summary": "Intermittent resets under load",
+                }
+            ],
+            "ticket_count": 1,
+            "results_count": 1,
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_support_tickets_helper",
+            new_callable=AsyncMock,
+        ) as mock_search:
+            mock_search.return_value = mock_result
+
+            result = await redis_sre_search_support_tickets(query="connection reset", limit=5)
+
+            assert result["query"] == "connection reset"
+            assert result["ticket_count"] == 1
+            assert result["tickets"][0]["ticket_id"] == "ticket-123"
+            mock_search.assert_called_once()
+            assert mock_search.call_args.kwargs["distance_threshold"] == pytest.approx(0.8)
+
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_limit_clamped(self):
+        """Support-ticket search limit is clamped to [1, 50]."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_support_tickets_helper",
+            new_callable=AsyncMock,
+        ) as mock_search:
+            mock_search.return_value = {"tickets": [], "results": [], "ticket_count": 0}
+
+            await redis_sre_search_support_tickets(query="x", limit=100)
+            assert mock_search.call_args.kwargs["limit"] == 50
+
+            await redis_sre_search_support_tickets(query="x", limit=0)
+            assert mock_search.call_args.kwargs["limit"] == 1
+
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_error_handling(self):
+        """Support-ticket search returns error payload on failure."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_support_tickets_helper",
+            new_callable=AsyncMock,
+        ) as mock_search:
+            mock_search.side_effect = Exception("Search failed")
+
+            result = await redis_sre_search_support_tickets(query="test")
+
+            assert "error" in result
+            assert result["tickets"] == []
+            assert result["total_results"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_support_ticket_success(self):
+        """Get support ticket returns full ticket payload."""
+        mock_result = {
+            "ticket_id": "ticket-123",
+            "title": "Connection reset incidents",
+            "doc_type": "support_ticket",
+            "full_content": "full ticket content",
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_support_ticket_helper",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_result
+
+            result = await redis_sre_get_support_ticket(ticket_id="ticket-123")
+
+            assert result["ticket_id"] == "ticket-123"
+            assert result["doc_type"] == "support_ticket"
+            mock_get.assert_called_once_with(ticket_id="ticket-123")
+
+    @pytest.mark.asyncio
+    async def test_get_support_ticket_error_payload_passthrough(self):
+        """Get support ticket returns helper error payload."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_support_ticket_helper",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = {
+                "ticket_id": "ticket-123",
+                "error": "not found",
+                "doc_type": "support_ticket",
+            }
+
+            result = await redis_sre_get_support_ticket(ticket_id="ticket-123")
+
+            assert result["ticket_id"] == "ticket-123"
+            assert result["error"] == "not found"
+
+    @pytest.mark.asyncio
+    async def test_get_support_ticket_exception_handling(self):
+        """Get support ticket returns error payload on exception."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_support_ticket_helper",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.side_effect = Exception("Lookup failed")
+
+            result = await redis_sre_get_support_ticket(ticket_id="ticket-123")
+
+            assert result["ticket_id"] == "ticket-123"
             assert "error" in result
 
 

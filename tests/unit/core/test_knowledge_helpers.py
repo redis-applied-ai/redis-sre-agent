@@ -9,9 +9,14 @@ from redis_sre_agent.core.knowledge_helpers import (
     _dedupe_docs,
     _doc_matches_requested_version,
     get_all_document_fragments,
+    get_pinned_documents_helper,
     get_related_document_fragments,
+    get_skill_helper,
+    get_support_ticket_helper,
     ingest_sre_document_helper,
     search_knowledge_base_helper,
+    search_support_tickets_helper,
+    skills_check_helper,
 )
 
 
@@ -66,6 +71,7 @@ class TestSearchKnowledgeBaseHelper:
                     "content": "Redis memory management guide",
                     "source": "docs",
                     "category": "monitoring",
+                    "doc_type": "runbook",
                     "version": "latest",
                     "score": 0.95,
                 }
@@ -95,6 +101,100 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results_count"] == 1
         assert len(result["results"]) == 1
         assert result["results"][0]["title"] == "Redis Memory"
+        assert result["results"][0]["doc_type"] == "runbook"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_with_doc_type_filter(self):
+        """Test document type filtering."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-1",
+                    "title": "Skill Doc",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-2",
+                    "title": "Ticket Doc",
+                    "doc_type": "ticket",
+                    "version": "latest",
+                },
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="documents",
+                doc_type="skill",
+                limit=10,
+                include_special_document_types=True,
+            )
+
+        assert result["doc_type"] == "skill"
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-1"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_support_ticket_filter(self):
+        """`support_ticket` filter should match support_ticket docs."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-ticket",
+                    "title": "Support Ticket",
+                    "doc_type": "support_ticket",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-runbook",
+                    "title": "Runbook",
+                    "doc_type": "runbook",
+                    "version": "latest",
+                },
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="tickets",
+                doc_type="support_ticket",
+                limit=10,
+                include_special_document_types=True,
+            )
+
+        assert result["doc_type"] == "support_ticket"
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-ticket"
+        assert result["results"][0]["doc_type"] == "support_ticket"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_version_filter(self):
@@ -127,7 +227,7 @@ class TestSearchKnowledgeBaseHelper:
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_latest_filters_versioned_source_paths(self):
-        """Test latest filtering excludes versioned source paths from legacy docs."""
+        """Test latest filtering excludes versioned source paths."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             return_value=[
@@ -171,28 +271,10 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["version"] == "latest"
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_specific_version_uses_fallback(self):
-        """Test fallback query can recover versioned docs from legacy-tagged data."""
+    async def test_search_knowledge_base_specific_version_does_not_use_unfiltered_fallback(self):
+        """Versioned searches should not run an unfiltered second query."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(
-            side_effect=[
-                [],
-                [
-                    {
-                        "id": "doc-7-22",
-                        "title": "Versioned doc",
-                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/7.22/references/a.md",
-                        "version": "latest",
-                    },
-                    {
-                        "id": "doc-latest",
-                        "title": "Latest doc",
-                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/references/a.md",
-                        "version": "latest",
-                    },
-                ],
-            ]
-        )
+        mock_index.query = AsyncMock(return_value=[])
 
         mock_vectorizer = MagicMock()
         mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
@@ -214,10 +296,8 @@ class TestSearchKnowledgeBaseHelper:
                 limit=5,
             )
 
-        assert mock_index.query.call_count == 2
-        assert result["results_count"] == 1
-        assert result["results"][0]["id"] == "doc-7-22"
-        assert result["results"][0]["version"] == "7.22"
+        assert mock_index.query.call_count == 1
+        assert result["results_count"] == 0
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_hybrid_search(self):
@@ -374,6 +454,7 @@ class TestIngestSreDocumentHelper:
         assert result["title"] == "Test Document"
         assert result["source"] == "test"
         assert result["category"] == "runbook"
+        assert result["doc_type"] == "knowledge"
         assert "document_id" in result
         mock_index.load.assert_called_once()
 
@@ -388,7 +469,7 @@ class TestIngestSreDocumentHelper:
 
         with (
             patch(
-                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
                 new_callable=AsyncMock,
                 return_value=mock_index,
             ),
@@ -402,14 +483,53 @@ class TestIngestSreDocumentHelper:
                 content="Redis Cloud content",
                 source="docs",
                 category="guide",
+                doc_type="skill",
                 product_labels=["redis-cloud", "enterprise"],
             )
 
         assert result["status"] == "ingested"
+        assert result["doc_type"] == "skill"
         # Verify the document was loaded with product labels
         call_args = mock_index.load.call_args
         doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert doc_data[0]["product_labels"] == "redis-cloud,enterprise"
+        assert doc_data[0]["doc_type"] == "skill"
+        assert doc_data[0]["pinned"] == "false"
+
+    @pytest.mark.asyncio
+    async def test_ingest_support_ticket_defaults_pinned_false(self):
+        """Support tickets should store pinned=false to support tag filters."""
+        mock_index = AsyncMock()
+        mock_index.load = AsyncMock()
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed = AsyncMock(return_value=b"vector_bytes")
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await ingest_sre_document_helper(
+                title="Ticket 123",
+                content="Customer incident details",
+                source="support",
+                category="incident",
+                severity="warning",
+                doc_type="support_ticket",
+            )
+
+        assert result["status"] == "ingested"
+        assert result["doc_type"] == "support_ticket"
+        call_args = mock_index.load.call_args
+        doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        assert doc_data[0]["pinned"] == "false"
 
 
 class TestGetAllDocumentFragments:
@@ -490,6 +610,45 @@ class TestGetAllDocumentFragments:
         assert result["document_hash"] == "test-hash"
         assert "error" in result
         assert "Connection error" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_all_fragments_version_filter_uses_version_tag(self):
+        """Version filtering should work when source URL does not encode version."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "chunk_index": "0",
+                    "content": "Version 7.4 content",
+                    "title": "Doc",
+                    "source": "docs/path/no-version",
+                    "version": "7.4",
+                },
+                {
+                    "chunk_index": "1",
+                    "content": "Version 7.2 content",
+                    "title": "Doc",
+                    "source": "docs/path/no-version",
+                    "version": "7.2",
+                },
+            ]
+        )
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+            new_callable=AsyncMock,
+            return_value=mock_index,
+        ):
+            result = await get_all_document_fragments(
+                document_hash="test-hash-versioned",
+                include_metadata=False,
+                version="7.4",
+            )
+
+        query_obj = mock_index.query.call_args.args[0]
+        assert "version" in query_obj._return_fields
+        assert result["fragments_count"] == 1
+        assert result["fragments"][0]["content"] == "Version 7.4 content"
 
 
 class TestGetRelatedDocumentFragments:
@@ -584,3 +743,400 @@ class TestGetRelatedDocumentFragments:
         assert result["document_hash"] == "test-hash"
         assert "error" in result
         assert "Database error" in result["error"]
+
+
+class TestSkillHelpers:
+    """Tests for skill-specific helper functions."""
+
+    @pytest.mark.asyncio
+    async def test_skills_check_helper_lists_unique_skills(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "a-0",
+                    "document_hash": "hash-a",
+                    "chunk_index": 0,
+                    "title": "Skill A",
+                    "content": "First chunk",
+                    "source": "docs/latest/a",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "a-1",
+                    "document_hash": "hash-a",
+                    "chunk_index": 1,
+                    "title": "Skill A",
+                    "content": "Second chunk",
+                    "source": "docs/latest/a",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "b-0",
+                    "document_hash": "hash-b",
+                    "chunk_index": 0,
+                    "title": "Skill B",
+                    "content": "Only chunk",
+                    "source": "docs/latest/b",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+            ]
+        )
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+            new_callable=AsyncMock,
+            return_value=mock_index,
+        ):
+            result = await skills_check_helper(limit=10, offset=0, version="latest")
+
+        assert result["results_count"] == 2
+        assert result["total_fetched"] == 2
+        assert [skill["title"] for skill in result["skills"]] == ["Skill A", "Skill B"]
+        assert [skill["document_hash"] for skill in result["skills"]] == ["hash-a", "hash-b"]
+
+    @pytest.mark.asyncio
+    async def test_get_skill_helper_returns_full_content_for_skill(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "skill-0",
+                    "document_hash": "hash-skill",
+                    "chunk_index": 0,
+                    "name": "Incident Triage",
+                    "title": "Skill Doc",
+                    "source": "docs/latest/skill",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+        fragments_result = {
+            "document_hash": "hash-skill",
+            "title": "Skill Doc",
+            "source": "docs/latest/skill",
+            "doc_type": "skill",
+            "fragments": [
+                {"chunk_index": 0, "content": "Part 1"},
+                {"chunk_index": 1, "content": "Part 2"},
+            ],
+            "metadata": {"owner": "sre"},
+        }
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+                new_callable=AsyncMock,
+                side_effect=AssertionError("should not call skills_check_helper on exact match"),
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value=fragments_result,
+            ),
+        ):
+            result = await get_skill_helper(skill_name="Incident Triage")
+
+        assert result["skill_name"] == "Incident Triage"
+        assert result["full_content"] == "Part 1\n\nPart 2"
+        assert "fragments" not in result
+        assert "fragments_count" not in result
+
+    @pytest.mark.asyncio
+    async def test_get_skill_helper_rejects_non_skill_document(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "skill-0",
+                    "document_hash": "hash-runbook",
+                    "chunk_index": 0,
+                    "name": "Incident Triage",
+                    "title": "Runbook",
+                    "source": "docs/latest/runbook",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+                new_callable=AsyncMock,
+                side_effect=AssertionError("should not call skills_check_helper on exact match"),
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value={
+                    "document_hash": "hash-runbook",
+                    "doc_type": "runbook",
+                    "fragments": [{"chunk_index": 0, "content": "text"}],
+                },
+            ),
+        ):
+            result = await get_skill_helper(skill_name="Incident Triage")
+
+        assert result["document_hash"] == "hash-runbook"
+        assert result["doc_type"] == "runbook"
+        assert "not 'skill'" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_skill_helper_filter_query_supports_required_filter_expression(self):
+        """Guard against redisvl versions requiring filter_expression in FilterQuery."""
+
+        class _StrictFilterQuery:
+            def __init__(self, *, filter_expression, return_fields, num_results):
+                self.filter_expression = filter_expression
+                self.return_fields = return_fields
+                self.num_results = num_results
+
+            def set_filter(self, _filter):
+                self._filter = _filter
+
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(return_value=[])
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.FilterQuery",
+                _StrictFilterQuery,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+                new_callable=AsyncMock,
+                return_value={"skills": []},
+            ),
+        ):
+            result = await get_skill_helper(skill_name="Not Found")
+
+        assert result["error"] == "Skill not found"
+
+    @pytest.mark.asyncio
+    async def test_skills_check_helper_uses_filter_expression_object(self):
+        """Guard against redisvl versions that reject raw string filter expressions."""
+
+        class _StrictFilterQuery:
+            def __init__(self, *, filter_expression, return_fields, num_results):
+                if isinstance(filter_expression, str):
+                    raise TypeError("filter_expression must be a FilterExpression")
+                self.filter_expression = filter_expression
+                self.return_fields = return_fields
+                self.num_results = num_results
+
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(return_value=[])
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.FilterQuery",
+                _StrictFilterQuery,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+        ):
+            result = await skills_check_helper(query=None, limit=10, offset=0, version="latest")
+
+        assert result["results_count"] == 0
+
+
+class TestSupportTicketHelpers:
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_normalizes_ticket_id_from_chunk_key(self):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+            new_callable=AsyncMock,
+            return_value={
+                "results": [
+                    {
+                        "id": "sre_support_tickets:abc123def456:chunk:0",
+                        "title": "Ticket A",
+                        "doc_type": "support_ticket",
+                    }
+                ]
+            },
+        ):
+            result = await search_support_tickets_helper(query="cache-prod-1 failover")
+
+        assert result["tickets"][0]["ticket_id"] == "abc123def456"
+
+    @pytest.mark.asyncio
+    async def test_get_support_ticket_helper_normalizes_chunk_key_input(self):
+        mock_fragments = {
+            "document_hash": "abc123def456",
+            "doc_type": "support_ticket",
+            "title": "Ticket A",
+            "source": "source",
+            "fragments": [{"chunk_index": 0, "content": "body", "doc_type": "support_ticket"}],
+            "metadata": {},
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+            return_value=mock_fragments,
+        ) as mock_get_fragments:
+            result = await get_support_ticket_helper(
+                ticket_id="sre_support_tickets:abc123def456:chunk:0"
+            )
+
+        call_kwargs = mock_get_fragments.await_args.kwargs
+        assert call_kwargs["document_hash"] == "abc123def456"
+        assert result["document_hash"] == "abc123def456"
+
+
+class TestPinnedDocumentsHelper:
+    @pytest.mark.asyncio
+    async def test_get_pinned_documents_includes_skills_and_support_tickets(self):
+        knowledge_index = AsyncMock()
+        knowledge_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "knowledge:doc-1:chunk:0",
+                    "document_hash": "doc-1",
+                    "chunk_index": 0,
+                    "name": "Pinned KB",
+                    "title": "Pinned KB",
+                    "content": "Pinned KB content",
+                    "source": "docs/latest/kb",
+                    "priority": "high",
+                    "pinned": "true",
+                    "doc_type": "runbook",
+                    "version": "latest",
+                },
+                {
+                    "id": "knowledge:skill-1:chunk:0",
+                    "document_hash": "skill-1",
+                    "chunk_index": 0,
+                    "name": "Pinned Skill",
+                    "title": "Pinned Skill",
+                    "content": "Pinned skill content",
+                    "source": "docs/latest/pinned-skill",
+                    "priority": "critical",
+                    "pinned": "true",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+            ]
+        )
+        skills_index = AsyncMock()
+        skills_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "skills:skill-1:chunk:0",
+                    "document_hash": "skill-1",
+                    "chunk_index": 0,
+                    "name": "Pinned Skill",
+                    "title": "Pinned Skill",
+                    "content": "Dedicated skill content",
+                    "source": "source_documents/shared/skills/pinned-skill",
+                    "priority": "critical",
+                    "pinned": "true",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+        tickets_index = AsyncMock()
+        tickets_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "tickets:ticket-1:chunk:0",
+                    "document_hash": "ticket-1",
+                    "chunk_index": 0,
+                    "name": "Pinned Ticket",
+                    "title": "Pinned Ticket",
+                    "content": "Pinned ticket content",
+                    "source": "source_documents/shared/support/ticket-1",
+                    "priority": "high",
+                    "pinned": "true",
+                    "doc_type": "support_ticket",
+                    "version": "latest",
+                }
+            ]
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=knowledge_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=tickets_index,
+            ),
+        ):
+            result = await get_pinned_documents_helper(version="latest", limit=10)
+
+        assert result["results_count"] == 3
+        by_name = {doc["name"]: doc for doc in result["pinned_documents"]}
+        assert by_name["Pinned Skill"]["doc_type"] == "skill"
+        assert by_name["Pinned Skill"]["full_content"] == "Dedicated skill content"
+        assert by_name["Pinned Ticket"]["doc_type"] == "support_ticket"
+        assert by_name["Pinned KB"]["doc_type"] == "runbook"
+
+    @pytest.mark.asyncio
+    async def test_get_pinned_documents_uses_filter_expression_object(self):
+        """Guard against redisvl versions that reject raw string filter expressions."""
+
+        class _StrictFilterQuery:
+            def __init__(self, *, filter_expression, return_fields, num_results):
+                if isinstance(filter_expression, str):
+                    raise TypeError("filter_expression must be a FilterExpression")
+                self.filter_expression = filter_expression
+                self.return_fields = return_fields
+                self.num_results = num_results
+
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[])
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.FilterQuery",
+                _StrictFilterQuery,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+        ):
+            result = await get_pinned_documents_helper(version="latest", limit=10)
+
+        assert result["results_count"] == 0

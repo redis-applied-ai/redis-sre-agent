@@ -38,6 +38,16 @@ class TestIndexListCLI:
                 return_value=mock_index,
             ),
             patch(
+                "redis_sre_agent.core.redis.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
                 "redis_sre_agent.core.redis.get_schedules_index",
                 new_callable=AsyncMock,
                 return_value=mock_index,
@@ -78,6 +88,16 @@ class TestIndexListCLI:
                 return_value=mock_index,
             ),
             patch(
+                "redis_sre_agent.core.redis.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.redis.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
                 "redis_sre_agent.core.redis.get_schedules_index",
                 new_callable=AsyncMock,
                 return_value=mock_index,
@@ -105,7 +125,7 @@ class TestIndexListCLI:
 
             output_data = json.loads(result.output)
             assert isinstance(output_data, list)
-            assert len(output_data) == 5  # 5 indices
+            assert len(output_data) == 7  # 7 indices
 
 
 class TestIndexRecreateCLI:

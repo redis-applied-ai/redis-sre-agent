@@ -13,7 +13,7 @@ UI_DIST ?= $(UI_DIR)/dist
 REDIS_DOCS_REPO_URL ?= https://github.com/redis/docs.git
 REDIS_DOCS_BRANCH ?= main
 
-.PHONY: help venv sync docs-build docs-serve local-services local-services-down local-services-logs test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
+.PHONY: help venv sync hooks-install lint docs-build docs-serve local-services local-services-down local-services-logs test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
 
 help: ## Show this help and available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9][^:]*:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -23,6 +23,13 @@ venv: ## Create a virtual environment with uv (./.venv)
 
 sync: ## Sync project dependencies (including dev) into the uv virtualenv
 	$(UV) sync --dev
+
+hooks-install: sync ## Install repo pre-commit hook (root config)
+	$(UV) run pre-commit install --config .pre-commit-config.yaml --install-hooks --overwrite
+
+lint: sync ## Run the same lint checks used in CI
+	$(UV) run ruff format --check .
+	$(UV) run ruff check .
 
 # --- Documentation ---
 

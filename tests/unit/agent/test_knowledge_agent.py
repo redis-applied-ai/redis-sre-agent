@@ -3,9 +3,9 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
+from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT, KnowledgeOnlyAgent
 from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
@@ -43,15 +43,17 @@ class TestKnowledgeAgent:
 
             # Verify knowledge tools are present
             knowledge_tools = [n for n in tool_names if "knowledge_" in n]
-            assert (
-                len(knowledge_tools) == 4
-            )  # search, ingest, get_all_fragments, get_related_fragments
+            assert len(knowledge_tools) == 8
 
             # Verify specific tools are present
             assert any("search" in n for n in knowledge_tools)
             assert any("ingest" in n for n in knowledge_tools)
             assert any("get_all_fragments" in n for n in knowledge_tools)
             assert any("get_related_fragments" in n for n in knowledge_tools)
+            assert any("skills_check" in n for n in knowledge_tools)
+            assert any("get_skill" in n for n in knowledge_tools)
+            assert any("search_support_tickets" in n for n in knowledge_tools)
+            assert any("get_support_ticket" in n for n in knowledge_tools)
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_wrapper(self):
@@ -69,6 +71,62 @@ class TestKnowledgeAgent:
         assert "limit" in params
         assert "distance_threshold" in params
         assert "retry" not in params
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_seeds_startup_context_into_initial_state(
+        self, mock_create_llm, mock_tool_manager_cls, mock_build_startup_context
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "knowledge_search_results": [],
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = KnowledgeOnlyAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(query="who runs AOP?", session_id="s1", user_id="u1")
+
+        initial_state = captured["initial_state"]
+        assert isinstance(initial_state["messages"][0], SystemMessage)
+        assert "STARTUP_CONTEXT" in initial_state["messages"][0].content
+        assert initial_state["startup_prompt_initialized"] is True
+        assert "STARTUP_CONTEXT" in (initial_state["startup_system_prompt"] or "")
+        mock_build_startup_context.assert_awaited_once_with(
+            query="who runs AOP?",
+            version="latest",
+            available_tools=[],
+        )
 
     @pytest.mark.asyncio
     async def test_ingest_sre_document_wrapper(self):
@@ -269,6 +327,338 @@ class TestKnowledgeAgentMethods:
         state_iter_1 = {**state_iter_0, "iteration_count": 1}
         await compiled.nodes["agent"].ainvoke(state_iter_1)
         mock_llm.bind.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_system_prompt_injected_with_conversation_history(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        """Startup context should still be injected on follow-up turns."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                HumanMessage(content="previous question"),
+                AIMessage(content="previous answer"),
+                HumanMessage(content="follow-up question"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = bound_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once_with(
+            query="follow-up question",
+            version="latest",
+            available_tools=[],
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_system_prompt_uses_base_prompt_when_startup_context_blank(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        """Blank startup context should not prepend empty lines to the system prompt."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.return_value = "  "
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="follow-up question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = bound_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert sent_messages[0].content == KNOWLEDGE_SYSTEM_PROMPT
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_startup_context_built_once_across_agent_iterations(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        """Startup context should be built once per workflow and then reused."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="turn-1", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        base_llm.ainvoke = AsyncMock(return_value=AIMessage(content="turn-2", tool_calls=[]))
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="follow-up question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        state_after_first = await compiled.nodes["agent"].ainvoke(state)
+        state_after_first["messages"] = [
+            m for m in state_after_first["messages"] if not isinstance(m, SystemMessage)
+        ]
+        state_after_first["iteration_count"] = 1
+        await compiled.nodes["agent"].ainvoke(state_after_first)
+
+        assert mock_build_startup_context.await_count == 1
+        sent_messages_second = base_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages_second[0], SystemMessage)
+        assert "STARTUP_CONTEXT" in sent_messages_second[0].content
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_startup_context_not_shared_between_independent_invocations(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.side_effect = ["CTX_ONE", "CTX_TWO"]
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state_one = {
+            "messages": [HumanMessage(content="first question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+        state_two = {
+            "messages": [HumanMessage(content="second question")],
+            "session_id": "session-2",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state_one)
+        await compiled.nodes["agent"].ainvoke(state_two)
+
+        assert mock_build_startup_context.await_count == 2
+        sent_messages_first = bound_llm.ainvoke.call_args_list[0].args[0]
+        sent_messages_second = bound_llm.ainvoke.call_args_list[1].args[0]
+        assert "CTX_ONE" in sent_messages_first[0].content
+        assert "CTX_TWO" in sent_messages_second[0].content
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_agent_node_rebuilds_prompt_on_first_step_when_cached_prompt_is_stale(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.return_value = "FRESH_CONTEXT"
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "STALE_CONTEXT",
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = bound_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert "FRESH_CONTEXT" in sent_messages[0].content
+        assert "STALE_CONTEXT" not in sent_messages[0].content
+        mock_build_startup_context.assert_awaited_once_with(
+            query="new question",
+            version="latest",
+            available_tools=[],
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_agent_node_reuses_initialized_prompt_without_rebuild(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "FRESH_CONTEXT",
+            "startup_prompt_initialized": True,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = bound_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert sent_messages[0].content == "FRESH_CONTEXT"
+        mock_build_startup_context.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_agent_node_does_not_persist_injected_system_message(
+        self, mock_create_llm, mock_build_startup_context
+    ):
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        base_llm = MagicMock()
+        bound_llm = MagicMock()
+        bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        base_llm.bind = MagicMock(return_value=bound_llm)
+        mock_create_llm.return_value = base_llm
+
+        agent = KnowledgeOnlyAgent()
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        workflow = agent._build_workflow(mock_tool_mgr, base_llm, NullEmitter())
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="new question")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        output_state = await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = bound_llm.ainvoke.call_args.args[0]
+        assert isinstance(sent_messages[0], SystemMessage)
+        assert isinstance(output_state["messages"][0], HumanMessage)
+        assert all(not isinstance(msg, SystemMessage) for msg in output_state["messages"])
 
 
 class TestSafeToolNodeErrorHandling:

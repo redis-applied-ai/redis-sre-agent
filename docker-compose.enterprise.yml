@@ -126,7 +126,6 @@ services:
     networks:
       sre-network:
         ipv4_address: 172.32.0.20
-
 volumes:
   redis_enterprise_node1_data:
   redis_enterprise_node2_data:

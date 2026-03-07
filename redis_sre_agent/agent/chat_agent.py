@@ -10,7 +10,7 @@ or safety-evaluation chains.
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from .helpers import build_result_envelope
+from .knowledge_context import build_startup_knowledge_context
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -59,19 +60,25 @@ This iterative approach prevents overwhelming context limits and produces better
 **Per turn, call at most 3-4 tools.** Analyze results before calling more.
 
 For Redis diagnostics:
-- Start with `get_detailed_redis_diagnostics` - it gives a comprehensive overview
-- Add `get_database` or `get_cluster_info` for Redis Enterprise/Cloud config details
-- Check `search_knowledge_base` if you need troubleshooting guidance
+- Start with diagnostics-category tools for a comprehensive overview
+- Add diagnostics/admin-api category tools for Redis Enterprise/Cloud configuration details
+- Add knowledge-category tools when you need troubleshooting guidance
 
 For code/repo investigation:
-- **First:** One targeted search (e.g., `search_code` with specific query)
+- **First:** One targeted repos-category search with a specific query
 - **Analyze:** Look at search results, identify the most relevant file
-- **Then:** Fetch that one file with `get_file_contents`
+- **Then:** Fetch one relevant file from repos-category tools
 - **Repeat:** If needed, fetch another file based on what you learned
 
 For metrics/logs:
 - Be specific with queries - broad queries return too much data
 - Fetch one metric or log query at a time
+
+For historical incident context (if `tickets` tools are available):
+- Search support tickets with concrete identifiers (cluster name/host, error strings)
+- Fetch the most relevant ticket record for full details
+
+Only call categories that are available in your current tool list.
 
 ## What NOT to Do
 
@@ -88,7 +95,7 @@ For metrics/logs:
 
 ## Redis Enterprise / Redis Cloud Notes
 - For managed Redis, INFO output can be misleading
-- Use the Admin REST API tools for accurate configuration details
+- Use available diagnostics/admin-api tools for accurate configuration details
 - Don't suggest CONFIG SET for managed deployments
 """
 
@@ -102,6 +109,8 @@ class ChatAgentState(TypedDict):
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
+    startup_system_prompt: Optional[str]
+    startup_prompt_initialized: NotRequired[bool]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -397,14 +406,52 @@ class ChatAgent:
             """Main agent node - invokes LLM with tools."""
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
+            startup_system_prompt = state.get("startup_system_prompt")
+            startup_prompt_initialized = state.get("startup_prompt_initialized", False)
+
+            if (
+                startup_system_prompt is None
+                and messages
+                and isinstance(messages[0], SystemMessage)
+            ):
+                startup_system_prompt = str(messages[0].content or "")
+                startup_prompt_initialized = True
+
+            if not messages or not isinstance(messages[0], SystemMessage):
+                if startup_system_prompt is None or (
+                    iteration_count == 0 and not startup_prompt_initialized
+                ):
+                    context_query = ""
+                    for message in reversed(messages):
+                        if isinstance(message, HumanMessage):
+                            context_query = str(message.content or "")
+                            break
+
+                    startup_context = await build_startup_knowledge_context(
+                        query=context_query,
+                        version="latest",
+                        available_tools=list(tooldefs_by_name.values()),
+                    )
+                    startup_system_prompt = (
+                        f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"
+                        if startup_context.strip()
+                        else CHAT_SYSTEM_PROMPT
+                    )
+                    startup_prompt_initialized = True
+                startup_system_prompt = startup_system_prompt or CHAT_SYSTEM_PROMPT
+                messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             with tracer.start_as_current_span("chat_agent_node"):
                 response = await llm_with_expand.ainvoke(messages)
 
-            new_messages = list(messages) + [response]
+            # Persist only the original workflow state messages plus response.
+            # If we injected a SystemMessage just for this invocation, keep it ephemeral.
+            new_messages = list(state["messages"]) + [response]
             return {
                 "messages": new_messages,
                 "iteration_count": iteration_count + 1,
+                "startup_system_prompt": startup_system_prompt,
+                "startup_prompt_initialized": startup_prompt_initialized,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -583,8 +630,18 @@ class ChatAgent:
             checkpointer = MemorySaver()
             app = workflow.compile(checkpointer=checkpointer)
 
-            # Build initial messages with instance context
-            initial_messages: List[BaseMessage] = [SystemMessage(content=CHAT_SYSTEM_PROMPT)]
+            # Build initial messages with shared startup context (pinned docs, skills, tool usage)
+            startup_context = await build_startup_knowledge_context(
+                query=query,
+                version="latest",
+                available_tools=tools,
+            )
+            system_prompt = (
+                f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"
+                if startup_context.strip()
+                else CHAT_SYSTEM_PROMPT
+            )
+            initial_messages: List[BaseMessage] = [SystemMessage(content=system_prompt)]
 
             # Add instance context to the query if available
             enhanced_query = query
@@ -619,6 +676,8 @@ User Query: {query}"""
                 "current_tool_calls": [],
                 "iteration_count": 0,
                 "max_iterations": max_iterations,
+                "startup_system_prompt": system_prompt,
+                "startup_prompt_initialized": True,
                 "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
             }
 

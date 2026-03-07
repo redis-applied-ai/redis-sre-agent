@@ -49,6 +49,7 @@ nav:
       - Using the API: how-to/api.md
       - Local development & testing: how-to/local-dev.md
       - Pipelines & ingestion: how-to/pipelines.md
+      - Source document features: how-to/source-document-features.md
       - Configuration (Advanced):
           - Encryption: how-to/configuration/encryption.md
       - Scheduling flows: how-to/scheduling-flows.md

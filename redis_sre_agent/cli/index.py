@@ -26,11 +26,15 @@ def index_list(as_json: bool):
             SRE_INSTANCES_INDEX,
             SRE_KNOWLEDGE_INDEX,
             SRE_SCHEDULES_INDEX,
+            SRE_SKILLS_INDEX,
+            SRE_SUPPORT_TICKETS_INDEX,
             SRE_TASKS_INDEX,
             SRE_THREADS_INDEX,
             get_instances_index,
             get_knowledge_index,
             get_schedules_index,
+            get_skills_index,
+            get_support_tickets_index,
             get_tasks_index,
             get_threads_index,
         )
@@ -38,6 +42,8 @@ def index_list(as_json: bool):
         console = Console()
         indices = [
             ("knowledge", SRE_KNOWLEDGE_INDEX, get_knowledge_index),
+            ("skills", SRE_SKILLS_INDEX, get_skills_index),
+            ("support_tickets", SRE_SUPPORT_TICKETS_INDEX, get_support_tickets_index),
             ("schedules", SRE_SCHEDULES_INDEX, get_schedules_index),
             ("threads", SRE_THREADS_INDEX, get_threads_index),
             ("tasks", SRE_TASKS_INDEX, get_tasks_index),
@@ -112,7 +118,18 @@ def index_list(as_json: bool):
 @index.command("recreate")
 @click.option(
     "--index-name",
-    type=click.Choice(["knowledge", "schedules", "threads", "tasks", "instances", "all"]),
+    type=click.Choice(
+        [
+            "knowledge",
+            "skills",
+            "support_tickets",
+            "schedules",
+            "threads",
+            "tasks",
+            "instances",
+            "all",
+        ]
+    ),
     default="all",
     help="Which index to recreate (default: all)",
 )

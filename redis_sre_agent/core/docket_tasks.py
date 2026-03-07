@@ -64,6 +64,7 @@ def sre_task(func):
 async def search_knowledge_base(
     query: str,
     category: Optional[str] = None,
+    doc_type: Optional[str] = None,
     limit: int = 5,
     distance_threshold: Optional[float] = None,
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
@@ -77,6 +78,7 @@ async def search_knowledge_base(
     Args:
         query: Search query text
         category: Optional category filter (incident, maintenance, monitoring, etc.)
+        doc_type: Optional document type filter
         limit: Maximum number of results
         distance_threshold: Optional cosine distance threshold. If provided, overrides backend default.
         retry: Retry configuration
@@ -88,6 +90,8 @@ async def search_knowledge_base(
         kwargs = {"query": query, "limit": limit}
         if category is not None:
             kwargs["category"] = category
+        if doc_type is not None:
+            kwargs["doc_type"] = doc_type
         if distance_threshold is not None:
             kwargs["distance_threshold"] = distance_threshold
         result = await search_knowledge_base_helper(**kwargs)
@@ -112,6 +116,7 @@ async def ingest_sre_document(
     source: str,
     category: str = "general",
     severity: str = "info",
+    doc_type: Optional[str] = None,
     product_labels: Optional[List[str]] = None,
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
@@ -127,6 +132,7 @@ async def ingest_sre_document(
         source: Source system or file
         category: Document category (incident, runbook, monitoring, etc.)
         severity: Severity level (info, warning, critical)
+        doc_type: Optional document type
         product_labels: Optional list of product labels
         retry: Retry configuration
 
@@ -140,6 +146,7 @@ async def ingest_sre_document(
             source=source,
             category=category,
             severity=severity,
+            doc_type=doc_type,
             product_labels=product_labels,
         )
     except Exception as e:
