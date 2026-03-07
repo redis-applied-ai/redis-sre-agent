@@ -18,14 +18,14 @@ from redis_sre_agent.api.schemas import (
 from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.instances import get_instance_by_id
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.tasks import TaskManager, create_task
-from redis_sre_agent.core.tasks import delete_task as delete_task_core
 from redis_sre_agent.core.target_context import (
     extract_turn_target,
     require_at_most_one_target,
     require_continuation_target_compatibility,
     require_exactly_one_target_for_new_turn,
 )
+from redis_sre_agent.core.tasks import TaskManager, create_task
+from redis_sre_agent.core.tasks import delete_task as delete_task_core
 from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)

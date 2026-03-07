@@ -34,13 +34,13 @@ from redis_sre_agent.core.qa import QAManager
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
-from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.target_context import (
     extract_turn_target,
     require_at_most_one_target,
     require_continuation_target_compatibility,
     require_exactly_one_target_for_new_turn,
 )
+from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.threads import Message, ThreadManager
 
 logger = logging.getLogger(__name__)
