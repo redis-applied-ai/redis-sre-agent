@@ -359,7 +359,9 @@ def test_query_continue_thread_rejects_target_switch(mock_thread_manager, mock_r
     mock_get_knowledge.assert_not_called()
 
 
-def test_query_continue_thread_allows_matching_instance_target(mock_thread_manager, mock_redis_client):
+def test_query_continue_thread_allows_matching_instance_target(
+    mock_thread_manager, mock_redis_client
+):
     runner = CliRunner()
 
     class DummyInstance:
@@ -415,7 +417,9 @@ def test_query_continue_thread_allows_matching_instance_target(mock_thread_manag
     assert kwargs.get("context") == {"instance_id": "redis-old", "cluster_id": "cluster-1"}
 
 
-def test_query_continue_thread_allows_matching_cluster_alias(mock_thread_manager, mock_redis_client):
+def test_query_continue_thread_allows_matching_cluster_alias(
+    mock_thread_manager, mock_redis_client
+):
     runner = CliRunner()
 
     class DummyInstance:
@@ -452,7 +456,9 @@ def test_query_continue_thread_allows_matching_cluster_alias(mock_thread_manager
         return None
 
     with (
-        patch("redis_sre_agent.cli.query.get_instance_by_id", new=AsyncMock(side_effect=_get_instance)),
+        patch(
+            "redis_sre_agent.cli.query.get_instance_by_id", new=AsyncMock(side_effect=_get_instance)
+        ),
         patch(
             "redis_sre_agent.cli.query.get_preferred_instance_by_cluster_id",
             new=AsyncMock(return_value=preferred_for_cluster),
@@ -486,7 +492,9 @@ def test_query_continue_thread_allows_matching_cluster_alias(mock_thread_manager
     assert kwargs.get("context") == {"instance_id": "redis-old", "cluster_id": "cluster-1"}
 
 
-def test_query_continue_thread_allows_instance_for_thread_cluster(mock_thread_manager, mock_redis_client):
+def test_query_continue_thread_allows_instance_for_thread_cluster(
+    mock_thread_manager, mock_redis_client
+):
     runner = CliRunner()
 
     class DummyInstance:

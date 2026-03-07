@@ -841,7 +841,9 @@ async def process_agent_turn(
                     context_update = {"instance_id": active_instance_id}
                     if active_cluster_id:
                         context_update["cluster_id"] = active_cluster_id
-                    await thread_manager.update_thread_context(thread_id, context_update, merge=True)
+                    await thread_manager.update_thread_context(
+                        thread_id, context_update, merge=True
+                    )
                     await task_manager.add_task_update(
                         task_id,
                         f"Created Redis instance: {new_instance.name} ({active_instance_id})",

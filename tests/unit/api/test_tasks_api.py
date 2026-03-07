@@ -48,7 +48,10 @@ class TestTasksAPI:
         with (
             patch("redis_sre_agent.api.tasks.get_redis_client"),
             patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
-            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
             patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
         ):
             docket_instance = AsyncMock()
@@ -104,7 +107,10 @@ class TestTasksAPI:
             patch("redis_sre_agent.api.tasks.get_redis_client"),
             patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
             patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
-            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
             patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
         ):
             docket_instance = AsyncMock()
@@ -167,9 +173,14 @@ class TestTasksAPI:
         with (
             patch("redis_sre_agent.api.tasks.get_redis_client"),
             patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
-            patch("redis_sre_agent.api.tasks.get_instance_by_id", new=AsyncMock(return_value=instance)),
+            patch(
+                "redis_sre_agent.api.tasks.get_instance_by_id", new=AsyncMock(return_value=instance)
+            ),
             patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
-            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
             patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
         ):
             docket_instance = AsyncMock()
@@ -213,7 +224,10 @@ class TestTasksAPI:
                 new=AsyncMock(return_value=thread_instance),
             ),
             patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
-            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://test")),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
             patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
         ):
             docket_instance = AsyncMock()

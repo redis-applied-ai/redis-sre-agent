@@ -42,17 +42,13 @@ def extract_turn_target(context: Optional[Mapping[str, Any]]) -> TurnTarget:
 def require_at_most_one_target(target: TurnTarget) -> None:
     """Ensure callers provide at most one target identifier."""
     if target.has_both():
-        raise ValueError(
-            "Provide only one target: instance_id or cluster_id, not both."
-        )
+        raise ValueError("Provide only one target: instance_id or cluster_id, not both.")
 
 
 def require_exactly_one_target_for_new_turn(target: TurnTarget) -> None:
     """Ensure a new turn is target-scoped."""
     if not target.has_any():
-        raise ValueError(
-            "New turns require exactly one target: provide instance_id or cluster_id."
-        )
+        raise ValueError("New turns require exactly one target: provide instance_id or cluster_id.")
 
 
 async def require_continuation_target_compatibility(
@@ -91,7 +87,9 @@ async def require_continuation_target_compatibility(
             provided_instance = await get_instance_by_id(provided_target.instance_id)
             if not provided_instance:
                 raise ValueError(f"Instance not found: {provided_target.instance_id}")
-            provided_cluster_id = normalize_target_id(getattr(provided_instance, "cluster_id", None))
+            provided_cluster_id = normalize_target_id(
+                getattr(provided_instance, "cluster_id", None)
+            )
             if provided_cluster_id != thread_target.cluster_id:
                 raise ValueError(
                     "Thread target mismatch: provided instance_id="
@@ -113,7 +111,9 @@ async def require_continuation_target_compatibility(
                     "Thread target mismatch: this thread is locked to "
                     f"instance_id={thread_target.instance_id}, but that instance no longer exists."
                 )
-            thread_instance_cluster_id = normalize_target_id(getattr(thread_instance, "cluster_id", None))
+            thread_instance_cluster_id = normalize_target_id(
+                getattr(thread_instance, "cluster_id", None)
+            )
             if thread_instance_cluster_id != provided_target.cluster_id:
                 raise ValueError(
                     "Thread target mismatch: provided cluster_id="

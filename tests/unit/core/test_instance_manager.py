@@ -898,7 +898,9 @@ class TestGetPreferredInstanceByClusterId:
     async def test_returns_none_when_cluster_has_no_instances(self):
         with patch(
             "redis_sre_agent.core.instances.query_instances",
-            new=AsyncMock(return_value=InstanceQueryResult(instances=[], total=0, limit=1, offset=0)),
+            new=AsyncMock(
+                return_value=InstanceQueryResult(instances=[], total=0, limit=1, offset=0)
+            ),
         ):
             result = await get_preferred_instance_by_cluster_id("cluster-empty")
         assert result is None

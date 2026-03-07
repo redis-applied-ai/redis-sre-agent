@@ -122,9 +122,7 @@ def query(
 
             instance = await get_preferred_instance_by_cluster_id(active_cluster_id)
             if not instance:
-                console.print(
-                    f"[red]❌ No instances linked to cluster: {active_cluster_id}[/red]"
-                )
+                console.print(f"[red]❌ No instances linked to cluster: {active_cluster_id}[/red]")
                 exit(1)
 
             console.print(f"[dim] Redis cluster: {cluster.name}[/dim]")
@@ -180,16 +178,18 @@ def query(
                             )
                             exit(1)
                     active_cluster_id = (
-                        thread_cluster_id
-                        or instance.cluster_id
-                        or active_cluster_id
+                        thread_cluster_id or instance.cluster_id or active_cluster_id
                     )
                 elif thread_cluster_id:
                     active_cluster_id = thread_cluster_id
-                    if provided_instance_id and (not instance or instance.id != provided_instance_id):
+                    if provided_instance_id and (
+                        not instance or instance.id != provided_instance_id
+                    ):
                         instance = await get_instance_by_id(provided_instance_id)
                         if not instance:
-                            console.print(f"[red]❌ Instance not found: {provided_instance_id}[/red]")
+                            console.print(
+                                f"[red]❌ Instance not found: {provided_instance_id}[/red]"
+                            )
                             exit(1)
 
             # Load conversation history
