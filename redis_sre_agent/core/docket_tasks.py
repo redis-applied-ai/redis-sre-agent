@@ -38,7 +38,6 @@ from redis_sre_agent.core.target_context import (
     extract_turn_target,
     require_at_most_one_target,
     require_continuation_target_compatibility,
-    require_exactly_one_target_for_new_turn,
 )
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.threads import Message, ThreadManager
@@ -693,7 +692,7 @@ async def process_agent_turn(
         # ============================================================================
         # Rules:
         # - At most one target may be provided in a request (instance_id XOR cluster_id).
-        # - Initial turns without saved thread target require exactly one target.
+        # - Initial turns without saved thread target may proceed unscoped.
         # - Continuations may provide a target only if it matches the saved thread target.
         # ============================================================================
 
@@ -702,9 +701,7 @@ async def process_agent_turn(
         require_at_most_one_target(provided_target)
 
         is_initial_turn = len(thread.messages or []) == 0
-        if is_initial_turn and not thread_target.has_any():
-            require_exactly_one_target_for_new_turn(provided_target)
-        else:
+        if not (is_initial_turn and not thread_target.has_any()):
             await require_continuation_target_compatibility(
                 provided_target=provided_target,
                 thread_target=thread_target,

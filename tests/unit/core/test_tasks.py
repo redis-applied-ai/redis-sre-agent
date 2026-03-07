@@ -990,8 +990,10 @@ class TestProcessAgentTurn:
         assert router_kwargs["context"]["instance_id"] == "redis-prod-1"
 
     @pytest.mark.asyncio
-    async def test_process_agent_turn_initial_turn_without_any_target_rejected(self):
-        """Initial turns without saved or provided target should fail fast."""
+    async def test_process_agent_turn_initial_turn_without_any_target_allows_unscoped_query(self):
+        """Initial turns without target should proceed as unscoped knowledge queries."""
+        from redis_sre_agent.agent.router import AgentType
+
         mock_redis = AsyncMock()
 
         mock_thread = MagicMock()
@@ -999,16 +1001,30 @@ class TestProcessAgentTurn:
         mock_thread.context = {}
         mock_thread.metadata = MagicMock()
         mock_thread.metadata.user_id = "user-1"
+        mock_thread.metadata.session_id = "session-1"
+        mock_thread.metadata.subject = "Existing subject"
         mock_thread.messages = []
 
         mock_thread_manager = AsyncMock()
         mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
         mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager._save_thread_state = AsyncMock()
+        mock_thread_manager.set_thread_subject = AsyncMock()
 
         mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="new-task-123")
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+
+        mock_knowledge_agent = MagicMock()
+        mock_knowledge_agent.process_query = AsyncMock(
+            return_value=AgentResponse(response="Knowledge response", search_results=[])
+        )
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
@@ -1016,20 +1032,36 @@ class TestProcessAgentTurn:
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
             patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_knowledge_agent",
+                return_value=mock_knowledge_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
             patch("opentelemetry.trace.get_tracer") as mock_tracer,
         ):
             mock_span = MagicMock()
             mock_span.end = MagicMock()
             mock_span.record_exception = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_span.get_span_context = MagicMock(return_value=MagicMock(is_valid=False))
             mock_tracer.return_value.start_span.return_value = mock_span
 
-            with pytest.raises(ValueError, match="New turns require exactly one target"):
-                await process_agent_turn(
-                    thread_id="thread-123",
-                    message="follow-up question",
-                    context={},
-                    task_id="provided-task-123",
-                )
+            result = await process_agent_turn(
+                thread_id="thread-123",
+                message="follow-up question",
+                context={},
+                task_id="provided-task-123",
+            )
+
+        assert result["response"] == "Knowledge response"
+        mock_task_manager.set_task_error.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_resolves_cluster_context_to_instance(self):

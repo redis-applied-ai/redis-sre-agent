@@ -31,7 +31,6 @@ from redis_sre_agent.core.target_context import (
     extract_turn_target,
     require_at_most_one_target,
     require_continuation_target_compatibility,
-    require_exactly_one_target_for_new_turn,
 )
 from redis_sre_agent.core.threads import ThreadManager
 
@@ -96,13 +95,6 @@ def query(
             console.print(f"[red]❌ {e}[/red]")
             exit(1)
 
-        if not thread_id:
-            try:
-                require_exactly_one_target_for_new_turn(provided_target)
-            except ValueError as e:
-                console.print(f"[red]❌ {e}[/red]")
-                exit(1)
-
         # Resolve instance/cluster if provided
         instance = None
         active_cluster_id = provided_cluster_id
@@ -156,11 +148,13 @@ def query(
             thread_instance_id = thread_target.instance_id
             thread_cluster_id = thread_target.cluster_id
             try:
-                await require_continuation_target_compatibility(
-                    provided_target=provided_target,
-                    thread_target=thread_target,
-                    get_instance_by_id=get_instance_by_id,
-                )
+                is_initial_turn = len(thread.messages or []) == 0
+                if not (is_initial_turn and not thread_target.has_any()):
+                    await require_continuation_target_compatibility(
+                        provided_target=provided_target,
+                        thread_target=thread_target,
+                        get_instance_by_id=get_instance_by_id,
+                    )
             except ValueError as e:
                 console.print(f"[red]❌ {e}[/red]")
                 exit(1)

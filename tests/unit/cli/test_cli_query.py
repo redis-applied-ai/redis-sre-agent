@@ -43,17 +43,29 @@ def test_query_cli_help_shows_options():
     assert "knowledge" in result.output
 
 
-def test_query_without_target_rejects_new_thread(mock_thread_manager, mock_redis_client):
+def test_query_without_target_allows_new_thread(mock_thread_manager, mock_redis_client):
     runner = CliRunner()
+
+    mock_knowledge_agent = MagicMock()
+    mock_knowledge_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="knowledge result", search_results=[])
+    )
+
+    from redis_sre_agent.agent.router import AgentType
 
     with (
         patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
         patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
+        ),
+        patch("redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_knowledge_agent),
     ):
         result = runner.invoke(query, ["What is Redis SRE?"])
 
-    assert result.exit_code == 1
-    assert "New turns require exactly one target" in result.output
+    assert result.exit_code == 0, result.output
+    mock_knowledge_agent.process_query.assert_awaited_once()
 
 
 def test_query_with_instance_uses_sre_agent_and_passes_instance_context(
@@ -357,6 +369,106 @@ def test_query_continue_thread_rejects_target_switch(mock_thread_manager, mock_r
     assert "instance_id=redis-old" in result.output
     mock_get_sre.assert_not_called()
     mock_get_knowledge.assert_not_called()
+
+
+def test_query_continue_empty_scoped_thread_allows_missing_turn_target(
+    mock_thread_manager, mock_redis_client
+):
+    runner = CliRunner()
+
+    class DummyInstance:
+        def __init__(self, id: str, name: str, cluster_id: str | None = None):  # noqa: A003
+            self.id = id
+            self.name = name
+            self.cluster_id = cluster_id
+            self.instance_type = "oss_single"
+            self.connection_url = "redis://localhost:6379"
+            self.environment = "development"
+            self.usage = "cache"
+
+    thread_instance = DummyInstance("redis-old", "Old Instance", "cluster-1")
+    thread = MagicMock()
+    thread.context = {"instance_id": "redis-old"}
+    thread.messages = []
+    mock_thread_manager.get_thread = AsyncMock(return_value=thread)
+
+    mock_sre_agent = MagicMock()
+    mock_sre_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
+
+    from redis_sre_agent.agent.router import AgentType
+
+    with (
+        patch(
+            "redis_sre_agent.cli.query.get_instance_by_id",
+            new=AsyncMock(return_value=thread_instance),
+        ),
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+        patch("redis_sre_agent.cli.query.get_sre_agent", return_value=mock_sre_agent),
+        patch("redis_sre_agent.cli.query.get_knowledge_agent"),
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+        ),
+    ):
+        result = runner.invoke(
+            query,
+            [
+                "--thread-id",
+                "thread-123",
+                "follow-up question",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    _, kwargs = mock_sre_agent.process_query.call_args
+    assert kwargs.get("context") == {"instance_id": "redis-old", "cluster_id": "cluster-1"}
+
+
+def test_query_continue_empty_unscoped_thread_allows_missing_turn_target(
+    mock_thread_manager, mock_redis_client
+):
+    runner = CliRunner()
+
+    thread = MagicMock()
+    thread.context = {}
+    thread.messages = []
+    mock_thread_manager.get_thread = AsyncMock(return_value=thread)
+
+    mock_knowledge_agent = MagicMock()
+    mock_knowledge_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="knowledge result", search_results=[])
+    )
+
+    from redis_sre_agent.agent.router import AgentType
+
+    with (
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
+        ),
+        patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch(
+            "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_knowledge_agent
+        ) as mock_get_knowledge,
+    ):
+        result = runner.invoke(
+            query,
+            [
+                "--thread-id",
+                "thread-123",
+                "follow-up question",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_get_sre.assert_not_called()
+    mock_get_knowledge.assert_called_once()
+    mock_knowledge_agent.process_query.assert_awaited_once()
 
 
 def test_query_continue_thread_allows_matching_instance_target(

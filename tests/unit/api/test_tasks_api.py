@@ -68,12 +68,30 @@ class TestTasksAPI:
             assert data["task_id"] == "t1"
             assert data["thread_id"] == "th1"
 
-    def test_create_task_rejects_new_thread_without_target(self, client):
-        """New turns must provide exactly one target identifier."""
-        with patch("redis_sre_agent.api.tasks.get_redis_client"):
+    def test_create_task_allows_new_thread_without_target(self, client):
+        """New turns may be unscoped for general knowledge queries."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            docket_instance.add = MagicMock(return_value=AsyncMock())
+            mock_docket.return_value = docket_instance
             resp = client.post("/api/v1/tasks", json={"message": "help"})
-        assert resp.status_code == 400
-        assert "require exactly one target" in resp.json()["detail"]
+        assert resp.status_code == 202
 
     def test_create_task_rejects_new_thread_with_both_targets(self, client):
         """New turns cannot provide both instance_id and cluster_id."""
@@ -129,8 +147,14 @@ class TestTasksAPI:
             )
         assert resp.status_code == 202
 
-    def test_create_task_continue_empty_unscoped_thread_requires_target(self, client):
-        """First turn on an unscoped thread still requires exactly one target."""
+    def test_create_task_continue_empty_unscoped_thread_allows_missing_turn_target(self, client):
+        """First turn on an unscoped thread may omit turn-level target context."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
         thread = MagicMock()
         thread.context = {}
         thread.messages = []
@@ -141,7 +165,18 @@ class TestTasksAPI:
         with (
             patch("redis_sre_agent.api.tasks.get_redis_client"),
             patch("redis_sre_agent.api.tasks.ThreadManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
         ):
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            docket_instance.add = MagicMock(return_value=AsyncMock())
+            mock_docket.return_value = docket_instance
             resp = client.post(
                 "/api/v1/tasks",
                 json={
@@ -150,8 +185,7 @@ class TestTasksAPI:
                 },
             )
 
-        assert resp.status_code == 400
-        assert "require exactly one target" in resp.json()["detail"]
+        assert resp.status_code == 202
 
     def test_create_task_continue_thread_accepts_matching_instance(self, client):
         """Continuation may include matching instance_id."""

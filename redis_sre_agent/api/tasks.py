@@ -22,7 +22,6 @@ from redis_sre_agent.core.target_context import (
     extract_turn_target,
     require_at_most_one_target,
     require_continuation_target_compatibility,
-    require_exactly_one_target_for_new_turn,
 )
 from redis_sre_agent.core.tasks import TaskManager, create_task
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
@@ -47,16 +46,12 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
                 raise HTTPException(status_code=404, detail=f"Thread {req.thread_id} not found")
             thread_target = extract_turn_target(thread.context)
             is_initial_turn = len(thread.messages or []) == 0
-            if is_initial_turn and not thread_target.has_any():
-                require_exactly_one_target_for_new_turn(provided_target)
-            else:
+            if not (is_initial_turn and not thread_target.has_any()):
                 await require_continuation_target_compatibility(
                     provided_target=provided_target,
                     thread_target=thread_target,
                     get_instance_by_id=get_instance_by_id,
                 )
-        else:
-            require_exactly_one_target_for_new_turn(provided_target)
 
         data = await create_task(
             message=req.message,
