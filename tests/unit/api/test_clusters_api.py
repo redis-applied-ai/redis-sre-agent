@@ -184,7 +184,16 @@ class TestClustersAPI:
             # Missing admin_username/admin_password
         }
 
-        response = client.post("/api/v1/clusters", json=invalid_data)
+        with patch.dict(
+            os.environ,
+            {
+                "REDIS_ENTERPRISE_ADMIN_URL": "",
+                "REDIS_ENTERPRISE_ADMIN_USERNAME": "",
+                "REDIS_ENTERPRISE_ADMIN_PASSWORD": "",
+            },
+            clear=False,
+        ):
+            response = client.post("/api/v1/clusters", json=invalid_data)
 
         assert response.status_code == 400
         assert "requires admin_url, admin_username, and admin_password" in response.json()["detail"]
