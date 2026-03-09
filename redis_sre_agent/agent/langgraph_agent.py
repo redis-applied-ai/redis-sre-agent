@@ -100,6 +100,28 @@ def _to_int(value: Any, default: int = 0) -> int:
             return default
 
 
+def _build_cluster_heuristic_context(
+    conversation_history: Optional[List[BaseMessage]], max_messages: int = 4
+) -> str:
+    """Build compact conversation text for cluster diagnostic intent heuristics."""
+    if not conversation_history:
+        return ""
+
+    recent_messages = conversation_history[-max_messages:]
+    if not recent_messages:
+        return ""
+
+    chunks: List[str] = []
+    for message in recent_messages:
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            chunks.append(content)
+        elif content is not None:
+            chunks.append(str(content))
+
+    return "\n".join(chunks)
+
+
 async def _collect_cluster_instance_diagnostics(
     linked_instances: List[Any],
     *,
@@ -1786,8 +1808,11 @@ CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but the cluster wa
                         for inst in all_instances
                         if (inst.cluster_id or "").strip() == str(cluster_id).strip()
                     ]
+                    conversation_context_text = _build_cluster_heuristic_context(
+                        conversation_history
+                    )
                     requires_instance_inspection = cluster_query_requests_db_diagnostics(
-                        query=query
+                        query=query, conversation_context=conversation_context_text
                     )
 
                     linked_lines = "\n".join(
