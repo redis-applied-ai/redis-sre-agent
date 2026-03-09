@@ -110,6 +110,7 @@ while True:
 async def redis_sre_deep_triage(
     query: str,
     instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a deep triage task to analyze a Redis issue comprehensively.
@@ -140,6 +141,7 @@ async def redis_sre_deep_triage(
     Args:
         query: The issue to analyze (e.g., "High memory usage on production Redis")
         instance_id: Optional Redis instance ID (use redis_sre_list_instances to find IDs)
+        cluster_id: Optional Redis cluster ID
         user_id: Optional user ID for tracking
 
     Returns:
@@ -156,10 +158,18 @@ async def redis_sre_deep_triage(
     logger.info(f"MCP deep_triage request: {query[:100]}...")
 
     try:
+        if instance_id and cluster_id:
+            return {
+                "status": "failed",
+                "message": "Please provide only one of instance_id or cluster_id",
+            }
+
         redis_client = get_redis_client()
         context: Dict[str, Any] = {}
         if instance_id:
             context["instance_id"] = instance_id
+        if cluster_id:
+            context["cluster_id"] = cluster_id
         if user_id:
             context["user_id"] = user_id
 

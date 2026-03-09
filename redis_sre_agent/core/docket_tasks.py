@@ -679,20 +679,27 @@ async def process_agent_turn(
             raise ValueError(f"Thread {thread_id} not found")
 
         # ============================================================================
-        # Instance ID Management Logic
+        # Target scope management logic
         # ============================================================================
-        # Determine the instance_id to use for this turn:
-        # 1. If client provides instance_id in context, use it and update thread
-        # 2. If no instance_id from client, check thread context for saved instance_id
-        # 3. If no instance_id anywhere, attempt to create one from user message
-        # 4. If still no instance_id, route to knowledge agent
+        # Determine the target for this turn:
+        # 1. If client provides instance_id, use it and clear cluster_id on thread
+        # 2. Else if client provides cluster_id, use it and clear instance_id on thread
+        # 3. Else fall back to existing thread instance_id/cluster_id
+        # 4. If no target exists, attempt to create an instance from user message
+        # 5. If still no target, route to knowledge/general tools
         # ============================================================================
 
         instance_id_from_client = context.get("instance_id") if context else None
+        cluster_id_from_client = context.get("cluster_id") if context else None
         instance_id_from_thread = thread.context.get("instance_id")
+        cluster_id_from_thread = thread.context.get("cluster_id")
 
-        # Determine which instance_id to use
+        if instance_id_from_client and cluster_id_from_client:
+            raise ValueError("Please provide only one of instance_id or cluster_id")
+
+        # Determine active targets
         active_instance_id = None
+        active_cluster_id = None
 
         if instance_id_from_client:
             # Client provided instance_id - use it and update thread
@@ -701,14 +708,33 @@ async def process_agent_turn(
                 f"Using instance_id from client: {active_instance_id} (will update thread context)"
             )
 
-            # Update thread context with new instance_id
+            # Update thread context with new instance_id and clear cluster scope
             await thread_manager.update_thread_context(
-                thread_id, {"instance_id": active_instance_id}, merge=True
+                thread_id,
+                {"instance_id": active_instance_id, "cluster_id": ""},
+                merge=True,
             )
             await task_manager.add_task_update(
                 task_id,
                 f"Using Redis instance: {active_instance_id}",
                 "instance_context",
+            )
+
+        elif cluster_id_from_client:
+            # Client provided cluster_id - use it and update thread
+            active_cluster_id = cluster_id_from_client
+            logger.info(
+                f"Using cluster_id from client: {active_cluster_id} (will update thread context)"
+            )
+            await thread_manager.update_thread_context(
+                thread_id,
+                {"cluster_id": active_cluster_id, "instance_id": ""},
+                merge=True,
+            )
+            await task_manager.add_task_update(
+                task_id,
+                f"Using Redis cluster: {active_cluster_id}",
+                "cluster_context",
             )
 
         elif instance_id_from_thread:
@@ -719,6 +745,16 @@ async def process_agent_turn(
                 task_id,
                 f"Continuing with Redis instance: {active_instance_id}",
                 "instance_context",
+            )
+
+        elif cluster_id_from_thread:
+            # No explicit target from client, but cluster is saved on thread
+            active_cluster_id = cluster_id_from_thread
+            logger.info(f"Using cluster_id from thread context: {active_cluster_id}")
+            await task_manager.add_task_update(
+                task_id,
+                f"Continuing with Redis cluster: {active_cluster_id}",
+                "cluster_context",
             )
 
         else:
@@ -774,6 +810,10 @@ async def process_agent_turn(
         # Ensure active_instance_id is in routing context
         if active_instance_id:
             routing_context["instance_id"] = active_instance_id
+            routing_context.pop("cluster_id", None)
+        elif active_cluster_id:
+            routing_context["cluster_id"] = active_cluster_id
+            routing_context.pop("instance_id", None)
 
         agent_type = await route_to_appropriate_agent(
             query=message,
@@ -925,7 +965,11 @@ async def process_agent_turn(
         else:
             # Use full Redis triage agent with full conversation state
             agent_response = await run_agent_with_progress(
-                agent, conversation_state, progress_emitter, thread
+                agent,
+                conversation_state,
+                progress_emitter,
+                thread,
+                agent_context=routing_context,
             )
 
         # Record Q&A with citation tracking (non-blocking, best effort)
@@ -1155,7 +1199,11 @@ async def process_agent_turn(
 
 
 async def run_agent_with_progress(
-    agent, conversation_state: Dict[str, Any], progress_emitter, thread_state=None
+    agent,
+    conversation_state: Dict[str, Any],
+    progress_emitter,
+    thread_state=None,
+    agent_context: Optional[Dict[str, Any]] = None,
 ):
     """
     Run the LangGraph agent with progress updates.
@@ -1167,6 +1215,8 @@ async def run_agent_with_progress(
         conversation_state: Dictionary containing messages and thread_id
         progress_emitter: ProgressEmitter instance for progress updates
         thread_state: Optional thread state object containing metadata and context
+        agent_context: Optional per-turn context to pass directly to the agent.
+            When provided, this takes precedence over thread_state.context.
     """
     try:
         # Agent will post reflections as it works
@@ -1208,8 +1258,9 @@ async def run_agent_with_progress(
         # Run the agent workflow using the compiled app
         {"configurable": {"thread_id": agent_state["session_id"]}}
 
-        # Pass thread context to the agent if available
-        agent_context = thread_state.context if thread_state else None
+        # Pass explicit per-turn context to the agent when available.
+        if agent_context is None:
+            agent_context = thread_state.context if thread_state else None
 
         # Get the latest user message for the query
         latest_user_message = None

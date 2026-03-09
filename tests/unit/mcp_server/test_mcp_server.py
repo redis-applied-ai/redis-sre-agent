@@ -83,6 +83,43 @@ class TestDeepTriageTool:
             mock_create.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_deep_triage_with_cluster_id(self):
+        """Test deep triage accepts cluster_id and forwards context."""
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "queued",
+            "message": "Task created",
+        }
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
+        ):
+            mock_create.return_value = mock_result
+
+            result = await redis_sre_deep_triage(
+                query="Cluster check",
+                cluster_id="cluster-prod-1",
+            )
+
+            assert result["task_id"] == "task-456"
+            call_kwargs = mock_create.call_args.kwargs
+            assert call_kwargs["context"]["cluster_id"] == "cluster-prod-1"
+
+    @pytest.mark.asyncio
+    async def test_deep_triage_rejects_instance_and_cluster_together(self):
+        """Test deep triage rejects conflicting target identifiers."""
+        result = await redis_sre_deep_triage(
+            query="Cluster check",
+            instance_id="redis-prod-1",
+            cluster_id="cluster-prod-1",
+        )
+
+        assert result["status"] == "failed"
+        assert "only one of instance_id or cluster_id" in result["message"]
+
+    @pytest.mark.asyncio
     async def test_deep_triage_error_handling(self):
         """Test deep triage error handling."""
         with (

@@ -60,6 +60,7 @@ export interface ThreadSummary {
   tags: string[];
   priority: number;
   instance_id?: string;
+  cluster_id?: string;
   // Optional count of user/assistant messages, provided by backend when available
   message_count?: number;
 }
@@ -339,7 +340,14 @@ class SREAgentAPI {
     priority: number = 0,
     tags?: string[],
     instanceId?: string,
+    clusterId?: string,
   ): Promise<TriageResponse> {
+    if (instanceId && clusterId) {
+      throw new Error(
+        "Please provide only one of instanceId or clusterId when starting a conversation",
+      );
+    }
+
     const response = await fetch(`${this.tasksBaseUrl}/tasks`, {
       method: "POST",
       headers: {
@@ -353,6 +361,7 @@ class SREAgentAPI {
           priority,
           tags,
           ...(instanceId && { instance_id: instanceId }),
+          ...(clusterId && { cluster_id: clusterId }),
         },
       }),
     });
@@ -521,6 +530,7 @@ class SREAgentAPI {
         tags: Array.isArray(t.tags) ? t.tags : [],
         priority: typeof t.priority === "number" ? t.priority : 0,
         instance_id: t.instance_id,
+        cluster_id: t.cluster_id,
         message_count:
           typeof t.message_count === "number" ? t.message_count : undefined,
       })) as ThreadSummary[];
@@ -817,6 +827,7 @@ class SREAgentAPI {
     priority: number = 0,
     tags?: string[],
     instanceId?: string,
+    clusterId?: string,
   ): Promise<string> {
     const triageResponse = await this.submitTriageRequest(
       message,
@@ -825,6 +836,7 @@ class SREAgentAPI {
       priority,
       tags,
       instanceId,
+      clusterId,
     );
     return triageResponse.thread_id;
   }

@@ -190,6 +190,193 @@ class TestSRELangGraphAgent:
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_cluster_query_uses_fanout_and_does_not_bind_single_instance(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Cluster-scoped DB diagnostics should fan out across linked instances."""
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_cluster = MagicMock()
+        mock_cluster.id = "cluster-prod-1"
+        mock_cluster.name = "Production Cluster"
+        mock_cluster.cluster_type = "redis_enterprise"
+        mock_cluster.environment = "production"
+
+        mock_instance_1 = MagicMock()
+        mock_instance_1.id = "redis-prod-1"
+        mock_instance_1.name = "Redis Prod 1"
+        mock_instance_1.environment = "production"
+        mock_instance_1.cluster_id = "cluster-prod-1"
+
+        mock_instance_2 = MagicMock()
+        mock_instance_2.id = "redis-prod-2"
+        mock_instance_2.name = "Redis Prod 2"
+        mock_instance_2.environment = "production"
+        mock_instance_2.cluster_id = "cluster-prod-1"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        fanout_payload = {
+            "inspected_instances": 2,
+            "total_linked_instances": 2,
+            "truncated": False,
+            "summary_lines": [
+                "- Redis Prod 1: used_memory=100, connected_clients=5",
+                "- Redis Prod 2: used_memory=200, connected_clients=8",
+            ],
+            "aggregate": {"connected_clients": 13},
+        }
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.core.clusters.get_cluster_by_id",
+                AsyncMock(return_value=mock_cluster),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.get_instances",
+                AsyncMock(return_value=[mock_instance_1, mock_instance_2]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._collect_cluster_instance_diagnostics",
+                AsyncMock(return_value=fanout_payload),
+            ) as mock_fanout,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ) as mock_tool_manager_cls,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="check cluster memory and clients",
+                session_id="s1",
+                user_id="u1",
+                context={"cluster_id": "cluster-prod-1"},
+            )
+
+        mock_fanout.assert_awaited_once()
+        fanout_arg_instances = mock_fanout.await_args.args[0]
+        assert len(fanout_arg_instances) == 2
+        assert fanout_arg_instances[0].id == "redis-prod-1"
+        assert fanout_arg_instances[1].id == "redis-prod-2"
+
+        initial_state = captured["initial_state"]
+        assert "Cluster fan-out diagnostics summary" in initial_state["messages"][-1].content
+        assert "Redis Prod 1" in initial_state["messages"][-1].content
+        assert "Redis Prod 2" in initial_state["messages"][-1].content
+
+        # Fan-out mode should not bind ToolManager to a single Redis instance.
+        assert mock_tool_manager_cls.call_args.kwargs.get("redis_instance") is None
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_cluster_query_with_no_linked_instances_avoids_db_specific_tools(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Cluster-scoped DB diagnostics should avoid DB tools when no instances are linked."""
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_cluster = MagicMock()
+        mock_cluster.id = "cluster-empty-1"
+        mock_cluster.name = "Empty Cluster"
+        mock_cluster.cluster_type = "redis_enterprise"
+        mock_cluster.environment = "production"
+
+        unrelated_instance = MagicMock()
+        unrelated_instance.id = "redis-other-1"
+        unrelated_instance.name = "Redis Other 1"
+        unrelated_instance.environment = "production"
+        unrelated_instance.cluster_id = "cluster-other"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.core.clusters.get_cluster_by_id",
+                AsyncMock(return_value=mock_cluster),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.get_instances",
+                AsyncMock(return_value=[unrelated_instance]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._collect_cluster_instance_diagnostics",
+                AsyncMock(return_value={}),
+            ) as mock_fanout,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ) as mock_tool_manager_cls,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="check cluster memory and clients",
+                session_id="s1",
+                user_id="u1",
+                context={"cluster_id": "cluster-empty-1"},
+            )
+
+        # No linked instances should skip diagnostics fan-out entirely.
+        mock_fanout.assert_not_awaited()
+
+        initial_state = captured["initial_state"]
+        assert (
+            "do NOT use database-specific diagnostic tools"
+            in initial_state["messages"][-1].content
+        )
+
+        # No linked DB target should be passed into ToolManager.
+        assert mock_tool_manager_cls.call_args.kwargs.get("redis_instance") is None
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
     async def test_system_prompt_injected_with_conversation_history(
         self, mock_build_startup_context, mock_settings, mock_llm
     ):

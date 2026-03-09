@@ -202,6 +202,68 @@ class TestRouteToAppropriateAgent:
 
         assert result == AgentType.REDIS_TRIAGE
 
+    async def test_cluster_context_with_quick_query_routes_to_chat(self):
+        """Cluster-scoped queries should use the same LLM triage/chat split as instance scope."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "CHAT"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
+            result = await route_to_appropriate_agent(
+                query="Check cluster health",
+                context={"cluster_id": "cluster-prod-1"},
+            )
+
+            assert result == AgentType.REDIS_CHAT
+
+    async def test_cluster_context_with_db_diagnostic_query_auto_upgrades_to_triage(self):
+        """Cluster-scoped DB diagnostic queries should auto-upgrade to triage."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "CHAT"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
+            result = await route_to_appropriate_agent(
+                query="check memory and clients for this cluster",
+                context={"cluster_id": "cluster-prod-1"},
+            )
+
+            assert result == AgentType.REDIS_TRIAGE
+
+    async def test_cluster_context_with_deep_request_routes_to_triage(self):
+        """Cluster-scoped deep triage requests should route to triage."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "DEEP_TRIAGE"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
+            result = await route_to_appropriate_agent(
+                query="Do a deep triage on this cluster",
+                context={"cluster_id": "cluster-prod-1"},
+            )
+
+            assert result == AgentType.REDIS_TRIAGE
+
+    async def test_cluster_context_user_preference_respected(self):
+        """Cluster-scoped queries should honor preferred_agent like instance-scoped queries."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            # LLM should not be called when preference is set
+            mock_create.return_value = MagicMock()
+
+            result = await route_to_appropriate_agent(
+                query="check cluster",
+                context={"cluster_id": "cluster-prod-1"},
+                user_preferences={"preferred_agent": "redis_triage"},
+            )
+
+            assert result == AgentType.REDIS_TRIAGE
+
     async def test_conversation_history_passed_to_llm(self):
         """Test that conversation history is included in the routing decision."""
         with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
