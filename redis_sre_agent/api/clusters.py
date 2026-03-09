@@ -272,6 +272,20 @@ async def create_cluster(request: CreateClusterRequest):
                     status_code=400,
                     detail=build_enterprise_admin_missing_fields_error(missing_fields),
                 )
+        elif any(
+            (
+                resolved_admin.admin_url,
+                resolved_admin.admin_username,
+                resolved_admin.admin_password,
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "admin_url/admin_username/admin_password are only valid for "
+                    "cluster_type=redis_enterprise"
+                ),
+            )
 
         cluster_id = f"cluster-{request.environment}-{int(datetime.now().timestamp())}"
         new_cluster = core_clusters.RedisCluster(

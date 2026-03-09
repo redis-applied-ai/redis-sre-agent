@@ -272,6 +272,80 @@ class TestSRELangGraphAgent:
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_cluster_query_followup_respects_router_context_truncation_for_fanout(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        """Fan-out heuristic context should match router formatting/truncation behavior."""
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_cluster = MagicMock()
+        mock_cluster.id = "cluster-prod-1"
+        mock_cluster.name = "Production Cluster"
+        mock_cluster.cluster_type = "redis_enterprise"
+        mock_cluster.environment = "production"
+
+        linked_instance = MagicMock()
+        linked_instance.id = "redis-prod-1"
+        linked_instance.name = "Redis Prod 1"
+        linked_instance.environment = "production"
+        linked_instance.cluster_id = "cluster-prod-1"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.core.clusters.get_cluster_by_id",
+                AsyncMock(return_value=mock_cluster),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.get_instances",
+                AsyncMock(return_value=[linked_instance]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._collect_cluster_instance_diagnostics",
+                AsyncMock(return_value={}),
+            ) as mock_fanout,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="yes, check that",
+                session_id="s1",
+                user_id="u1",
+                context={"cluster_id": "cluster-prod-1"},
+                conversation_history=[
+                    HumanMessage(content=f"{'x' * 520} memory and clients for this cluster")
+                ],
+            )
+
+        mock_fanout.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
     async def test_cluster_query_uses_fanout_and_does_not_bind_single_instance(
         self, mock_build_startup_context, mock_settings, mock_llm
     ):
