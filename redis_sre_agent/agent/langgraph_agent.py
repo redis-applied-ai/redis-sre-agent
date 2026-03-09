@@ -40,6 +40,7 @@ from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..tools.manager import ToolManager
+from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
 from .knowledge_context import build_startup_knowledge_context
@@ -84,36 +85,6 @@ def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
         masked_url = _mask_redis_url_credentials(connection_url)
         logger.warning(f"Failed to parse connection URL {masked_url}: {e}")
         return "localhost", 6379
-
-
-def _query_requires_instance_inspection(query: str) -> bool:
-    """Heuristic: determine if a cluster query needs DB/instance diagnostics."""
-    q = (query or "").lower()
-    if not q:
-        return False
-
-    signal_terms = (
-        "memory",
-        "slowlog",
-        "latency",
-        "throughput",
-        "connections",
-        "connected clients",
-        "client list",
-        "config",
-        "keyspace",
-        "keys",
-        "replication",
-        "failover",
-        "performance",
-        "hot key",
-        "health check",
-        "diagnostic",
-        "triage",
-        "database",
-        "db",
-    )
-    return any(term in q for term in signal_terms)
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -187,15 +158,36 @@ async def _collect_cluster_instance_diagnostics(
                 )
 
                 async with RedisCommandToolProvider(redis_instance=instance) as provider:
-                    info_memory, info_clients, info_stats, info_keyspace, replication = (
-                        await asyncio.gather(
-                            provider.info("memory"),
-                            provider.info("clients"),
-                            provider.info("stats"),
-                            provider.info("keyspace"),
-                            provider.replication_info(),
-                        )
+                    (
+                        raw_info_memory,
+                        raw_info_clients,
+                        raw_info_stats,
+                        raw_info_keyspace,
+                        raw_replication,
+                    ) = await asyncio.gather(
+                        provider.info("memory"),
+                        provider.info("clients"),
+                        provider.info("stats"),
+                        provider.info("keyspace"),
+                        provider.replication_info(),
+                        return_exceptions=True,
                     )
+
+                def _normalize_result(label: str, result: Any) -> Dict[str, Any]:
+                    if isinstance(result, Exception):
+                        return {"status": "error", "error": f"{label} failed: {result}"}
+                    if isinstance(result, dict):
+                        return result
+                    return {
+                        "status": "error",
+                        "error": f"{label} returned unexpected result type: {type(result).__name__}",
+                    }
+
+                info_memory = _normalize_result("INFO memory", raw_info_memory)
+                info_clients = _normalize_result("INFO clients", raw_info_clients)
+                info_stats = _normalize_result("INFO stats", raw_info_stats)
+                info_keyspace = _normalize_result("INFO keyspace", raw_info_keyspace)
+                replication = _normalize_result("replication_info", raw_replication)
 
                 errors: List[str] = []
                 for result in (
@@ -294,7 +286,8 @@ async def _collect_cluster_instance_diagnostics(
             _to_int((s.get("metrics") or {}).get("expired_keys")) for s in successful_snapshots
         ),
         "estimated_db_count": sum(
-            _to_int((s.get("metrics") or {}).get("estimated_db_count")) for s in successful_snapshots
+            _to_int((s.get("metrics") or {}).get("estimated_db_count"))
+            for s in successful_snapshots
         ),
     }
 
@@ -1793,7 +1786,9 @@ CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but the cluster wa
                         for inst in all_instances
                         if (inst.cluster_id or "").strip() == str(cluster_id).strip()
                     ]
-                    requires_instance_inspection = _query_requires_instance_inspection(query)
+                    requires_instance_inspection = cluster_query_requests_db_diagnostics(
+                        query=query
+                    )
 
                     linked_lines = "\n".join(
                         [
@@ -1811,7 +1806,9 @@ CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but the cluster wa
                         inspected_instances = fanout.get("inspected_instances", 0)
                         total_linked_instances = fanout.get("total_linked_instances", 0)
                         truncated = fanout.get("truncated", False)
-                        fanout_lines = fanout.get("summary_lines") or ["- No diagnostics collected."]
+                        fanout_lines = fanout.get("summary_lines") or [
+                            "- No diagnostics collected."
+                        ]
                         aggregate = fanout.get("aggregate") or {}
 
                         fanout_text = "\n".join([str(line) for line in fanout_lines])

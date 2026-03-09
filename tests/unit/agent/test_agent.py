@@ -368,8 +368,7 @@ class TestSRELangGraphAgent:
 
         initial_state = captured["initial_state"]
         assert (
-            "do NOT use database-specific diagnostic tools"
-            in initial_state["messages"][-1].content
+            "do NOT use database-specific diagnostic tools" in initial_state["messages"][-1].content
         )
 
         # No linked DB target should be passed into ToolManager.

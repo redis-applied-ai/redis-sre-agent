@@ -13,6 +13,8 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.core.llm_helpers import create_nano_llm
 
+from .cluster_diagnostics import cluster_query_requests_db_diagnostics
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,36 +49,6 @@ def _format_conversation_context(
         lines.append(f"{role}: {content}")
 
     return "\n".join(lines)
-
-
-def _cluster_query_requests_db_diagnostics(query: str, conversation_context: str = "") -> bool:
-    """Heuristic: detect cluster-scoped requests that need DB/instance diagnostics."""
-    text = f"{query or ''} {conversation_context or ''}".lower()
-    if not text.strip():
-        return False
-
-    signal_terms = (
-        "memory",
-        "slowlog",
-        "latency",
-        "throughput",
-        "connections",
-        "connected clients",
-        "client list",
-        "config",
-        "keyspace",
-        "keys",
-        "replication",
-        "failover",
-        "performance",
-        "hot key",
-        "health check",
-        "diagnostic",
-        "triage",
-        "database",
-        "db",
-    )
-    return any(term in text for term in signal_terms)
 
 
 async def route_to_appropriate_agent(
@@ -222,12 +194,13 @@ Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
             return AgentType.REDIS_TRIAGE
 
         # Auto-upgrade cluster-scoped DB diagnostics to triage even when LLM says CHAT.
-        if has_cluster and not has_instance and _cluster_query_requests_db_diagnostics(
-            query=query, conversation_context=context_str
+        if (
+            has_cluster
+            and not has_instance
+            and cluster_query_requests_db_diagnostics(query=query, conversation_context=context_str)
         ):
             logger.info(
-                "Auto-upgrading cluster-scoped diagnostic query to REDIS_TRIAGE "
-                "(LLM returned CHAT)"
+                "Auto-upgrading cluster-scoped diagnostic query to REDIS_TRIAGE (LLM returned CHAT)"
             )
             return AgentType.REDIS_TRIAGE
 
@@ -235,7 +208,7 @@ Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
         return AgentType.REDIS_CHAT
 
     except Exception as e:
-        if has_cluster and not has_instance and _cluster_query_requests_db_diagnostics(query=query):
+        if has_cluster and not has_instance and cluster_query_requests_db_diagnostics(query=query):
             logger.warning(
                 "LLM routing failed for cluster-scoped diagnostic query; "
                 "auto-upgrading to REDIS_TRIAGE: %s",
