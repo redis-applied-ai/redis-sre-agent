@@ -28,7 +28,7 @@ from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-from ..agent.router import AgentType, _format_conversation_context, route_to_appropriate_agent
+from ..agent.router import AgentType, format_conversation_context, route_to_appropriate_agent
 from ..core.config import settings
 from ..core.instances import (
     create_instance,
@@ -1786,7 +1786,7 @@ CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but the cluster wa
                         for inst in all_instances
                         if (inst.cluster_id or "").strip() == str(cluster_id).strip()
                     ]
-                    conversation_context_text = _format_conversation_context(conversation_history)
+                    conversation_context_text = format_conversation_context(conversation_history)
                     requires_instance_inspection = cluster_query_requests_db_diagnostics(
                         query=query, conversation_context=conversation_context_text
                     )

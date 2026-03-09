@@ -29,7 +29,7 @@ class AgentType(Enum):
     REDIS_FOCUSED = "redis_triage"  # Alias for REDIS_TRIAGE
 
 
-def _format_conversation_context(
+def format_conversation_context(
     conversation_history: Optional[List[BaseMessage]], max_messages: int = 4
 ) -> str:
     """Format recent conversation history for the router to understand context."""
@@ -93,7 +93,7 @@ async def route_to_appropriate_agent(
             llm = create_nano_llm(timeout=10.0)
 
             # Include conversation context if available
-            context_str = _format_conversation_context(conversation_history)
+            context_str = format_conversation_context(conversation_history)
 
             system_prompt = """You are a query categorization system for a Redis SRE agent.
 
@@ -137,11 +137,10 @@ Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
             return AgentType(preferred)
 
     # 4. Use LLM to categorize triage vs chat
+    context_str = format_conversation_context(conversation_history)
+
     try:
         llm = create_nano_llm(timeout=10.0)
-
-        # Include conversation context if available
-        context_str = _format_conversation_context(conversation_history)
 
         system_prompt = """You are a query categorization system for a Redis SRE agent.
 
@@ -208,7 +207,11 @@ Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
         return AgentType.REDIS_CHAT
 
     except Exception as e:
-        if has_cluster and not has_instance and cluster_query_requests_db_diagnostics(query=query):
+        if (
+            has_cluster
+            and not has_instance
+            and cluster_query_requests_db_diagnostics(query=query, conversation_context=context_str)
+        ):
             logger.warning(
                 "LLM routing failed for cluster-scoped diagnostic query; "
                 "auto-upgrading to REDIS_TRIAGE: %s",
