@@ -234,6 +234,38 @@ class TestRouteToAppropriateAgent:
 
             assert result == AgentType.REDIS_TRIAGE
 
+    async def test_cluster_context_with_db_word_auto_upgrades_to_triage(self):
+        """A standalone 'db' term should trigger cluster diagnostic auto-upgrade."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "CHAT"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
+            result = await route_to_appropriate_agent(
+                query="check db health for this cluster",
+                context={"cluster_id": "cluster-prod-1"},
+            )
+
+            assert result == AgentType.REDIS_TRIAGE
+
+    async def test_cluster_context_with_db_substring_does_not_auto_upgrade(self):
+        """Words containing 'db' as a substring should not trigger auto-upgrade."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "CHAT"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
+            result = await route_to_appropriate_agent(
+                query="share feedback on this cluster",
+                context={"cluster_id": "cluster-prod-1"},
+            )
+
+            assert result == AgentType.REDIS_CHAT
+
     async def test_cluster_context_with_deep_request_routes_to_triage(self):
         """Cluster-scoped deep triage requests should route to triage."""
         with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:

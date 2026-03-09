@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 _CLUSTER_DB_DIAGNOSTIC_SIGNAL_TERMS: Final[tuple[str, ...]] = (
@@ -26,10 +27,20 @@ _CLUSTER_DB_DIAGNOSTIC_SIGNAL_TERMS: Final[tuple[str, ...]] = (
     "db",
 )
 
+_DB_WORD_PATTERN = re.compile(r"\bdb\b")
+
 
 def cluster_query_requests_db_diagnostics(query: str, conversation_context: str = "") -> bool:
     """Detect whether cluster-scoped query text implies DB/instance diagnostics."""
     text = f"{query or ''} {conversation_context or ''}".lower()
     if not text.strip():
         return False
-    return any(term in text for term in _CLUSTER_DB_DIAGNOSTIC_SIGNAL_TERMS)
+
+    for term in _CLUSTER_DB_DIAGNOSTIC_SIGNAL_TERMS:
+        if term == "db":
+            if _DB_WORD_PATTERN.search(text):
+                return True
+            continue
+        if term in text:
+            return True
+    return False
