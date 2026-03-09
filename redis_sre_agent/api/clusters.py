@@ -12,10 +12,14 @@ from pydantic import (
     ValidationError,
     field_serializer,
     field_validator,
-    model_validator,
 )
 
 from redis_sre_agent.core import clusters as core_clusters
+from redis_sre_agent.core.cluster_admin_defaults import (
+    build_enterprise_admin_missing_fields_error,
+    missing_enterprise_admin_fields,
+    resolve_enterprise_admin_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,27 +146,6 @@ class CreateClusterRequest(BaseModel):
             raise ValueError("created_by must be 'user' or 'agent'")
         return normalized
 
-    @model_validator(mode="after")
-    def validate_admin_fields(self):
-        has_url = bool((self.admin_url or "").strip())
-        has_username = bool((self.admin_username or "").strip())
-        has_password = bool(self.admin_password)
-
-        if self.cluster_type == "redis_enterprise":
-            if not (has_url and has_username and has_password):
-                raise ValueError(
-                    "cluster_type=redis_enterprise requires admin_url, admin_username, and admin_password"
-                )
-            return self
-
-        if has_url or has_username or has_password:
-            raise ValueError(
-                "admin_url/admin_username/admin_password are only valid for "
-                "cluster_type=redis_enterprise"
-            )
-
-        return self
-
     @field_serializer("admin_password", when_used="json")
     def dump_secret(self, v):
         if v is None:
@@ -272,6 +255,24 @@ async def create_cluster(request: CreateClusterRequest):
                 status_code=400, detail=f"Cluster with name '{request.name}' already exists"
             )
 
+        resolved_admin = resolve_enterprise_admin_fields(
+            cluster_type=request.cluster_type,
+            admin_url=request.admin_url,
+            admin_username=request.admin_username,
+            admin_password=request.admin_password,
+        )
+        if request.cluster_type == "redis_enterprise":
+            missing_fields = missing_enterprise_admin_fields(
+                admin_url=resolved_admin.admin_url,
+                admin_username=resolved_admin.admin_username,
+                admin_password=resolved_admin.admin_password,
+            )
+            if missing_fields:
+                raise HTTPException(
+                    status_code=400,
+                    detail=build_enterprise_admin_missing_fields_error(missing_fields),
+                )
+
         cluster_id = f"cluster-{request.environment}-{int(datetime.now().timestamp())}"
         new_cluster = core_clusters.RedisCluster(
             id=cluster_id,
@@ -280,9 +281,9 @@ async def create_cluster(request: CreateClusterRequest):
             environment=request.environment,
             description=request.description,
             notes=request.notes,
-            admin_url=request.admin_url,
-            admin_username=request.admin_username,
-            admin_password=request.admin_password,
+            admin_url=resolved_admin.admin_url,
+            admin_username=resolved_admin.admin_username,
+            admin_password=resolved_admin.admin_password,
             status=request.status,
             version=request.version,
             last_checked=request.last_checked,
@@ -299,6 +300,8 @@ async def create_cluster(request: CreateClusterRequest):
 
     except HTTPException:
         raise
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create cluster: {e}")
         raise HTTPException(status_code=500, detail="Failed to create cluster")
