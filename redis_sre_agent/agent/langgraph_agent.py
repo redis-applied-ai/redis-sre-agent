@@ -28,7 +28,7 @@ from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-from ..agent.router import AgentType, route_to_appropriate_agent
+from ..agent.router import AgentType, format_conversation_context, route_to_appropriate_agent
 from ..core.config import settings
 from ..core.instances import (
     create_instance,
@@ -40,6 +40,7 @@ from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..tools.manager import ToolManager
+from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
 from .knowledge_context import build_startup_knowledge_context
@@ -84,6 +85,243 @@ def _parse_redis_connection_url(connection_url: str) -> tuple[str, int]:
         masked_url = _mask_redis_url_credentials(connection_url)
         logger.warning(f"Failed to parse connection URL {masked_url}: {e}")
         return "localhost", 6379
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    """Best-effort integer conversion for numeric telemetry fields."""
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except Exception:
+        try:
+            return int(float(value))
+        except Exception:
+            return default
+
+
+async def _collect_cluster_instance_diagnostics(
+    linked_instances: List[Any],
+    *,
+    max_instances: int = 5,
+) -> Dict[str, Any]:
+    """Run a bounded diagnostics fan-out across linked Redis instances.
+
+    The bundle is intentionally lightweight and read-only:
+    - INFO memory
+    - INFO clients
+    - INFO stats
+    - INFO keyspace
+    - replication_info
+    """
+    total = len(linked_instances)
+    selected = linked_instances[: max(0, max_instances)]
+    truncated = total > len(selected)
+
+    if not selected:
+        return {
+            "inspected_instances": 0,
+            "total_linked_instances": total,
+            "truncated": truncated,
+            "snapshots": [],
+            "summary_lines": [],
+            "aggregate": {
+                "successful_instances": 0,
+                "connected_clients": 0,
+                "blocked_clients": 0,
+                "instantaneous_ops_per_sec": 0,
+                "evicted_keys": 0,
+                "expired_keys": 0,
+                "estimated_db_count": 0,
+            },
+        }
+
+    semaphore = asyncio.Semaphore(3)
+
+    async def _inspect_instance(instance: Any) -> Dict[str, Any]:
+        name = getattr(instance, "name", "unknown")
+        instance_id = getattr(instance, "id", "unknown")
+        environment = getattr(instance, "environment", "unknown")
+        snapshot: Dict[str, Any] = {
+            "instance_id": instance_id,
+            "instance_name": name,
+            "environment": environment,
+            "status": "error",
+            "metrics": {},
+            "error": "",
+        }
+
+        async with semaphore:
+            try:
+                from redis_sre_agent.tools.diagnostics.redis_command.provider import (
+                    RedisCommandToolProvider,
+                )
+
+                async with RedisCommandToolProvider(redis_instance=instance) as provider:
+                    (
+                        raw_info_memory,
+                        raw_info_clients,
+                        raw_info_stats,
+                        raw_info_keyspace,
+                        raw_replication,
+                    ) = await asyncio.gather(
+                        provider.info("memory"),
+                        provider.info("clients"),
+                        provider.info("stats"),
+                        provider.info("keyspace"),
+                        provider.replication_info(),
+                        return_exceptions=True,
+                    )
+
+                def _normalize_result(label: str, result: Any) -> Dict[str, Any]:
+                    if isinstance(result, Exception):
+                        return {"status": "error", "error": f"{label} failed: {result}"}
+                    if isinstance(result, dict):
+                        return result
+                    return {
+                        "status": "error",
+                        "error": f"{label} returned unexpected result type: {type(result).__name__}",
+                    }
+
+                info_memory = _normalize_result("INFO memory", raw_info_memory)
+                info_clients = _normalize_result("INFO clients", raw_info_clients)
+                info_stats = _normalize_result("INFO stats", raw_info_stats)
+                info_keyspace = _normalize_result("INFO keyspace", raw_info_keyspace)
+                replication = _normalize_result("replication_info", raw_replication)
+
+                errors: List[str] = []
+                for result in (
+                    info_memory,
+                    info_clients,
+                    info_stats,
+                    info_keyspace,
+                    replication,
+                ):
+                    if isinstance(result, dict) and result.get("status") == "error":
+                        err = result.get("error")
+                        if err:
+                            errors.append(str(err))
+
+                memory_data = (
+                    info_memory.get("data", {})
+                    if isinstance(info_memory, dict) and info_memory.get("status") == "success"
+                    else {}
+                )
+                clients_data = (
+                    info_clients.get("data", {})
+                    if isinstance(info_clients, dict) and info_clients.get("status") == "success"
+                    else {}
+                )
+                stats_data = (
+                    info_stats.get("data", {})
+                    if isinstance(info_stats, dict) and info_stats.get("status") == "success"
+                    else {}
+                )
+                keyspace_data = (
+                    info_keyspace.get("data", {})
+                    if isinstance(info_keyspace, dict) and info_keyspace.get("status") == "success"
+                    else {}
+                )
+
+                role_type = None
+                if isinstance(replication, dict):
+                    role = replication.get("role")
+                    if isinstance(role, dict):
+                        role_type = role.get("type")
+
+                db_count = 0
+                if isinstance(keyspace_data, dict):
+                    db_count = len(
+                        [key for key in keyspace_data.keys() if str(key).lower().startswith("db")]
+                    )
+
+                metrics = {
+                    "role": role_type or "unknown",
+                    "used_memory": _to_int(memory_data.get("used_memory")),
+                    "used_memory_human": memory_data.get("used_memory_human") or "unknown",
+                    "maxmemory": _to_int(memory_data.get("maxmemory")),
+                    "connected_clients": _to_int(clients_data.get("connected_clients")),
+                    "blocked_clients": _to_int(clients_data.get("blocked_clients")),
+                    "instantaneous_ops_per_sec": _to_int(
+                        stats_data.get("instantaneous_ops_per_sec")
+                    ),
+                    "evicted_keys": _to_int(stats_data.get("evicted_keys")),
+                    "expired_keys": _to_int(stats_data.get("expired_keys")),
+                    "estimated_db_count": db_count,
+                }
+
+                snapshot["metrics"] = metrics
+                if errors:
+                    snapshot["status"] = "partial"
+                    snapshot["error"] = "; ".join(errors)
+                else:
+                    snapshot["status"] = "success"
+            except Exception as exc:
+                snapshot["status"] = "error"
+                snapshot["error"] = str(exc)
+
+        return snapshot
+
+    snapshots = await asyncio.gather(*[_inspect_instance(inst) for inst in selected])
+
+    successful_snapshots = [
+        s for s in snapshots if s.get("status") in ("success", "partial") and s.get("metrics")
+    ]
+    aggregate = {
+        "successful_instances": len(successful_snapshots),
+        "connected_clients": sum(
+            _to_int((s.get("metrics") or {}).get("connected_clients")) for s in successful_snapshots
+        ),
+        "blocked_clients": sum(
+            _to_int((s.get("metrics") or {}).get("blocked_clients")) for s in successful_snapshots
+        ),
+        "instantaneous_ops_per_sec": sum(
+            _to_int((s.get("metrics") or {}).get("instantaneous_ops_per_sec"))
+            for s in successful_snapshots
+        ),
+        "evicted_keys": sum(
+            _to_int((s.get("metrics") or {}).get("evicted_keys")) for s in successful_snapshots
+        ),
+        "expired_keys": sum(
+            _to_int((s.get("metrics") or {}).get("expired_keys")) for s in successful_snapshots
+        ),
+        "estimated_db_count": sum(
+            _to_int((s.get("metrics") or {}).get("estimated_db_count"))
+            for s in successful_snapshots
+        ),
+    }
+
+    summary_lines: List[str] = []
+    for snapshot in snapshots:
+        name = snapshot.get("instance_name", "unknown")
+        instance_id = snapshot.get("instance_id", "unknown")
+        status = snapshot.get("status", "unknown")
+        metrics = snapshot.get("metrics") or {}
+
+        if status == "error":
+            summary_lines.append(
+                f"- {name} ({instance_id}): status=error, error={snapshot.get('error') or 'unknown'}"
+            )
+            continue
+
+        summary_lines.append(
+            (
+                f"- {name} ({instance_id}): status={status}, role={metrics.get('role', 'unknown')}, "
+                f"connected_clients={metrics.get('connected_clients', 0)}, "
+                f"used_memory={metrics.get('used_memory_human', 'unknown')}, "
+                f"ops_per_sec={metrics.get('instantaneous_ops_per_sec', 0)}, "
+                f"estimated_db_count={metrics.get('estimated_db_count', 0)}"
+            )
+        )
+
+    return {
+        "inspected_instances": len(selected),
+        "total_linked_instances": total,
+        "truncated": truncated,
+        "snapshots": snapshots,
+        "summary_lines": summary_lines,
+        "aggregate": aggregate,
+    }
 
 
 def _get_secret_value(secret: Any) -> str:
@@ -1525,6 +1763,128 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but the instance
 
 CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an error retrieving instance details. Please proceed with general Redis troubleshooting."""
 
+        elif context and context.get("cluster_id"):
+            cluster_id = context["cluster_id"]
+            logger.info(f"Processing query with Redis cluster context: {cluster_id}")
+
+            try:
+                from ..core.clusters import get_cluster_by_id
+
+                cluster = await get_cluster_by_id(cluster_id)
+                if not cluster:
+                    logger.warning(
+                        "Cluster %s not found, proceeding without specific cluster context",
+                        cluster_id,
+                    )
+                    enhanced_query = f"""User Query: {query}
+
+CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but the cluster was not found in the system. Please proceed with general Redis troubleshooting."""
+                else:
+                    all_instances = await get_instances()
+                    linked_instances = [
+                        inst
+                        for inst in all_instances
+                        if (inst.cluster_id or "").strip() == str(cluster_id).strip()
+                    ]
+                    conversation_context_text = format_conversation_context(conversation_history)
+                    requires_instance_inspection = cluster_query_requests_db_diagnostics(
+                        query=query, conversation_context=conversation_context_text
+                    )
+
+                    linked_lines = "\n".join(
+                        [
+                            f"- {inst.name} ({inst.id}) [{inst.environment}]"
+                            for inst in linked_instances[:10]
+                        ]
+                    )
+                    if not linked_lines:
+                        linked_lines = "- None"
+
+                    if requires_instance_inspection and linked_instances:
+                        # Fan out a bounded diagnostics bundle across linked instances.
+                        # Keep tool manager unbound to a single DB target for this mode.
+                        fanout = await _collect_cluster_instance_diagnostics(linked_instances)
+                        inspected_instances = fanout.get("inspected_instances", 0)
+                        total_linked_instances = fanout.get("total_linked_instances", 0)
+                        truncated = fanout.get("truncated", False)
+                        fanout_lines = fanout.get("summary_lines") or [
+                            "- No diagnostics collected."
+                        ]
+                        aggregate = fanout.get("aggregate") or {}
+
+                        fanout_text = "\n".join([str(line) for line in fanout_lines])
+                        truncation_note = (
+                            f"- NOTE: diagnostics were bounded to {inspected_instances} instances "
+                            f"(out of {total_linked_instances} linked)."
+                            if truncated
+                            else "- NOTE: all linked instances were inspected."
+                        )
+                        logger.info(
+                            "Cluster query fan-out complete: inspected=%s total=%s truncated=%s",
+                            inspected_instances,
+                            total_linked_instances,
+                            truncated,
+                        )
+
+                        enhanced_query = f"""User Query: {query}
+
+IMPORTANT CONTEXT: This query is scoped to Redis cluster:
+- Cluster ID: {cluster.id}
+- Cluster Name: {cluster.name}
+- Cluster Type: {cluster.cluster_type}
+- Environment: {cluster.environment}
+- Linked Instances ({len(linked_instances)}):
+{linked_lines}
+
+Cluster fan-out diagnostics summary:
+- inspected_instances={inspected_instances}
+- total_linked_instances={total_linked_instances}
+{truncation_note}
+{fanout_text}
+
+Cluster fan-out aggregate metrics:
+- successful_instances={aggregate.get("successful_instances", 0)}
+- connected_clients={aggregate.get("connected_clients", 0)}
+- blocked_clients={aggregate.get("blocked_clients", 0)}
+- instantaneous_ops_per_sec={aggregate.get("instantaneous_ops_per_sec", 0)}
+- evicted_keys={aggregate.get("evicted_keys", 0)}
+- expired_keys={aggregate.get("expired_keys", 0)}
+- estimated_db_count={aggregate.get("estimated_db_count", 0)}
+
+Use this fan-out evidence to produce cluster-wide conclusions and recommendations. If deeper follow-up is needed, explicitly call out which linked instances require additional investigation."""
+                    elif requires_instance_inspection and not linked_instances:
+                        logger.info(
+                            "Cluster query requested instance diagnostics but no linked instances exist"
+                        )
+                        enhanced_query = f"""User Query: {query}
+
+IMPORTANT CONTEXT: This query is scoped to Redis cluster:
+- Cluster ID: {cluster.id}
+- Cluster Name: {cluster.name}
+- Cluster Type: {cluster.cluster_type}
+- Environment: {cluster.environment}
+- Linked Instances: None
+
+There are no Redis instances linked to this cluster, so do NOT use database-specific diagnostic tools. Use only non-database tools (knowledge/cluster-level/integration tools) and explain what additional instance linkage is needed for deeper diagnostics."""
+                    else:
+                        enhanced_query = f"""User Query: {query}
+
+IMPORTANT CONTEXT: This query is scoped to Redis cluster:
+- Cluster ID: {cluster.id}
+- Cluster Name: {cluster.name}
+- Cluster Type: {cluster.cluster_type}
+- Environment: {cluster.environment}
+- Linked Instances ({len(linked_instances)}):
+{linked_lines}
+
+Focus on cluster-level analysis and use instance-level diagnostics only if the user asks for database-specific checks."""
+
+            except Exception as e:
+                logger.error(f"Failed to resolve cluster {cluster_id}: {e}")
+                enhanced_query = f"""User Query: {query}
+
+CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but there was an error retrieving cluster details. Please proceed with general Redis troubleshooting."""
+
         elif context and context.get("support_package_path"):
             # Support package provided without specific instance - focus on the package
             support_pkg_path = context["support_package_path"]
@@ -1708,7 +2068,7 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
 
         # Defer initial state construction until tools are loaded so startup context
         # can include the actual tool instructions available for this query.
-        initial_instance_context = context if context and context.get("instance_id") else None
+        initial_instance_context = context if context else None
 
         # INSTANCE TYPE TRIAGE: Detect and validate instance type before loading tools
         if target_instance and target_instance.instance_type in ["unknown", None]:

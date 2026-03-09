@@ -211,10 +211,18 @@ class TestClustersAPI:
             "admin_password": "secret",
         }
 
-        response = client.post("/api/v1/clusters", json=invalid_data)
+        with (
+            patch("redis_sre_agent.core.clusters.get_clusters") as mock_get,
+            patch("redis_sre_agent.core.clusters.save_clusters") as mock_save,
+            patch("redis_sre_agent.api.clusters.core_clusters.RedisCluster") as mock_model,
+        ):
+            mock_get.return_value = []
+            response = client.post("/api/v1/clusters", json=invalid_data)
 
         assert response.status_code == 400
         assert "admin_url/admin_username/admin_password are only valid" in response.json()["detail"]
+        mock_model.assert_not_called()
+        mock_save.assert_not_called()
 
     def test_update_cluster_success(self, client, sample_cluster):
         """Test successful cluster update."""

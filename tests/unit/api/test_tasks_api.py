@@ -52,6 +52,23 @@ class TestTasksAPI:
             assert data["task_id"] == "t1"
             assert data["thread_id"] == "th1"
 
+    def test_create_task_rejects_instance_and_cluster_together(self, client):
+        """POST /api/v1/tasks returns 400 when both target IDs are provided."""
+        with patch("redis_sre_agent.api.tasks.get_redis_client"):
+            resp = client.post(
+                "/api/v1/tasks",
+                json={
+                    "message": "help",
+                    "context": {
+                        "instance_id": "redis-prod-1",
+                        "cluster_id": "cluster-prod-1",
+                    },
+                },
+            )
+
+        assert resp.status_code == 400
+        assert "only one of instance_id or cluster_id" in resp.json()["detail"]
+
     def test_get_task_success(self, client):
         """GET /api/v1/tasks/{task_id} returns 200 with state."""
 

@@ -27,6 +27,13 @@ router = APIRouter()
 
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
+    context = req.context or {}
+    if context.get("instance_id") and context.get("cluster_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide only one of instance_id or cluster_id in context",
+        )
+
     try:
         redis_client = get_redis_client()
         data = await create_task(
@@ -52,6 +59,8 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
             )
 
         return task
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create task: {e}")
         raise HTTPException(status_code=500, detail=str(e))

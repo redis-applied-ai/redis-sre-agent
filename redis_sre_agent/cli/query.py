@@ -19,6 +19,7 @@ from redis_sre_agent.core.citation_message import (
     format_citation_message,
     should_include_citations,
 )
+from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import get_instance_by_id
 from redis_sre_agent.core.redis import get_redis_client
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 @click.command()
 @click.argument("query")
 @click.option("--redis-instance-id", "-r", help="Redis instance ID to investigate")
+@click.option("--redis-cluster-id", "-c", help="Redis cluster ID to investigate")
 @click.option("--support-package-id", "-p", help="Support package ID to analyze")
 @click.option("--thread-id", "-t", help="Thread ID to continue an existing conversation")
 @click.option(
@@ -42,6 +44,7 @@ logger = logging.getLogger(__name__)
 def query(
     query: str,
     redis_instance_id: Optional[str],
+    redis_cluster_id: Optional[str],
     support_package_id: Optional[str],
     thread_id: Optional[str],
     agent: str,
@@ -71,12 +74,27 @@ def query(
         mcp_pool = MCPConnectionPool.get_instance()
         await mcp_pool.start()
 
+        # Validate targeting mode: at most one explicit target
+        if redis_instance_id and redis_cluster_id:
+            console.print(
+                "[red]❌ Please provide only one of --redis-instance-id or --redis-cluster-id[/red]"
+            )
+            exit(1)
+
         # Resolve instance if provided
         instance = None
         if redis_instance_id:
             instance = await get_instance_by_id(redis_instance_id)
             if not instance:
                 console.print(f"[red]❌ Instance not found: {redis_instance_id}[/red]")
+                exit(1)
+
+        # Resolve cluster if provided
+        cluster = None
+        if redis_cluster_id:
+            cluster = await get_cluster_by_id(redis_cluster_id)
+            if not cluster:
+                console.print(f"[red]❌ Cluster not found: {redis_cluster_id}[/red]")
                 exit(1)
 
         # Resolve support package if provided
@@ -111,17 +129,23 @@ def query(
                 elif msg.role == "assistant":
                     conversation_history.append(AIMessage(content=msg.content))
 
-            # Use instance from thread context if not provided
-            if not instance and thread.context.get("instance_id"):
+            # Use target from thread context if no target was explicitly provided
+            if not instance and not cluster and thread.context.get("instance_id"):
                 instance = await get_instance_by_id(thread.context["instance_id"])
                 if instance:
                     console.print(f"[dim]🔗 Using instance from thread: {instance.name}[/dim]")
+            elif not instance and not cluster and thread.context.get("cluster_id"):
+                cluster = await get_cluster_by_id(thread.context["cluster_id"])
+                if cluster:
+                    console.print(f"[dim]🔗 Using cluster from thread: {cluster.name}[/dim]")
 
         else:
             # Create new thread
             initial_context = {}
             if instance:
                 initial_context["instance_id"] = instance.id
+            elif cluster:
+                initial_context["cluster_id"] = cluster.id
             if support_package_id:
                 initial_context["support_package_id"] = support_package_id
                 initial_context["support_package_path"] = str(support_package_path)
@@ -139,11 +163,15 @@ def query(
 
         if instance:
             console.print(f"[dim]🔗 Redis instance: {instance.name}[/dim]")
+        elif cluster:
+            console.print(f"[dim]🔗 Redis cluster: {cluster.name}[/dim]")
 
         # Build context for routing
         routing_context = {}
         if instance:
             routing_context["instance_id"] = instance.id
+        elif cluster:
+            routing_context["cluster_id"] = cluster.id
         if support_package_path:
             routing_context["support_package_path"] = str(support_package_path)
 
@@ -185,6 +213,8 @@ def query(
             context = {}
             if instance:
                 context["instance_id"] = instance.id
+            elif cluster:
+                context["cluster_id"] = cluster.id
             if support_package_path:
                 context["support_package_path"] = str(support_package_path)
 

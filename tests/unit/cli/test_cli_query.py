@@ -39,6 +39,8 @@ def test_query_cli_help_shows_options():
     assert "triage" in result.output
     assert "chat" in result.output
     assert "knowledge" in result.output
+    assert "--redis-cluster-id" in result.output
+    assert "-c" in result.output
 
 
 def test_query_without_instance_uses_knowledge_agent(mock_thread_manager, mock_redis_client):
@@ -184,6 +186,96 @@ def test_query_with_unknown_instance_exits_with_error_and_skips_agents(
     # Since the instance doesn't exist, no agent should be initialized or invoked
     mock_get_knowledge.assert_not_called()
     mock_get_sre.assert_not_called()
+    mock_agent.process_query.assert_not_awaited()
+
+
+def test_query_with_cluster_uses_sre_agent_and_passes_cluster_context(
+    mock_thread_manager, mock_redis_client
+):
+    runner = CliRunner()
+
+    class DummyCluster:
+        def __init__(self, id: str, name: str):  # noqa: A003
+            self.id = id
+            self.name = name
+
+    cluster = DummyCluster("cluster-prod-123", "Prod Cluster")
+
+    mock_sre_agent = MagicMock()
+    mock_sre_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
+
+    from redis_sre_agent.agent.router import AgentType
+
+    with (
+        patch(
+            "redis_sre_agent.cli.query.get_cluster_by_id",
+            new=AsyncMock(return_value=cluster),
+        ) as mock_get_cluster,
+        patch(
+            "redis_sre_agent.cli.query.get_sre_agent", return_value=mock_sre_agent
+        ) as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+        ),
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+    ):
+        result = runner.invoke(
+            query,
+            [
+                "Check this cluster",
+                "-c",
+                cluster.id,
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_get_cluster.assert_awaited_once_with(cluster.id)
+    mock_get_sre.assert_called_once()
+    mock_get_knowledge.assert_not_called()
+
+    mock_sre_agent.process_query.assert_awaited_once()
+    _, kwargs = mock_sre_agent.process_query.call_args
+    assert kwargs.get("context") == {"cluster_id": cluster.id}
+
+
+def test_query_rejects_both_instance_and_cluster_ids(mock_thread_manager, mock_redis_client):
+    runner = CliRunner()
+
+    mock_agent = MagicMock()
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent
+        ) as mock_get_knowledge,
+        patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_chat_agent") as mock_get_chat,
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+    ):
+        result = runner.invoke(
+            query,
+            [
+                "Check target",
+                "-r",
+                "redis-prod-1",
+                "-c",
+                "cluster-prod-1",
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert "only one of --redis-instance-id or --redis-cluster-id" in result.output
+    mock_get_knowledge.assert_not_called()
+    mock_get_sre.assert_not_called()
+    mock_get_chat.assert_not_called()
     mock_agent.process_query.assert_not_awaited()
 
 

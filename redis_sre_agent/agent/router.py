@@ -13,6 +13,8 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.core.llm_helpers import create_nano_llm
 
+from .cluster_diagnostics import cluster_query_requests_db_diagnostics
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +29,7 @@ class AgentType(Enum):
     REDIS_FOCUSED = "redis_triage"  # Alias for REDIS_TRIAGE
 
 
-def _format_conversation_context(
+def format_conversation_context(
     conversation_history: Optional[List[BaseMessage]], max_messages: int = 4
 ) -> str:
     """Format recent conversation history for the router to understand context."""
@@ -59,9 +61,9 @@ async def route_to_appropriate_agent(
     Route a query to the appropriate agent using a fast LLM categorization.
 
     Routing logic:
-    - No Redis instance: KNOWLEDGE_ONLY (general knowledge questions)
-    - Has Redis instance + asks for full/comprehensive health check or triage: REDIS_TRIAGE
-    - Has Redis instance + quick question: REDIS_CHAT (fast diagnostic loop)
+    - No Redis diagnostic scope (instance/cluster): KNOWLEDGE_ONLY (general knowledge questions)
+    - Has Redis diagnostic scope + asks for deep/comprehensive triage: REDIS_TRIAGE
+    - Has Redis diagnostic scope + quick/standard question: REDIS_CHAT (fast diagnostic loop)
 
     Args:
         query: The user's query text
@@ -75,21 +77,23 @@ async def route_to_appropriate_agent(
     logger.info(f"Routing query: {query[:100]}...")
 
     has_instance = context and context.get("instance_id")
+    has_cluster = context and context.get("cluster_id")
     has_support_package = context and context.get("support_package_path")
+    has_diagnostic_scope = bool(has_instance or has_cluster)
 
     # 1. Has support package - route to triage (needs diagnostic tools)
     if has_support_package:
         logger.info("Support package provided - routing to REDIS_TRIAGE for diagnostic tools")
         return AgentType.REDIS_TRIAGE
 
-    # 2. No instance context - route to knowledge agent
-    if not has_instance:
+    # 2. No diagnostic scope (instance/cluster) - route to knowledge agent
+    if not has_diagnostic_scope:
         # Use LLM to decide if query needs instance access or is knowledge-only
         try:
             llm = create_nano_llm(timeout=10.0)
 
             # Include conversation context if available
-            context_str = _format_conversation_context(conversation_history)
+            context_str = format_conversation_context(conversation_history)
 
             system_prompt = """You are a query categorization system for a Redis SRE agent.
 
@@ -124,7 +128,7 @@ Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
             logger.error(f"Error during LLM routing: {e}, defaulting to KNOWLEDGE_ONLY")
             return AgentType.KNOWLEDGE_ONLY
 
-    # 2. Has instance - decide between triage (full) and chat (quick)
+    # 3. Has instance or cluster scope - decide between triage (full) and chat (quick)
     # Check user preferences first
     if user_preferences and user_preferences.get("preferred_agent"):
         preferred = user_preferences["preferred_agent"]
@@ -132,16 +136,15 @@ Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
             logger.info(f"Using user preference: {preferred}")
             return AgentType(preferred)
 
-    # 3. Use LLM to categorize triage vs chat
+    # 4. Use LLM to categorize triage vs chat
+    context_str = format_conversation_context(conversation_history)
+
     try:
         llm = create_nano_llm(timeout=10.0)
 
-        # Include conversation context if available
-        context_str = _format_conversation_context(conversation_history)
-
         system_prompt = """You are a query categorization system for a Redis SRE agent.
 
-The user has a Redis instance available. Determine what kind of agent should handle their query.
+The user has Redis diagnostic scope available (instance and/or cluster). Determine what kind of agent should handle their query.
 Consider the conversation context if provided - a follow-up like "yes", "sure", or "check that" refers to the previous discussion.
 
 1. DEEP_TRIAGE: ONLY use this for explicit requests for deep, comprehensive, or multi-topic analysis.
@@ -173,7 +176,10 @@ DEFAULT TO CHAT unless you see explicit deep/exhaustive keywords.
 
 Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
 
-        query_with_context = f"Categorize this query: {query}{context_str}"
+        scope_hint = (
+            " [Scope: cluster]" if has_cluster and not has_instance else " [Scope: instance]"
+        )
+        query_with_context = f"Categorize this query:{scope_hint} {query}{context_str}"
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=query_with_context),
@@ -185,10 +191,32 @@ Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
         if "DEEP_TRIAGE" in category:
             logger.info("LLM categorized query as REDIS_TRIAGE (deep triage requested)")
             return AgentType.REDIS_TRIAGE
-        else:
-            logger.info("LLM categorized query as REDIS_CHAT (default agent)")
-            return AgentType.REDIS_CHAT
+
+        # Auto-upgrade cluster-scoped DB diagnostics to triage even when LLM says CHAT.
+        if (
+            has_cluster
+            and not has_instance
+            and cluster_query_requests_db_diagnostics(query=query, conversation_context=context_str)
+        ):
+            logger.info(
+                "Auto-upgrading cluster-scoped diagnostic query to REDIS_TRIAGE (LLM returned CHAT)"
+            )
+            return AgentType.REDIS_TRIAGE
+
+        logger.info("LLM categorized query as REDIS_CHAT (default agent)")
+        return AgentType.REDIS_CHAT
 
     except Exception as e:
+        if (
+            has_cluster
+            and not has_instance
+            and cluster_query_requests_db_diagnostics(query=query, conversation_context=context_str)
+        ):
+            logger.warning(
+                "LLM routing failed for cluster-scoped diagnostic query; "
+                "auto-upgrading to REDIS_TRIAGE: %s",
+                e,
+            )
+            return AgentType.REDIS_TRIAGE
         logger.error(f"Error during LLM routing: {e}, defaulting to REDIS_CHAT")
         return AgentType.REDIS_CHAT
