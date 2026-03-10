@@ -140,21 +140,6 @@ uv run redis-sre-agent instance create \
   --cluster-id "<cluster_id>"
 ```
 
-Legacy compatibility flow (deprecated, still accepted):
-
-```bash
-uv run redis-sre-agent instance create \
-  --name "re-prod-db-legacy" \
-  --connection-url "rediss://default:<db-password>@re-cluster.example.com:12000" \
-  --environment production \
-  --usage cache \
-  --description "Redis Enterprise production database" \
-  --instance-type redis_enterprise \
-  --admin-url "https://re-cluster.example.com:9443" \
-  --admin-username "admin@redis.com" \
-  --admin-password "<admin-password>"
-```
-
 UI:
 - Set **Instance Type** to `Redis Enterprise`
 - Fill:

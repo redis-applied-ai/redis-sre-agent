@@ -203,7 +203,7 @@ The agent consists of two processes:
 ### Start the Worker (Terminal 1)
 ```bash
 cd redis-sre-agent
-uv run redis-sre-agent worker --concurrency 4
+uv run redis-sre-agent worker start --concurrency 4
 ```
 
 Expected output:
@@ -311,7 +311,7 @@ Type=simple
 User=sre-agent
 WorkingDirectory=/opt/redis-sre-agent
 Environment="PATH=/home/sre-agent/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/sre-agent/.cargo/bin/uv run redis-sre-agent worker --concurrency 4
+ExecStart=/home/sre-agent/.cargo/bin/uv run redis-sre-agent worker start --concurrency 4
 Restart=always
 RestartSec=10
 

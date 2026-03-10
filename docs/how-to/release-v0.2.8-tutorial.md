@@ -271,7 +271,6 @@ Release item:
 
 Use the updated connection guide for:
 - Cluster-first Redis Enterprise flow (`cluster create` first, then `instance create --cluster-id`)
-- Legacy compatibility flow (`instance create` with deprecated `admin_*` fields)
 - Env-default credential fallback for enterprise cluster creation in CLI and API
 
 Reference:

@@ -100,11 +100,9 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
 - The API masks credentials in returned `connection_url`
 - `cluster_id` is optional; it is only required when linking an instance to an existing cluster
 - `cluster_id` is the preferred credential path when using Redis Enterprise admin credentials
-- Legacy instance `admin_url`, `admin_username`, `admin_password` are still accepted but deprecated
-- If you send deprecated instance admin fields, send all three together
 - Use `PUT /api/v1/instances/{id}` to update fields (masked secrets are preserved)
 - Use `DELETE /api/v1/instances/{id}` to remove
-- Startup runs an automated instance->cluster backfill migration for legacy data
+- Startup runs an automated instance->cluster backfill migration for existing data
 - Manual backfill is available via CLI: `uv run redis-sre-agent cluster backfill-instance-links --dry-run`
 - If backfill reports a completion marker and skips work, rerun with `--force`: `uv run redis-sre-agent cluster backfill-instance-links --force --json`
 
