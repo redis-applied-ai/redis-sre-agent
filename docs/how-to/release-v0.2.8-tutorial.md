@@ -4,6 +4,16 @@ This walkthrough validates each user-facing feature from the
 [`v0.2.8` release](https://github.com/redis-applied-ai/redis-sre-agent/releases/tag/v0.2.8)
 with runnable examples.
 
+## Release Items Covered
+
+- `fix: Force tool call on first turn in knowledge agent`
+- `docs: citation tracing via thread get/trace`
+- `docs: Redis connection setup guidance`
+- `feat: Split RedisCluster from RedisInstance`
+- `feat: pinned docs, skills, and support tickets`
+- `feat: Allow Redis Enterprise cluster creation to use env admin defaults`
+- `feat: Cluster-scoped diagnostics across CLI/API/UI/MCP`
+
 ## Prerequisites
 
 ```bash
@@ -35,8 +45,8 @@ You should see a thread ID in CLI output.
 # 1) Get thread messages
 uv run redis-sre-agent thread get <thread_id> --json
 
-# 2) Trace a specific assistant message (message_id)
-uv run redis-sre-agent thread trace <message_id> --json
+# 2) Trace by assistant message_id or decision trace ID printed by query
+uv run redis-sre-agent thread trace <message_id_or_decision_trace_id> --json
 
 # 3) Show source fragments gathered for the thread
 uv run redis-sre-agent thread sources <thread_id> --json
@@ -46,6 +56,8 @@ What to look for:
 - `thread trace` includes `tool_envelopes` entries for knowledge-search calls.
 - If sources were retrieved, the thread also includes a system message titled
   `**Sources for previous response**`.
+- `thread sources` returns fragment results from knowledge indexes.
+- For support-ticket retrieval flows, use `thread trace` + `thread get` for provenance.
 
 ## 2) RedisCluster / RedisInstance Split
 
@@ -204,7 +216,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/clusters \
 ## 5) Cluster-Scoped Diagnostics (CLI/API/MCP)
 
 Release item:
-- `feat: Cluster-scoped diagnostics: route to triage, fan out linked-instance checks, and add CLI/API/UI/MCP support`
+- `feat: Cluster-scoped diagnostics across CLI/API/UI/MCP`
 
 ### CLI path (fan-out verified)
 
@@ -238,9 +250,26 @@ curl -fsS http://localhost:8080/api/v1/tasks/<task_id> | jq
 
 ### MCP path
 
-Use `redis_sre_deep_triage` with `cluster_id` and poll with `redis_sre_get_task_status`.
+Create a task with `redis_sre_deep_triage` and poll to completion:
+
+1. `redis_sre_deep_triage(query="Check this cluster for connectivity and memory pressure", cluster_id="<cluster_id>")`
+2. `redis_sre_get_task_status(task_id="<task_id>")` until status is `done`
+3. Optional: `redis_sre_get_thread(thread_id="<thread_id>")` for full transcript
+
+## 6) Redis Connection Documentation Updates
+
+Release item:
+- `docs: ... establishing Redis connections`
+
+Use the updated connection guide for:
+- Cluster-first Redis Enterprise flow (`cluster create` first, then `instance create --cluster-id`)
+- Legacy compatibility flow (`instance create` with deprecated `admin_*` fields)
+- Env-default credential fallback for enterprise cluster creation in CLI and API
+
+Reference:
+- [How to connect to Redis](./connect-to-redis.md)
 
 ## Known Caveats from Real Validation
 
-- Some CLI/API outputs use different JSON envelope keys depending on command path.
+- CLI/API outputs use different JSON envelope keys by command path.
 - The docs examples here use command forms that are valid in `v0.2.8` CLI help output.

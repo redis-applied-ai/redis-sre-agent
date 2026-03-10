@@ -106,6 +106,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
 - Use `DELETE /api/v1/instances/{id}` to remove
 - Startup runs an automated instance->cluster backfill migration for legacy data
 - Manual backfill is available via CLI: `uv run redis-sre-agent cluster backfill-instance-links --dry-run`
+- If backfill reports a completion marker and skips work, rerun with `--force`: `uv run redis-sre-agent cluster backfill-instance-links --force --json`
 
 ### 4) Triage with tasks and threads
 Simplest: create a task with your question. The API will create a thread if you omit `thread_id`.

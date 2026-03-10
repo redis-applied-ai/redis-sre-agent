@@ -124,6 +124,43 @@ uv run redis-sre-agent thread get <thread_id> --json
 
 ---
 
+## Minimal Three-Document Example
+
+The repository includes a ready-to-run set under `source_documents/shared/release-v028-example/`.
+
+Included files:
+
+- `01-policy.md`: pinned runbook with escalation code `RDX-911`
+- `02-skill.md`: `failover-investigation` skill document
+- `03-ticket.md`: support ticket for `ECONNRESET` during failover
+
+Ingest and verify:
+
+```bash
+uv run redis-sre-agent pipeline prepare-sources \
+  --source-dir source_documents/shared/release-v028-example \
+  --batch-date 2099-01-04
+
+uv run redis-sre-agent pipeline ingest --batch-date 2099-01-04
+
+uv run redis-sre-agent query --agent chat \
+  "For sev-1 Redis incidents, what escalation code must we post?"
+
+uv run redis-sre-agent query --agent chat \
+  "Do we have a skill named failover-investigation?"
+
+uv run redis-sre-agent query --agent chat \
+  "Find support tickets for ECONNRESET during failover on cache-prod-1.redis.company.net."
+```
+
+Expected outcomes:
+
+- The policy query returns `RDX-911` from pinned startup context.
+- The skill query references `failover-investigation`.
+- The support-ticket query uses `search_support_tickets` and `get_support_ticket` in `thread trace`.
+
+---
+
 ## Related Docs
 
 - [Pipelines & ingestion](./pipelines.md)
