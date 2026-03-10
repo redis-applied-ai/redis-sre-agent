@@ -172,6 +172,7 @@ Use these commands together when you want citation-level provenance for an answe
 
 When a response uses knowledge search, citations are also added to the chat history as a follow-up system message (`**Sources for previous response**`) in the same thread.
 For support-ticket workflows, provenance appears in `thread trace` and thread system messages; `thread sources` focuses on fragment retrieval from knowledge indexes.
+If a response used no tools, `thread trace` can return `No decision trace found for message ...`.
 
 ### Tips
 - Use the Docker stack to get Prometheus/Loki; set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL so the agent can fetch metrics/logs.

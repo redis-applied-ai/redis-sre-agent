@@ -102,6 +102,9 @@ Follow-up turns in threaded conversations also get this startup context when abs
 Example ingestion:
 
 ```bash
+# Fresh Redis databases: initialize all required indexes once
+uv run redis-sre-agent index recreate --yes --json
+
 uv run redis-sre-agent pipeline prepare-sources \
   --source-dir source_documents/shared \
   --batch-date 2099-01-04
@@ -137,6 +140,9 @@ Included files:
 Ingest and verify:
 
 ```bash
+# Fresh Redis databases: initialize all required indexes once
+uv run redis-sre-agent index recreate --yes --json
+
 uv run redis-sre-agent pipeline prepare-sources \
   --source-dir source_documents/shared/release-v028-example \
   --batch-date 2099-01-04

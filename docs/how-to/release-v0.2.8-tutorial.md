@@ -17,6 +17,9 @@ with runnable examples.
 ## Prerequisites
 
 ```bash
+# Fresh Redis databases: initialize all required indexes once
+uv run redis-sre-agent index recreate --yes --json
+
 # API
 uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
 
@@ -91,6 +94,8 @@ uv run redis-sre-agent cluster get <cluster_id> --json
 uv run redis-sre-agent instance get <instance_id> --json
 ```
 
+Note: `cluster create --json` returns `{id, status}`. Use `cluster get <cluster_id> --json` for full cluster fields.
+
 ### API flow
 
 ```bash
@@ -128,8 +133,7 @@ Release item:
 ```bash
 uv run redis-sre-agent pipeline prepare-sources \
   --source-dir /path/to/source_documents \
-  --batch-date 2099-01-04 \
-  --prepare-only
+  --batch-date 2099-01-04
 
 uv run redis-sre-agent pipeline ingest --batch-date 2099-01-04
 ```
@@ -198,6 +202,9 @@ uv run redis-sre-agent cluster create \
   --admin-username 'override-user' \
   --admin-password 'override-pass' \
   --json
+
+# Verify resolved admin fields on the created cluster
+uv run redis-sre-agent cluster get <cluster_id> --json
 ```
 
 ### API fallback
@@ -227,6 +234,7 @@ uv run redis-sre-agent query \
 ```
 
 Expected:
+- CLI output shows `Agent: Triage (selected)` for diagnostic prompts.
 - Cluster-scoped diagnostic prompts are upgraded to triage.
 - Linked instances are inspected in fan-out mode.
 - Unhealthy linked instances are called out in the response.
@@ -272,4 +280,6 @@ Reference:
 ## Known Caveats from Real Validation
 
 - CLI/API outputs use different JSON envelope keys by command path.
+- On fresh Redis databases, run `index recreate --yes` before ingestion/query flows to avoid `No such index` errors.
+- `thread trace` is available only when a response has a stored decision trace (typically responses involving tool calls).
 - The docs examples here use command forms that are valid in `v0.2.8` CLI help output.
