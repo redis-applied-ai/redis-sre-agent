@@ -75,12 +75,15 @@ async def get_task(task_id: str) -> TaskResponse:
     if not state:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    tool_calls = await task_manager.get_task_tool_calls(state)
+
     return TaskResponse(
         task_id=state.task_id,
         thread_id=state.thread_id,
         status=state.status,
         updates=[u.model_dump() for u in state.updates],
         result=state.result,
+        tool_calls=tool_calls,
         error_message=state.error_message,
         subject=state.metadata.subject if state.metadata else None,
         created_at=state.metadata.created_at if state.metadata else None,

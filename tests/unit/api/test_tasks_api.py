@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from redis_sre_agent.api.app import app
@@ -29,6 +30,7 @@ class TestTasksAPI:
         """GET /api/v1/tasks/{task_id} returns 404 when TaskManager returns None."""
         mock_tm = MagicMock()
         mock_tm.get_task_state = AsyncMock(return_value=None)
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=None)
         with patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm):
             resp = client.get("/api/v1/tasks/abc123")
         assert resp.status_code == 404
@@ -51,6 +53,39 @@ class TestTasksAPI:
             data = resp.json()
             assert data["task_id"] == "t1"
             assert data["thread_id"] == "th1"
+
+    def test_create_task_missing_thread_id_returns_500(self, client):
+        """POST /api/v1/tasks returns 500 if core create_task omits thread_id."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "",
+            "status": "queued",
+            "message": "ok",
+        }
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch("redis_sre_agent.api.tasks.create_task", new=AsyncMock(return_value=fake)),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            resp = client.post("/api/v1/tasks", json={"message": "help"})
+
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "Failed to create thread for task"
+        mock_docket.assert_not_called()
+
+    def test_create_task_http_exception_passthrough(self, client):
+        """POST /api/v1/tasks preserves explicit HTTPException from dependencies."""
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client"),
+            patch(
+                "redis_sre_agent.api.tasks.create_task",
+                new=AsyncMock(side_effect=HTTPException(status_code=429, detail="rate limited")),
+            ),
+        ):
+            resp = client.post("/api/v1/tasks", json={"message": "help"})
+
+        assert resp.status_code == 429
+        assert resp.json()["detail"] == "rate limited"
 
     def test_create_task_rejects_instance_and_cluster_together(self, client):
         """POST /api/v1/tasks returns 400 when both target IDs are provided."""
@@ -89,6 +124,7 @@ class TestTasksAPI:
 
         mock_tm = MagicMock()
         mock_tm.get_task_state = AsyncMock(return_value=S())
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=None)
         with patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm):
             resp = client.get("/api/v1/tasks/t1")
         assert resp.status_code == 200
@@ -98,6 +134,34 @@ class TestTasksAPI:
         assert data["subject"] == "Test subject"
         assert data["created_at"] == "2024-01-01T00:00:00Z"
         assert data["updated_at"] == "2024-01-01T00:01:00Z"
+        assert data["tool_calls"] is None
+
+    def test_get_task_done_includes_tool_calls(self, client):
+        """GET /api/v1/tasks/{task_id} returns tool_calls for completed tasks."""
+
+        class Metadata:
+            subject = "Complete task"
+            created_at = "2024-01-01T00:00:00Z"
+            updated_at = "2024-01-01T00:01:00Z"
+
+        class S:
+            task_id = "t1"
+            thread_id = "th1"
+            status = "done"
+            updates = []
+            result = {"response": "ok"}
+            error_message = None
+            metadata = Metadata()
+
+        tool_calls = [{"name": "redis_info", "args": {"section": "memory"}, "status": "success"}]
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=S())
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=tool_calls)
+        with patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm):
+            resp = client.get("/api/v1/tasks/t1")
+
+        assert resp.status_code == 200
+        assert resp.json()["tool_calls"] == tool_calls
 
     def test_delete_task_success(self, client):
         """DELETE /api/v1/tasks/{task_id} cancels Docket task and deletes core state."""

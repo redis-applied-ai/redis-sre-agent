@@ -162,8 +162,9 @@ uv run redis-sre-agent thread sources <thread_id>
 Use these commands together when you want citation-level provenance for an answer:
 
 1. Run `thread get <thread_id>` to list messages in the thread and find assistant `message_id` values.
-2. Run `thread trace <message_id>` to inspect the decision trace for that assistant response, including tool calls and citations derived from knowledge-search tool results.
-3. Run `thread sources <thread_id>` to list retrieved knowledge fragments by thread or turn.
+2. Run `task get <task_id>` (or `GET /api/v1/tasks/<task_id>`) after completion to view `tool_calls` directly on the task payload.
+3. Run `thread trace <message_id>` to inspect the decision trace for that assistant response, including tool calls and citations derived from knowledge-search tool results.
+4. Run `thread sources <thread_id>` to list retrieved knowledge fragments by thread or turn.
 
 When a response uses knowledge search, citations are also added to the chat history as a follow-up system message (`Sources for previous response`) in the same thread.
 
