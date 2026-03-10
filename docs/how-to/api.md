@@ -22,7 +22,7 @@ docker compose up -d \
 # API
 uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
 # Worker (separate terminal)
-uv run redis-sre-agent worker --concurrency 4
+uv run redis-sre-agent worker start
 ```
 
 ### 2) Health and readiness
@@ -123,6 +123,14 @@ curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   -d '{
     "message": "Check memory pressure and slow ops",
     "context": {"instance_id": "<instance_id>"}
+  }' | jq
+
+# Create a task (target a specific cluster; fans out to linked instances)
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "Check this cluster for connectivity and memory pressure",
+    "context": {"cluster_id": "<cluster_id>"}
   }' | jq
 ```
 Poll task or inspect the thread:
