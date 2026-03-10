@@ -976,6 +976,7 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
             "updated_at": metadata.get("updated_at"),
             "updates": task.get("updates", []),
             "result": task.get("result"),
+            "tool_calls": task.get("tool_calls"),
             "error_message": task.get("error_message"),
         }
 

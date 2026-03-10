@@ -212,8 +212,8 @@ See `docs/how-to/tool-providers.md` for more on the tool system.
 
 ## Tasks vs. Threads
 
-- **Task**: How you interact with the agent. Create a task to run a query or triage. Each task has a `task_id` and tracks execution status (queued, running, completed, failed).
-- **Thread**: What happened during execution. Contains the conversation history, messages, tool calls, and results. Each thread has a `thread_id`.
+- **Task**: How you interact with the agent. Create a task to run a query or triage. Each task has a `task_id` and tracks execution status (queued, running, completed, failed). Completed task payloads include `tool_calls` for the final assistant message.
+- **Thread**: What happened during execution. Contains the conversation history, messages, and full decision traces (including tool call details) keyed by message ID. Each thread has a `thread_id`.
 
 When you create a task, the API creates or reuses a thread to store the execution history. You can:
 - Poll the task for status: `GET /api/v1/tasks/{task_id}`
@@ -233,7 +233,7 @@ sequenceDiagram
   Worker->>Redis: check instance
   Worker-->>API: stream updates to thread
   Client->>API: GET /api/v1/tasks/{task_id}
-  API-->>Client: status/result
+  API-->>Client: status/result/tool_calls
 ```
 
 ---

@@ -857,7 +857,11 @@ class TestProcessAgentTurn:
         mock_task_manager.set_task_error = AsyncMock()
 
         mock_knowledge_agent = AsyncMock()
-        mock_response = AgentResponse(response="Knowledge response", search_results=[])
+        mock_response = AgentResponse(
+            response="Knowledge response",
+            search_results=[],
+            tool_envelopes=[{"name": "redis_info", "status": "success"}],
+        )
         mock_knowledge_agent.process_query = AsyncMock(return_value=mock_response)
 
         with (
@@ -874,6 +878,9 @@ class TestProcessAgentTurn:
                 "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent",
                 return_value=mock_knowledge_agent,
             ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
             patch("opentelemetry.trace.get_tracer") as mock_tracer,
         ):
             mock_span = MagicMock()
@@ -881,7 +888,7 @@ class TestProcessAgentTurn:
             mock_span.set_attribute = MagicMock()
             mock_tracer.return_value.start_span.return_value = mock_span
 
-            _ = await process_agent_turn(
+            result = await process_agent_turn(
                 thread_id="thread-123",
                 message="What are Redis best practices?",
                 task_id="provided-task-123",  # Provide task_id
@@ -891,6 +898,28 @@ class TestProcessAgentTurn:
         mock_task_manager.create_task.assert_not_called()
         mock_task_manager.update_task_status.assert_any_call(
             "provided-task-123", TaskStatus.IN_PROGRESS
+        )
+        assert result["message_id"] == "01HXTESTMESSAGEID1234567890"
+
+        # Result payload should include the assistant message_id for trace lookup.
+        set_result_call = mock_task_manager.set_task_result.await_args
+        assert set_result_call.args[0] == "provided-task-123"
+        assert set_result_call.args[1]["message_id"] == "01HXTESTMESSAGEID1234567890"
+
+        # The assistant message persisted on thread should preserve message_id + task linkage metadata.
+        assistant_msgs = [m for m in mock_thread.messages if m.role == "assistant"]
+        assert assistant_msgs
+        assert assistant_msgs[-1].message_id == "01HXTESTMESSAGEID1234567890"
+        assert assistant_msgs[-1].metadata["metadata"]["task_id"] == "provided-task-123"
+        assert (
+            assistant_msgs[-1].metadata["metadata"]["message_id"] == "01HXTESTMESSAGEID1234567890"
+        )
+
+        # Tool envelopes are stored as decision trace for this assistant message_id.
+        mock_thread_manager.set_message_trace.assert_awaited_once_with(
+            message_id="01HXTESTMESSAGEID1234567890",
+            tool_envelopes=[{"name": "redis_info", "status": "success"}],
+            otel_trace_id=None,
         )
 
 

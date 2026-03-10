@@ -94,6 +94,7 @@ class TaskResponse(BaseModel):
     status: TaskStatus
     updates: List[Dict[str, Any]] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
     error_message: Optional[str] = None
     subject: Optional[str] = None
     created_at: Optional[str] = None

@@ -1,6 +1,7 @@
 """Unit tests for TaskManager and task-related functions in core/tasks.py."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -491,6 +492,242 @@ class TestTaskManagerGetTaskState:
         assert state.updates[0].message == "Valid"
 
 
+class TestTaskManagerToolCalls:
+    """Test TaskManager.get_task_tool_calls helper."""
+
+    @pytest.fixture
+    def task_manager(self):
+        return TaskManager(redis_client=AsyncMock())
+
+    def test_extract_message_id_from_result_ignores_non_dict(self, task_manager):
+        assert task_manager._extract_message_id_from_result("not-a-dict") is None
+
+    @pytest.mark.asyncio
+    async def test_extract_message_id_from_thread_returns_none_without_thread_id(
+        self, task_manager
+    ):
+        assert (
+            await task_manager._extract_message_id_from_thread(thread_id="", task_id="task-1")
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_returns_none_for_non_done(self, task_manager):
+        task = TaskState(task_id="task-1", thread_id="thread-1", status=TaskStatus.IN_PROGRESS)
+
+        tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls is None
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_reads_trace_from_message_id(self, task_manager):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            result={"message_id": "msg-1"},
+        )
+        trace = {"tool_envelopes": [{"name": "redis_info", "args": {"section": "memory"}}]}
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_message_trace = AsyncMock(return_value=trace)
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls == trace["tool_envelopes"]
+        mock_thread_manager.get_message_trace.assert_awaited_once_with("msg-1")
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_uses_result_fallback(self, task_manager):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            result={"response": {"tool_envelopes": [{"name": "knowledge_search"}]}},
+        )
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_message_trace = AsyncMock(return_value=None)
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls == [{"name": "knowledge_search"}]
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_returns_empty_list_when_missing(self, task_manager):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            result={},
+        )
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_message_trace = AsyncMock(return_value=None)
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls == []
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_uses_update_message_id(self, task_manager):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            updates=[
+                TaskUpdate(message="old", metadata={"message_id": "msg-old"}),
+                TaskUpdate(message="new", metadata={"message_id": "msg-new"}),
+            ],
+            result={},
+        )
+        trace = {"tool_envelopes": [{"name": "redis_info"}]}
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_message_trace = AsyncMock(return_value=trace)
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls == trace["tool_envelopes"]
+        mock_thread_manager.get_message_trace.assert_awaited_once_with("msg-new")
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_extracts_message_id_from_thread_task_metadata(
+        self, task_manager
+    ):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            result={},
+        )
+        thread_state = SimpleNamespace(
+            messages=[
+                SimpleNamespace(role="user", message_id="u-1", metadata={}),
+                SimpleNamespace(
+                    role="assistant",
+                    message_id="msg-from-thread",
+                    metadata={"task_id": "task-1"},
+                ),
+            ]
+        )
+        trace = {"tool_envelopes": [{"name": "redis_slowlog"}]}
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=thread_state)
+        mock_thread_manager.get_message_trace = AsyncMock(return_value=trace)
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls == trace["tool_envelopes"]
+        mock_thread_manager.get_thread.assert_awaited_once_with("thread-1")
+        mock_thread_manager.get_message_trace.assert_awaited_once_with("msg-from-thread")
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_extracts_nested_or_fallback_message_id(self, task_manager):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            result={},
+        )
+        thread_state = SimpleNamespace(
+            messages=[
+                # nested metadata fallback
+                SimpleNamespace(
+                    role="assistant",
+                    message_id=None,
+                    metadata={"metadata": {"message_id": "msg-from-nested"}},
+                ),
+                # final fallback to most recent assistant message_id
+                SimpleNamespace(
+                    role="assistant",
+                    message_id="msg-last-assistant",
+                    metadata={"task_id": "other-task"},
+                ),
+            ]
+        )
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=thread_state)
+        mock_thread_manager.get_message_trace = AsyncMock(return_value={"tool_envelopes": []})
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        # nested metadata message_id is preferred before "last assistant" fallback
+        assert tool_calls == []
+        mock_thread_manager.get_message_trace.assert_awaited_once_with("msg-from-nested")
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_falls_back_to_last_assistant_message_id(self, task_manager):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            result={},
+        )
+        thread_state = SimpleNamespace(
+            messages=[
+                SimpleNamespace(
+                    role="assistant", message_id=None, metadata={"task_id": "other-task"}
+                ),
+                SimpleNamespace(
+                    role="assistant",
+                    message_id="msg-last-assistant",
+                    metadata={"task_id": "another-task"},
+                ),
+            ]
+        )
+        trace = {"tool_envelopes": [{"name": "knowledge_search"}]}
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=thread_state)
+        mock_thread_manager.get_message_trace = AsyncMock(return_value=trace)
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls == trace["tool_envelopes"]
+        mock_thread_manager.get_message_trace.assert_awaited_once_with("msg-last-assistant")
+
+    @pytest.mark.asyncio
+    async def test_get_task_tool_calls_returns_empty_when_thread_has_no_extractable_message_id(
+        self, task_manager
+    ):
+        task = TaskState(
+            task_id="task-1",
+            thread_id="thread-1",
+            status=TaskStatus.DONE,
+            result={},
+        )
+        thread_state = SimpleNamespace(
+            messages=[
+                SimpleNamespace(role="user", message_id=None, metadata={}),
+                SimpleNamespace(
+                    role="assistant", message_id=None, metadata={"metadata": "not-a-dict"}
+                ),
+            ]
+        )
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=thread_state)
+        mock_thread_manager.get_message_trace = AsyncMock(return_value=None)
+
+        with patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager):
+            tool_calls = await task_manager.get_task_tool_calls(task)
+
+        assert tool_calls == []
+        mock_thread_manager.get_message_trace.assert_not_awaited()
+
+
 class TestCreateTaskFunction:
     """Test module-level create_task function."""
 
@@ -576,6 +813,9 @@ class TestGetTaskByIdFunction:
 
         mock_task_manager = AsyncMock()
         mock_task_manager.get_task_state = AsyncMock(return_value=mock_state)
+        mock_task_manager.get_task_tool_calls = AsyncMock(
+            return_value=[{"name": "redis_info", "args": {"section": "stats"}}]
+        )
 
         with patch("redis_sre_agent.core.tasks.TaskManager", return_value=mock_task_manager):
             result = await get_task_by_id(task_id="task-123", redis_client=mock_redis)
@@ -585,6 +825,7 @@ class TestGetTaskByIdFunction:
             assert result["status"] == TaskStatus.DONE
             assert len(result["updates"]) == 1
             assert result["result"] == {"response": "Complete"}
+            assert result["tool_calls"] == [{"name": "redis_info", "args": {"section": "stats"}}]
 
     @pytest.mark.asyncio
     async def test_get_task_by_id_not_found(self):
@@ -593,6 +834,7 @@ class TestGetTaskByIdFunction:
 
         mock_task_manager = AsyncMock()
         mock_task_manager.get_task_state = AsyncMock(return_value=None)
+        mock_task_manager.get_task_tool_calls = AsyncMock(return_value=None)
 
         with patch("redis_sre_agent.core.tasks.TaskManager", return_value=mock_task_manager):
             with pytest.raises(ValueError, match="not found"):
