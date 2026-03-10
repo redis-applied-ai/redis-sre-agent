@@ -301,6 +301,97 @@ class TaskManager:
             ),
         )
 
+    def _extract_message_id_from_result(self, result: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Extract assistant message_id from task result if available."""
+        if not isinstance(result, dict):
+            return None
+        message_id = result.get("message_id")
+        return message_id if isinstance(message_id, str) and message_id else None
+
+    def _extract_message_id_from_updates(self, updates: List[TaskUpdate]) -> Optional[str]:
+        """Extract message_id from update metadata, preferring latest update."""
+        for update in reversed(updates or []):
+            metadata = update.metadata or {}
+            message_id = metadata.get("message_id")
+            if isinstance(message_id, str) and message_id:
+                return message_id
+        return None
+
+    async def _extract_message_id_from_thread(
+        self, *, thread_id: str, task_id: str
+    ) -> Optional[str]:
+        """Extract message_id from persisted thread messages for this task."""
+        if not thread_id:
+            return None
+
+        thread_manager = ThreadManager(redis_client=self._redis)
+        thread = await thread_manager.get_thread(thread_id)
+        if not thread or not thread.messages:
+            return None
+
+        # Prefer assistant messages tied to this task.
+        for message in reversed(thread.messages):
+            if message.role != "assistant":
+                continue
+            metadata = message.metadata or {}
+            nested_metadata = metadata.get("metadata", {})
+            if not isinstance(nested_metadata, dict):
+                nested_metadata = {}
+            if (
+                metadata.get("task_id") == task_id or nested_metadata.get("task_id") == task_id
+            ) and message.message_id:
+                return message.message_id
+
+        # Fallback to explicit message_id in assistant metadata, if present.
+        for message in reversed(thread.messages):
+            if message.role != "assistant":
+                continue
+            metadata = message.metadata or {}
+            nested_metadata = metadata.get("metadata", {})
+            if not isinstance(nested_metadata, dict):
+                nested_metadata = {}
+            metadata_message_id = metadata.get("message_id") or nested_metadata.get("message_id")
+            if isinstance(metadata_message_id, str) and metadata_message_id:
+                return metadata_message_id
+
+        # Last resort: use the most recent assistant message id.
+        for message in reversed(thread.messages):
+            if message.role == "assistant" and message.message_id:
+                return message.message_id
+
+        return None
+
+    async def get_task_tool_calls(self, task: TaskState) -> Optional[List[Dict[str, Any]]]:
+        """Return tool calls for a done task, otherwise None."""
+        if task.status != TaskStatus.DONE:
+            return None
+
+        # First, use trace data linked to the assistant message for this task.
+        message_id = (
+            self._extract_message_id_from_result(task.result)
+            or self._extract_message_id_from_updates(task.updates)
+            or await self._extract_message_id_from_thread(
+                thread_id=task.thread_id, task_id=task.task_id
+            )
+        )
+        if message_id:
+            thread_manager = ThreadManager(redis_client=self._redis)
+            trace = await thread_manager.get_message_trace(message_id)
+            if isinstance(trace, dict):
+                tool_envelopes = trace.get("tool_envelopes")
+                if isinstance(tool_envelopes, list):
+                    return tool_envelopes
+
+        # Backward-compatible fallback for older task result payloads.
+        if isinstance(task.result, dict):
+            response = task.result.get("response")
+            if isinstance(response, dict):
+                result_tool_envelopes = response.get("tool_envelopes")
+                if isinstance(result_tool_envelopes, list):
+                    return result_tool_envelopes
+
+        return []
+
 
 # TODO: Why do we need create_task() here and also in TaskManager?
 async def create_task(
@@ -374,12 +465,15 @@ async def get_task_by_id(*, task_id: str, redis_client=None) -> Dict[str, Any]:
         "subject": task.metadata.subject,
     }
 
+    tool_calls = await task_manager.get_task_tool_calls(task)
+
     return {
         "task_id": task.task_id,
         "thread_id": task.thread_id,
         "status": task.status,
         "updates": updates,
         "result": task.result,
+        "tool_calls": tool_calls,
         "error_message": task.error_message,
         "metadata": metadata,
         "context": {},

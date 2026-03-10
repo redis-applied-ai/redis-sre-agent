@@ -991,12 +991,17 @@ async def process_agent_turn(
                 logger.warning(f"Failed to record Q&A with citations: {e}")
 
         # Add agent response to conversation
+        assistant_message_id = str(ULID())
+        assistant_metadata = dict(agent_response.get("metadata", {}) or {})
+        assistant_metadata["task_id"] = task_id
+        assistant_metadata["message_id"] = assistant_message_id
         conversation_state["messages"].append(
             {
+                "message_id": assistant_message_id,
                 "role": "assistant",
                 "content": response_text,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "metadata": agent_response.get("metadata", {}),
+                "metadata": assistant_metadata,
             }
         )
 
@@ -1063,6 +1068,7 @@ async def process_agent_turn(
         # Convert clean_messages dicts to Message objects for thread storage
         thread.messages = [
             Message(
+                message_id=m.get("message_id"),
                 role=m.get("role", "user"),
                 content=m.get("content", ""),
                 metadata={k: v for k, v in m.items() if k not in ("role", "content")} or None,
@@ -1111,6 +1117,7 @@ async def process_agent_turn(
             "metadata": agent_response.get("metadata", {}),
             "thread_id": thread_id,
             "task_id": task_id,
+            "message_id": assistant_message_id,
             "turn_completed_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -1118,31 +1125,22 @@ async def process_agent_turn(
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
 
         # Store decision trace for this message (tool calls + citations)
-        # Find the last assistant message to get its message_id
         tool_envelopes = agent_response.get("tool_envelopes", [])
-        if tool_envelopes and thread.messages:
-            # Find the last assistant message's message_id
-            last_assistant_msg = None
-            for msg in reversed(thread.messages):
-                if msg.role == "assistant":
-                    last_assistant_msg = msg
-                    break
-
-            if last_assistant_msg and last_assistant_msg.message_id:
-                try:
-                    otel_trace_id = (
-                        format(_root_span.get_span_context().trace_id, "032x")
-                        if _root_span and _root_span.get_span_context().is_valid
-                        else None
-                    )
-                except Exception:
-                    otel_trace_id = None
-
-                await thread_manager.set_message_trace(
-                    message_id=last_assistant_msg.message_id,
-                    tool_envelopes=tool_envelopes,
-                    otel_trace_id=otel_trace_id,
+        if tool_envelopes and assistant_message_id:
+            try:
+                otel_trace_id = (
+                    format(_root_span.get_span_context().trace_id, "032x")
+                    if _root_span and _root_span.get_span_context().is_valid
+                    else None
                 )
+            except Exception:
+                otel_trace_id = None
+
+            await thread_manager.set_message_trace(
+                message_id=assistant_message_id,
+                tool_envelopes=tool_envelopes,
+                otel_trace_id=otel_trace_id,
+            )
 
         # Publish completion to stream for WebSocket updates
         await task_manager._publish_stream_update(

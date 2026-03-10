@@ -63,6 +63,7 @@ curl -X POST http://localhost:8000/api/v1/tasks \\
 
 # Check task status
 curl http://localhost:8000/api/v1/tasks/{task_id}
+# Includes `tool_calls` when task status is `done`
 ```
 
 ## SRE Tools

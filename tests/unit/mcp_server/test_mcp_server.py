@@ -1180,6 +1180,7 @@ class TestGetTaskStatusTool:
                 {"timestamp": "2024-01-01T00:00:30Z", "message": "Processing", "type": "progress"}
             ],
             "result": {"summary": "Complete"},
+            "tool_calls": [{"name": "redis_info", "args": {"section": "memory"}}],
             "error_message": None,
             "metadata": {
                 "subject": "Health check",
@@ -1206,6 +1207,7 @@ class TestGetTaskStatusTool:
             assert result["updated_at"] == "2024-01-01T00:01:00Z"
             assert result["updates"] == mock_task["updates"]
             assert result["result"] == {"summary": "Complete"}
+            assert result["tool_calls"] == mock_task["tool_calls"]
 
     @pytest.mark.asyncio
     async def test_get_task_status_not_found(self):

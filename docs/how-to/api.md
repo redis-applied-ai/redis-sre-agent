@@ -133,6 +133,9 @@ curl -fsS http://localhost:8080/api/v1/tasks/<task_id> | jq
 # Get the thread state (messages, updates, result)
 curl -fsS http://localhost:8080/api/v1/threads/<thread_id> | jq
 ```
+When a task is `done`, `GET /api/v1/tasks/<task_id>` also includes a `tool_calls` field
+containing the JSON tool-call envelopes used to generate the final assistant message.
+
 Real-time updates via WebSocket:
 ```bash
 # Requires a thread_id; use any ws client (wscat, websocat)

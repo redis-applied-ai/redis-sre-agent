@@ -120,6 +120,7 @@ uv run redis-sre-agent query --agent chat --thread-id <thread_id> \
 # inspect tool envelopes and citations
 uv run redis-sre-agent thread trace <assistant_message_id> --json
 uv run redis-sre-agent thread get <thread_id> --json
+uv run redis-sre-agent task get <task_id> --json | jq '.tool_calls'
 ```
 
 ---
