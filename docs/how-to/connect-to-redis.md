@@ -116,9 +116,20 @@ For Redis Cloud management API tooling during troubleshooting, set:
 
 Use this when your target database runs in a Redis Enterprise cluster.
 
-CLI example:
+Preferred CLI flow (cluster-first, then linked instance):
 
 ```bash
+# 1) Create Redis Enterprise cluster object (preferred credential path)
+uv run redis-sre-agent cluster create \
+  --name "re-prod-cluster" \
+  --cluster-type redis_enterprise \
+  --environment production \
+  --description "Redis Enterprise control plane for prod" \
+  --admin-url "https://re-cluster.example.com:9443" \
+  --admin-username "admin@redis.com" \
+  --admin-password "<admin-password>"
+
+# 2) Create DB instance linked to that cluster
 uv run redis-sre-agent instance create \
   --name "re-prod-db" \
   --connection-url "rediss://default:<db-password>@re-cluster.example.com:12000" \
@@ -126,9 +137,7 @@ uv run redis-sre-agent instance create \
   --usage cache \
   --description "Redis Enterprise production database" \
   --instance-type redis_enterprise \
-  --admin-url "https://re-cluster.example.com:9443" \
-  --admin-username "admin@redis.com" \
-  --admin-password "<admin-password>"
+  --cluster-id "<cluster_id>"
 ```
 
 UI:
@@ -164,6 +173,33 @@ Precedence is field-by-field:
 2. Environment variable default
 
 The env fallback is applied only for `cluster_type=redis_enterprise`.
+
+CLI example using env defaults:
+
+```bash
+export REDIS_ENTERPRISE_ADMIN_URL="https://re-cluster.example.com:9443"
+export REDIS_ENTERPRISE_ADMIN_USERNAME="admin@redis.com"
+export REDIS_ENTERPRISE_ADMIN_PASSWORD="<admin-password>"
+
+uv run redis-sre-agent cluster create \
+  --name "re-cluster-from-env" \
+  --cluster-type redis_enterprise \
+  --environment production \
+  --description "Uses REDIS_ENTERPRISE_ADMIN_* defaults"
+```
+
+API example using env defaults:
+
+```bash
+curl -fsS -X POST http://localhost:8080/api/v1/clusters \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "re-cluster-from-env-api",
+    "cluster_type": "redis_enterprise",
+    "environment": "production",
+    "description": "Uses REDIS_ENTERPRISE_ADMIN_* defaults"
+  }' | jq
+```
 
 ### Redis Enterprise: Checking Cluster Health
 

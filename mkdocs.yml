@@ -47,6 +47,7 @@ nav:
       - Tool Providers: how-to/tool-providers.md
       - Using the CLI & API: how-to/cli.md
       - Using the API: how-to/api.md
+      - v0.2.8 release tutorial: how-to/release-v0.2.8-tutorial.md
       - Local development & testing: how-to/local-dev.md
       - Pipelines & ingestion: how-to/pipelines.md
       - Source document features: how-to/source-document-features.md

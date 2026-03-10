@@ -22,7 +22,7 @@ docker compose up -d \
 # API
 uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
 # Worker (separate terminal)
-uv run redis-sre-agent worker --concurrency 4
+uv run redis-sre-agent worker start
 ```
 
 ### 2) Health and readiness
@@ -100,12 +100,11 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
 - The API masks credentials in returned `connection_url`
 - `cluster_id` is optional; it is only required when linking an instance to an existing cluster
 - `cluster_id` is the preferred credential path when using Redis Enterprise admin credentials
-- Legacy instance `admin_url`, `admin_username`, `admin_password` are still accepted but deprecated
-- If you send deprecated instance admin fields, send all three together
 - Use `PUT /api/v1/instances/{id}` to update fields (masked secrets are preserved)
 - Use `DELETE /api/v1/instances/{id}` to remove
-- Startup runs an automated instance->cluster backfill migration for legacy data
+- Startup runs an automated instance->cluster backfill migration for existing data
 - Manual backfill is available via CLI: `uv run redis-sre-agent cluster backfill-instance-links --dry-run`
+- If backfill reports a completion marker and skips work, rerun with `--force`: `uv run redis-sre-agent cluster backfill-instance-links --force --json`
 
 ### 4) Triage with tasks and threads
 Simplest: create a task with your question. The API will create a thread if you omit `thread_id`.
@@ -123,6 +122,14 @@ curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   -d '{
     "message": "Check memory pressure and slow ops",
     "context": {"instance_id": "<instance_id>"}
+  }' | jq
+
+# Create a task (target a specific cluster; fans out to linked instances)
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "Check this cluster for connectivity and memory pressure",
+    "context": {"cluster_id": "<cluster_id>"}
   }' | jq
 ```
 Poll task or inspect the thread:

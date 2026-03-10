@@ -21,7 +21,7 @@ docker compose up -d \
   # API
   uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
   # Worker (separate terminal)
-  uv run redis-sre-agent worker --concurrency 4
+  uv run redis-sre-agent worker start
   ```
 
 ### 2) Add a Redis instance and verify
@@ -38,7 +38,7 @@ uv run redis-sre-agent instance create \
 # List / view / test
 uv run redis-sre-agent instance list
 uv run redis-sre-agent instance get <id>
-uv run redis-sre-agent instance test --id <id>
+uv run redis-sre-agent instance test <id>
 ```
 
 ### 3) Triage with queries
@@ -50,6 +50,11 @@ uv run redis-sre-agent instance test --id <id>
   ```bash
   uv run redis-sre-agent query "Check memory pressure and slow ops" -r <id>
   ```
+- With a cluster: cluster-scoped diagnostics fan out across linked instances
+  ```bash
+  uv run redis-sre-agent query "Check this cluster for connectivity and memory pressure" -c <cluster_id>
+  ```
+  - For diagnostic prompts, cluster-scoped queries are auto-upgraded to triage.
 
 ### 4) Prepare knowledge for better answers (ingest a batch)
 Load docs so the agent can cite internal knowledge.
@@ -76,7 +81,7 @@ uv run redis-sre-agent runbook evaluate
 ### 5) Search what the agent knows (and verify context)
 Use this to confirm the agent’s view of your knowledge base.
 ```bash
-uv run redis-sre-agent knowledge search --query "redis eviction policy"
+uv run redis-sre-agent knowledge search "redis eviction policy"
 uv run redis-sre-agent knowledge fragments --doc-hash <hash>
 uv run redis-sre-agent knowledge related --doc-hash <hash> --chunk-index 0
 ```
@@ -154,7 +159,7 @@ uv run redis-sre-agent task get <task_id>
 # Threads
 uv run redis-sre-agent thread list
 uv run redis-sre-agent thread get <thread_id>
-uv run redis-sre-agent thread trace <message_id>
+uv run redis-sre-agent thread trace <message_id_or_decision_trace_id>
 uv run redis-sre-agent thread sources <thread_id>
 ```
 
@@ -163,10 +168,12 @@ Use these commands together when you want citation-level provenance for an answe
 
 1. Run `thread get <thread_id>` to list messages in the thread and find assistant `message_id` values.
 2. Run `task get <task_id>` (or `GET /api/v1/tasks/<task_id>`) after completion to view `tool_calls` directly on the task payload.
-3. Run `thread trace <message_id>` to inspect the decision trace for that assistant response, including tool calls and citations derived from knowledge-search tool results.
+3. Run `thread trace <id>` with either an assistant `message_id` (from `thread get`) or a `Decision trace: <id>` printed by `query`.
 4. Run `thread sources <thread_id>` to list retrieved knowledge fragments by thread or turn.
 
-When a response uses knowledge search, citations are also added to the chat history as a follow-up system message (`Sources for previous response`) in the same thread.
+When a response uses knowledge search, citations are also added to the chat history as a follow-up system message (`**Sources for previous response**`) in the same thread.
+For support-ticket workflows, provenance appears in `thread trace` and thread system messages; `thread sources` focuses on fragment retrieval from knowledge indexes.
+If a response used no tools, `thread trace` can return `No decision trace found for message ...`.
 
 ### Tips
 - Use the Docker stack to get Prometheus/Loki; set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL so the agent can fetch metrics/logs.
