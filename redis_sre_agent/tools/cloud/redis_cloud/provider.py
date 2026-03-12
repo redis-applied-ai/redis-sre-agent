@@ -33,6 +33,9 @@ from .api_client.api.subscriptions_pro import (
     get_all_subscriptions as pro_list_subscriptions,
 )
 from .api_client.api.subscriptions_pro import (
+    get_regions_from_active_active_subscription,
+)
+from .api_client.api.subscriptions_pro import (
     get_subscription_by_id as pro_get_subscription_by_id,
 )
 
@@ -240,6 +243,20 @@ class RedisCloudToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
+            ToolDefinition(
+                name=self._make_tool_name("get_active_active_regions"),
+                description=(
+                    "Get regions in the configured Redis Cloud Active-Active subscription (CRDB). "
+                    "Use this for active-active or CRDB topology questions to inspect configured "
+                    "remote regions and per-region database membership. This does not expose live sync lag."
+                ),
+                capability=ToolCapability.DIAGNOSTICS,
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            ),
             # Database operations
             ToolDefinition(
                 name=self._make_tool_name("list_databases"),
@@ -424,6 +441,23 @@ class RedisCloudToolProvider(ToolProvider):
             )
             if obj is None:
                 raise ValueError(f"Subscription {self._subscription_id} not found.")
+        return _to_dict_safe(obj)
+
+    async def get_active_active_regions(self) -> Any:
+        """Get configured regions for the current Active-Active subscription."""
+
+        client = self.get_client()
+        if self._subscription_id is None:
+            raise ValueError("Redis Cloud subscription ID is not configured for this instance.")
+
+        obj = await get_regions_from_active_active_subscription.asyncio(
+            subscription_id=self._subscription_id,
+            client=client,
+        )
+        if obj is None:
+            raise ValueError(
+                f"Active-Active region details are not available for subscription {self._subscription_id}."
+            )
         return _to_dict_safe(obj)
 
     # --- Database operations -----------------------------------------------

@@ -54,6 +54,7 @@ async def test_create_tool_schemas(provider):
     tool_names = [s.name for s in schemas]
     assert any("get_account" in name for name in tool_names)
     assert any("list_subscriptions" in name for name in tool_names)
+    assert any("get_active_active_regions" in name for name in tool_names)
     assert any("list_databases" in name for name in tool_names)
 
 
@@ -414,6 +415,62 @@ class TestRedisCloudToolProviderGetSubscription:
             ):
                 with pytest.raises(ValueError, match="not found"):
                     await provider.get_subscription()
+
+
+class TestRedisCloudToolProviderGetActiveActiveRegions:
+    """Test get_active_active_regions method."""
+
+    @pytest.mark.asyncio
+    async def test_get_active_active_regions_requires_subscription_id(self, mock_config):
+        """Test get_active_active_regions raises error without subscription ID."""
+        provider = RedisCloudToolProvider(config=mock_config)
+
+        with pytest.raises(ValueError, match="subscription ID is not configured"):
+            await provider.get_active_active_regions()
+
+    @pytest.mark.asyncio
+    async def test_get_active_active_regions_success(self, mock_config):
+        """Test get_active_active_regions returns Active-Active region details."""
+        fake_instance = type(
+            "Instance",
+            (),
+            {
+                "id": "test-instance-id",
+                "instance_type": "redis_cloud",
+                "redis_cloud_subscription_id": 12345,
+                "redis_cloud_database_id": None,
+                "redis_cloud_subscription_type": "pro",
+            },
+        )()
+        provider = RedisCloudToolProvider(redis_instance=fake_instance, config=mock_config)
+
+        class Dummy:
+            def to_dict(self):
+                return {
+                    "subscriptionId": 12345,
+                    "regions": [
+                        {
+                            "regionId": 1,
+                            "region": "us-east-1",
+                            "databases": [{"databaseId": 862, "databaseName": "cache-us"}],
+                        },
+                        {
+                            "regionId": 4,
+                            "region": "eu-west-1",
+                            "databases": [{"databaseId": 863, "databaseName": "cache-eu"}],
+                        },
+                    ],
+                }
+
+        with patch(
+            "redis_sre_agent.tools.cloud.redis_cloud.provider.get_regions_from_active_active_subscription.asyncio",
+            new=AsyncMock(return_value=Dummy()),
+        ):
+            result = await provider.get_active_active_regions()
+
+        assert result["subscriptionId"] == 12345
+        assert len(result["regions"]) == 2
+        assert result["regions"][0]["region"] == "us-east-1"
 
 
 class TestRedisCloudToolProviderGetRegions:

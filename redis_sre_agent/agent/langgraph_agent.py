@@ -986,7 +986,8 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 ### What You MUST Do First
 1. **Call `get_database` tool** to get the ACTUAL database configuration from the REST API
 2. This returns the REAL configuration: memory limits, persistence settings, replication status, clustering, security, modules, endpoints, throughput limits
-3. Use INFO only for runtime metrics (ops/sec, connected clients, keyspace stats)
+3. **If the question mentions active-active or CRDB**, also call `get_subscription` and `get_active_active_regions` to inspect subscription topology and remote regions
+4. Use INFO only for runtime metrics (ops/sec, connected clients, keyspace stats)
 
 ### What You CANNOT Suggest
 - ❌ CONFIG SET for persistence, replication, clustering, maxmemory
@@ -998,9 +999,11 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 
 ### Correct Diagnostic Approach
 1. Call `get_database` to get configuration from REST API
-2. Use INFO for runtime metrics only
-3. Compare actual usage vs. configured limits
-4. Provide recommendations based on ACTUAL configuration, not INFO output
+2. If the question is about CRDB or active-active, call `get_subscription` and `get_active_active_regions` to confirm deployment type and configured remote regions
+3. Use INFO for runtime metrics only
+4. Compare actual usage vs. configured limits
+5. Do not claim CRDB is fully synced unless you have evidence beyond local runtime metrics; the cloud API can confirm topology, but not live cross-region sync lag
+6. Provide recommendations based on ACTUAL configuration, not INFO output
 
 **Remember: Redis Cloud manages persistence, replication, clustering, and modules automatically. Use the REST API to see the real configuration!**
                     """

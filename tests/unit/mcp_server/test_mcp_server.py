@@ -12,6 +12,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_delete_task,
     redis_sre_general_chat,
     redis_sre_get_support_ticket,
+    redis_sre_get_task_citations,
     redis_sre_get_task_status,
     redis_sre_get_thread,
     redis_sre_knowledge_query,
@@ -47,6 +48,7 @@ class TestMCPServerSetup:
         assert "redis_sre_get_thread" in tool_names
         assert "redis_sre_list_threads" in tool_names
         assert "redis_sre_get_task_status" in tool_names
+        assert "redis_sre_get_task_citations" in tool_names
         assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
         assert "redis_sre_create_instance" in tool_names
@@ -1207,7 +1209,7 @@ class TestGetTaskStatusTool:
             assert result["updated_at"] == "2024-01-01T00:01:00Z"
             assert result["updates"] == mock_task["updates"]
             assert result["result"] == {"summary": "Complete"}
-            assert result["tool_calls"] == mock_task["tool_calls"]
+            assert "tool_calls" not in result
 
     @pytest.mark.asyncio
     async def test_get_task_status_not_found(self):
@@ -1219,6 +1221,48 @@ class TestGetTaskStatusTool:
             mock_get.side_effect = ValueError("Task task-999 not found")
 
             result = await redis_sre_get_task_status(task_id="task-999")
+
+            assert result["status"] == "not_found"
+            assert "error" in result
+
+
+class TestGetTaskCitationsTool:
+    """Test the redis_sre_get_task_citations MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_get_task_citations_success(self):
+        """Test successful citation retrieval."""
+        mock_task = {
+            "task_id": "task-123",
+            "thread_id": "thread-456",
+            "status": "done",
+            "tool_calls": [{"name": "redis_info", "args": {"section": "memory"}}],
+        }
+
+        with patch(
+            "redis_sre_agent.core.tasks.get_task_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_task
+
+            result = await redis_sre_get_task_citations(task_id="task-123")
+
+            assert result["task_id"] == "task-123"
+            assert result["thread_id"] == "thread-456"
+            assert result["status"] == "done"
+            assert result["citation_count"] == 1
+            assert result["tool_calls"] == mock_task["tool_calls"]
+
+    @pytest.mark.asyncio
+    async def test_get_task_citations_not_found(self):
+        """Test citation lookup for missing task."""
+        with patch(
+            "redis_sre_agent.core.tasks.get_task_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.side_effect = ValueError("Task task-999 not found")
+
+            result = await redis_sre_get_task_citations(task_id="task-999")
 
             assert result["status"] == "not_found"
             assert "error" in result

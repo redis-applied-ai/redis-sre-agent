@@ -27,6 +27,7 @@ def test_startup_context_includes_support_ticket_tool_instructions():
     joined = "\n".join(lines)
     assert "available tool categories: knowledge, tickets." in joined.lower()
     assert "tickets tools for historical incidents" in joined.lower()
+    assert "general knowledge search does not include support tickets" in joined.lower()
     assert "cluster name or cluster host" in joined
     assert "search_support_tickets" not in joined
     assert "get_support_ticket" not in joined
@@ -52,14 +53,17 @@ def test_chat_prompt_mentions_support_ticket_usage():
     assert "tools are available" in prompt
     assert "tickets" in prompt
     assert "support tickets" in prompt
+    assert "general knowledge search excludes support tickets" in prompt
 
 
 def test_knowledge_prompt_mentions_support_tickets():
     prompt = KNOWLEDGE_SYSTEM_PROMPT.lower()
     assert "support ticket" in prompt
+    assert "general knowledge search excludes support tickets" in prompt
 
 
 def test_sre_prompt_mentions_support_ticket_usage():
     prompt = SRE_SYSTEM_PROMPT.lower()
     assert "category tools in your batch" in prompt
     assert "support tickets" in prompt
+    assert "general knowledge search excludes support tickets" in prompt

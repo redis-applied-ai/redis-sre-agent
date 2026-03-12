@@ -275,7 +275,10 @@ class KnowledgeBaseToolProvider(ToolProvider):
                 name=self._make_tool_name("search_support_tickets"),
                 description=(
                     "Search support tickets only. "
-                    "Use this for historical or active support-case context."
+                    "Use this for historical or active support-case context. "
+                    "Use this instead of general knowledge search when the user asks about "
+                    "support tickets, prior incidents, or case history because general knowledge "
+                    "search excludes support tickets."
                 ),
                 capability=ToolCapability.TICKETS,
                 parameters={
@@ -319,7 +322,10 @@ class KnowledgeBaseToolProvider(ToolProvider):
             ),
             ToolDefinition(
                 name=self._make_tool_name("get_support_ticket"),
-                description="Retrieve the complete content of a support ticket by ticket id.",
+                description=(
+                    "Retrieve the complete content of a support ticket by ticket id. "
+                    "Use this after search_support_tickets returns a likely match."
+                ),
                 capability=ToolCapability.TICKETS,
                 parameters={
                     "type": "object",

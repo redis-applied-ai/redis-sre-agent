@@ -75,6 +75,7 @@ For metrics/logs:
 - Fetch one metric or log query at a time
 
 For historical incident context (if `tickets` tools are available):
+- Use tickets tools instead of general knowledge search because general knowledge search excludes support tickets
 - Search support tickets with concrete identifiers (cluster name/host, error strings)
 - Fetch the most relevant ticket record for full details
 
