@@ -85,7 +85,7 @@ def _tool_instruction_lines_for_categories(
         "metrics": "- Use metrics tools for time-series signals and trend validation.",
         "logs": "- Use logs tools for event timelines and error correlation.",
         "knowledge": "- Use knowledge tools for runbooks, skills, and documentation retrieval.",
-        "tickets": "- Use tickets tools for historical incidents and prior remediation patterns.",
+        "tickets": "- Use tickets tools for historical incidents and prior remediation patterns. General knowledge search does not include support tickets.",
         "repos": "- Use repos tools for code and configuration investigation.",
         "traces": "- Use traces tools for distributed request-path analysis.",
         "utilities": "- Use utilities tools for safe helper operations (time conversion, lightweight formatting, etc.).",
@@ -97,8 +97,9 @@ def _tool_instruction_lines_for_categories(
 
     if "tickets" in categories:
         lines.append(
-            "Support-ticket workflow: ask for concrete identifiers (for example cluster name or cluster host), "
-            "search with those identifiers, then fetch the best matching ticket."
+            "Support-ticket workflow: when the user asks for support tickets, prior cases, or historical incidents, "
+            "use tickets tools instead of general knowledge search. Ask for concrete identifiers "
+            "(for example cluster name or cluster host), search with those identifiers, then fetch the best matching ticket."
         )
 
     return lines

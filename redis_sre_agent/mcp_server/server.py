@@ -58,6 +58,7 @@ After calling any of these, you MUST:
 | `redis_sre_list_instances()` | List available Redis instances |
 | `redis_sre_list_threads()` | List conversation threads (find previous chats) |
 | `redis_sre_get_task_status()` | Check task progress |
+| `redis_sre_get_task_citations()` | Get task citation/tool-call data |
 | `redis_sre_get_thread()` | Get conversation history |
 
 ## Standard Workflow
@@ -99,6 +100,7 @@ while True:
 ## Tips
 
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
+- Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
 - Use `redis_sre_list_instances()` to find instance IDs before calling other tools
@@ -958,6 +960,7 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
         result: Final response (only present when status="done")
         error_message: Error details (only present when status="failed")
         thread_id: For multi-turn follow-ups via redis_sre_get_thread()
+        Use redis_sre_get_task_citations() for tool provenance when needed
     """
     from redis_sre_agent.core.tasks import get_task_by_id
 
@@ -976,7 +979,6 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
             "updated_at": metadata.get("updated_at"),
             "updates": task.get("updates", []),
             "result": task.get("result"),
-            "tool_calls": task.get("tool_calls"),
             "error_message": task.get("error_message"),
         }
 
@@ -988,6 +990,53 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Get task status failed: {e}")
+        return {
+            "error": str(e),
+            "task_id": task_id,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_task_citations(task_id: str) -> Dict[str, Any]:
+    """Get citation and tool-call data for a completed task.
+
+    Use this when you need provenance details without inflating the normal
+    task-status payload returned by redis_sre_get_task_status().
+
+    Args:
+        task_id: The task_id returned from triage or chat tools
+
+    Returns:
+        task_id: The requested task id
+        thread_id: Thread associated with the task
+        status: Current task status
+        citation_count: Number of tool-call envelopes available
+        tool_calls: Raw tool-call envelopes for citation/provenance use
+    """
+    from redis_sre_agent.core.tasks import get_task_by_id
+
+    logger.info(f"MCP get_task_citations: {task_id}")
+
+    try:
+        task = await get_task_by_id(task_id=task_id)
+        tool_calls = task.get("tool_calls") or []
+
+        return {
+            "task_id": task_id,
+            "thread_id": task.get("thread_id"),
+            "status": task.get("status"),
+            "citation_count": len(tool_calls),
+            "tool_calls": tool_calls,
+        }
+
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "task_id": task_id,
+            "status": "not_found",
+        }
+    except Exception as e:
+        logger.error(f"Get task citations failed: {e}")
         return {
             "error": str(e),
             "task_id": task_id,

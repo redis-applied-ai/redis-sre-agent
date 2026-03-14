@@ -830,6 +830,7 @@ class TestSRELangGraphAgent:
         state_after_first = await compiled.nodes["agent"].ainvoke(state)
         sent_messages_first = mock_llm.ainvoke.call_args_list[0].args[0]
         assert "CRITICAL REDIS CLOUD CONTEXT" in sent_messages_first[0].content
+        assert "get_active_active_regions" in sent_messages_first[0].content
 
         state_after_first["messages"] = [
             m for m in state_after_first["messages"] if not isinstance(m, SystemMessage)
@@ -840,6 +841,7 @@ class TestSRELangGraphAgent:
         sent_messages_second = mock_llm.ainvoke.call_args_list[1].args[0]
         assert isinstance(sent_messages_second[0], SystemMessage)
         assert "CRITICAL REDIS CLOUD CONTEXT" in sent_messages_second[0].content
+        assert "get_active_active_regions" in sent_messages_second[0].content
         assert mock_build_startup_context.await_count == 0
 
     @pytest.mark.asyncio

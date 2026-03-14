@@ -38,6 +38,7 @@ Turn 1: Call get_detailed_redis_diagnostics, get_cluster_info, list_nodes, searc
 Think about what information you'll need upfront and request it all in one turn. This significantly speeds up analysis.
 
 When incidents may have happened before, include `tickets` category tools in your batch (if available):
+- Use `tickets` tools instead of general knowledge search when the user asks about support tickets, prior cases, or historical incidents, because general knowledge search excludes support tickets
 - Search support tickets with concrete identifiers (cluster name/host, error strings)
 - Fetch the most relevant ticket record
 
@@ -218,7 +219,8 @@ The `INFO` command output is MISLEADING for Redis Cloud:
 **DO NOT suggest "fixing" these - they are expected behavior in Redis Cloud!**
 
 ### What You SHOULD Do with Redis Cloud
-1. **Use the REST API for configuration details** - Call `get_database` to see actual configuration:
+1. **Use the REST API for configuration details**:
+   - Call `get_database` to see actual database configuration:
    - Memory limits (`memoryUsedInMb`, `datasetSizeInGb`)
    - Persistence settings (`dataPersistence`)
    - Replication status (`replication`)
@@ -227,6 +229,8 @@ The `INFO` command output is MISLEADING for Redis Cloud:
    - Module versions (`modules`)
    - Network endpoints (`publicEndpoint`, `privateEndpoint`)
    - Throughput limits (`throughputMeasurement`)
+   - Call `get_subscription` for subscription-level deployment details
+   - For CRDB or active-active questions, call `get_active_active_regions` to inspect configured remote regions and per-region database membership. This does not expose live sync lag, so do not claim it proves CRDB data is fully synced.
 
 2. **Use Redis commands for data operations only**:
    - ✅ DBSIZE, KEYS, SCAN - data inspection
@@ -241,6 +245,7 @@ See the Redis Cloud API tool descriptions for more, but a summary is:
    - `get_regions` - List available regions
    - `list_subscriptions` - List all subscriptions
    - `get_subscription` - Get subscription details
+   - `get_active_active_regions` - Inspect regions in an Active-Active subscription
    - `list_databases` - List databases in a subscription
    - `get_database` - **USE THIS for database configuration details**
    - `list_users` - View account users
@@ -277,7 +282,7 @@ Your database is healthy. The INFO output shows some confusing values (AOF size=
 but these are normal for Redis Cloud - persistence and replication are managed automatically by the platform.
 ```
 
-**ALWAYS call get_database for Redis Cloud instances to get accurate configuration!**
+**ALWAYS call get_database for Redis Cloud instances to get accurate configuration. For CRDB or active-active questions, also call get_subscription and get_active_active_regions.**
 
 **CRITICAL: Understanding Node Shard Counts and Maintenance Mode**
 
