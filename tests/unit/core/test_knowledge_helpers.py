@@ -963,18 +963,25 @@ class TestSkillHelpers:
 class TestSupportTicketHelpers:
     @pytest.mark.asyncio
     async def test_search_support_tickets_helper_normalizes_ticket_id_from_chunk_key(self):
-        with patch(
-            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
-            new_callable=AsyncMock,
-            return_value={
-                "results": [
-                    {
-                        "id": "sre_support_tickets:abc123def456:chunk:0",
-                        "title": "Ticket A",
-                        "doc_type": "support_ticket",
-                    }
-                ]
-            },
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "results": [
+                        {
+                            "id": "sre_support_tickets:abc123def456:chunk:0",
+                            "title": "Ticket A",
+                            "doc_type": "support_ticket",
+                        }
+                    ]
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await search_support_tickets_helper(query="cache-prod-1 failover")
 
@@ -1012,11 +1019,18 @@ class TestSupportTicketHelpers:
             "metadata": {},
         }
 
-        with patch(
-            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
-            new_callable=AsyncMock,
-            return_value=mock_fragments,
-        ) as mock_get_fragments:
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value=mock_fragments,
+            ) as mock_get_fragments,
+        ):
             result = await get_support_ticket_helper(
                 ticket_id="sre_support_tickets:abc123def456:chunk:0"
             )
