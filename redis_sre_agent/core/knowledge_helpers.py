@@ -35,6 +35,7 @@ _INDEX_TYPE_TO_PREFIX = {
     "skills": "sre_skills",
     "support_tickets": "sre_support_tickets",
 }
+_SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
 
 
 def _extract_version_from_source(source: str) -> str:
@@ -456,31 +457,42 @@ async def search_support_tickets_helper(
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Search support tickets only."""
+    effective_limit = max(limit + offset, limit)
+    exact_matches = await _find_support_ticket_exact_matches(
+        query=query,
+        version=version,
+        config=config,
+    )
     result = await search_knowledge_base_helper(
         query=query,
-        limit=limit,
-        offset=offset,
+        limit=effective_limit,
+        offset=0,
         distance_threshold=distance_threshold,
-        hybrid_search=hybrid_search,
+        hybrid_search=hybrid_search or _looks_like_support_ticket_identifier(query),
         version=version,
         config=config,
         index_type="support_tickets",
     )
 
     tickets = []
-    for ticket in result.get("results", []):
+    seen_ticket_keys: set[str] = set()
+    for ticket in [*exact_matches, *result.get("results", [])]:
+        ticket_key = str(ticket.get("document_hash") or ticket.get("id") or "").strip()
+        if ticket_key and ticket_key in seen_ticket_keys:
+            continue
+        if ticket_key:
+            seen_ticket_keys.add(ticket_key)
         ticket_with_id = dict(ticket)
-        ticket_with_id["ticket_id"] = _normalize_support_ticket_id(
-            str(ticket.get("document_hash") or ticket.get("id") or "")
-        )
+        ticket_with_id["ticket_id"] = _support_ticket_id_for_result(ticket)
         tickets.append(ticket_with_id)
+    paged_tickets = tickets[offset : offset + limit]
 
     result.update(
         {
-            "ticket_count": len(tickets),
-            "tickets": tickets,
-            "results": tickets,
-            "results_count": len(tickets),
+            "ticket_count": len(paged_tickets),
+            "tickets": paged_tickets,
+            "results": paged_tickets,
+            "results_count": len(paged_tickets),
             "doc_type": "support_ticket",
             "doc_type_filter": "support_ticket",
         }
@@ -504,11 +516,98 @@ def _normalize_support_ticket_id(ticket_id: str) -> str:
     return raw_id
 
 
+def _looks_like_support_ticket_identifier(query: str) -> bool:
+    """Best-effort detection for exact support ticket IDs like RET-4421."""
+    normalized_query = _normalize_support_ticket_id(query)
+    if not normalized_query or " " in normalized_query:
+        return False
+    if not _SUPPORT_TICKET_ID_RE.match(normalized_query):
+        return False
+    return any(char.isdigit() for char in normalized_query)
+
+
+def _support_ticket_id_for_result(ticket: Dict[str, Any]) -> str:
+    """Resolve the stable public ticket identifier for a search result."""
+    for key in ("name", "meta_name"):
+        value = str(ticket.get(key) or "").strip()
+        if value:
+            return value
+    return _normalize_support_ticket_id(str(ticket.get("document_hash") or ticket.get("id") or ""))
+
+
+async def _find_support_ticket_exact_matches(
+    query: str,
+    version: Optional[str] = "latest",
+    config: Optional[Settings] = None,
+) -> List[Dict[str, Any]]:
+    """Find support tickets by exact stable ID stored in the indexed `name` field."""
+    normalized_query = _normalize_support_ticket_id(query)
+    if not _looks_like_support_ticket_identifier(normalized_query):
+        return []
+
+    index = await get_support_tickets_index(config=config)
+    rows = await index.query(
+        FilterQuery(
+            filter_expression=Tag("name") == normalized_query,
+            return_fields=[
+                "id",
+                "document_hash",
+                "chunk_index",
+                "title",
+                "content",
+                "source",
+                "category",
+                "doc_type",
+                "name",
+                "summary",
+                "priority",
+                "pinned",
+                "meta_name",
+                "meta_summary",
+                "meta_priority",
+                "meta_pinned",
+                "severity",
+                "version",
+            ],
+            num_results=50,
+        )
+    )
+
+    candidates = [doc for doc in _dedupe_docs(rows) if _doc_matches_requested_version(doc, version)]
+
+    by_document: Dict[str, Dict[str, Any]] = {}
+    for doc in candidates:
+        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
+        if not key:
+            continue
+        existing = by_document.get(key)
+        if existing is None or _doc_chunk_index(doc) < _doc_chunk_index(existing):
+            by_document[key] = doc
+
+    return sorted(
+        by_document.values(),
+        key=lambda doc: (
+            _support_ticket_id_for_result(doc).lower(),
+            str(doc.get("source", "")).lower(),
+            _doc_chunk_index(doc),
+        ),
+    )
+
+
 async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     """Get complete content for a support ticket by ticket id."""
     normalized_ticket_id = _normalize_support_ticket_id(ticket_id)
+    exact_matches = await _find_support_ticket_exact_matches(
+        query=normalized_ticket_id,
+        version=None,
+    )
+    resolved_document_hash = (
+        str(exact_matches[0].get("document_hash") or normalized_ticket_id).strip()
+        if exact_matches
+        else normalized_ticket_id
+    )
     result = await get_all_document_fragments(
-        document_hash=normalized_ticket_id,
+        document_hash=resolved_document_hash,
         include_metadata=True,
         index_type="support_tickets",
     )
@@ -517,6 +616,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
         return {
             "ticket_id": ticket_id,
             "normalized_ticket_id": normalized_ticket_id,
+            "document_hash": resolved_document_hash,
             **result,
         }
 
@@ -526,7 +626,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     if normalized_type != "support_ticket":
         return {
             "ticket_id": ticket_id,
-            "document_hash": normalized_ticket_id,
+            "document_hash": resolved_document_hash,
             "error": f"Document type is '{normalized_type}', not 'support_ticket'",
             "doc_type": normalized_type,
         }
@@ -536,7 +636,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
     metadata = result.get("metadata", {}) or {}
     return {
         "ticket_id": ticket_id,
-        "document_hash": normalized_ticket_id,
+        "document_hash": resolved_document_hash,
         "title": result.get("title", ""),
         "source": result.get("source", ""),
         "doc_type": normalized_type,

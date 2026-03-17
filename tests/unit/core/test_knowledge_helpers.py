@@ -981,6 +981,27 @@ class TestSupportTicketHelpers:
         assert result["tickets"][0]["ticket_id"] == "abc123def456"
 
     @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_prefers_stable_ticket_name(self):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+            new_callable=AsyncMock,
+            return_value={
+                "results": [
+                    {
+                        "id": "sre_support_tickets:abc123def456:chunk:0",
+                        "document_hash": "abc123def456",
+                        "name": "ret-4421",
+                        "title": "Ticket RET-4421",
+                        "doc_type": "support_ticket",
+                    }
+                ]
+            },
+        ):
+            result = await search_support_tickets_helper(query="ret-4421")
+
+        assert result["tickets"][0]["ticket_id"] == "ret-4421"
+
+    @pytest.mark.asyncio
     async def test_get_support_ticket_helper_normalizes_chunk_key_input(self):
         mock_fragments = {
             "document_hash": "abc123def456",
@@ -999,6 +1020,51 @@ class TestSupportTicketHelpers:
             result = await get_support_ticket_helper(
                 ticket_id="sre_support_tickets:abc123def456:chunk:0"
             )
+
+        call_kwargs = mock_get_fragments.await_args.kwargs
+        assert call_kwargs["document_hash"] == "abc123def456"
+        assert result["document_hash"] == "abc123def456"
+
+    @pytest.mark.asyncio
+    async def test_get_support_ticket_helper_resolves_stable_ticket_name(self):
+        mock_fragments = {
+            "document_hash": "abc123def456",
+            "doc_type": "support_ticket",
+            "title": "Ticket RET-4421",
+            "source": "source",
+            "fragments": [{"chunk_index": 0, "content": "body", "doc_type": "support_ticket"}],
+            "metadata": {},
+        }
+        support_tickets_index = AsyncMock()
+        support_tickets_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "sre_support_tickets:abc123def456:chunk:0",
+                    "document_hash": "abc123def456",
+                    "name": "ret-4421",
+                    "title": "Ticket RET-4421",
+                    "doc_type": "support_ticket",
+                    "source": "source",
+                    "chunk_index": 0,
+                    "content": "body",
+                    "version": "latest",
+                }
+            ]
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=support_tickets_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value=mock_fragments,
+            ) as mock_get_fragments,
+        ):
+            result = await get_support_ticket_helper(ticket_id="ret-4421")
 
         call_kwargs = mock_get_fragments.await_args.kwargs
         assert call_kwargs["document_hash"] == "abc123def456"
