@@ -7,6 +7,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+ENTERPRISE_COMPOSE_CMD=(docker compose -f "$PROJECT_ROOT/docker-compose.yml" -f "$PROJECT_ROOT/docker-compose.enterprise.yml")
 
 # Colors for output
 RED='\033[0;31m'
@@ -17,8 +18,8 @@ NC='\033[0m' # No Color
 
 # Configuration
 CLUSTER_FQDN="cluster.local"
-ADMIN_EMAIL="admin@redis.local"
-ADMIN_PASSWORD="RedisEnterprise123!"
+ADMIN_EMAIL="admin@redis.com"
+ADMIN_PASSWORD="admin"
 DATABASE_NAME="test-db"
 DATABASE_PORT="12000"
 
@@ -90,7 +91,7 @@ start_redis_enterprise() {
     cd "$PROJECT_ROOT"
 
     # Start only the Redis Enterprise service
-    docker-compose up -d redis-enterprise
+    "${ENTERPRISE_COMPOSE_CMD[@]}" up -d redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 redis-enterprise redis-enterprise-exporter
 
     # Wait for the service to be ready
     wait_for_service "Redis Enterprise" "https://localhost:8443/" 60
@@ -103,9 +104,10 @@ setup_cluster() {
     log "Attempting cluster setup using rladmin..."
 
     # First, try to check if cluster already exists
-    local cluster_status=$(docker exec redis-enterprise-node1 rladmin status 2>/dev/null || echo "NO_CLUSTER")
+    local cluster_status
+    cluster_status=$(docker exec redis-enterprise-node1 rladmin status nodes 2>/dev/null || echo "NO_CLUSTER")
 
-    if echo "$cluster_status" | grep -q "CLUSTER OK"; then
+    if echo "$cluster_status" | grep -q "node:1"; then
         success "Cluster already exists and is healthy"
         return 0
     fi
@@ -160,8 +162,9 @@ EOF
     sleep 15
 
     # Verify cluster is working
-    local final_status=$(docker exec redis-enterprise-node1 rladmin status 2>/dev/null || echo "VERIFICATION_FAILED")
-    if echo "$final_status" | grep -q "CLUSTER OK\|cluster_ok"; then
+    local final_status
+    final_status=$(docker exec redis-enterprise-node1 rladmin status nodes 2>/dev/null || echo "VERIFICATION_FAILED")
+    if echo "$final_status" | grep -q "node:1"; then
         success "Cluster is operational"
     else
         warning "Cluster status unclear, but proceeding with database creation"
@@ -268,7 +271,7 @@ show_cluster_info() {
     echo ""
     echo "🔧 Testing Commands:"
     echo "  • Test connection: docker exec redis-enterprise-node1 redis-cli -p $DATABASE_PORT ping"
-    echo "  • Check cluster status: docker exec redis-enterprise-node1 rladmin status"
+    echo "  • Check cluster status: docker exec redis-enterprise-node1 rladmin status nodes"
     echo "  • Check database status: docker exec redis-enterprise-node1 rladmin status databases"
     echo ""
     echo "📚 Enterprise Runbook Testing:"
@@ -279,7 +282,7 @@ show_cluster_info() {
 
     # Show cluster status
     log "Current cluster status:"
-    docker exec redis-enterprise-node1 rladmin status 2>/dev/null || warning "Could not retrieve cluster status"
+    docker exec redis-enterprise-node1 rladmin status nodes 2>/dev/null || warning "Could not retrieve cluster status"
 }
 
 cleanup() {
@@ -323,13 +326,16 @@ case "${1:-}" in
     "cleanup")
         log "Stopping Redis Enterprise..."
         cd "$PROJECT_ROOT"
-        docker-compose down redis-enterprise
-        docker volume rm redis-sre-agent_redis_enterprise_data 2>/dev/null || true
+        "${ENTERPRISE_COMPOSE_CMD[@]}" stop redis-enterprise redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 redis-enterprise-exporter 2>/dev/null || true
+        "${ENTERPRISE_COMPOSE_CMD[@]}" rm -f redis-enterprise redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 redis-enterprise-exporter 2>/dev/null || true
+        docker volume rm redis-sre-agent_redis_enterprise_node1_data 2>/dev/null || true
+        docker volume rm redis-sre-agent_redis_enterprise_node2_data 2>/dev/null || true
+        docker volume rm redis-sre-agent_redis_enterprise_node3_data 2>/dev/null || true
         success "Redis Enterprise cleanup completed"
         ;;
     "status")
         log "Checking Redis Enterprise status..."
-        docker exec redis-enterprise-node1 rladmin status 2>/dev/null || error "Redis Enterprise is not running"
+        docker exec redis-enterprise-node1 rladmin status nodes 2>/dev/null || error "Redis Enterprise is not running"
         ;;
     "logs")
         log "Showing Redis Enterprise logs..."

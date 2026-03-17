@@ -6,12 +6,15 @@ and other administrative functions exposed by the Redis Enterprise admin API.
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlencode
 
 import httpx
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from redis_enterprise import EnterpriseClient
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.decorators import status_update
@@ -19,6 +22,61 @@ from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
+_API_ERROR_CODE_RE = re.compile(r"\(code:\s*(\d+)\)")
+
+
+class _EnterpriseResponse:
+    """Minimal response wrapper for the upstream Redis Enterprise client."""
+
+    def __init__(self, data: Any):
+        self._data = data
+
+    def json(self) -> Any:
+        return self._data
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _EnterpriseClientAdapter:
+    """Adapt the upstream client to the provider's existing response flow."""
+
+    def __init__(self, client: EnterpriseClient):
+        self._client = client
+
+    @staticmethod
+    def _build_path(path: str, params: Optional[Dict[str, Any]] = None) -> str:
+        if not params:
+            return path
+        filtered = {key: value for key, value in params.items() if value is not None}
+        if not filtered:
+            return path
+        return f"{path}?{urlencode(filtered, doseq=True)}"
+
+    @staticmethod
+    def _status_code_from_exception(exc: Exception) -> Optional[int]:
+        match = _API_ERROR_CODE_RE.search(str(exc))
+        if match:
+            return int(match.group(1))
+        if isinstance(exc, ValueError) and str(exc) == "Resource not found":
+            return 404
+        return None
+
+    async def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> _EnterpriseResponse:
+        full_path = self._build_path(path, params)
+        try:
+            data = await self._client.get(full_path)
+        except Exception as exc:
+            status_code = self._status_code_from_exception(exc)
+            if status_code is None:
+                raise
+            request = httpx.Request("GET", full_path)
+            response = httpx.Response(status_code, request=request, text=str(exc))
+            raise httpx.HTTPStatusError(str(exc), request=request, response=response) from exc
+        return _EnterpriseResponse(data)
+
+    async def aclose(self) -> None:
+        return None
 
 
 class RedisEnterpriseAdminConfig(BaseSettings):
@@ -97,7 +155,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             config = RedisEnterpriseAdminConfig()
 
         self.config = config
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[_EnterpriseClientAdapter] = None
 
     @property
     def provider_name(self) -> str:
@@ -108,13 +166,13 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """Admin tools always require a Redis Enterprise instance."""
         return True
 
-    def get_client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client (lazy initialization).
+    def get_client(self) -> _EnterpriseClientAdapter:
+        """Get or create the upstream Redis Enterprise client (lazy initialization).
 
         Uses admin_url, admin_username, and admin_password from the RedisInstance.
 
         Returns:
-            httpx.AsyncClient: Initialized HTTP client
+            _EnterpriseClientAdapter: Initialized Redis Enterprise client adapter
         """
         if self._client is None:
             # Get credentials from the instance
@@ -138,15 +196,14 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "No admin credentials provided - API calls will likely fail with 401"
                 )
 
-            self._client = httpx.AsyncClient(
-                base_url=admin_url,
-                auth=auth,
-                verify=self.config.verify_ssl,
-                timeout=30.0,
-                headers={
-                    # Be explicit to avoid 406 content negotiation issues on some endpoints
-                    "Accept": "application/json",
-                },
+            self._client = _EnterpriseClientAdapter(
+                EnterpriseClient(
+                    base_url=admin_url,
+                    username=admin_username,
+                    password=admin_password,
+                    insecure=not self.config.verify_ssl,
+                    timeout_secs=30,
+                )
             )
             logger.info(f"Connected to Redis Enterprise admin API at {admin_url}")
         return self._client

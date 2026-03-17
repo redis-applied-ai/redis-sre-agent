@@ -1,25 +1,18 @@
 """Tests for Redis Enterprise admin API tool provider.
 
-These are unit tests with mocked HTTP responses - no actual Redis Enterprise cluster required.
-Mock responses are validated against Pydantic schemas derived from the official API documentation.
+These tests use mocked responses and a local mock admin API. No real Redis Enterprise
+cluster is required.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiohttp import web
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise.provider import (
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
-)
-
-# Import test-only schemas for validating mock responses
-from tests.tools.redis_enterprise_schemas import (
-    ActionObject,
-    BDBObject,
-    ClusterObject,
-    NodeObject,
 )
 
 
@@ -59,6 +52,77 @@ async def test_provider_initialization(provider, config, redis_instance):
     assert provider.config == config
     assert provider.redis_instance == redis_instance
     assert provider._client is None
+
+
+def test_get_client_uses_upstream_sdk(provider):
+    """Test that the provider initializes the upstream redis-enterprise client."""
+    with patch(
+        "redis_sre_agent.tools.admin.redis_enterprise.provider.EnterpriseClient"
+    ) as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        client = provider.get_client()
+
+        assert client is provider._client
+        mock_client_cls.assert_called_once_with(
+            base_url="https://test-cluster.example.com:9443",
+            username="test@example.com",
+            password="test-password",
+            insecure=True,
+            timeout_secs=30,
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_database_with_real_upstream_client_returns_raw_payload(config):
+    """Test the real upstream client path against a local mock admin API."""
+    payload = {
+        "uid": 197,
+        "name": "test-db",
+        "status": "active",
+        "crdt": True,
+        "crdt_guid": "guid-123",
+    }
+    seen = {}
+
+    async def get_database_handler(request):
+        seen["path_qs"] = request.path_qs
+        return web.json_response(payload)
+
+    app = web.Application()
+    app.router.add_get("/v1/bdbs/197", get_database_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+
+    provider = RedisEnterpriseAdminToolProvider(
+        redis_instance=RedisInstance(
+            id="test-redis-2",
+            name="mock-admin-api",
+            connection_url="redis://localhost:6379",
+            environment="test",
+            usage="cache",
+            description="Mock Redis Enterprise cluster",
+            instance_type="redis_enterprise",
+            admin_url=f"http://127.0.0.1:{port}",
+            admin_username="test@example.com",
+            admin_password="test-password",
+        ),
+        config=config,
+    )
+
+    try:
+        result = await provider.get_database(uid=197, fields="uid,name,status,crdt_guid")
+    finally:
+        await provider.__aexit__(None, None, None)
+        await runner.cleanup()
+
+    assert result["status"] == "success"
+    assert result["database"] == payload
+    assert seen["path_qs"] == "/v1/bdbs/197?fields=uid%2Cname%2Cstatus%2Ccrdt_guid"
 
 
 @pytest.mark.asyncio
@@ -110,8 +174,7 @@ async def test_create_tool_schemas(provider):
 
 @pytest.mark.asyncio
 async def test_get_cluster_info_success(provider):
-    """Test successful cluster info retrieval with schema validation."""
-    # Create a mock response that matches the ClusterObject schema
+    """Test successful cluster info retrieval."""
     cluster_data = {
         "name": "test-cluster",
         "nodes_count": 3,
@@ -120,9 +183,6 @@ async def test_get_cluster_info_success(provider):
         "email_alerts": True,
         "created_time": "2024-01-01T00:00:00Z",
     }
-
-    # Validate against schema
-    ClusterObject(**cluster_data)
 
     mock_response = MagicMock()
     mock_response.json.return_value = cluster_data
@@ -145,8 +205,7 @@ async def test_get_cluster_info_success(provider):
 
 @pytest.mark.asyncio
 async def test_list_databases_success(provider):
-    """Test successful database listing with schema validation."""
-    # Create mock databases that match the BDBObject schema
+    """Test successful database listing."""
     databases = [
         {
             "uid": 1,
@@ -167,10 +226,6 @@ async def test_list_databases_success(provider):
             "replication": False,
         },
     ]
-
-    # Validate each database against schema
-    for db in databases:
-        BDBObject(**db)
 
     mock_response = MagicMock()
     mock_response.json.return_value = databases
@@ -214,7 +269,7 @@ async def test_list_databases_with_fields(provider):
 
 @pytest.mark.asyncio
 async def test_get_database_success(provider):
-    """Test successful database retrieval with schema validation."""
+    """Test successful database retrieval."""
     database_data = {
         "uid": 1,
         "name": "test-db",
@@ -229,9 +284,6 @@ async def test_get_database_success(provider):
         "port": 12000,
         "redis_version": "7.2",
     }
-
-    # Validate against schema
-    BDBObject(**database_data)
 
     mock_response = MagicMock()
     mock_response.json.return_value = database_data
@@ -252,8 +304,36 @@ async def test_get_database_success(provider):
 
 
 @pytest.mark.asyncio
+async def test_get_database_preserves_crdt_guid_field_name(provider):
+    """Test that the provider uses the admin API's CRDT field names unchanged."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "uid": 1,
+        "name": "test-db",
+        "type": "redis",
+        "memory_size": 1073741824,
+        "crdt": True,
+        "crdt_guid": "crdt-123",
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_database(uid=1, fields="uid,name,crdt_guid")
+
+        assert result["status"] == "success"
+        assert result["database"]["crdt_guid"] == "crdt-123"
+        mock_client.get.assert_called_once_with(
+            "/v1/bdbs/1", params={"fields": "uid,name,crdt_guid"}
+        )
+
+
+@pytest.mark.asyncio
 async def test_list_nodes_success(provider):
-    """Test successful node listing with schema validation."""
+    """Test successful node listing."""
     nodes = [
         {
             "uid": 1,
@@ -277,10 +357,6 @@ async def test_list_nodes_success(provider):
         },
     ]
 
-    # Validate each node against schema
-    for node in nodes:
-        NodeObject(**node)
-
     mock_response = MagicMock()
     mock_response.json.return_value = nodes
     mock_response.raise_for_status = MagicMock()
@@ -303,7 +379,7 @@ async def test_list_nodes_success(provider):
 
 @pytest.mark.asyncio
 async def test_list_actions_success(provider):
-    """Test successful action listing with schema validation."""
+    """Test successful action listing."""
     actions = [
         {
             "action_uid": "abc-123",
@@ -329,10 +405,6 @@ async def test_list_actions_success(provider):
             "creation_time": 1742595800,
         },
     ]
-
-    # Validate each action against schema
-    for action in actions:
-        ActionObject(**action)
 
     mock_response = MagicMock()
     mock_response.json.return_value = actions

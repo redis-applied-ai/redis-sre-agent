@@ -1,6 +1,10 @@
 #!/bin/bash
 # Setup Redis Enterprise 3-node cluster for demo scenarios
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+COMPOSE_CMD=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.enterprise.yml")
+
 echo "🚀 Setting up Redis Enterprise 3-node cluster..."
 echo
 
@@ -23,6 +27,29 @@ run_with_timeout() {
 
     echo "⚠️  'timeout' not found; running without timeout: $*"
     "$@"
+}
+
+wait_for_cluster_nodes_ready() {
+    echo "⏳ Waiting for cluster membership to stabilize..."
+    for i in {1..60}; do
+        local status_output
+        status_output="$(docker exec redis-enterprise-node1 rladmin status nodes 2>/dev/null || true)"
+
+        if echo "$status_output" | grep -q 'node:1' && \
+           echo "$status_output" | grep -q 'node:2' && \
+           echo "$status_output" | grep -q 'node:3' && \
+           ! echo "$status_output" | grep -Eq 'DOWN|never seen'; then
+            echo "✅ Cluster membership is healthy"
+            return 0
+        fi
+
+        echo "   Waiting for cluster membership... ($i/60)"
+        sleep 2
+    done
+
+    echo "⚠️  Cluster membership did not stabilize in time"
+    docker exec redis-enterprise-node1 rladmin status nodes 2>/dev/null || true
+    return 1
 }
 
 # Check if cluster already exists and is working
@@ -48,8 +75,8 @@ else
 
     # Stop and remove existing containers to start fresh
     echo "🧹 Cleaning up existing containers..."
-    docker-compose stop redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 2>/dev/null || true
-    docker-compose rm -f redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 2>/dev/null || true
+    "${COMPOSE_CMD[@]}" stop redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 2>/dev/null || true
+    "${COMPOSE_CMD[@]}" rm -f redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 2>/dev/null || true
 
     # Remove volumes for clean slate
     echo "🧹 Removing old data volumes..."
@@ -59,7 +86,7 @@ else
 
     # Start fresh nodes
     echo "🚀 Starting fresh Redis Enterprise nodes..."
-    docker-compose up -d redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3
+    "${COMPOSE_CMD[@]}" up -d redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3
 
     echo "⏳ Waiting 90 seconds for nodes to initialize..."
     sleep 90
@@ -112,6 +139,9 @@ else
     sleep 5
 fi
 
+echo
+wait_for_cluster_nodes_ready
+
 # Check cluster status
 echo
 echo "📋 Step 4: Checking cluster status..."
@@ -132,13 +162,14 @@ done
 # Create database via REST API (delete preexisting via rladmin if present)
 echo
 echo "📋 Step 5: Creating test database..."
-# If a preexisting DB exists, delete it via rladmin to ensure a clean state
-if docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | grep -q 'test-db'; then
-    echo "   ⚠️  Database 'test-db' already exists; deleting via rladmin..."
-    docker exec redis-enterprise-node1 rladmin delete db test-db || true
+# If a preexisting DB exists, delete it via REST API to ensure a clean state
+EXISTING_DB_UID=$(curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs | jq -r '.[] | select(.name=="test-db") | .uid' | head -n 1)
+if [ -n "$EXISTING_DB_UID" ]; then
+    echo "   ⚠️  Database 'test-db' already exists; deleting via REST API..."
+    curl -k -s -u "admin@redis.com:admin" -X DELETE "https://localhost:9443/v1/bdbs/$EXISTING_DB_UID" >/dev/null || true
     # Wait for deletion to complete
     for i in {1..30}; do
-        if docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | grep -q 'test-db'; then
+        if curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs 2>/dev/null | grep -q '"name":"test-db"'; then
             echo "      Waiting for database deletion... ($i/30)"
             sleep 2
         else
@@ -187,11 +218,11 @@ for i in {1..30}; do
 done
 echo
 echo "📋 Step 6: Ensuring 'test-db' has 2 shards across nodes..."
-# Determine DB UID
-DB_UID=""
-DB_UID=$(docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | awk '/test-db/ {print $1}' | sed 's/db://')
-if [ -z "$DB_UID" ]; then
-    DB_UID=$(curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs | tr -d '\n' | sed -E 's/.*"name":"test-db".*?"uid":([0-9]+).*/\1/')
+# Determine the REST BDB uid. Use the admin API as the source of truth for
+# follow-up REST calls because rladmin output can lag during delete/recreate.
+DB_UID=$(curl -k -s -u "admin@redis.com:admin" https://localhost:9443/v1/bdbs | jq -r '.[] | select(.name=="test-db") | .uid' | head -n 1)
+if [ -z "$DB_UID" ] || [ "$DB_UID" = "null" ]; then
+    DB_UID=$(docker exec redis-enterprise-node1 rladmin status databases 2>/dev/null | awk '/test-db/ {print $1}' | sed 's/db://')
 fi
 if [ -z "$DB_UID" ]; then
     echo "   ❌ Could not determine database UID for 'test-db'"
