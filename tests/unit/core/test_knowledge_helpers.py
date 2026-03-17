@@ -989,20 +989,27 @@ class TestSupportTicketHelpers:
 
     @pytest.mark.asyncio
     async def test_search_support_tickets_helper_prefers_stable_ticket_name(self):
-        with patch(
-            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
-            new_callable=AsyncMock,
-            return_value={
-                "results": [
-                    {
-                        "id": "sre_support_tickets:abc123def456:chunk:0",
-                        "document_hash": "abc123def456",
-                        "name": "ret-4421",
-                        "title": "Ticket RET-4421",
-                        "doc_type": "support_ticket",
-                    }
-                ]
-            },
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "results": [
+                        {
+                            "id": "sre_support_tickets:abc123def456:chunk:0",
+                            "document_hash": "abc123def456",
+                            "name": "ret-4421",
+                            "title": "Ticket RET-4421",
+                            "doc_type": "support_ticket",
+                        }
+                    ]
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await search_support_tickets_helper(query="ret-4421")
 
