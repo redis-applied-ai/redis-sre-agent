@@ -240,6 +240,11 @@ litellm_settings:
   cache: false
   # Timeout settings
   request_timeout: 600
+  # Context-window-specific fallbacks: if a model group hits a
+  # ContextWindowExceededError, route to a larger-context model group.
+  # Here we fall back from legacy gpt-4 (8k) to gpt-4-turbo (128k).
+  context_window_fallbacks:
+    - { "gpt-4": ["gpt-4-turbo"] }
 
 general_settings:
   # Master key for authentication
