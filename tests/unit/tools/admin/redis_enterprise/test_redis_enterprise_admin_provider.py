@@ -11,8 +11,10 @@ from aiohttp import web
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise.provider import (
+    EnterpriseClient,
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
+    _HttpxClientAdapter,
 )
 
 
@@ -56,6 +58,9 @@ async def test_provider_initialization(provider, config, redis_instance):
 
 def test_get_client_uses_upstream_sdk(provider):
     """Test that the provider initializes the upstream redis-enterprise client."""
+    if EnterpriseClient is None:
+        pytest.skip("redis-enterprise is not installed on this platform")
+
     with patch(
         "redis_sre_agent.tools.admin.redis_enterprise.provider.EnterpriseClient"
     ) as mock_client_cls:
@@ -75,8 +80,26 @@ def test_get_client_uses_upstream_sdk(provider):
 
 
 @pytest.mark.asyncio
+async def test_get_client_falls_back_to_httpx_when_sdk_unavailable(provider):
+    """Test that the provider uses httpx when redis-enterprise is unavailable."""
+    provider._client = None
+
+    with patch(
+        "redis_sre_agent.tools.admin.redis_enterprise.provider.EnterpriseClient",
+        None,
+    ):
+        client = provider.get_client()
+
+    assert isinstance(client, _HttpxClientAdapter)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_get_database_with_real_upstream_client_returns_raw_payload(config):
     """Test the real upstream client path against a local mock admin API."""
+    if EnterpriseClient is None:
+        pytest.skip("redis-enterprise is not installed on this platform")
+
     payload = {
         "uid": 197,
         "name": "test-db",

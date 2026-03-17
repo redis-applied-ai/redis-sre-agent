@@ -3906,7 +3906,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/03/a2/011da7684c068ed21cdcf3247a15e2086ac65d4417e914625b7209aeeabb/redis_enterprise-0.8.3.tar.gz", hash = "sha256:c9b61eab715661d2b6a4e7ca94c4fa0b7306c0fa412c487f02b07808ff4c825e", size = 174200, upload-time = "2026-02-10T11:07:16.687Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/28/0a/a23d119070b8f4da392ff60f01904b41a2e9c181acd7f24ef33cfd48ec77/redis_enterprise-0.8.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:c1beb814097dcf1b9282d877defd47d97bbd4610a4f661ce65ae702298d1db71", size = 2971824, upload-time = "2026-02-10T11:07:10.234Z" },
-    { url = "https://files.pythonhosted.org/packages/29/88/98c35c08bf30040b27f2e951469b2b71dc24fa14ef2a4a11abcc2aab07a7/redis_enterprise-0.8.3-cp312-cp312-win_amd64.whl", hash = "sha256:3862d24aa4bc444280182d7eccad0d515aecb217dc2ca35f62f5f53275a37bc9", size = 2574227, upload-time = "2026-02-10T11:07:12.328Z" },
 ]
 
 [[package]]
@@ -3953,7 +3952,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-ulid" },
     { name = "redis" },
-    { name = "redis-enterprise" },
+    { name = "redis-enterprise", marker = "sys_platform == 'darwin'" },
     { name = "redisvl" },
     { name = "requests" },
     { name = "rich" },
@@ -4021,7 +4020,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-ulid", specifier = ">=3.0.0" },
     { name = "redis", specifier = ">=4.5.0" },
-    { name = "redis-enterprise", specifier = ">=0.8.3" },
+    { name = "redis-enterprise", marker = "sys_platform == 'darwin'", specifier = ">=0.8.3" },
     { name = "redisvl", specifier = ">=0.9.0,<1.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "rich", specifier = ">=14.1.0" },
