@@ -14,6 +14,7 @@ from redis_sre_agent.tools.admin.redis_enterprise.provider import (
     EnterpriseClient,
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
+    _EnterpriseClientAdapter,
     _HttpxClientAdapter,
 )
 
@@ -92,6 +93,35 @@ async def test_get_client_falls_back_to_httpx_when_sdk_unavailable(provider):
 
     assert isinstance(client, _HttpxClientAdapter)
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_enterprise_client_adapter_closes_async_client_method():
+    """Test that the Enterprise adapter forwards async cleanup when available."""
+
+    wrapped_client = MagicMock()
+    wrapped_client.aclose = AsyncMock()
+
+    client = _EnterpriseClientAdapter(wrapped_client)
+
+    await client.aclose()
+
+    wrapped_client.aclose.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_enterprise_client_adapter_closes_sync_client_method():
+    """Test that the Enterprise adapter falls back to a synchronous close method."""
+
+    wrapped_client = MagicMock()
+    wrapped_client.aclose = None
+    wrapped_client.close = MagicMock()
+
+    client = _EnterpriseClientAdapter(wrapped_client)
+
+    await client.aclose()
+
+    wrapped_client.close.assert_called_once_with()
 
 
 @pytest.mark.asyncio

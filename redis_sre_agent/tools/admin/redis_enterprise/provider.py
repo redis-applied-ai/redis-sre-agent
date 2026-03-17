@@ -5,6 +5,7 @@ It provides read-only tools for cluster inspection, database information, node s
 and other administrative functions exposed by the Redis Enterprise admin API.
 """
 
+import inspect
 import logging
 import re
 from datetime import datetime, timezone
@@ -80,6 +81,16 @@ class _EnterpriseClientAdapter:
         return _EnterpriseResponse(data)
 
     async def aclose(self) -> None:
+        for method_name in ("aclose", "close"):
+            method = getattr(self._client, method_name, None)
+            if not callable(method):
+                continue
+
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+            return None
+
         return None
 
 

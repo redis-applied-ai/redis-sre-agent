@@ -216,7 +216,7 @@ docker exec "$NODE_CONTAINER" /opt/redislabs/bin/crdb-cli --help >/dev/null 2>&1
     die "crdb-cli is not available in $NODE_CONTAINER"
 
 existing_crdb_json="$(get_crdb_json_by_name "$CRDB_NAME")"
-if [ "$existing_crdb_json" != "null" ]; then
+if [ -n "$existing_crdb_json" ] && [ "$existing_crdb_json" != "null" ]; then
     log "CRDB '$CRDB_NAME' already exists"
     print_summary "$existing_crdb_json"
     exit 0
