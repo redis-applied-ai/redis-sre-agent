@@ -92,7 +92,7 @@ class _RawTextQuery(BaseQuery):
 
         text = self._raw_query_string
         if filter_expression and filter_expression != "*":
-            text += f" AND {filter_expression}"
+            text += f" {filter_expression}"
         return text
 
 
@@ -141,6 +141,13 @@ def _doc_matches_requested_type(doc: Dict[str, Any], requested_type: Optional[st
     if requested_type is None:
         return True
     return _normalized_doc_type(doc) == requested_type.strip().lower()
+
+
+def _doc_matches_requested_category(doc: Dict[str, Any], requested_category: Optional[str]) -> bool:
+    """Apply category filtering when the caller requested one."""
+    if requested_category is None:
+        return True
+    return str(doc.get("category", "")).strip().lower() == requested_category.strip().lower()
 
 
 def _parse_bool(value: Any, default: bool = False) -> bool:
@@ -361,6 +368,7 @@ async def _find_exact_document_matches(
         doc
         for doc in _dedupe_docs(rows)
         if _doc_matches_requested_version(doc, version)
+        and _doc_matches_requested_category(doc, category)
         and _doc_matches_requested_type(doc, doc_type)
         and (
             normalized_index_type != "knowledge"
@@ -386,19 +394,14 @@ async def _find_exact_document_matches(
     )
 
 
-def _quoted_text_phrase_query(
-    phrase: str, filter_expression: Optional[FilterExpression | str]
-) -> str:
+def _quoted_text_phrase_query(phrase: str) -> str:
     """Build a literal phrase query over the searchable TEXT fields."""
     escaped_phrase = phrase.lower().replace("\\", "\\\\").replace('"', '\\"')
     field_queries = []
     for field_name in _TEXT_PHRASE_QUERY_FIELDS:
         field_queries.append(f'@{field_name}:("{escaped_phrase}")')
 
-    text = "(" + " | ".join(field_queries) + ")"
-    if filter_expression and str(filter_expression) != "*":
-        text += f" AND {filter_expression}"
-    return text
+    return "(" + " | ".join(field_queries) + ")"
 
 
 def _result_score(doc: Dict[str, Any]) -> float:
@@ -443,7 +446,8 @@ async def _find_quoted_text_matches(
         filter_expr = doc_type_expr if filter_expr is None else (filter_expr & doc_type_expr)
 
     query_obj = _RawTextQuery(
-        _quoted_text_phrase_query(phrase, filter_expr),
+        _quoted_text_phrase_query(phrase),
+        filter_expression=filter_expr,
         return_fields=_SEARCH_RETURN_FIELDS,
         num_results=50,
     )
@@ -453,6 +457,7 @@ async def _find_quoted_text_matches(
         doc
         for doc in _dedupe_docs(rows)
         if _doc_matches_requested_version(doc, version)
+        and _doc_matches_requested_category(doc, category)
         and _doc_matches_requested_type(doc, doc_type)
         and (
             normalized_index_type != "knowledge"
@@ -1138,9 +1143,7 @@ async def search_knowledge_base_helper(
         if precise_search
         else []
     )
-    effective_hybrid_search = (
-        hybrid_search or bool(exact_matches) or bool(quoted_text_matches) or precise_search
-    )
+    effective_hybrid_search = hybrid_search or precise_search
 
     # We need to fetch more results if there's an offset, then slice.
     # This is because RedisVL vector queries don't support offset directly
@@ -1205,6 +1208,7 @@ async def search_knowledge_base_helper(
         doc
         for doc in merged_results
         if _doc_matches_requested_version(doc, version)
+        and _doc_matches_requested_category(doc, category)
         and _doc_matches_requested_type(doc, normalized_doc_type)
         and (
             normalized_index_type != "knowledge"

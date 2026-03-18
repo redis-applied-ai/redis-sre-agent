@@ -61,6 +61,7 @@ class TestSearchRunbookKnowledge:
                 "title": "Redis Memory Alert",
                 "content": "Memory usage troubleshooting guide",
                 "source": "runbook.md",
+                "category": "monitoring",
                 "score": 0.95,
             }
         ]

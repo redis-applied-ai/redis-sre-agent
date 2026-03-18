@@ -8,6 +8,8 @@ import pytest
 from redis_sre_agent.core.knowledge_helpers import (
     _dedupe_docs,
     _doc_matches_requested_version,
+    _quoted_text_phrase_query,
+    _RawTextQuery,
     get_all_document_fragments,
     get_pinned_documents_helper,
     get_related_document_fragments,
@@ -280,6 +282,25 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results_count"] == 2
         assert result["results"][0]["id"] == "doc-phrase"
         assert mock_index.query.await_args_list[2].args[0].__class__.__name__ == "HybridQuery"
+
+    def test_quoted_text_phrase_query_uses_implicit_and_for_filters(self):
+        """Phrase queries should only contain the literal TEXT search expression."""
+        query = _quoted_text_phrase_query("DB memory full")
+
+        assert " AND " not in query
+        assert "@version:{latest}" not in query
+        assert '@title:("db memory full")' in query
+
+    def test_raw_text_query_uses_implicit_and_for_filters(self):
+        """Raw text queries should concatenate filters without a literal AND token."""
+        query = _RawTextQuery(
+            '@content:("db memory full")',
+            filter_expression="@version:{latest}",
+            num_results=5,
+        )
+
+        assert " AND " not in str(query)
+        assert '@content:("db memory full") @version:{latest}' in str(query)
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_doc_type_filter(self):
