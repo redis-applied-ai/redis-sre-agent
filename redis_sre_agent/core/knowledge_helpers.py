@@ -1146,7 +1146,9 @@ async def search_knowledge_base_helper(
     effective_hybrid_search = hybrid_search or precise_search
 
     # We need to fetch more results if there's an offset, then slice.
-    # This is because RedisVL vector queries don't support offset directly
+    # This path merges exact/quoted prequery results with semantic results and
+    # applies additional post-filtering, while the RedisVL HybridQuery path
+    # does not expose paging directly.
     fetch_limit = limit + offset
     if version is not None or normalized_doc_type is not None:
         # Oversample when version filtering to improve recall after post-filtering.
