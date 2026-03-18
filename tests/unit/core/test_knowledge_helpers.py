@@ -1243,6 +1243,36 @@ class TestSupportTicketHelpers:
         assert result["tickets"][0]["ticket_id"] == "ret-4421"
 
     @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_restores_requested_pagination_metadata(self):
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "offset": 0,
+                    "limit": 4,
+                    "results": [
+                        {"id": "ticket-1", "document_hash": "a", "title": "Ticket 1"},
+                        {"id": "ticket-2", "document_hash": "b", "title": "Ticket 2"},
+                        {"id": "ticket-3", "document_hash": "c", "title": "Ticket 3"},
+                    ],
+                },
+            ) as mock_search,
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await search_support_tickets_helper(query="ret-4421", limit=2, offset=1)
+
+        mock_search.assert_awaited_once()
+        assert result["offset"] == 1
+        assert result["limit"] == 2
+        assert result["ticket_count"] == 2
+        assert [ticket["id"] for ticket in result["tickets"]] == ["ticket-2", "ticket-3"]
+
+    @pytest.mark.asyncio
     async def test_get_support_ticket_helper_normalizes_chunk_key_input(self):
         mock_fragments = {
             "document_hash": "abc123def456",

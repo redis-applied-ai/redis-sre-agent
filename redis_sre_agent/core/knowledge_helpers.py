@@ -263,9 +263,14 @@ def _strip_outer_quotes(query: str) -> tuple[str, bool]:
 def _normalize_exact_match_query(query: str, index_type: str) -> str:
     """Normalize exact-match queries to the canonical stored value when possible."""
     normalized_query, _ = _strip_outer_quotes(query)
+    return _normalize_exact_match_value(normalized_query, index_type)
+
+
+def _normalize_exact_match_value(value: str, index_type: str) -> str:
+    """Normalize an already-unquoted exact-match value when possible."""
     if index_type.strip().lower() == "support_tickets":
-        return _normalize_support_ticket_id(normalized_query)
-    return normalized_query
+        return _normalize_support_ticket_id(value)
+    return str(value or "").strip()
 
 
 def _quote_tag_value(value: str) -> str:
@@ -281,7 +286,7 @@ def _tag_equals_expression(field_name: str, value: str) -> FilterExpression:
 def _looks_like_precise_search_query(query: str, index_type: str) -> bool:
     """Heuristic for queries that benefit from exact-match plus hybrid retrieval."""
     normalized_query, was_quoted = _strip_outer_quotes(query)
-    normalized_query = _normalize_exact_match_query(normalized_query, index_type)
+    normalized_query = _normalize_exact_match_value(normalized_query, index_type)
     if not normalized_query or "\n" in normalized_query:
         return False
 
@@ -789,6 +794,8 @@ async def search_support_tickets_helper(
 
     result.update(
         {
+            "offset": offset,
+            "limit": limit,
             "ticket_count": len(paged_tickets),
             "tickets": paged_tickets,
             "results": paged_tickets,
