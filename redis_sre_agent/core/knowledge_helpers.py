@@ -1111,29 +1111,35 @@ async def search_knowledge_base_helper(
 
     query_vector = vectors[0] if vectors else []
 
-    exact_matches = await _find_exact_document_matches(
-        query=query,
-        index_type=normalized_index_type,
-        version=version,
-        category=category,
-        doc_type=normalized_doc_type,
-        config=config,
-        include_special_document_types=include_special_document_types,
+    precise_search = hybrid_search or _looks_like_precise_search_query(query, normalized_index_type)
+    exact_matches = (
+        await _find_exact_document_matches(
+            query=query,
+            index_type=normalized_index_type,
+            version=version,
+            category=category,
+            doc_type=normalized_doc_type,
+            config=config,
+            include_special_document_types=include_special_document_types,
+        )
+        if precise_search
+        else []
     )
-    quoted_text_matches = await _find_quoted_text_matches(
-        query=query,
-        index_type=normalized_index_type,
-        version=version,
-        category=category,
-        doc_type=normalized_doc_type,
-        config=config,
-        include_special_document_types=include_special_document_types,
+    quoted_text_matches = (
+        await _find_quoted_text_matches(
+            query=query,
+            index_type=normalized_index_type,
+            version=version,
+            category=category,
+            doc_type=normalized_doc_type,
+            config=config,
+            include_special_document_types=include_special_document_types,
+        )
+        if precise_search
+        else []
     )
     effective_hybrid_search = (
-        hybrid_search
-        or bool(exact_matches)
-        or bool(quoted_text_matches)
-        or _looks_like_precise_search_query(query, normalized_index_type)
+        hybrid_search or bool(exact_matches) or bool(quoted_text_matches) or precise_search
     )
 
     # We need to fetch more results if there's an offset, then slice.
@@ -1224,23 +1230,31 @@ async def search_knowledge_base_helper(
             _span.set_attribute("query.filtered", bool(category_fallback_expr is not None))
             category_fallback_results = await index.query(category_fallback_query)
 
-        fallback_exact_matches = await _find_exact_document_matches(
-            query=query,
-            index_type=normalized_index_type,
-            version=version,
-            category=None,
-            doc_type=normalized_doc_type,
-            config=config,
-            include_special_document_types=include_special_document_types,
+        fallback_exact_matches = (
+            await _find_exact_document_matches(
+                query=query,
+                index_type=normalized_index_type,
+                version=version,
+                category=None,
+                doc_type=normalized_doc_type,
+                config=config,
+                include_special_document_types=include_special_document_types,
+            )
+            if precise_search
+            else []
         )
-        fallback_quoted_text_matches = await _find_quoted_text_matches(
-            query=query,
-            index_type=normalized_index_type,
-            version=version,
-            category=None,
-            doc_type=normalized_doc_type,
-            config=config,
-            include_special_document_types=include_special_document_types,
+        fallback_quoted_text_matches = (
+            await _find_quoted_text_matches(
+                query=query,
+                index_type=normalized_index_type,
+                version=version,
+                category=None,
+                doc_type=normalized_doc_type,
+                config=config,
+                include_special_document_types=include_special_document_types,
+            )
+            if precise_search
+            else []
         )
         merged_fallback_results = _dedupe_docs(
             [*fallback_exact_matches, *fallback_quoted_text_matches, *category_fallback_results]

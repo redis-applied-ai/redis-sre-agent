@@ -62,22 +62,19 @@ class TestSearchKnowledgeBaseHelper:
         """Test successful knowledge base search."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
-            side_effect=[
-                [],
-                [
-                    {
-                        "id": "doc-1",
-                        "document_hash": "hash-1",
-                        "chunk_index": 0,
-                        "title": "Redis Memory",
-                        "content": "Redis memory management guide",
-                        "source": "docs",
-                        "category": "monitoring",
-                        "doc_type": "runbook",
-                        "version": "latest",
-                        "score": 0.95,
-                    }
-                ],
+            return_value=[
+                {
+                    "id": "doc-1",
+                    "document_hash": "hash-1",
+                    "chunk_index": 0,
+                    "title": "Redis Memory",
+                    "content": "Redis memory management guide",
+                    "source": "docs",
+                    "category": "monitoring",
+                    "doc_type": "runbook",
+                    "version": "latest",
+                    "score": 0.95,
+                }
             ]
         )
 
@@ -289,22 +286,19 @@ class TestSearchKnowledgeBaseHelper:
         """Test document type filtering."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
-            side_effect=[
-                [],
-                [
-                    {
-                        "id": "doc-1",
-                        "title": "Skill Doc",
-                        "doc_type": "skill",
-                        "version": "latest",
-                    },
-                    {
-                        "id": "doc-2",
-                        "title": "Ticket Doc",
-                        "doc_type": "ticket",
-                        "version": "latest",
-                    },
-                ],
+            return_value=[
+                {
+                    "id": "doc-1",
+                    "title": "Skill Doc",
+                    "doc_type": "skill",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-2",
+                    "title": "Ticket Doc",
+                    "doc_type": "ticket",
+                    "version": "latest",
+                },
             ]
         )
 
@@ -338,22 +332,19 @@ class TestSearchKnowledgeBaseHelper:
         """`support_ticket` filter should match support_ticket docs."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
-            side_effect=[
-                [],
-                [
-                    {
-                        "id": "doc-ticket",
-                        "title": "Support Ticket",
-                        "doc_type": "support_ticket",
-                        "version": "latest",
-                    },
-                    {
-                        "id": "doc-runbook",
-                        "title": "Runbook",
-                        "doc_type": "runbook",
-                        "version": "latest",
-                    },
-                ],
+            return_value=[
+                {
+                    "id": "doc-ticket",
+                    "title": "Support Ticket",
+                    "doc_type": "support_ticket",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-runbook",
+                    "title": "Runbook",
+                    "doc_type": "runbook",
+                    "version": "latest",
+                },
             ]
         )
 
@@ -417,22 +408,19 @@ class TestSearchKnowledgeBaseHelper:
         """Test latest filtering excludes versioned source paths."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
-            side_effect=[
-                [],
-                [
-                    {
-                        "id": "doc-latest",
-                        "title": "Latest doc",
-                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/references/a.md",
-                        "version": "latest",
-                    },
-                    {
-                        "id": "doc-7-22",
-                        "title": "Versioned doc",
-                        "source": "https://github.com/redis/docs/blob/main/content/operate/rs/7.22/references/a.md",
-                        "version": "latest",
-                    },
-                ],
+            return_value=[
+                {
+                    "id": "doc-latest",
+                    "title": "Latest doc",
+                    "source": "https://github.com/redis/docs/blob/main/content/operate/rs/references/a.md",
+                    "version": "latest",
+                },
+                {
+                    "id": "doc-7-22",
+                    "title": "Versioned doc",
+                    "source": "https://github.com/redis/docs/blob/main/content/operate/rs/7.22/references/a.md",
+                    "version": "latest",
+                },
             ]
         )
 
@@ -464,7 +452,7 @@ class TestSearchKnowledgeBaseHelper:
     async def test_search_knowledge_base_specific_version_does_not_use_unfiltered_fallback(self):
         """Versioned searches should not run an unfiltered second query."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(side_effect=[[], []])
+        mock_index.query = AsyncMock(return_value=[])
 
         mock_vectorizer = MagicMock()
         mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
@@ -486,7 +474,7 @@ class TestSearchKnowledgeBaseHelper:
                 limit=5,
             )
 
-        assert mock_index.query.call_count == 2
+        assert mock_index.query.call_count == 1
         assert result["results_count"] == 0
 
     @pytest.mark.asyncio
@@ -519,17 +507,42 @@ class TestSearchKnowledgeBaseHelper:
         assert mock_index.query.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_search_knowledge_base_natural_language_query_skips_exact_prequery(self):
+        """Natural-language searches should not pay for exact TAG/TEXT probes."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[])
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="how do I tune memory",
+                limit=10,
+            )
+
+        assert result["results_count"] == 0
+        mock_index.query.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_search_knowledge_base_with_offset(self):
         """Test knowledge base search with offset pagination."""
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
-            side_effect=[
-                [],
-                [
-                    {"id": "doc-1", "title": "Doc 1", "score": 0.9},
-                    {"id": "doc-2", "title": "Doc 2", "score": 0.8},
-                    {"id": "doc-3", "title": "Doc 3", "score": 0.7},
-                ],
+            return_value=[
+                {"id": "doc-1", "title": "Doc 1", "score": 0.9},
+                {"id": "doc-2", "title": "Doc 2", "score": 0.8},
+                {"id": "doc-3", "title": "Doc 3", "score": 0.7},
             ]
         )
 
@@ -562,7 +575,7 @@ class TestSearchKnowledgeBaseHelper:
     async def test_search_knowledge_base_no_distance_threshold(self):
         """Test knowledge base search with no distance threshold (pure KNN)."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(side_effect=[[], []])
+        mock_index.query = AsyncMock(return_value=[])
 
         mock_vectorizer = MagicMock()
         mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
@@ -585,7 +598,7 @@ class TestSearchKnowledgeBaseHelper:
             )
 
         assert result["results_count"] == 0
-        assert mock_index.query.call_count == 2
+        assert mock_index.query.call_count == 1
 
 
 class TestSearchKnowledgeBaseVersionHelpers:
