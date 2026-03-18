@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from redisvl.query import FilterQuery, VectorRangeQuery
 
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.core.docket_tasks import (
@@ -88,7 +89,11 @@ class TestSearchRunbookKnowledge:
 
         # Verify method calls
         mock_vectorizer.aembed_many.assert_called_once_with(["redis memory issues"])
-        mock_search_index.query.assert_called_once()
+        assert mock_search_index.query.call_count == 2
+        first_query = mock_search_index.query.call_args_list[0].args[0]
+        second_query = mock_search_index.query.call_args_list[1].args[0]
+        assert isinstance(first_query, FilterQuery)
+        assert isinstance(second_query, VectorRangeQuery)
 
     @pytest.mark.asyncio
     async def test_search_knowledge_no_category(self, mock_search_index, mock_vectorizer):

@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from opentelemetry import trace
-from redisvl.query import FilterQuery, HybridQuery, VectorQuery, VectorRangeQuery
-from redisvl.query.filter import Tag
+from redisvl.query import BaseQuery, FilterQuery, HybridQuery, VectorQuery, VectorRangeQuery
+from redisvl.query.filter import FilterExpression, Tag
 from ulid import ULID
 
 from redis_sre_agent.core.config import Settings
@@ -35,7 +35,65 @@ _INDEX_TYPE_TO_PREFIX = {
     "skills": "sre_skills",
     "support_tickets": "sre_support_tickets",
 }
+_SEARCH_RETURN_FIELDS = [
+    "id",
+    "document_hash",
+    "content_hash",
+    "chunk_index",
+    "title",
+    "content",
+    "source",
+    "category",
+    "doc_type",
+    "name",
+    "summary",
+    "priority",
+    "pinned",
+    "meta_name",
+    "meta_summary",
+    "meta_priority",
+    "meta_pinned",
+    "severity",
+    "version",
+]
+_EXACT_MATCH_TAG_FIELDS = ("name", "document_hash", "content_hash", "source")
 _SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
+_TEXT_PHRASE_QUERY_FIELDS = ("title", "summary", "content")
+
+
+class _RawTextQuery(BaseQuery):
+    """Minimal raw-text query wrapper for literal phrase search."""
+
+    def __init__(
+        self,
+        query_string: str,
+        *,
+        filter_expression: Optional[FilterExpression | str] = None,
+        return_fields: Optional[List[str]] = None,
+        num_results: int = 10,
+        dialect: int = 2,
+        return_score: bool = True,
+    ):
+        self._raw_query_string = query_string
+        super().__init__("*")
+        self.set_filter(filter_expression)
+
+        if return_fields:
+            self.return_fields(*return_fields)
+        self.paging(0, num_results).dialect(dialect)
+
+        if return_score:
+            self.with_scores()
+
+    def _build_query_string(self) -> str:
+        filter_expression = self._filter_expression
+        if isinstance(filter_expression, FilterExpression):
+            filter_expression = str(filter_expression)
+
+        text = self._raw_query_string
+        if filter_expression and filter_expression != "*":
+            text += f" AND {filter_expression}"
+        return text
 
 
 def _extract_version_from_source(source: str) -> str:
@@ -179,6 +237,248 @@ async def _get_index_for_type(index_type: str, config: Optional[Settings] = None
     if normalized == "support_tickets":
         return await get_support_tickets_index(config=config)
     return await get_knowledge_index(config=config)
+
+
+def _strip_outer_quotes(query: str) -> tuple[str, bool]:
+    """Remove a single pair of wrapping quotes if present."""
+    normalized_query = str(query or "").strip()
+    quote_pairs = (('"', '"'), ("“", "”"), ("'", "'"))
+    for start, end in quote_pairs:
+        if (
+            len(normalized_query) >= 2
+            and normalized_query.startswith(start)
+            and normalized_query.endswith(end)
+        ):
+            return normalized_query[len(start) : -len(end)].strip(), True
+    return normalized_query, False
+
+
+def _normalize_exact_match_query(query: str, index_type: str) -> str:
+    """Normalize exact-match queries to the canonical stored value when possible."""
+    normalized_query, _ = _strip_outer_quotes(query)
+    if index_type.strip().lower() == "support_tickets":
+        return _normalize_support_ticket_id(normalized_query)
+    return normalized_query
+
+
+def _quote_tag_value(value: str) -> str:
+    """Quote a RediSearch TAG value so punctuation is treated literally."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _tag_equals_expression(field_name: str, value: str) -> FilterExpression:
+    """Build an exact TAG match expression that survives punctuation like `|`."""
+    return FilterExpression(f"@{field_name}:{{{_quote_tag_value(value)}}}")
+
+
+def _looks_like_precise_search_query(query: str, index_type: str) -> bool:
+    """Heuristic for queries that benefit from exact-match plus hybrid retrieval."""
+    normalized_query, was_quoted = _strip_outer_quotes(query)
+    normalized_query = _normalize_exact_match_query(normalized_query, index_type)
+    if not normalized_query or "\n" in normalized_query:
+        return False
+
+    if was_quoted:
+        return True
+
+    if " " in normalized_query:
+        return False
+
+    if index_type.strip().lower() == "support_tickets" and _SUPPORT_TICKET_ID_RE.match(
+        normalized_query
+    ):
+        return True
+
+    return any(char.isdigit() for char in normalized_query) or any(
+        not char.isalnum() for char in normalized_query
+    )
+
+
+def _exact_match_sort_key(doc: Dict[str, Any], normalized_query: str) -> tuple[int, str, str, int]:
+    """Prefer stronger exact matches before weaker exact-field hits."""
+    lowered_query = normalized_query.lower()
+    normalized_name = _doc_name(doc).strip().lower()
+    document_hash = str(doc.get("document_hash") or "").strip().lower()
+    content_hash = str(doc.get("content_hash") or "").strip().lower()
+    source = str(doc.get("source") or "").strip().lower()
+
+    if normalized_name == lowered_query:
+        rank = 0
+    elif document_hash == lowered_query:
+        rank = 1
+    elif content_hash == lowered_query:
+        rank = 2
+    elif source == lowered_query:
+        rank = 3
+    else:
+        rank = 4
+
+    return (rank, normalized_name, source, _doc_chunk_index(doc))
+
+
+async def _find_exact_document_matches(
+    query: str,
+    *,
+    index_type: str,
+    version: Optional[str] = "latest",
+    category: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    config: Optional[Settings] = None,
+    include_special_document_types: bool = False,
+) -> List[Dict[str, Any]]:
+    """Find exact matches on the stable indexed tag fields for a document index."""
+    normalized_index_type = index_type.strip().lower()
+    normalized_query = _normalize_exact_match_query(query, normalized_index_type)
+    if not normalized_query:
+        return []
+
+    index = await _get_index_for_type(normalized_index_type, config=config)
+
+    filter_expr = None
+    for field_name in _EXACT_MATCH_TAG_FIELDS:
+        field_expr = _tag_equals_expression(field_name, normalized_query)
+        filter_expr = field_expr if filter_expr is None else (filter_expr | field_expr)
+
+    if version is not None:
+        version_expr = _tag_equals_expression("version", version)
+        filter_expr = version_expr if filter_expr is None else (filter_expr & version_expr)
+    if category is not None:
+        category_expr = _tag_equals_expression("category", category)
+        filter_expr = category_expr if filter_expr is None else (filter_expr & category_expr)
+    if doc_type is not None:
+        doc_type_expr = _tag_equals_expression("doc_type", doc_type.strip().lower())
+        filter_expr = doc_type_expr if filter_expr is None else (filter_expr & doc_type_expr)
+
+    rows = await index.query(
+        FilterQuery(
+            filter_expression=filter_expr,
+            return_fields=_SEARCH_RETURN_FIELDS,
+            num_results=50,
+        )
+    )
+
+    candidates = [
+        doc
+        for doc in _dedupe_docs(rows)
+        if _doc_matches_requested_version(doc, version)
+        and _doc_matches_requested_type(doc, doc_type)
+        and (
+            normalized_index_type != "knowledge"
+            or include_special_document_types
+            or _doc_is_general_knowledge(doc)
+        )
+    ]
+
+    by_document: Dict[str, Dict[str, Any]] = {}
+    for doc in candidates:
+        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
+        if not key:
+            continue
+        existing = by_document.get(key)
+        if existing is None or _exact_match_sort_key(doc, normalized_query) < _exact_match_sort_key(
+            existing, normalized_query
+        ):
+            by_document[key] = doc
+
+    return sorted(
+        by_document.values(),
+        key=lambda doc: _exact_match_sort_key(doc, normalized_query),
+    )
+
+
+def _quoted_text_phrase_query(
+    phrase: str, filter_expression: Optional[FilterExpression | str]
+) -> str:
+    """Build a literal phrase query over the searchable TEXT fields."""
+    escaped_phrase = phrase.lower().replace("\\", "\\\\").replace('"', '\\"')
+    field_queries = []
+    for field_name in _TEXT_PHRASE_QUERY_FIELDS:
+        field_queries.append(f'@{field_name}:("{escaped_phrase}")')
+
+    text = "(" + " | ".join(field_queries) + ")"
+    if filter_expression and str(filter_expression) != "*":
+        text += f" AND {filter_expression}"
+    return text
+
+
+def _result_score(doc: Dict[str, Any]) -> float:
+    """Normalize text/vector scores for sorting merged results."""
+    for key in ("score", "vector_distance", "distance"):
+        value = doc.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except Exception:
+            continue
+    return 0.0
+
+
+async def _find_quoted_text_matches(
+    query: str,
+    *,
+    index_type: str,
+    version: Optional[str] = "latest",
+    category: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    config: Optional[Settings] = None,
+    include_special_document_types: bool = False,
+) -> List[Dict[str, Any]]:
+    """Find literal quoted-phrase matches on TEXT fields."""
+    phrase, was_quoted = _strip_outer_quotes(query)
+    if not was_quoted or not phrase:
+        return []
+
+    normalized_index_type = index_type.strip().lower()
+    index = await _get_index_for_type(normalized_index_type, config=config)
+
+    filter_expr = None
+    if version is not None:
+        filter_expr = _tag_equals_expression("version", version)
+    if category is not None:
+        category_expr = _tag_equals_expression("category", category)
+        filter_expr = category_expr if filter_expr is None else (filter_expr & category_expr)
+    if doc_type is not None:
+        doc_type_expr = _tag_equals_expression("doc_type", doc_type.strip().lower())
+        filter_expr = doc_type_expr if filter_expr is None else (filter_expr & doc_type_expr)
+
+    query_obj = _RawTextQuery(
+        _quoted_text_phrase_query(phrase, filter_expr),
+        return_fields=_SEARCH_RETURN_FIELDS,
+        num_results=50,
+    )
+    rows = await index.query(query_obj)
+
+    candidates = [
+        doc
+        for doc in _dedupe_docs(rows)
+        if _doc_matches_requested_version(doc, version)
+        and _doc_matches_requested_type(doc, doc_type)
+        and (
+            normalized_index_type != "knowledge"
+            or include_special_document_types
+            or _doc_is_general_knowledge(doc)
+        )
+    ]
+
+    by_document: Dict[str, Dict[str, Any]] = {}
+    for doc in candidates:
+        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
+        if not key:
+            continue
+        existing = by_document.get(key)
+        if existing is None or _result_score(doc) > _result_score(existing):
+            by_document[key] = doc
+
+    return sorted(
+        by_document.values(),
+        key=lambda doc: (
+            -_result_score(doc),
+            _doc_name(doc).lower(),
+            str(doc.get("source", "")).lower(),
+            _doc_chunk_index(doc),
+        ),
+    )
 
 
 async def skills_check_helper(
@@ -359,7 +659,7 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
     async def _query_by_name(index_type: str) -> list[dict]:
         index = await _get_index_for_type(index_type)
         query = FilterQuery(
-            filter_expression=Tag("name") == normalized_name,
+            filter_expression=_tag_equals_expression("name", normalized_name),
             return_fields=return_fields,
             num_results=50,
         )
@@ -458,11 +758,6 @@ async def search_support_tickets_helper(
 ) -> Dict[str, Any]:
     """Search support tickets only."""
     effective_limit = max(limit + offset, limit)
-    exact_matches = await _find_support_ticket_exact_matches(
-        query=query,
-        version=version,
-        config=config,
-    )
     result = await search_knowledge_base_helper(
         query=query,
         limit=effective_limit,
@@ -476,7 +771,7 @@ async def search_support_tickets_helper(
 
     tickets = []
     seen_ticket_keys: set[str] = set()
-    for ticket in [*exact_matches, *result.get("results", [])]:
+    for ticket in result.get("results", []):
         ticket_key = str(ticket.get("document_hash") or ticket.get("id") or "").strip()
         if ticket_key and ticket_key in seen_ticket_keys:
             continue
@@ -540,57 +835,13 @@ async def _find_support_ticket_exact_matches(
     version: Optional[str] = "latest",
     config: Optional[Settings] = None,
 ) -> List[Dict[str, Any]]:
-    """Find support tickets by exact stable ID stored in the indexed `name` field."""
-    normalized_query = _normalize_support_ticket_id(query)
-    if not _looks_like_support_ticket_identifier(normalized_query):
-        return []
-
-    index = await get_support_tickets_index(config=config)
-    rows = await index.query(
-        FilterQuery(
-            filter_expression=Tag("name") == normalized_query,
-            return_fields=[
-                "id",
-                "document_hash",
-                "chunk_index",
-                "title",
-                "content",
-                "source",
-                "category",
-                "doc_type",
-                "name",
-                "summary",
-                "priority",
-                "pinned",
-                "meta_name",
-                "meta_summary",
-                "meta_priority",
-                "meta_pinned",
-                "severity",
-                "version",
-            ],
-            num_results=50,
-        )
-    )
-
-    candidates = [doc for doc in _dedupe_docs(rows) if _doc_matches_requested_version(doc, version)]
-
-    by_document: Dict[str, Dict[str, Any]] = {}
-    for doc in candidates:
-        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
-        if not key:
-            continue
-        existing = by_document.get(key)
-        if existing is None or _doc_chunk_index(doc) < _doc_chunk_index(existing):
-            by_document[key] = doc
-
-    return sorted(
-        by_document.values(),
-        key=lambda doc: (
-            _support_ticket_id_for_result(doc).lower(),
-            str(doc.get("source", "")).lower(),
-            _doc_chunk_index(doc),
-        ),
+    """Find support tickets by exact indexed values."""
+    return await _find_exact_document_matches(
+        query=query,
+        index_type="support_tickets",
+        version=version,
+        doc_type="support_ticket",
+        config=config,
     )
 
 
@@ -833,26 +1084,7 @@ async def search_knowledge_base_helper(
     index = await _get_index_for_type(normalized_index_type, config=config)
     normalized_doc_type = doc_type.strip().lower() if doc_type else None
 
-    return_fields = [
-        "id",
-        "document_hash",
-        # "chunk_index",
-        "title",
-        "content",
-        "source",
-        "category",
-        "doc_type",
-        "name",
-        "summary",
-        "priority",
-        "pinned",
-        "meta_name",
-        "meta_summary",
-        "meta_priority",
-        "meta_pinned",
-        "severity",
-        "version",
-    ]
+    return_fields = list(_SEARCH_RETURN_FIELDS)
 
     # Build version filter expression if version is specified.
     # Source-aware filtering still runs post-query for canonical matching.
@@ -879,6 +1111,31 @@ async def search_knowledge_base_helper(
 
     query_vector = vectors[0] if vectors else []
 
+    exact_matches = await _find_exact_document_matches(
+        query=query,
+        index_type=normalized_index_type,
+        version=version,
+        category=category,
+        doc_type=normalized_doc_type,
+        config=config,
+        include_special_document_types=include_special_document_types,
+    )
+    quoted_text_matches = await _find_quoted_text_matches(
+        query=query,
+        index_type=normalized_index_type,
+        version=version,
+        category=category,
+        doc_type=normalized_doc_type,
+        config=config,
+        include_special_document_types=include_special_document_types,
+    )
+    effective_hybrid_search = (
+        hybrid_search
+        or bool(exact_matches)
+        or bool(quoted_text_matches)
+        or _looks_like_precise_search_query(query, normalized_index_type)
+    )
+
     # We need to fetch more results if there's an offset, then slice.
     # This is because RedisVL vector queries don't support offset directly
     fetch_limit = limit + offset
@@ -887,7 +1144,7 @@ async def search_knowledge_base_helper(
         fetch_limit = min(fetch_limit * 4, 200)
 
     def _build_query(query_filter, num_results: int):
-        if hybrid_search:
+        if effective_hybrid_search:
             logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
             return HybridQuery(
                 vector=query_vector,
@@ -927,7 +1184,7 @@ async def search_knowledge_base_helper(
     with tracer.start_as_current_span("knowledge.index.query") as _span:
         _span.set_attribute("limit", int(limit))
         _span.set_attribute("offset", int(offset))
-        _span.set_attribute("hybrid_search", bool(hybrid_search))
+        _span.set_attribute("hybrid_search", bool(effective_hybrid_search))
         _span.set_attribute("version", version or "all")
         _span.set_attribute(
             "distance_threshold",
@@ -937,9 +1194,10 @@ async def search_knowledge_base_helper(
         _span.set_attribute("query.filtered", bool(filter_expr is not None))
     _t3 = time.monotonic()
 
+    merged_results = _dedupe_docs([*exact_matches, *quoted_text_matches, *all_results])
     filtered_results = [
         doc
-        for doc in all_results
+        for doc in merged_results
         if _doc_matches_requested_version(doc, version)
         and _doc_matches_requested_type(doc, normalized_doc_type)
         and (
@@ -957,7 +1215,7 @@ async def search_knowledge_base_helper(
         with tracer.start_as_current_span("knowledge.index.query") as _span:
             _span.set_attribute("limit", int(limit))
             _span.set_attribute("offset", int(offset))
-            _span.set_attribute("hybrid_search", bool(hybrid_search))
+            _span.set_attribute("hybrid_search", bool(effective_hybrid_search))
             _span.set_attribute("version", version or "all")
             _span.set_attribute(
                 "distance_threshold",
@@ -966,9 +1224,30 @@ async def search_knowledge_base_helper(
             _span.set_attribute("query.filtered", bool(category_fallback_expr is not None))
             category_fallback_results = await index.query(category_fallback_query)
 
+        fallback_exact_matches = await _find_exact_document_matches(
+            query=query,
+            index_type=normalized_index_type,
+            version=version,
+            category=None,
+            doc_type=normalized_doc_type,
+            config=config,
+            include_special_document_types=include_special_document_types,
+        )
+        fallback_quoted_text_matches = await _find_quoted_text_matches(
+            query=query,
+            index_type=normalized_index_type,
+            version=version,
+            category=None,
+            doc_type=normalized_doc_type,
+            config=config,
+            include_special_document_types=include_special_document_types,
+        )
+        merged_fallback_results = _dedupe_docs(
+            [*fallback_exact_matches, *fallback_quoted_text_matches, *category_fallback_results]
+        )
         filtered_results = [
             doc
-            for doc in category_fallback_results
+            for doc in merged_fallback_results
             if _doc_matches_requested_version(doc, version)
             and _doc_matches_requested_type(doc, normalized_doc_type)
             and (
@@ -1165,16 +1444,8 @@ async def get_all_document_fragments(
         # Tag values that include punctuation (e.g., '-') must be quoted.
         from redisvl.query import FilterQuery
 
-        def _quote_tag_value(value: str) -> str:
-            """Quote a RediSearch TAG value, escaping any embedded quotes.
-
-            See: RediSearch TAG query syntax — values with special chars must be
-            wrapped in double quotes. Double quotes inside must be escaped.
-            """
-            return '"' + (value.replace('"', '\\"')) + '"'
-
         filter_query = FilterQuery(
-            filter_expression=f"@document_hash:{{{_quote_tag_value(document_hash)}}}",
+            filter_expression=str(_tag_equals_expression("document_hash", document_hash)),
             return_fields=[
                 "title",
                 "content",
