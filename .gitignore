@@ -143,3 +143,4 @@ eval_reports
 
 # Root config.yaml only (subdirectory config.yaml files are preserved)
 /config.yaml
+.gitnexus

@@ -8,6 +8,8 @@ import pytest
 from redis_sre_agent.core.knowledge_helpers import (
     _dedupe_docs,
     _doc_matches_requested_version,
+    _quoted_text_phrase_query,
+    _RawTextQuery,
     get_all_document_fragments,
     get_pinned_documents_helper,
     get_related_document_fragments,
@@ -102,6 +104,203 @@ class TestSearchKnowledgeBaseHelper:
         assert len(result["results"]) == 1
         assert result["results"][0]["title"] == "Redis Memory"
         assert result["results"][0]["doc_type"] == "runbook"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_promotes_exact_name_match(self):
+        """Exact tag matches should appear ahead of semantic-only matches."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "id": "doc-exact",
+                        "document_hash": "hash-exact",
+                        "chunk_index": 0,
+                        "title": "RET-4421 incident",
+                        "content": "Exact incident record",
+                        "source": "tickets",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "name": "ret-4421",
+                        "version": "latest",
+                    }
+                ],
+                [
+                    {
+                        "id": "doc-semantic",
+                        "document_hash": "hash-semantic",
+                        "chunk_index": 0,
+                        "title": "Similar issue",
+                        "content": "Related ticket analysis",
+                        "source": "docs",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "name": "incident-analysis",
+                        "version": "latest",
+                        "score": 0.2,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(query="ret-4421", limit=10)
+
+        assert result["results_count"] == 2
+        assert result["results"][0]["id"] == "doc-exact"
+        assert result["results"][0]["name"] == "ret-4421"
+        assert result["results"][1]["id"] == "doc-semantic"
+        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "HybridQuery"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_promotes_exact_document_hash_match(self):
+        """Exact document_hash hits should be surfaced before semantic matches."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "id": "doc-exact",
+                        "document_hash": "abc123def456",
+                        "chunk_index": 0,
+                        "title": "Exact doc",
+                        "content": "Exact hash match",
+                        "source": "docs",
+                        "category": "general",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                    }
+                ],
+                [
+                    {
+                        "id": "doc-semantic",
+                        "document_hash": "zzz999",
+                        "chunk_index": 0,
+                        "title": "Approximate doc",
+                        "content": "Approximate result",
+                        "source": "docs",
+                        "category": "general",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 0.3,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(query="abc123def456", limit=10)
+
+        assert result["results_count"] == 2
+        assert result["results"][0]["document_hash"] == "abc123def456"
+        assert result["results"][1]["id"] == "doc-semantic"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_quoted_phrase_runs_literal_text_query(self):
+        """Quoted input should trigger a literal phrase query over TEXT fields."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [],
+                [
+                    {
+                        "id": "doc-phrase",
+                        "document_hash": "hash-phrase",
+                        "chunk_index": 0,
+                        "title": "DB memory full",
+                        "content": "Alert: DB memory full on cluster.",
+                        "source": "alerts",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+                [
+                    {
+                        "id": "doc-semantic",
+                        "document_hash": "hash-semantic",
+                        "chunk_index": 0,
+                        "title": "Memory pressure",
+                        "content": "Related semantic result",
+                        "source": "docs",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 0.2,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(query='"DB memory full"', limit=10)
+
+        literal_query = str(mock_index.query.await_args_list[1].args[0])
+        assert '@title:("db memory full")' in literal_query
+        assert '@summary:("db memory full")' in literal_query
+        assert '@content:("db memory full")' in literal_query
+        assert result["results_count"] == 2
+        assert result["results"][0]["id"] == "doc-phrase"
+        assert mock_index.query.await_args_list[2].args[0].__class__.__name__ == "HybridQuery"
+
+    def test_quoted_text_phrase_query_uses_implicit_and_for_filters(self):
+        """Phrase queries should only contain the literal TEXT search expression."""
+        query = _quoted_text_phrase_query("DB memory full")
+
+        assert " AND " not in query
+        assert "@version:{latest}" not in query
+        assert '@title:("db memory full")' in query
+
+    def test_raw_text_query_uses_implicit_and_for_filters(self):
+        """Raw text queries should concatenate filters without a literal AND token."""
+        query = _RawTextQuery(
+            '@content:("db memory full")',
+            filter_expression="@version:{latest}",
+            num_results=5,
+        )
+
+        assert " AND " not in str(query)
+        assert '@content:("db memory full") @version:{latest}' in str(query)
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_doc_type_filter(self):
@@ -200,7 +399,7 @@ class TestSearchKnowledgeBaseHelper:
     async def test_search_knowledge_base_with_version_filter(self):
         """Test knowledge base search with version filter."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(return_value=[])
+        mock_index.query = AsyncMock(side_effect=[[], []])
 
         mock_vectorizer = MagicMock()
         mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
@@ -303,7 +502,7 @@ class TestSearchKnowledgeBaseHelper:
     async def test_search_knowledge_base_hybrid_search(self):
         """Test knowledge base hybrid search."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(return_value=[])
+        mock_index.query = AsyncMock(side_effect=[[], []])
 
         mock_vectorizer = MagicMock()
         mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
@@ -322,6 +521,34 @@ class TestSearchKnowledgeBaseHelper:
             result = await search_knowledge_base_helper(
                 query="redis memory",
                 hybrid_search=True,
+                limit=10,
+            )
+
+        assert result["results_count"] == 0
+        assert mock_index.query.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_natural_language_query_skips_exact_prequery(self):
+        """Natural-language searches should not pay for exact TAG/TEXT probes."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[])
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="how do I tune memory",
                 limit=10,
             )
 
@@ -392,7 +619,7 @@ class TestSearchKnowledgeBaseHelper:
             )
 
         assert result["results_count"] == 0
-        mock_index.query.assert_called_once()
+        assert mock_index.query.call_count == 1
 
 
 class TestSearchKnowledgeBaseVersionHelpers:
@@ -963,22 +1190,112 @@ class TestSkillHelpers:
 class TestSupportTicketHelpers:
     @pytest.mark.asyncio
     async def test_search_support_tickets_helper_normalizes_ticket_id_from_chunk_key(self):
-        with patch(
-            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
-            new_callable=AsyncMock,
-            return_value={
-                "results": [
-                    {
-                        "id": "sre_support_tickets:abc123def456:chunk:0",
-                        "title": "Ticket A",
-                        "doc_type": "support_ticket",
-                    }
-                ]
-            },
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "results": [
+                        {
+                            "id": "sre_support_tickets:abc123def456:chunk:0",
+                            "title": "Ticket A",
+                            "doc_type": "support_ticket",
+                        }
+                    ]
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await search_support_tickets_helper(query="cache-prod-1 failover")
 
         assert result["tickets"][0]["ticket_id"] == "abc123def456"
+
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_prefers_stable_ticket_name(self):
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "results": [
+                        {
+                            "id": "sre_support_tickets:abc123def456:chunk:0",
+                            "document_hash": "abc123def456",
+                            "name": "ret-4421",
+                            "title": "Ticket RET-4421",
+                            "doc_type": "support_ticket",
+                        }
+                    ]
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await search_support_tickets_helper(query="ret-4421")
+
+        assert result["tickets"][0]["ticket_id"] == "ret-4421"
+
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_restores_requested_pagination_metadata(self):
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+                new_callable=AsyncMock,
+                return_value={
+                    "offset": 0,
+                    "limit": 4,
+                    "results": [
+                        {"id": "ticket-1", "document_hash": "a", "title": "Ticket 1"},
+                        {"id": "ticket-2", "document_hash": "b", "title": "Ticket 2"},
+                        {"id": "ticket-3", "document_hash": "c", "title": "Ticket 3"},
+                    ],
+                },
+            ) as mock_search,
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await search_support_tickets_helper(query="ret-4421", limit=2, offset=1)
+
+        mock_search.assert_awaited_once()
+        assert result["offset"] == 1
+        assert result["limit"] == 2
+        assert result["ticket_count"] == 2
+        assert [ticket["id"] for ticket in result["tickets"]] == ["ticket-2", "ticket-3"]
+
+    @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_overfetches_to_cover_dedupe(self):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+            new_callable=AsyncMock,
+            return_value={"results": []},
+        ) as mock_search:
+            await search_support_tickets_helper(
+                query="cache-prod-1 failover",
+                limit=2,
+                offset=0,
+                version=None,
+            )
+
+        mock_search.assert_awaited_once_with(
+            query="cache-prod-1 failover",
+            limit=4,
+            offset=0,
+            distance_threshold=0.8,
+            hybrid_search=False,
+            version=None,
+            config=None,
+            index_type="support_tickets",
+        )
 
     @pytest.mark.asyncio
     async def test_get_support_ticket_helper_normalizes_chunk_key_input(self):
@@ -991,14 +1308,66 @@ class TestSupportTicketHelpers:
             "metadata": {},
         }
 
-        with patch(
-            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
-            new_callable=AsyncMock,
-            return_value=mock_fragments,
-        ) as mock_get_fragments:
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers._find_support_ticket_exact_matches",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value=mock_fragments,
+            ) as mock_get_fragments,
+        ):
             result = await get_support_ticket_helper(
                 ticket_id="sre_support_tickets:abc123def456:chunk:0"
             )
+
+        call_kwargs = mock_get_fragments.await_args.kwargs
+        assert call_kwargs["document_hash"] == "abc123def456"
+        assert result["document_hash"] == "abc123def456"
+
+    @pytest.mark.asyncio
+    async def test_get_support_ticket_helper_resolves_stable_ticket_name(self):
+        mock_fragments = {
+            "document_hash": "abc123def456",
+            "doc_type": "support_ticket",
+            "title": "Ticket RET-4421",
+            "source": "source",
+            "fragments": [{"chunk_index": 0, "content": "body", "doc_type": "support_ticket"}],
+            "metadata": {},
+        }
+        support_tickets_index = AsyncMock()
+        support_tickets_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "sre_support_tickets:abc123def456:chunk:0",
+                    "document_hash": "abc123def456",
+                    "name": "ret-4421",
+                    "title": "Ticket RET-4421",
+                    "doc_type": "support_ticket",
+                    "source": "source",
+                    "chunk_index": 0,
+                    "content": "body",
+                    "version": "latest",
+                }
+            ]
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=support_tickets_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+                new_callable=AsyncMock,
+                return_value=mock_fragments,
+            ) as mock_get_fragments,
+        ):
+            result = await get_support_ticket_helper(ticket_id="ret-4421")
 
         call_kwargs = mock_get_fragments.await_args.kwargs
         assert call_kwargs["document_hash"] == "abc123def456"

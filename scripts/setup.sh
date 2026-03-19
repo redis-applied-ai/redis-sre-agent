@@ -4,6 +4,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BASE_COMPOSE_CMD=(docker compose -f "$PROJECT_ROOT/docker-compose.yml")
+ENTERPRISE_COMPOSE_CMD=(docker compose -f "$PROJECT_ROOT/docker-compose.yml" -f "$PROJECT_ROOT/docker-compose.enterprise.yml")
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -50,10 +55,10 @@ start_core_services() {
     log "Starting core services (Redis, Prometheus, Grafana)..."
 
     # Start core infrastructure first
-    docker-compose up -d redis redis-demo prometheus grafana redis-exporter node-exporter
+    "${BASE_COMPOSE_CMD[@]}" up -d redis redis-demo prometheus grafana redis-exporter node-exporter
 
     log "Waiting for Redis to be healthy..."
-    timeout 60 bash -c 'until docker-compose exec -T redis redis-cli ping | grep -q PONG; do sleep 2; done'
+    timeout 60 bash -c "until ${BASE_COMPOSE_CMD[*]} exec -T redis redis-cli ping | grep -q PONG; do sleep 2; done"
 
     success "Core services started successfully"
 }
@@ -63,7 +68,7 @@ setup_redis_enterprise() {
     log "Setting up Redis Enterprise..."
 
     # Start Redis Enterprise container
-    docker-compose up -d redis-enterprise
+    "${ENTERPRISE_COMPOSE_CMD[@]}" up -d redis-enterprise-node1 redis-enterprise-node2 redis-enterprise-node3 redis-enterprise redis-enterprise-exporter
 
     log "Waiting for Redis Enterprise to start..."
     sleep 45
@@ -150,7 +155,7 @@ load_demo_data() {
 
     # Load data into demo Redis
     log "Loading enterprise-like data into demo Redis..."
-    docker-compose exec -T redis-demo bash -c '
+    "${BASE_COMPOSE_CMD[@]}" exec -T redis-demo bash -c '
         redis-cli CONFIG SET maxmemory 256mb
         redis-cli CONFIG SET maxmemory-policy allkeys-lru
 
@@ -197,16 +202,16 @@ start_sre_services() {
     log "Starting SRE Agent services..."
 
     # Start the API first
-    docker-compose up -d sre-agent
+    "${BASE_COMPOSE_CMD[@]}" up -d sre-agent
 
     log "Waiting for SRE Agent API to be ready..."
     timeout 60 bash -c 'until curl -s http://localhost:8000/api/v1/health >/dev/null; do sleep 2; done'
 
     # Start the worker
-    docker-compose up -d sre-worker
+    "${BASE_COMPOSE_CMD[@]}" up -d sre-worker
 
     # Start the UI
-    docker-compose up -d sre-ui
+    "${BASE_COMPOSE_CMD[@]}" up -d sre-ui
 
     log "Waiting for UI to be ready..."
     timeout 60 bash -c 'until curl -s http://localhost:3002 >/dev/null; do sleep 2; done'

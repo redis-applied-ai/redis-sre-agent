@@ -5,13 +5,24 @@ It provides read-only tools for cluster inspection, database information, node s
 and other administrative functions exposed by the Redis Enterprise admin API.
 """
 
+import inspect
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlencode
 
 import httpx
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    from redis_enterprise import EnterpriseClient
+except ImportError as exc:
+    EnterpriseClient = None
+    _ENTERPRISE_CLIENT_IMPORT_ERROR = exc
+else:
+    _ENTERPRISE_CLIENT_IMPORT_ERROR = None
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.decorators import status_update
@@ -19,12 +30,13 @@ from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
+_API_ERROR_CODE_RE = re.compile(r"\(code:\s*(\d+)\)")
 
 
 class RedisEnterpriseAdminConfig(BaseSettings):
     """Configuration for Redis Enterprise admin API provider.
 
-    This config is used for default/fallback values only. The actual admin URL,
+    This config is used for default values only. The actual admin URL,
     username, and password are read from the RedisInstance object's admin_url,
     admin_username, and admin_password fields (which may be cluster-resolved by
     ToolManager before provider initialization).
@@ -97,7 +109,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             config = RedisEnterpriseAdminConfig()
 
         self.config = config
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[Any] = None
+        self._cached_get_supports_params: Optional[bool] = None
+        self._cached_get_supports_params_client: Optional[Any] = None
 
     @property
     def provider_name(self) -> str:
@@ -108,15 +122,21 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """Admin tools always require a Redis Enterprise instance."""
         return True
 
-    def get_client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client (lazy initialization).
+    def get_client(self) -> Any:
+        """Get or create the upstream Redis Enterprise client (lazy initialization).
 
         Uses admin_url, admin_username, and admin_password from the RedisInstance.
 
         Returns:
-            httpx.AsyncClient: Initialized HTTP client
+            EnterpriseClient: Initialized Redis Enterprise client
         """
         if self._client is None:
+            if EnterpriseClient is None:
+                raise RuntimeError(
+                    "Redis Enterprise admin tools require the `redis-enterprise` Python package. "
+                    "Install `redis-enterprise>=0.8.3` in this environment before using `re_admin` tools."
+                ) from _ENTERPRISE_CLIENT_IMPORT_ERROR
+
             # Get credentials from the instance
             from pydantic import SecretStr
 
@@ -130,26 +150,96 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             else:
                 admin_password = admin_password_field or ""
 
-            # Create auth tuple only if username is provided
-            auth = (admin_username, admin_password) if admin_username else None
-
-            if not auth:
+            if not admin_username:
                 logger.warning(
                     "No admin credentials provided - API calls will likely fail with 401"
                 )
 
-            self._client = httpx.AsyncClient(
+            self._client = EnterpriseClient(
                 base_url=admin_url,
-                auth=auth,
-                verify=self.config.verify_ssl,
-                timeout=30.0,
-                headers={
-                    # Be explicit to avoid 406 content negotiation issues on some endpoints
-                    "Accept": "application/json",
-                },
+                username=admin_username,
+                password=admin_password,
+                insecure=not self.config.verify_ssl,
+                timeout_secs=30,
             )
-            logger.info(f"Connected to Redis Enterprise admin API at {admin_url}")
+            logger.info(
+                "Connected to Redis Enterprise admin API at %s using upstream SDK",
+                admin_url,
+            )
         return self._client
+
+    @staticmethod
+    def _build_path(path: str, params: Optional[Dict[str, Any]] = None) -> str:
+        if not params:
+            return path
+        filtered = {key: value for key, value in params.items() if value is not None}
+        if not filtered:
+            return path
+        return f"{path}?{urlencode(filtered, doseq=True)}"
+
+    @staticmethod
+    def _status_code_from_exception(exc: Exception) -> Optional[int]:
+        match = _API_ERROR_CODE_RE.search(str(exc))
+        if match:
+            return int(match.group(1))
+        if isinstance(exc, ValueError) and str(exc) == "Resource not found":
+            return 404
+        return None
+
+    def _client_supports_params(self, client: Any) -> bool:
+        """Detect whether the client get method accepts a params keyword."""
+        if client is self._cached_get_supports_params_client:
+            assert self._cached_get_supports_params is not None
+            return self._cached_get_supports_params
+
+        get_signature = inspect.signature(client.get)
+        supports_params = any(
+            parameter.name == "params" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in get_signature.parameters.values()
+        )
+        self._cached_get_supports_params_client = client
+        self._cached_get_supports_params = supports_params
+        return supports_params
+
+    async def _get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        client = self.get_client()
+        full_path = self._build_path(path, params)
+        try:
+            get_method = client.get
+            supports_params = self._client_supports_params(client)
+            if supports_params:
+                response = await get_method(path, params=params or {})
+            else:
+                response = await get_method(full_path)
+
+            if hasattr(response, "raise_for_status"):
+                response.raise_for_status()
+            if hasattr(response, "json") and callable(response.json):
+                return response.json()
+            return response
+        except Exception as exc:
+            status_code = self._status_code_from_exception(exc)
+            if status_code is None:
+                raise
+            request = httpx.Request("GET", full_path)
+            response = httpx.Response(status_code, request=request, text=str(exc))
+            raise httpx.HTTPStatusError(str(exc), request=request, response=response) from exc
+
+    async def _close_client(self) -> None:
+        if self._client is None:
+            return None
+
+        for method_name in ("aclose", "close"):
+            method = getattr(self._client, method_name, None)
+            if not callable(method):
+                continue
+
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+            break
+
+        return None
 
     def resolve_operation(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         """Parse operation name from full tool name for status updates.
@@ -172,8 +262,10 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Support async context manager - cleanup HTTP client."""
         if self._client:
-            await self._client.aclose()
+            await self._close_client()
         self._client = None
+        self._cached_get_supports_params = None
+        self._cached_get_supports_params_client = None
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for Redis Enterprise admin API operations."""
@@ -551,13 +643,11 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info("Getting Redis Enterprise cluster info")
         try:
-            client = self.get_client()
-            response = await client.get("/v1/cluster")
-            response.raise_for_status()
+            data = await self._get_json("/v1/cluster")
 
             return {
                 "status": "success",
-                "data": response.json(),
+                "data": data,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -595,26 +685,22 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Listing databases (fields={fields})")
         try:
-            client = self.get_client()
             params = {}
             if fields:
                 params["fields"] = fields
 
             try:
-                response = await client.get("/v1/bdbs", params=params)
-                response.raise_for_status()
+                databases = await self._get_json("/v1/bdbs", params=params)
             except httpx.HTTPStatusError as e:
                 # Some Redis Enterprise versions do not accept 'fields' on this endpoint
                 if e.response.status_code in (406, 400) and fields:
                     logger.warning(
                         f"list_databases(fields={fields}) failed with {e.response.status_code}; retrying without fields"
                     )
-                    response = await client.get("/v1/bdbs")
-                    response.raise_for_status()
+                    databases = await self._get_json("/v1/bdbs")
                 else:
                     raise
 
-            databases = response.json()
             return {
                 "status": "success",
                 "count": len(databases) if isinstance(databases, list) else 1,
@@ -649,28 +735,25 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting database {uid} (fields={fields})")
         try:
-            client = self.get_client()
             params = {}
             if fields:
                 params["fields"] = fields
 
             try:
-                response = await client.get(f"/v1/bdbs/{uid}", params=params)
-                response.raise_for_status()
+                database = await self._get_json(f"/v1/bdbs/{uid}", params=params)
             except httpx.HTTPStatusError as e:
                 # Some Redis Enterprise versions return 406 when 'fields' is not supported on this endpoint
                 if e.response.status_code in (406, 400) and fields:
                     logger.warning(
                         f"get_database({uid}) with fields failed ({e.response.status_code}); retrying without fields"
                     )
-                    response = await client.get(f"/v1/bdbs/{uid}")
-                    response.raise_for_status()
+                    database = await self._get_json(f"/v1/bdbs/{uid}")
                 else:
                     raise
 
             return {
                 "status": "success",
-                "database": response.json(),
+                "database": database,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -700,15 +783,11 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Listing nodes (fields={fields})")
         try:
-            client = self.get_client()
             params = {}
             if fields:
                 params["fields"] = fields
 
-            response = await client.get("/v1/nodes", params=params)
-            response.raise_for_status()
-
-            nodes = response.json()
+            nodes = await self._get_json("/v1/nodes", params=params)
             return {
                 "status": "success",
                 "count": len(nodes),
@@ -743,17 +822,13 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting node {uid} (fields={fields})")
         try:
-            client = self.get_client()
             params = {}
             if fields:
                 params["fields"] = fields
 
-            response = await client.get(f"/v1/nodes/{uid}", params=params)
-            response.raise_for_status()
-
             return {
                 "status": "success",
-                "node": response.json(),
+                "node": await self._get_json(f"/v1/nodes/{uid}", params=params),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -780,11 +855,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info("Listing Redis modules")
         try:
-            client = self.get_client()
-            response = await client.get("/v1/modules")
-            response.raise_for_status()
-
-            modules = response.json()
+            modules = await self._get_json("/v1/modules")
             return {
                 "status": "success",
                 "count": len(modules),
@@ -819,17 +890,13 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting database {uid} stats (interval={interval})")
         try:
-            client = self.get_client()
             params = {"interval": interval}
-
-            response = await client.get(f"/v1/bdbs/stats/{uid}", params=params)
-            response.raise_for_status()
 
             return {
                 "status": "success",
                 "uid": uid,
                 "interval": interval,
-                "stats": response.json(),
+                "stats": await self._get_json(f"/v1/bdbs/stats/{uid}", params=params),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -861,14 +928,11 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting cluster stats (interval={interval})")
         try:
-            client = self.get_client()
             params = {"interval": interval}
-            response = await client.get("/v1/cluster/stats", params=params)
-            response.raise_for_status()
             return {
                 "status": "success",
                 "interval": interval,
-                "stats": response.json(),
+                "stats": await self._get_json("/v1/cluster/stats", params=params),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -919,7 +983,6 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info("Getting cluster logs")
         try:
-            client = self.get_client()
             params: Dict[str, Any] = {}
             if order:
                 params["order"] = order
@@ -934,9 +997,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             if et:
                 params["etime"] = et
 
-            response = await client.get("/v1/logs", params=params)
-            response.raise_for_status()
-            data = response.json()
+            data = await self._get_json("/v1/logs", params=params)
             return {
                 "status": "success",
                 "count": len(data) if isinstance(data, list) else 1,
@@ -964,12 +1025,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info("Listing cluster actions")
         try:
-            client = self.get_client()
             # Use v2 API for more comprehensive action information
-            response = await client.get("/v2/actions")
-            response.raise_for_status()
-
-            actions = response.json()
+            actions = await self._get_json("/v2/actions")
             return {
                 "status": "success",
                 "count": len(actions),
@@ -1003,14 +1060,10 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting action {action_uid}")
         try:
-            client = self.get_client()
             # Use v2 API for more comprehensive action information
-            response = await client.get(f"/v2/actions/{action_uid}")
-            response.raise_for_status()
-
             return {
                 "status": "success",
-                "action": response.json(),
+                "action": await self._get_json(f"/v2/actions/{action_uid}"),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -1040,15 +1093,11 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Listing shards (fields={fields})")
         try:
-            client = self.get_client()
             params = {}
             if fields:
                 params["fields"] = fields
 
-            response = await client.get("/v1/shards", params=params)
-            response.raise_for_status()
-
-            shards = response.json()
+            shards = await self._get_json("/v1/shards", params=params)
             return {
                 "status": "success",
                 "count": len(shards),
@@ -1073,10 +1122,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         from redis_sre_agent.tools.models import SystemHost
 
         try:
-            client = self.get_client()
-            resp = await client.get("/v1/nodes")
-            resp.raise_for_status()
-            nodes = resp.json() or []
+            nodes = await self._get_json("/v1/nodes") or []
             results: List[SystemHost] = []
             for n in nodes:
                 try:
@@ -1262,13 +1308,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting shard {uid}")
         try:
-            client = self.get_client()
-            response = await client.get(f"/v1/shards/{uid}")
-            response.raise_for_status()
-
             return {
                 "status": "success",
-                "shard": response.json(),
+                "shard": await self._get_json(f"/v1/shards/{uid}"),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -1295,12 +1337,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info("Getting cluster alerts")
         try:
-            client = self.get_client()
             # Get cluster info which includes alert_settings
-            response = await client.get("/v1/cluster")
-            response.raise_for_status()
-
-            cluster_data = response.json()
+            cluster_data = await self._get_json("/v1/cluster")
             return {
                 "status": "success",
                 "alert_settings": cluster_data.get("alert_settings", {}),
@@ -1334,15 +1372,11 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting database {uid} alerts")
         try:
-            client = self.get_client()
             # Per docs, database alerts endpoints live under /v1/bdbs/alerts/{uid}
-            response = await client.get(f"/v1/bdbs/alerts/{uid}")
-            response.raise_for_status()
-
             return {
                 "status": "success",
                 "uid": uid,
-                "alerts": response.json(),
+                "alerts": await self._get_json(f"/v1/bdbs/alerts/{uid}"),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
@@ -1375,17 +1409,13 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         """
         logger.info(f"Getting node {uid} stats (interval={interval})")
         try:
-            client = self.get_client()
             params = {"interval": interval}
-
-            response = await client.get(f"/v1/nodes/stats/{uid}", params=params)
-            response.raise_for_status()
 
             return {
                 "status": "success",
                 "uid": uid,
                 "interval": interval,
-                "stats": response.json(),
+                "stats": await self._get_json(f"/v1/nodes/stats/{uid}", params=params),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except httpx.HTTPStatusError as e:
