@@ -38,7 +38,6 @@ _INDEX_TYPE_TO_PREFIX = {
 _SEARCH_RETURN_FIELDS = [
     "id",
     "document_hash",
-    "content_hash",
     "chunk_index",
     "title",
     "content",
@@ -56,7 +55,7 @@ _SEARCH_RETURN_FIELDS = [
     "severity",
     "version",
 ]
-_EXACT_MATCH_TAG_FIELDS = ("name", "document_hash", "content_hash", "source")
+_EXACT_MATCH_TAG_FIELDS = ("name", "document_hash", "source")
 _SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
 _TEXT_PHRASE_QUERY_FIELDS = ("title", "summary", "content")
 
@@ -311,19 +310,16 @@ def _exact_match_sort_key(doc: Dict[str, Any], normalized_query: str) -> tuple[i
     lowered_query = normalized_query.lower()
     normalized_name = _doc_name(doc).strip().lower()
     document_hash = str(doc.get("document_hash") or "").strip().lower()
-    content_hash = str(doc.get("content_hash") or "").strip().lower()
     source = str(doc.get("source") or "").strip().lower()
 
     if normalized_name == lowered_query:
         rank = 0
     elif document_hash == lowered_query:
         rank = 1
-    elif content_hash == lowered_query:
-        rank = 2
     elif source == lowered_query:
-        rank = 3
+        rank = 2
     else:
-        rank = 4
+        rank = 3
 
     return (rank, normalized_name, source, _doc_chunk_index(doc))
 
@@ -422,7 +418,7 @@ def _result_score(doc: Dict[str, Any]) -> float:
     return 0.0
 
 
-async def _find_quoted_text_matches(
+async def _find_precise_text_matches(
     query: str,
     *,
     index_type: str,
@@ -431,10 +427,11 @@ async def _find_quoted_text_matches(
     doc_type: Optional[str] = None,
     config: Optional[Settings] = None,
     include_special_document_types: bool = False,
+    force_literal_phrase: bool = False,
 ) -> List[Dict[str, Any]]:
     """Find literal quoted-phrase matches on TEXT fields."""
     phrase, was_quoted = _strip_outer_quotes(query)
-    if not was_quoted or not phrase:
+    if not phrase or not (was_quoted or force_literal_phrase):
         return []
 
     normalized_index_type = index_type.strip().lower()
@@ -1125,7 +1122,8 @@ async def search_knowledge_base_helper(
 
     query_vector = vectors[0] if vectors else []
 
-    precise_search = hybrid_search or _looks_like_precise_search_query(query, normalized_index_type)
+    exact_match_search = _looks_like_precise_search_query(query, normalized_index_type)
+    precise_search = hybrid_search or exact_match_search
     exact_matches = (
         await _find_exact_document_matches(
             query=query,
@@ -1136,11 +1134,11 @@ async def search_knowledge_base_helper(
             config=config,
             include_special_document_types=include_special_document_types,
         )
-        if precise_search
+        if exact_match_search
         else []
     )
-    quoted_text_matches = (
-        await _find_quoted_text_matches(
+    precise_text_matches = (
+        await _find_precise_text_matches(
             query=query,
             index_type=normalized_index_type,
             version=version,
@@ -1148,8 +1146,9 @@ async def search_knowledge_base_helper(
             doc_type=normalized_doc_type,
             config=config,
             include_special_document_types=include_special_document_types,
+            force_literal_phrase=exact_match_search,
         )
-        if precise_search
+        if exact_match_search
         else []
     )
     effective_hybrid_search = hybrid_search or precise_search
@@ -1214,7 +1213,7 @@ async def search_knowledge_base_helper(
         _span.set_attribute("query.filtered", bool(filter_expr is not None))
     _t3 = time.monotonic()
 
-    merged_results = _dedupe_docs([*exact_matches, *quoted_text_matches, *all_results])
+    merged_results = _dedupe_docs([*exact_matches, *precise_text_matches, *all_results])
     filtered_results = [
         doc
         for doc in merged_results
@@ -1255,11 +1254,11 @@ async def search_knowledge_base_helper(
                 config=config,
                 include_special_document_types=include_special_document_types,
             )
-            if precise_search
+            if exact_match_search
             else []
         )
-        fallback_quoted_text_matches = (
-            await _find_quoted_text_matches(
+        fallback_precise_text_matches = (
+            await _find_precise_text_matches(
                 query=query,
                 index_type=normalized_index_type,
                 version=version,
@@ -1267,12 +1266,13 @@ async def search_knowledge_base_helper(
                 doc_type=normalized_doc_type,
                 config=config,
                 include_special_document_types=include_special_document_types,
+                force_literal_phrase=exact_match_search,
             )
-            if precise_search
+            if exact_match_search
             else []
         )
         merged_fallback_results = _dedupe_docs(
-            [*fallback_exact_matches, *fallback_quoted_text_matches, *category_fallback_results]
+            [*fallback_exact_matches, *fallback_precise_text_matches, *category_fallback_results]
         )
         filtered_results = [
             doc

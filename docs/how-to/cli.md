@@ -86,6 +86,26 @@ uv run redis-sre-agent knowledge fragments --doc-hash <hash>
 uv run redis-sre-agent knowledge related --doc-hash <hash> --chunk-index 0
 ```
 
+#### Exact-match search notes
+- Wrap a query in quotes to force the precise-search path for exact names, document hashes, source filenames, or literal phrases.
+- Unquoted single-token identifiers that contain digits or punctuation also trigger exact matching automatically.
+- Exact-looking queries first check identifier-style fields such as `name` and `source`, then run a literal phrase search across `title`, `summary`, and `content` before semantic results are merged in.
+- General knowledge search excludes pinned docs, skills, and support tickets. Use the support-ticket tools for historical ticket lookups.
+
+Examples:
+```bash
+# Exact source filename match
+uv run redis-sre-agent knowledge search '"redis-enterprise-rladmin-cli.md"'
+
+# Exact document hash or other identifier-like value
+uv run redis-sre-agent knowledge search '"<document_hash>"'
+```
+
+For support-ticket IDs such as `RET-4421`, use the ticket workflow instead of general knowledge search:
+```bash
+uv run redis-sre-agent query --agent chat "Find support tickets for RET-4421"
+```
+
 ### 6) Schedule recurring checks
 Create a schedule that enqueues a triage with optional instance context.
 ```bash
