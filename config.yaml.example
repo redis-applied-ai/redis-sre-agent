@@ -85,6 +85,71 @@ mcp_servers:
 
           {original}
 
+  # Redis Retrieval Optimizer MCP server for search optimization
+  # Provides tools to optimize Redis-based information retrieval systems
+  # Install: pip install redis-retrieval-optimizer (or clone the retrieval-optimizer repo)
+  retrieval-optimizer:
+    command: uv
+    args:
+      - run
+      - --directory
+      - /path/to/retrieval-optimizer  # Update this path to your retrieval-optimizer directory
+      - redis-retrieval-optimizer-mcp
+    env:
+      REDIS_URL: ${REDIS_URL}
+    tools:
+      run_grid_study_tool:
+        capability: utilities
+        description: |
+          Run a grid search study to compare embedding models and search methods.
+          Use this to find the best-performing retrieval configuration for your data.
+          Requires corpus, queries, and qrels files.
+
+          {original}
+      run_bayes_study_tool:
+        capability: utilities
+        description: |
+          Run Bayesian optimization to fine-tune Redis index configurations.
+          Use this after grid study to optimize HNSW parameters, vector data types,
+          and other index settings.
+
+          {original}
+      run_search_study_tool:
+        capability: utilities
+        description: |
+          Test different search methods on an existing Redis index without
+          recreating it. Ideal for A/B testing search strategies.
+
+          {original}
+      optimize_cache_threshold:
+        capability: utilities
+        description: |
+          Optimize the distance threshold for a RedisVL SemanticCache.
+          Use this to improve cache hit rates while maintaining relevance.
+
+          {original}
+      optimize_router_threshold:
+        capability: utilities
+        description: |
+          Optimize distance thresholds for a RedisVL SemanticRouter.
+          Use this to improve routing accuracy across routes.
+
+          {original}
+      get_index_info:
+        capability: utilities
+        description: |
+          Get information about an existing Redis search index including
+          document count, memory usage, and field configuration.
+
+          {original}
+      evaluate_search_results:
+        capability: utilities
+        description: |
+          Evaluate search results against ground truth relevance labels.
+          Computes NDCG, recall, precision, and F1 metrics.
+
+          {original}
+
   # GitHub MCP server for repository operations (Docker image)
   github:
     command: docker
