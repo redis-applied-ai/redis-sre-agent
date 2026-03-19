@@ -11,11 +11,8 @@ from aiohttp import web
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise.provider import (
-    EnterpriseClient,
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
-    _EnterpriseClientAdapter,
-    _HttpxClientAdapter,
 )
 
 
@@ -59,9 +56,6 @@ async def test_provider_initialization(provider, config, redis_instance):
 
 def test_get_client_uses_upstream_sdk(provider):
     """Test that the provider initializes the upstream redis-enterprise client."""
-    if EnterpriseClient is None:
-        pytest.skip("redis-enterprise is not installed on this platform")
-
     with patch(
         "redis_sre_agent.tools.admin.redis_enterprise.provider.EnterpriseClient"
     ) as mock_client_cls:
@@ -81,53 +75,57 @@ def test_get_client_uses_upstream_sdk(provider):
 
 
 @pytest.mark.asyncio
-async def test_get_client_falls_back_to_httpx_when_sdk_unavailable(provider):
-    """Test that the provider uses httpx when redis-enterprise is unavailable."""
+async def test_get_client_raises_helpful_error_when_sdk_unavailable(provider):
+    """Test that the provider fails clearly when redis-enterprise is unavailable."""
     provider._client = None
 
-    with patch(
-        "redis_sre_agent.tools.admin.redis_enterprise.provider.EnterpriseClient",
-        None,
+    with (
+        patch(
+            "redis_sre_agent.tools.admin.redis_enterprise.provider.EnterpriseClient",
+            None,
+        ),
+        patch(
+            "redis_sre_agent.tools.admin.redis_enterprise.provider._ENTERPRISE_CLIENT_IMPORT_ERROR",
+            ImportError("no module named redis_enterprise"),
+        ),
     ):
-        client = provider.get_client()
-
-    assert isinstance(client, _HttpxClientAdapter)
-    await client.aclose()
+        with pytest.raises(RuntimeError, match="redis-enterprise>=0.8.3"):
+            provider.get_client()
 
 
 @pytest.mark.asyncio
-async def test_enterprise_client_adapter_closes_async_client_method():
-    """Test that the Enterprise adapter forwards async cleanup when available."""
-
+async def test_provider_aexit_closes_async_client_method(provider):
+    """Test that provider cleanup forwards async close when available."""
     wrapped_client = MagicMock()
     wrapped_client.aclose = AsyncMock()
+    provider._client = wrapped_client
 
-    client = _EnterpriseClientAdapter(wrapped_client)
-
-    await client.aclose()
+    await provider.__aexit__(None, None, None)
 
     wrapped_client.aclose.assert_awaited_once_with()
+    assert provider._client is None
 
 
 @pytest.mark.asyncio
-async def test_enterprise_client_adapter_closes_sync_client_method():
-    """Test that the Enterprise adapter falls back to a synchronous close method."""
-
+async def test_provider_aexit_closes_sync_client_method(provider):
+    """Test that provider cleanup falls back to a synchronous close method."""
     wrapped_client = MagicMock()
     wrapped_client.aclose = None
     wrapped_client.close = MagicMock()
+    provider._client = wrapped_client
 
-    client = _EnterpriseClientAdapter(wrapped_client)
-
-    await client.aclose()
+    await provider.__aexit__(None, None, None)
 
     wrapped_client.close.assert_called_once_with()
+    assert provider._client is None
 
 
 @pytest.mark.asyncio
 async def test_get_database_with_real_upstream_client_returns_raw_payload(config):
     """Test the real upstream client path against a local mock admin API."""
-    if EnterpriseClient is None:
+    try:
+        import redis_enterprise  # noqa: F401
+    except ImportError:
         pytest.skip("redis-enterprise is not installed on this platform")
 
     payload = {
@@ -253,7 +251,7 @@ async def test_get_cluster_info_success(provider):
         assert result["data"]["name"] == "test-cluster"
         assert "timestamp" in result
 
-        mock_client.get.assert_called_once_with("/v1/cluster")
+        mock_client.get.assert_called_once_with("/v1/cluster", params={})
 
 
 @pytest.mark.asyncio
@@ -474,7 +472,7 @@ async def test_list_actions_success(provider):
         assert result["count"] == 2
         assert len(result["actions"]) == 2
 
-        mock_client.get.assert_called_once_with("/v2/actions")
+        mock_client.get.assert_called_once_with("/v2/actions", params={})
 
 
 @pytest.mark.asyncio
