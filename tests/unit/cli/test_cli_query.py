@@ -243,6 +243,58 @@ def test_query_with_cluster_uses_sre_agent_and_passes_cluster_context(
     assert kwargs.get("context") == {"cluster_id": cluster.id}
 
 
+def test_query_with_cluster_uses_chat_agent_when_router_selects_chat(
+    mock_thread_manager, mock_redis_client
+):
+    runner = CliRunner()
+
+    class DummyCluster:
+        def __init__(self, id: str, name: str):  # noqa: A003
+            self.id = id
+            self.name = name
+            self.cluster_type = "redis_enterprise"
+            self.environment = "production"
+
+    cluster = DummyCluster("cluster-prod-123", "Prod Cluster")
+
+    mock_chat_agent = MagicMock()
+    mock_chat_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
+
+    from redis_sre_agent.agent.router import AgentType
+
+    with (
+        patch(
+            "redis_sre_agent.cli.query.get_cluster_by_id",
+            new=AsyncMock(return_value=cluster),
+        ) as mock_get_cluster,
+        patch("redis_sre_agent.cli.query.get_chat_agent", return_value=mock_chat_agent) as mock_get_chat,
+        patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
+        patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.REDIS_CHAT),
+        ),
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+    ):
+        result = runner.invoke(
+            query,
+            [
+                "Check this cluster",
+                "-c",
+                cluster.id,
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_get_cluster.assert_awaited_once_with(cluster.id)
+    mock_get_chat.assert_called_once_with(redis_instance=None, redis_cluster=cluster)
+    mock_get_sre.assert_not_called()
+    mock_get_knowledge.assert_not_called()
+
+
 def test_query_rejects_both_instance_and_cluster_ids(mock_thread_manager, mock_redis_client):
     runner = CliRunner()
 

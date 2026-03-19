@@ -527,8 +527,9 @@ class TestSRELangGraphAgent:
             "do NOT use database-specific diagnostic tools" in initial_state["messages"][-1].content
         )
 
-        # No linked DB target should be passed into ToolManager.
+        # Cluster-only queries should still pass the cluster into ToolManager.
         assert mock_tool_manager_cls.call_args.kwargs.get("redis_instance") is None
+        assert mock_tool_manager_cls.call_args.kwargs.get("redis_cluster") == mock_cluster
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")

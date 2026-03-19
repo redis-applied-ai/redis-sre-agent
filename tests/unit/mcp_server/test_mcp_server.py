@@ -189,6 +189,39 @@ class TestGeneralChatTool:
             assert call_kwargs["context"]["instance_id"] == "redis-prod-1"
 
     @pytest.mark.asyncio
+    async def test_general_chat_with_cluster_id(self):
+        """Test general_chat with a specific cluster includes it in context."""
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "queued",
+        }
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
+        ):
+            mock_create.return_value = mock_result
+
+            result = await redis_sre_general_chat(query="Check cluster", cluster_id="cluster-prod-1")
+
+            assert result["task_id"] == "task-456"
+            call_kwargs = mock_create.call_args.kwargs
+            assert call_kwargs["context"]["cluster_id"] == "cluster-prod-1"
+
+    @pytest.mark.asyncio
+    async def test_general_chat_rejects_instance_and_cluster_together(self):
+        """Test general_chat rejects conflicting target identifiers."""
+        result = await redis_sre_general_chat(
+            query="Check status",
+            instance_id="redis-prod-1",
+            cluster_id="cluster-prod-1",
+        )
+
+        assert result["status"] == "failed"
+        assert "only one of instance_id or cluster_id" in result["message"]
+
+    @pytest.mark.asyncio
     async def test_general_chat_error_handling(self):
         """Test general_chat error handling."""
         with (
@@ -252,6 +285,39 @@ class TestDatabaseChatTool:
             assert result["task_id"] == "task-456"
             call_kwargs = mock_create.call_args.kwargs
             assert call_kwargs["context"]["exclude_mcp_categories"] == ["tickets", "repos"]
+
+    @pytest.mark.asyncio
+    async def test_database_chat_with_cluster_id(self):
+        """Test database_chat forwards cluster_id in context."""
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "queued",
+        }
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
+        ):
+            mock_create.return_value = mock_result
+
+            result = await redis_sre_database_chat(query="Check cluster", cluster_id="cluster-prod-1")
+
+            assert result["task_id"] == "task-456"
+            call_kwargs = mock_create.call_args.kwargs
+            assert call_kwargs["context"]["cluster_id"] == "cluster-prod-1"
+
+    @pytest.mark.asyncio
+    async def test_database_chat_rejects_instance_and_cluster_together(self):
+        """Test database_chat rejects conflicting target identifiers."""
+        result = await redis_sre_database_chat(
+            query="Check status",
+            instance_id="redis-prod-1",
+            cluster_id="cluster-prod-1",
+        )
+
+        assert result["status"] == "failed"
+        assert "only one of instance_id or cluster_id" in result["message"]
 
 
 class TestKnowledgeSearchTool:

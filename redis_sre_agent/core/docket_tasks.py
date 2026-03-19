@@ -19,6 +19,7 @@ from redis_sre_agent.core.citation_message import (
     format_citation_message,
     should_include_citations,
 )
+from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.config import Settings, settings
 from redis_sre_agent.core.instances import create_instance, get_instance_by_id
 from redis_sre_agent.core.knowledge_helpers import (
@@ -202,6 +203,7 @@ async def process_chat_turn(
     task_id: str,
     thread_id: str,
     instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
     user_id: Optional[str] = None,
     exclude_mcp_categories: Optional[List[str]] = None,
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
@@ -218,6 +220,7 @@ async def process_chat_turn(
         task_id: Task ID for notifications and result storage
         thread_id: Thread ID for conversation context and result storage
         instance_id: Optional Redis instance ID
+        cluster_id: Optional Redis cluster ID
         user_id: Optional user ID for tracking
         exclude_mcp_categories: Optional list of MCP tool category names to exclude.
             Valid values: "metrics", "logs", "tickets", "repos", "traces",
@@ -253,6 +256,9 @@ async def process_chat_turn(
         # Create task emitter for notifications
         emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
 
+        if instance_id and cluster_id:
+            raise ValueError("Please provide only one of instance_id or cluster_id")
+
         # Get Redis instance if specified
         redis_instance = None
         if instance_id:
@@ -260,9 +266,16 @@ async def process_chat_turn(
             if not redis_instance:
                 raise ValueError(f"Instance not found: {instance_id}")
 
+        redis_cluster = None
+        if cluster_id:
+            redis_cluster = await get_cluster_by_id(cluster_id)
+            if not redis_cluster:
+                raise ValueError(f"Cluster not found: {cluster_id}")
+
         # Run chat agent
         agent = ChatAgent(
             redis_instance=redis_instance,
+            redis_cluster=redis_cluster,
             progress_emitter=emitter,
             exclude_mcp_categories=mcp_categories,
         )
@@ -277,6 +290,7 @@ async def process_chat_turn(
         result = {
             "response": response.model_dump() if hasattr(response, "model_dump") else response,
             "instance_id": instance_id,
+            "cluster_id": cluster_id,
         }
         await task_manager.set_task_result(task_id, result)
         await task_manager.update_task_status(task_id, TaskStatus.DONE)
@@ -834,7 +848,13 @@ async def process_agent_turn(
             target_instance = (
                 await get_instance_by_id(active_instance_id) if active_instance_id else None
             )
-            agent = get_chat_agent(redis_instance=target_instance)
+            target_cluster = (
+                await get_cluster_by_id(active_cluster_id) if active_cluster_id else None
+            )
+            agent = get_chat_agent(
+                redis_instance=target_instance,
+                redis_cluster=target_cluster,
+            )
         else:
             agent = get_knowledge_agent()
 

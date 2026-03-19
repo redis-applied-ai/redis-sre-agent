@@ -11,6 +11,7 @@ from redis_sre_agent.agent.chat_agent import (
     ChatAgentState,
     get_chat_agent,
 )
+from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.progress import NullEmitter
 
@@ -63,6 +64,31 @@ class TestChatAgentInitialization:
 
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_agent_initializes_with_cluster(self, mock_create_mini_llm, mock_create_llm):
+        """Test that ChatAgent accepts cluster-only context."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        cluster = RedisCluster(
+            id="cluster-1",
+            name="test-cluster",
+            cluster_type=RedisClusterType.redis_enterprise,
+            environment="test",
+            description="Test cluster",
+            admin_url="https://cluster.example.com:9443",
+            admin_username="admin@redis.com",
+            admin_password="secret",
+        )
+
+        agent = ChatAgent(redis_cluster=cluster)
+
+        assert agent.llm is mock_llm
+        assert agent.redis_cluster is cluster
+        assert agent.redis_instance is None
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
     def test_agent_initializes_with_progress_emitter(self, mock_create_mini_llm, mock_create_llm):
         """Test that ChatAgent accepts a progress_emitter."""
         mock_llm = MagicMock()
@@ -107,7 +133,10 @@ class TestChatAgentSingleton:
             agent = get_chat_agent()
 
             assert agent is mock_instance
-            mock_agent_class.assert_called_once_with(redis_instance=None)
+            mock_agent_class.assert_called_once_with(
+                redis_instance=None,
+                redis_cluster=None,
+            )
 
     def test_get_chat_agent_caches_by_instance_name(self):
         """Test get_chat_agent caches agents by instance name."""
@@ -147,6 +176,46 @@ class TestChatAgentSingleton:
             # Same instance name should return cached agent
             assert agent1 is agent1_again
             # Different instance name should return new agent
+            assert agent1 is not agent2
+            assert mock_agent_class.call_count == 2
+
+    def test_get_chat_agent_caches_by_cluster_id(self):
+        """Test get_chat_agent caches cluster-scoped agents separately."""
+        with patch("redis_sre_agent.agent.chat_agent.ChatAgent") as mock_agent_class:
+            mock_agent1 = MagicMock()
+            mock_agent2 = MagicMock()
+            mock_agent_class.side_effect = [mock_agent1, mock_agent2]
+
+            from redis_sre_agent.agent import chat_agent
+
+            chat_agent._chat_agents.clear()
+
+            cluster1 = RedisCluster(
+                id="cluster-1",
+                name="cluster-1",
+                cluster_type=RedisClusterType.redis_enterprise,
+                environment="test",
+                description="cluster 1",
+                admin_url="https://cluster-1.example.com:9443",
+                admin_username="admin@redis.com",
+                admin_password="secret",
+            )
+            cluster2 = RedisCluster(
+                id="cluster-2",
+                name="cluster-2",
+                cluster_type=RedisClusterType.redis_enterprise,
+                environment="test",
+                description="cluster 2",
+                admin_url="https://cluster-2.example.com:9443",
+                admin_username="admin@redis.com",
+                admin_password="secret",
+            )
+
+            agent1 = get_chat_agent(redis_cluster=cluster1)
+            agent1_again = get_chat_agent(redis_cluster=cluster1)
+            agent2 = get_chat_agent(redis_cluster=cluster2)
+
+            assert agent1 is agent1_again
             assert agent1 is not agent2
             assert mock_agent_class.call_count == 2
 

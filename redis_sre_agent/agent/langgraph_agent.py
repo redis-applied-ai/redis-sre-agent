@@ -1718,6 +1718,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
         # Determine target Redis instance from context
         target_instance = None
+        target_cluster = None
         enhanced_query = query
 
         if context and context.get("instance_id"):
@@ -1783,6 +1784,7 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
 
 CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but the cluster was not found in the system. Please proceed with general Redis troubleshooting."""
                 else:
+                    target_cluster = cluster
                     all_instances = await get_instances()
                     linked_instances = [
                         inst
@@ -2224,6 +2226,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         # Create ToolManager for this query with the target instance
         async with ToolManager(
             redis_instance=target_instance,
+            redis_cluster=target_cluster,
             support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,

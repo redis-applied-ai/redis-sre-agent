@@ -413,6 +413,74 @@ class TestProcessChatTurn:
         assert result["response"] == "Response"
 
     @pytest.mark.asyncio
+    async def test_process_chat_turn_with_cluster(self):
+        """Test chat turn with a cluster-only target."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value="Cluster response")
+
+        mock_cluster = MagicMock()
+        mock_cluster.id = "cluster-1"
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_cluster_by_id",
+                new_callable=AsyncMock,
+                return_value=mock_cluster,
+            ),
+            patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_agent) as mock_cls,
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            result = await process_chat_turn(
+                query="What nodes are in this cluster?",
+                task_id="task-123",
+                thread_id="thread-456",
+                cluster_id="cluster-1",
+                user_id="user-1",
+            )
+
+        assert result["response"] == "Cluster response"
+        assert result["cluster_id"] == "cluster-1"
+        assert mock_cls.call_args.kwargs["redis_cluster"] is mock_cluster
+
+    @pytest.mark.asyncio
+    async def test_process_chat_turn_rejects_instance_and_cluster(self):
+        """Test chat turn rejects conflicting target identifiers."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_thread_manager = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            with pytest.raises(ValueError, match="only one of instance_id or cluster_id"):
+                await process_chat_turn(
+                    query="Test",
+                    task_id="task-123",
+                    thread_id="thread-456",
+                    instance_id="inst-1",
+                    cluster_id="cluster-1",
+                )
+
+    @pytest.mark.asyncio
     async def test_process_chat_turn_agent_error(self):
         """Test chat turn with agent error."""
         mock_redis = AsyncMock()

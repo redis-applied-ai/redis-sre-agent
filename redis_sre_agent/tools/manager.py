@@ -24,6 +24,7 @@ from .protocols import ToolProvider
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from redis_sre_agent.core.clusters import RedisCluster
     from redis_sre_agent.tools.cache import ToolCache
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ class ToolManager:
     def __init__(
         self,
         redis_instance: Optional[RedisInstance] = None,
+        redis_cluster: Optional["RedisCluster"] = None,
         exclude_mcp_categories: Optional[List[ToolCapability]] = None,
         support_package_path: Optional["Path"] = None,
         cache_client: Optional[Any] = None,
@@ -89,6 +91,7 @@ class ToolManager:
 
         Args:
             redis_instance: Optional Redis instance to scope tools to
+            redis_cluster: Optional Redis cluster to scope cluster-level tools to
             exclude_mcp_categories: Optional list of MCP tool categories to exclude.
                 Use [ToolCapability.UTILITIES] to exclude utility-only MCP tools,
                 or pass all capabilities to exclude all MCP tools.
@@ -102,6 +105,7 @@ class ToolManager:
             cache_ttl_overrides: Optional custom TTLs for specific tools.
         """
         self.redis_instance = redis_instance
+        self.redis_cluster = redis_cluster
         self.exclude_mcp_categories = exclude_mcp_categories
         self.support_package_path = support_package_path
         # Track loaded provider class paths to avoid duplicates
@@ -299,6 +303,12 @@ class ToolManager:
                     f"Unknown or unspecified instance type '{instance_type}' for instance '{self.redis_instance.name}'. "
                     "Using standard Redis tools."
                 )
+        elif self.redis_cluster:
+            logger.info(
+                "Loading cluster-specific providers for cluster: %s",
+                self.redis_cluster.name,
+            )
+            await self._load_cluster_scoped_providers()
         else:
             logger.info("No redis_instance provided - loading only instance-independent providers")
 
@@ -317,12 +327,93 @@ class ToolManager:
 
         return self
 
-    async def _load_provider(self, provider_path: str, always_on: bool = False) -> None:
+    async def _load_cluster_scoped_providers(self) -> None:
+        """Load providers that can operate with cluster-only context."""
+        cluster_type = (
+            self.redis_cluster.cluster_type.value
+            if hasattr(self.redis_cluster.cluster_type, "value")
+            else str(self.redis_cluster.cluster_type or "").strip().lower()
+        )
+
+        if cluster_type != "redis_enterprise":
+            logger.info(
+                "Cluster type '%s' has no cluster-only providers to load",
+                cluster_type or "unknown",
+            )
+            return
+
+        admin_instance = self.build_redis_enterprise_admin_instance_from_cluster(self.redis_cluster)
+        if admin_instance is None:
+            logger.warning(
+                "Redis Enterprise cluster '%s' is missing admin credentials. "
+                "Cluster-only admin tools will not be available.",
+                self.redis_cluster.name,
+            )
+            return
+
+        logger.info(
+            "Loading Redis Enterprise admin API provider for cluster '%s'",
+            self.redis_cluster.name,
+        )
+        await self._load_provider(
+            "redis_sre_agent.tools.admin.redis_enterprise.provider.RedisEnterpriseAdminToolProvider",
+            redis_instance_override=admin_instance,
+        )
+
+    @staticmethod
+    def build_redis_enterprise_admin_instance_from_cluster(
+        redis_cluster: "RedisCluster",
+    ) -> Optional[RedisInstance]:
+        """Build a synthetic RedisInstance for cluster-scoped admin providers."""
+        if redis_cluster is None:
+            return None
+
+        cluster_type = (
+            redis_cluster.cluster_type.value
+            if hasattr(redis_cluster.cluster_type, "value")
+            else str(redis_cluster.cluster_type or "").strip().lower()
+        )
+        has_admin_url = bool((redis_cluster.admin_url or "").strip())
+        has_admin_username = bool((redis_cluster.admin_username or "").strip())
+        has_admin_password = bool(redis_cluster.admin_password)
+
+        if cluster_type != "redis_enterprise" or not (
+            has_admin_url and has_admin_username and has_admin_password
+        ):
+            return None
+
+        connection_host = (redis_cluster.admin_url or "").strip()
+        return RedisInstance(
+            id=f"cluster-admin::{redis_cluster.id}",
+            name=f"{redis_cluster.name} (cluster admin)",
+            connection_url="redis://cluster-only.invalid:6379",
+            environment=redis_cluster.environment,
+            usage="custom",
+            description=f"Synthetic cluster admin target for {redis_cluster.name}",
+            instance_type="redis_enterprise",
+            cluster_id=redis_cluster.id,
+            admin_url=redis_cluster.admin_url,
+            admin_username=redis_cluster.admin_username,
+            admin_password=redis_cluster.admin_password,
+            monitoring_identifier=redis_cluster.name,
+            logging_identifier=redis_cluster.name,
+            notes=f"Cluster-scoped admin tooling target for {connection_host}",
+            created_by="agent",
+            user_id=redis_cluster.user_id,
+        )
+
+    async def _load_provider(
+        self,
+        provider_path: str,
+        always_on: bool = False,
+        redis_instance_override: Optional[RedisInstance] = None,
+    ) -> None:
         """Load and register a provider.
 
         Args:
             provider_path: Fully qualified class path
             always_on: If True, initialize without redis_instance (for always-on providers)
+            redis_instance_override: Optional instance to use for a single provider load
         """
         try:
             # Skip duplicate loads of the same provider class
@@ -332,7 +423,7 @@ class ToolManager:
 
             provider_cls = self._get_provider_class(provider_path)
             # Always-on providers should not have redis_instance set
-            instance = None if always_on else self.redis_instance
+            instance = None if always_on else (redis_instance_override or self.redis_instance)
             provider = await self._stack.enter_async_context(provider_cls(redis_instance=instance))
             # Back-reference so providers can discover peers by capability when needed
             try:

@@ -204,7 +204,10 @@ def query(
         if agent_type == AgentType.REDIS_TRIAGE:
             selected_agent = get_sre_agent()
         elif agent_type == AgentType.REDIS_CHAT:
-            selected_agent = get_chat_agent(redis_instance=instance)
+            selected_agent = get_chat_agent(
+                redis_instance=instance,
+                redis_cluster=cluster,
+            )
         else:
             selected_agent = get_knowledge_agent()
 
