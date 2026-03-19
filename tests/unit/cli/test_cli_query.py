@@ -269,7 +269,9 @@ def test_query_with_cluster_uses_chat_agent_when_router_selects_chat(
             "redis_sre_agent.cli.query.get_cluster_by_id",
             new=AsyncMock(return_value=cluster),
         ) as mock_get_cluster,
-        patch("redis_sre_agent.cli.query.get_chat_agent", return_value=mock_chat_agent) as mock_get_chat,
+        patch(
+            "redis_sre_agent.cli.query.get_chat_agent", return_value=mock_chat_agent
+        ) as mock_get_chat,
         patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
         patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
         patch(

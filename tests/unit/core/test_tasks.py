@@ -439,7 +439,9 @@ class TestProcessChatTurn:
                 new_callable=AsyncMock,
                 return_value=mock_cluster,
             ),
-            patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_agent) as mock_cls,
+            patch(
+                "redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_agent
+            ) as mock_cls,
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             result = await process_chat_turn(

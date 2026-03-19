@@ -203,7 +203,9 @@ class TestGeneralChatTool:
         ):
             mock_create.return_value = mock_result
 
-            result = await redis_sre_general_chat(query="Check cluster", cluster_id="cluster-prod-1")
+            result = await redis_sre_general_chat(
+                query="Check cluster", cluster_id="cluster-prod-1"
+            )
 
             assert result["task_id"] == "task-456"
             call_kwargs = mock_create.call_args.kwargs
@@ -301,7 +303,9 @@ class TestDatabaseChatTool:
         ):
             mock_create.return_value = mock_result
 
-            result = await redis_sre_database_chat(query="Check cluster", cluster_id="cluster-prod-1")
+            result = await redis_sre_database_chat(
+                query="Check cluster", cluster_id="cluster-prod-1"
+            )
 
             assert result["task_id"] == "task-456"
             call_kwargs = mock_create.call_args.kwargs
