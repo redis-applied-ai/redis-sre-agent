@@ -22,7 +22,14 @@ _active_jobs: Dict[str, Dict] = {}
 class SearchRequest(BaseModel):
     """Request model for knowledge base search."""
 
-    query: str = Field(..., description="Search query")
+    query: str = Field(
+        ...,
+        description=(
+            "Search query. Wrap exact identifiers such as names, document hashes, source "
+            "filenames, or literal phrases in quotes to trigger precise matching plus literal "
+            "text search before semantic results are merged."
+        ),
+    )
     category: Optional[str] = Field(None, description="Filter by category")
     doc_type: Optional[str] = Field(None, description="Filter by document type")
     limit: int = Field(10, ge=1, le=50, description="Number of results to return")
@@ -147,7 +154,14 @@ class UpdateKnowledgeSettingsRequest(BaseModel):
 
 @router.get("/search", response_model=SearchResponse)
 async def search_knowledge(
-    query: str = Query(..., description="Search query"),
+    query: str = Query(
+        ...,
+        description=(
+            "Search query. Wrap exact identifiers such as names, document hashes, source "
+            "filenames, or literal phrases in quotes to trigger precise matching plus literal "
+            "text search before semantic results are merged."
+        ),
+    ),
     category: Optional[str] = Query(None, description="Filter by category"),
     doc_type: Optional[str] = Query(None, description="Filter by document type"),
     product_labels: Optional[str] = Query(
@@ -164,7 +178,18 @@ async def search_knowledge(
         ),
     ),
 ):
-    """Search the knowledge base for relevant documents."""
+    """Search the knowledge base for relevant documents.
+
+    Notes:
+    - Quoted queries trigger a precise-search path for exact identifiers, sources,
+      and literal phrases before semantic results are merged.
+    - Unquoted single-token identifiers with digits or punctuation can also trigger
+      the precise-search path automatically.
+    - The precise-search path combines identifier equality with literal phrase
+      search across title, summary, and content.
+    - General knowledge search excludes support tickets; use the support-ticket tools
+      for historical incident lookups.
+    """
     try:
         logger.info(f"Knowledge base search: {query}")
 

@@ -8,6 +8,7 @@ import pytest
 from redis_sre_agent.core.knowledge_helpers import (
     _dedupe_docs,
     _doc_matches_requested_version,
+    _exact_match_sort_key,
     _quoted_text_phrase_query,
     _RawTextQuery,
     get_all_document_fragments,
@@ -54,6 +55,22 @@ class TestKnowledgeHelpers:
         assert get_related_document_fragments.__doc__ is not None
         assert "retrieve all fragments" in get_all_document_fragments.__doc__.lower()
         assert "related fragments" in get_related_document_fragments.__doc__.lower()
+
+    def test_exact_match_sort_key_ranks_source_and_non_match_after_name_and_hash(self):
+        """Source equality should outrank unrelated rows in exact-match ordering."""
+        source_match = {
+            "document_hash": "hash-1",
+            "chunk_index": 0,
+            "source": "ticket-ret-4421.md",
+        }
+        non_match = {
+            "document_hash": "hash-2",
+            "chunk_index": 1,
+            "source": "other.md",
+        }
+
+        assert _exact_match_sort_key(source_match, "ticket-ret-4421.md")[0] == 2
+        assert _exact_match_sort_key(non_match, "ticket-ret-4421.md")[0] == 3
 
 
 class TestSearchKnowledgeBaseHelper:
@@ -125,6 +142,7 @@ class TestSearchKnowledgeBaseHelper:
                         "version": "latest",
                     }
                 ],
+                [],
                 [
                     {
                         "id": "doc-semantic",
@@ -163,7 +181,8 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["id"] == "doc-exact"
         assert result["results"][0]["name"] == "ret-4421"
         assert result["results"][1]["id"] == "doc-semantic"
-        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "HybridQuery"
+        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "_RawTextQuery"
+        assert mock_index.query.await_args_list[2].args[0].__class__.__name__ == "HybridQuery"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_promotes_exact_document_hash_match(self):
@@ -184,6 +203,7 @@ class TestSearchKnowledgeBaseHelper:
                         "version": "latest",
                     }
                 ],
+                [],
                 [
                     {
                         "id": "doc-semantic",
@@ -219,6 +239,68 @@ class TestSearchKnowledgeBaseHelper:
 
         assert result["results_count"] == 2
         assert result["results"][0]["document_hash"] == "abc123def456"
+        assert result["results"][1]["id"] == "doc-semantic"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_identifier_query_runs_literal_text_query(self):
+        """Identifier-like queries should search TEXT fields even without wrapping quotes."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [],
+                [
+                    {
+                        "id": "doc-phrase",
+                        "document_hash": "hash-phrase",
+                        "chunk_index": 0,
+                        "title": "Follow-up incident",
+                        "content": "See RET-4421 for the original incident timeline.",
+                        "source": "alerts",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+                [
+                    {
+                        "id": "doc-semantic",
+                        "document_hash": "hash-semantic",
+                        "chunk_index": 0,
+                        "title": "Memory pressure",
+                        "content": "Related semantic result",
+                        "source": "docs",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 0.2,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(query="RET-4421", limit=10)
+
+        literal_query = str(mock_index.query.await_args_list[1].args[0])
+        assert '@title:("ret-4421")' in literal_query
+        assert '@summary:("ret-4421")' in literal_query
+        assert '@content:("ret-4421")' in literal_query
+        assert result["results_count"] == 2
+        assert result["results"][0]["id"] == "doc-phrase"
         assert result["results"][1]["id"] == "doc-semantic"
 
     @pytest.mark.asyncio
@@ -500,9 +582,9 @@ class TestSearchKnowledgeBaseHelper:
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_hybrid_search(self):
-        """Test knowledge base hybrid search."""
+        """Hybrid search alone should not trigger exact/literal prequeries."""
         mock_index = AsyncMock()
-        mock_index.query = AsyncMock(side_effect=[[], []])
+        mock_index.query = AsyncMock(return_value=[])
 
         mock_vectorizer = MagicMock()
         mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
@@ -525,7 +607,8 @@ class TestSearchKnowledgeBaseHelper:
             )
 
         assert result["results_count"] == 0
-        assert mock_index.query.call_count == 2
+        assert mock_index.query.call_count == 1
+        assert mock_index.query.await_args_list[0].args[0].__class__.__name__ == "HybridQuery"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_natural_language_query_skips_exact_prequery(self):
@@ -554,6 +637,62 @@ class TestSearchKnowledgeBaseHelper:
 
         assert result["results_count"] == 0
         mock_index.query.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_category_fallback_runs_precise_text_query_for_identifier(
+        self,
+    ):
+        """Category fallback should retry literal TEXT matching for exact-looking queries."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [],
+                [],
+                [],
+                [],
+                [],
+                [
+                    {
+                        "id": "doc-fallback-phrase",
+                        "document_hash": "hash-fallback",
+                        "chunk_index": 0,
+                        "title": "Follow-up incident",
+                        "content": "RET-4421 shows the linked failover issue.",
+                        "source": "alerts",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="RET-4421",
+                category="incident",
+                version=None,
+                limit=10,
+            )
+
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-fallback-phrase"
+        assert mock_index.query.call_count == 6
+        assert mock_index.query.await_args_list[5].args[0].__class__.__name__ == "_RawTextQuery"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_with_offset(self):

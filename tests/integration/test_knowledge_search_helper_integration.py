@@ -508,10 +508,10 @@ class TestKnowledgeSearchHelper:
 
         index = await get_support_tickets_index(config=test_settings)
         exact_content = "Orthogonal ticket body"
-        semantic_content = "Failover investigation notes"
+        semantic_content = "Follow-up for RET-4421 after failover investigation"
         exact_vec = _vec(1)
         semantic_vec = _vec(0)
-        query_vec = semantic_vec[:]
+        query_vec = exact_vec[:]
         mock_vec = MockVectorizer(
             query_vec,
             {
@@ -554,7 +554,6 @@ class TestKnowledgeSearchHelper:
             search_result = await search_support_tickets_helper(
                 query="RET-4421",
                 limit=2,
-                distance_threshold=None,
                 config=test_settings,
             )
 

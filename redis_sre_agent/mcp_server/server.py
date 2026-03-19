@@ -448,7 +448,10 @@ async def redis_sre_knowledge_search(
     instead, which creates a task that uses the Knowledge Agent to analyze and answer.
 
     Args:
-        query: Search query (e.g., "redis memory eviction policies")
+        query: Search query (e.g., "redis memory eviction policies"). Wrap exact
+            identifiers such as names, document hashes, source filenames, or literal
+            phrases in quotes to trigger precise matching plus literal text search
+            before semantic results are merged.
         limit: Maximum number of results (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
         category: Optional filter by category ('incident', 'maintenance', 'monitoring', etc.)
@@ -527,7 +530,8 @@ async def redis_sre_search_support_tickets(
     Uses the dedicated support-ticket index and returns ticket-scoped results.
 
     Args:
-        query: Search query text
+        query: Search query text. Exact ticket IDs such as RET-4421 are matched
+            directly before semantic results are merged.
         limit: Maximum results to return (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
         version: Redis documentation version filter. Defaults to "latest".

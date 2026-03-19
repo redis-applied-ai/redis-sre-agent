@@ -83,6 +83,22 @@ Startup instructions explicitly tell agents to:
 2. Search tickets with identifiers + symptoms.
 3. Fetch and summarize best matching ticket(s).
 
+Exact-match behavior:
+
+- `search_support_tickets("<ticket-id>")` performs exact matching on stable identifier fields before merging semantic results.
+- Exact-looking queries also run a literal phrase search across `title`, `summary`, and `content`, which lets ticket searches find documents that mention the ticket ID in their body text.
+- `get_support_ticket("<ticket-id>")` also accepts indexed chunk IDs like `sre_support_tickets:<document_hash>:chunk:<n>` and normalizes them back to the canonical ticket/document hash.
+
+Examples:
+
+```text
+search_support_tickets("RET-4421")
+get_support_ticket("RET-4421")
+get_support_ticket("sre_support_tickets:RET-4421:chunk:0")
+```
+
+For general knowledge documents, quoted queries trigger the same precise-search path. Use quotes when you need an exact name, source match, or literal phrase search over the document text.
+
 ---
 
 ## Shared System-Prompt Behavior Across Agents
