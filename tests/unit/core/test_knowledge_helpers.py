@@ -695,6 +695,40 @@ class TestSearchKnowledgeBaseHelper:
         assert mock_index.query.await_args_list[5].args[0].__class__.__name__ == "_RawTextQuery"
 
     @pytest.mark.asyncio
+    async def test_search_knowledge_base_category_fallback_skips_exact_prequery_for_natural_language_hybrid(
+        self,
+    ):
+        """Category fallback should not run exact TAG/TEXT probes for ordinary hybrid queries."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(side_effect=[[], []])
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="redis memory tuning",
+                category="incident",
+                hybrid_search=True,
+                limit=10,
+            )
+
+        assert result["results_count"] == 0
+        assert mock_index.query.call_count == 2
+        assert mock_index.query.await_args_list[0].args[0].__class__.__name__ == "HybridQuery"
+        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "HybridQuery"
+
+    @pytest.mark.asyncio
     async def test_search_knowledge_base_with_offset(self):
         """Test knowledge base search with offset pagination."""
         mock_index = AsyncMock()

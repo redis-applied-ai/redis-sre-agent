@@ -1254,7 +1254,7 @@ async def search_knowledge_base_helper(
                 config=config,
                 include_special_document_types=include_special_document_types,
             )
-            if precise_search
+            if exact_match_search
             else []
         )
         fallback_precise_text_matches = (
