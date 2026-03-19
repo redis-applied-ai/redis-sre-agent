@@ -110,6 +110,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
 
         self.config = config
         self._client: Optional[Any] = None
+        self._cached_get_supports_params: Optional[bool] = None
+        self._cached_get_supports_params_client: Optional[Any] = None
 
     @property
     def provider_name(self) -> str:
@@ -184,17 +186,27 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             return 404
         return None
 
+    def _client_supports_params(self, client: Any) -> bool:
+        """Detect whether the client get method accepts a params keyword."""
+        if client is self._cached_get_supports_params_client:
+            assert self._cached_get_supports_params is not None
+            return self._cached_get_supports_params
+
+        get_signature = inspect.signature(client.get)
+        supports_params = any(
+            parameter.name == "params" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in get_signature.parameters.values()
+        )
+        self._cached_get_supports_params_client = client
+        self._cached_get_supports_params = supports_params
+        return supports_params
+
     async def _get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         client = self.get_client()
         full_path = self._build_path(path, params)
         try:
             get_method = client.get
-            get_signature = inspect.signature(get_method)
-            supports_params = any(
-                parameter.name == "params" or parameter.kind == inspect.Parameter.VAR_KEYWORD
-                for parameter in get_signature.parameters.values()
-            )
-
+            supports_params = self._client_supports_params(client)
             if supports_params:
                 response = await get_method(path, params=params or {})
             else:
@@ -252,6 +264,8 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
         if self._client:
             await self._close_client()
         self._client = None
+        self._cached_get_supports_params = None
+        self._cached_get_supports_params_client = None
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas for Redis Enterprise admin API operations."""

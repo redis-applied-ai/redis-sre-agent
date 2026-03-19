@@ -767,7 +767,9 @@ async def search_support_tickets_helper(
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Search support tickets only."""
-    effective_limit = max(limit + offset, limit)
+    # Fetch one extra page so per-ticket dedupe still has enough rows to fill
+    # the requested page when multiple chunks collapse into the same ticket.
+    effective_limit = limit + offset + max(limit, 1)
     result = await search_knowledge_base_helper(
         query=query,
         limit=effective_limit,

@@ -1273,6 +1273,31 @@ class TestSupportTicketHelpers:
         assert [ticket["id"] for ticket in result["tickets"]] == ["ticket-2", "ticket-3"]
 
     @pytest.mark.asyncio
+    async def test_search_support_tickets_helper_overfetches_to_cover_dedupe(self):
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.search_knowledge_base_helper",
+            new_callable=AsyncMock,
+            return_value={"results": []},
+        ) as mock_search:
+            await search_support_tickets_helper(
+                query="cache-prod-1 failover",
+                limit=2,
+                offset=0,
+                version=None,
+            )
+
+        mock_search.assert_awaited_once_with(
+            query="cache-prod-1 failover",
+            limit=4,
+            offset=0,
+            distance_threshold=0.8,
+            hybrid_search=False,
+            version=None,
+            config=None,
+            index_type="support_tickets",
+        )
+
+    @pytest.mark.asyncio
     async def test_get_support_ticket_helper_normalizes_chunk_key_input(self):
         mock_fragments = {
             "document_hash": "abc123def456",

@@ -4,6 +4,7 @@ These tests use mocked responses and a local mock admin API. No real Redis Enter
 cluster is required.
 """
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -295,6 +296,39 @@ async def test_list_databases_success(provider):
         assert result["databases"][0]["name"] == "db1"
 
         mock_client.get.assert_called_once_with("/v1/bdbs", params={})
+
+
+@pytest.mark.asyncio
+async def test_get_json_caches_params_support_detection(provider):
+    """The provider should only inspect the client signature once per client."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+    mock_response.raise_for_status = MagicMock()
+
+    with (
+        patch.object(provider, "get_client") as mock_get_client,
+        patch(
+            "redis_sre_agent.tools.admin.redis_enterprise.provider.inspect.signature",
+            return_value=inspect.Signature(
+                parameters=[
+                    inspect.Parameter("path", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+                    inspect.Parameter(
+                        "params",
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        default=None,
+                    ),
+                ]
+            ),
+        ) as mock_signature,
+    ):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        await provider.get_cluster_info()
+        await provider.list_databases()
+
+    assert mock_signature.call_count == 1
 
 
 @pytest.mark.asyncio
