@@ -216,6 +216,7 @@ async def redis_sre_deep_triage(
 async def redis_sre_general_chat(
     query: str,
     instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a chat task for Redis Q&A with full tool access.
@@ -246,6 +247,7 @@ async def redis_sre_general_chat(
     Args:
         query: Your question (e.g., "What's the current memory usage?")
         instance_id: Optional Redis instance ID (use redis_sre_list_instances to find IDs)
+        cluster_id: Optional Redis cluster ID
         user_id: Optional user ID for tracking
 
     Returns:
@@ -262,10 +264,15 @@ async def redis_sre_general_chat(
     logger.info(f"MCP general_chat request: {query[:100]}...")
 
     try:
+        if instance_id and cluster_id:
+            raise ValueError("Please provide only one of instance_id or cluster_id")
+
         redis_client = get_redis_client()
         context: Dict[str, Any] = {"agent_type": "chat"}
         if instance_id:
             context["instance_id"] = instance_id
+        if cluster_id:
+            context["cluster_id"] = cluster_id
         if user_id:
             context["user_id"] = user_id
 
@@ -283,6 +290,7 @@ async def redis_sre_general_chat(
                 task_id=result["task_id"],
                 thread_id=result["thread_id"],
                 instance_id=instance_id,
+                cluster_id=cluster_id,
                 user_id=user_id,
             )
 
@@ -310,6 +318,7 @@ async def redis_sre_general_chat(
 async def redis_sre_database_chat(
     query: str,
     instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
     user_id: Optional[str] = None,
     exclude_mcp_categories: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -355,6 +364,7 @@ async def redis_sre_database_chat(
     Args:
         query: Your question (e.g., "What's the current memory usage?")
         instance_id: Optional Redis instance ID (use redis_sre_list_instances to find IDs)
+        cluster_id: Optional Redis cluster ID
         user_id: Optional user ID for tracking
         exclude_mcp_categories: Categories to exclude. Pass ["all"] to exclude all MCP tools.
             Default: ["all"] (excludes all MCP tools for focused Redis chat)
@@ -382,6 +392,9 @@ async def redis_sre_database_chat(
         exclude_mcp_categories = [cap.value for cap in ToolCapability]
 
     try:
+        if instance_id and cluster_id:
+            raise ValueError("Please provide only one of instance_id or cluster_id")
+
         redis_client = get_redis_client()
         context: Dict[str, Any] = {
             "agent_type": "chat",
@@ -389,6 +402,8 @@ async def redis_sre_database_chat(
         }
         if instance_id:
             context["instance_id"] = instance_id
+        if cluster_id:
+            context["cluster_id"] = cluster_id
         if user_id:
             context["user_id"] = user_id
 
@@ -406,6 +421,7 @@ async def redis_sre_database_chat(
                 task_id=result["task_id"],
                 thread_id=result["thread_id"],
                 instance_id=instance_id,
+                cluster_id=cluster_id,
                 user_id=user_id,
                 exclude_mcp_categories=exclude_mcp_categories,
             )

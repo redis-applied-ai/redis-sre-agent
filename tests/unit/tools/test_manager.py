@@ -436,3 +436,22 @@ class TestEnterpriseCredentialResolution:
             async with ToolManager(redis_instance=instance) as mgr:
                 tool_names = [t.name for t in mgr.get_tools()]
                 assert not any(name.startswith("re_admin_") for name in tool_names)
+
+    @pytest.mark.asyncio
+    async def test_loads_re_admin_tools_from_cluster_without_instance(self):
+        """Cluster-only Redis Enterprise queries should still load admin tools."""
+        cluster = RedisCluster(
+            id="cluster-only-1",
+            name="enterprise-cluster-only",
+            cluster_type=RedisClusterType.redis_enterprise,
+            environment="test",
+            description="cluster-only creds",
+            admin_url="https://cluster-only.example.com:9443",
+            admin_username="admin@redis.com",
+            admin_password="secret",
+        )
+
+        async with ToolManager(redis_cluster=cluster) as mgr:
+            tool_names = [t.name for t in mgr.get_tools()]
+            assert any(name.startswith("re_admin_") for name in tool_names)
+            assert mgr.redis_instance is None

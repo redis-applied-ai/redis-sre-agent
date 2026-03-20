@@ -20,6 +20,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 
+from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.llm_helpers import create_llm, create_mini_llm
@@ -129,6 +130,7 @@ class ChatAgent:
     def __init__(
         self,
         redis_instance: Optional[RedisInstance] = None,
+        redis_cluster: Optional[RedisCluster] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
         exclude_mcp_categories: Optional[List["ToolCapability"]] = None,
         support_package_path: Optional["Path"] = None,
@@ -137,6 +139,7 @@ class ChatAgent:
 
         Args:
             redis_instance: Optional Redis instance for context
+            redis_cluster: Optional Redis cluster for cluster-scoped context
             progress_emitter: Emitter for progress/notification updates
             exclude_mcp_categories: Optional list of MCP tool capability categories to exclude.
                 Use this to filter out specific types of MCP tools. Common categories:
@@ -147,6 +150,7 @@ class ChatAgent:
         """
         self.settings = settings
         self.redis_instance = redis_instance
+        self.redis_cluster = redis_cluster
         self.exclude_mcp_categories = exclude_mcp_categories
         self.support_package_path = support_package_path
 
@@ -613,6 +617,7 @@ class ChatAgent:
         # Create ToolManager with Redis instance for full tool access
         async with ToolManager(
             redis_instance=self.redis_instance,
+            redis_cluster=self.redis_cluster,
             exclude_mcp_categories=self.exclude_mcp_categories,
             support_package_path=self.support_package_path,
             cache_client=cache_client,
@@ -664,6 +669,18 @@ Your diagnostic tools are PRE-CONFIGURED for this instance.
 
 User Query: {query}"""
                 enhanced_query = instance_context
+            elif self.redis_cluster:
+                cluster_context = f"""
+CLUSTER CONTEXT: This query is about Redis cluster:
+- Cluster Name: {self.redis_cluster.name}
+- Cluster ID: {self.redis_cluster.id}
+- Environment: {self.redis_cluster.environment}
+- Cluster Type: {self.redis_cluster.cluster_type}
+
+Cluster-level admin tools are PRE-CONFIGURED for this cluster when available.
+
+User Query: {query}"""
+                enhanced_query = cluster_context
 
             if conversation_history:
                 initial_messages.extend(conversation_history)
@@ -718,19 +735,33 @@ User Query: {query}"""
 _chat_agents: Dict[str, ChatAgent] = {}
 
 
-def get_chat_agent(redis_instance: Optional[RedisInstance] = None) -> ChatAgent:
+def get_chat_agent(
+    redis_instance: Optional[RedisInstance] = None,
+    redis_cluster: Optional[RedisCluster] = None,
+) -> ChatAgent:
     """Get or create a chat agent, optionally for a specific Redis instance.
 
     Args:
         redis_instance: Optional Redis instance for context
+        redis_cluster: Optional Redis cluster for cluster-scoped context
 
     Returns:
         ChatAgent instance
     """
     global _chat_agents
-    key = redis_instance.name if redis_instance else "__no_instance__"
+    if redis_instance and redis_cluster:
+        key = f"instance:{redis_instance.id}|cluster:{redis_cluster.id}"
+    elif redis_instance:
+        key = f"instance:{redis_instance.id}"
+    elif redis_cluster:
+        key = f"cluster:{redis_cluster.id}"
+    else:
+        key = "__no_instance__"
 
     if key not in _chat_agents:
-        _chat_agents[key] = ChatAgent(redis_instance=redis_instance)
+        _chat_agents[key] = ChatAgent(
+            redis_instance=redis_instance,
+            redis_cluster=redis_cluster,
+        )
 
     return _chat_agents[key]
