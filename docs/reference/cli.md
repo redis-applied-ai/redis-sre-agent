@@ -76,6 +76,8 @@ Generated from the Click command tree.
 - index — RediSearch index management commands.
 - index list — List all SRE agent indices and their status.
 - index recreate — Drop and recreate RediSearch indices.
+- index schema-status — Show whether existing index schemas match the current code definitions.
+- index sync-schemas — Create or recreate only indices whose schema has drifted.
 - support-package — Manage support packages.
 - support-package delete — Delete a support package.
 - support-package extract — Extract a support package.
