@@ -1,6 +1,6 @@
 """Unit tests for Redis infrastructure components."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -9,10 +9,12 @@ from redis_sre_agent.core.redis import (
     SRE_SKILLS_SCHEMA,
     SRE_SUPPORT_TICKETS_SCHEMA,
     create_indices,
+    get_index_schema_status,
     get_knowledge_index,
     get_redis_client,
     get_vectorizer,
     initialize_redis,
+    sync_index_schemas,
     test_redis_connection,
     test_vector_search,
 )
@@ -237,6 +239,88 @@ class TestRedisInfrastructure:
             result = await create_indices()
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_get_index_schema_status_detects_missing_pinned_field(self):
+        """Schema status should flag older indices that are missing pinned."""
+        from redis_sre_agent.core.config import settings
+
+        mock_index = AsyncMock()
+        mock_index.exists.return_value = True
+        mock_index._redis_client = AsyncMock()
+        mock_index._redis_client.execute_command.return_value = [
+            b"attributes",
+            [
+                [b"attribute", b"title", b"type", b"TEXT"],
+                [b"attribute", b"content", b"type", b"TEXT"],
+                [b"attribute", b"content_hash", b"type", b"TAG"],
+                [b"attribute", b"document_hash", b"type", b"TAG"],
+                [b"attribute", b"source", b"type", b"TAG"],
+                [b"attribute", b"category", b"type", b"TAG"],
+                [b"attribute", b"doc_type", b"type", b"TAG"],
+                [b"attribute", b"name", b"type", b"TAG"],
+                [b"attribute", b"summary", b"type", b"TEXT"],
+                [b"attribute", b"priority", b"type", b"TAG"],
+                [b"attribute", b"severity", b"type", b"TAG"],
+                [b"attribute", b"product_labels", b"type", b"TAG"],
+                [b"attribute", b"product_label_tags", b"type", b"TAG"],
+                [b"attribute", b"version", b"type", b"TAG"],
+                [b"attribute", b"chunk_index", b"type", b"NUMERIC"],
+                [b"attribute", b"created_at", b"type", b"NUMERIC"],
+                [
+                    b"attribute",
+                    b"vector",
+                    b"type",
+                    b"VECTOR",
+                    b"algorithm",
+                    b"FLAT",
+                    b"data_type",
+                    b"FLOAT32",
+                    b"dim",
+                    settings.vector_dim,
+                    b"distance_metric",
+                    b"COSINE",
+                ],
+            ],
+        ]
+
+        with patch("redis_sre_agent.core.redis.get_skills_index", return_value=mock_index):
+            result = await get_index_schema_status(index_name="skills")
+
+        assert result["success"] is True
+        assert result["indices"]["skills"]["status"] == "drifted"
+        assert result["indices"]["skills"]["missing_fields"] == ["pinned"]
+
+    @pytest.mark.asyncio
+    async def test_sync_index_schemas_recreates_drifted_index(self):
+        """Schema sync should recreate an index whose fields have drifted."""
+        mock_index = AsyncMock()
+        mock_index.exists.return_value = True
+        mock_index.create = AsyncMock()
+        mock_index._redis_client = AsyncMock()
+        mock_index._redis_client.execute_command = AsyncMock(
+            side_effect=[
+                [
+                    b"attributes",
+                    [
+                        [b"attribute", b"title", b"type", b"TEXT"],
+                        [b"attribute", b"content", b"type", b"TEXT"],
+                    ],
+                ],
+                b"OK",
+            ]
+        )
+
+        with patch("redis_sre_agent.core.redis.get_skills_index", return_value=mock_index):
+            result = await sync_index_schemas(index_name="skills")
+
+        assert result["success"] is True
+        assert result["indices"]["skills"]["action"] == "recreated"
+        mock_index.create.assert_awaited_once()
+        assert mock_index._redis_client.execute_command.await_args_list[1].args == (
+            "FT.DROPINDEX",
+            "sre_skills",
+        )
 
     @pytest.mark.asyncio
     async def test_initialize_redis_infrastructure_success(self):
