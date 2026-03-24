@@ -405,6 +405,56 @@ class TestChatAgentExpandEvidenceTool:
         assert result["status"] == "error"
         assert "No tool calls have been made yet" in result["error"]
 
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_expand_evidence_progress_message_without_query(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        """Expand-evidence progress should read naturally without a query."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+        tool_mgr = MagicMock()
+        tool_mgr.get_status_update.return_value = None
+
+        message = agent._tool_call_progress_message(
+            tool_mgr,
+            "expand_evidence",
+            {"tool_key": "knowledge_search_1"},
+        )
+
+        assert (
+            message
+            == "I have a preview of the last tool call's output. I'm retrieving the full output now."
+        )
+
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    def test_expand_evidence_progress_message_with_query(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        """Expand-evidence progress should include the requested JMESPath."""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+        tool_mgr = MagicMock()
+        tool_mgr.get_status_update.return_value = None
+
+        message = agent._tool_call_progress_message(
+            tool_mgr,
+            "expand_evidence",
+            {"tool_key": "knowledge_search_1", "query": "results[*].title"},
+        )
+
+        assert (
+            message
+            == "I have a preview of the last tool call's output. I'm retrieving the full output now. Applying JMESPath query: results[*].title"
+        )
+
 
 class TestChatAgentExcludeMcpCategories:
     """Test exclude_mcp_categories parameter."""
