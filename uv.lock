@@ -3901,12 +3901,13 @@ wheels = [
 
 [[package]]
 name = "redis-enterprise"
-version = "0.8.3"
+version = "0.8.7"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/03/a2/011da7684c068ed21cdcf3247a15e2086ac65d4417e914625b7209aeeabb/redis_enterprise-0.8.3.tar.gz", hash = "sha256:c9b61eab715661d2b6a4e7ca94c4fa0b7306c0fa412c487f02b07808ff4c825e", size = 174200, upload-time = "2026-02-10T11:07:16.687Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/00/d7087e79e74140c10eb9581e970e23bcdd8c3631012a7265c630d14468ad/redis_enterprise-0.8.7.tar.gz", hash = "sha256:22d40909176c81397d3f7978aa7bd5b9a7a341b589894fec689b75c463137835", size = 174681, upload-time = "2026-03-19T02:20:39.325Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/0a/a23d119070b8f4da392ff60f01904b41a2e9c181acd7f24ef33cfd48ec77/redis_enterprise-0.8.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:c1beb814097dcf1b9282d877defd47d97bbd4610a4f661ce65ae702298d1db71", size = 2971824, upload-time = "2026-02-10T11:07:10.234Z" },
-    { url = "https://files.pythonhosted.org/packages/29/88/98c35c08bf30040b27f2e951469b2b71dc24fa14ef2a4a11abcc2aab07a7/redis_enterprise-0.8.3-cp312-cp312-win_amd64.whl", hash = "sha256:3862d24aa4bc444280182d7eccad0d515aecb217dc2ca35f62f5f53275a37bc9", size = 2574227, upload-time = "2026-02-10T11:07:12.328Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/2f/76b37ac22c98d07ad989413df009f259e8cfd78e687ab36210c3210d7e0b/redis_enterprise-0.8.7-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:c7a1cd09dea989c9d9b0412a64ec80d6f96595604d9ff9cb5208ef0b8b7777cc", size = 3032711, upload-time = "2026-03-19T02:20:33.813Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/36/b644f29610bff8e72ac5c24f36f896c4c746e1b99ea7d425d751150bceb7/redis_enterprise-0.8.7-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cfe8b2ac88f9b0eceda7141e1d8bbaaff18de6876d23d2892277f5eac93829bc", size = 3296557, upload-time = "2026-03-19T02:20:35.766Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/b9/1c12f9b9c65d0b071e9a0d0370ebf8927034c366cc6941ad4ed9bb1fe974/redis_enterprise-0.8.7-cp39-abi3-win_amd64.whl", hash = "sha256:b2985827053f83321933e16382ce0c31dda209c4ee7e712fd20296711db688c9", size = 2630467, upload-time = "2026-03-19T02:20:37.666Z" },
 ]
 
 [[package]]
@@ -4021,7 +4022,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-ulid", specifier = ">=3.0.0" },
     { name = "redis", specifier = ">=4.5.0" },
-    { name = "redis-enterprise", specifier = ">=0.8.3" },
+    { name = "redis-enterprise", specifier = ">=0.8.7" },
     { name = "redisvl", specifier = ">=0.9.0,<1.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "rich", specifier = ">=14.1.0" },
