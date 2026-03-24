@@ -247,12 +247,19 @@ async def build_adapters_for_tooldefs(tool_manager: Any, tooldefs: List[Any]) ->
         # Best-effort fallback (should not happen in runtime)
         return []
 
+    def _field_default(spec: dict, is_required: bool):
+        if is_required:
+            return ...
+        if "default" in (spec or {}):
+            return spec.get("default")
+        return None
+
     def _args_model_from_parameters(tool_name: str, params: dict) -> type[_BaseModel]:
         props = (params or {}).get("properties", {}) or {}
         required = set((params or {}).get("required", []) or [])
         fields: dict[str, tuple[_Any, _Any]] = {}
         for k, spec in props.items():
-            default = ... if k in required else None
+            default = _field_default(spec or {}, k in required)
             fields[k] = (
                 _Any,
                 _Field(default, description=(spec or {}).get("description")),

@@ -218,6 +218,22 @@ class TestKnowledgeProviderToolCapabilities:
         assert len(schemas) == 8
 
 
+@pytest.mark.asyncio
+async def test_search_treats_none_offset_as_zero():
+    """Knowledge search should tolerate nullable offset values from tool calls."""
+    provider = KnowledgeBaseToolProvider()
+    with patch(
+        "redis_sre_agent.tools.knowledge.knowledge_base.search_knowledge_base_helper",
+        new_callable=AsyncMock,
+    ) as mock_search:
+        mock_search.return_value = {"results": []}
+
+        await provider.search(query="port conflict", limit=3, offset=None, version="latest")
+
+        assert mock_search.call_args.kwargs["limit"] == 3
+        assert mock_search.call_args.kwargs["offset"] == 0
+
+
 def test_knowledge_provider_resolve_operation_for_multi_word_tool_name():
     """Multi-word operations should resolve correctly from generated tool names."""
     provider = KnowledgeBaseToolProvider()

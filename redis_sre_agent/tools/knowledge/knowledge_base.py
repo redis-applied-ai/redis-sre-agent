@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(coerced, 0)
+
+
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    return max(_coerce_non_negative_int(value, default=default), 1)
+
+
 class KnowledgeBaseToolProvider(ToolProvider):
     """Provides knowledge base search and ingestion tools.
 
@@ -362,6 +374,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         Returns:
             Search results with relevant knowledge base content
         """
+        limit = _coerce_positive_int(limit, default=10)
+        offset = _coerce_non_negative_int(offset, default=0)
         logger.info(
             f"Knowledge base search: {query} (limit={limit}, offset={offset}, version={version})"
         )
@@ -492,6 +506,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         version: Optional[str] = "latest",
     ) -> Dict[str, Any]:
         """List available skills from the knowledge base."""
+        limit = _coerce_positive_int(limit, default=20)
+        offset = _coerce_non_negative_int(offset, default=0)
         logger.info(
             "Checking skills (query=%s, limit=%s, offset=%s, version=%s)",
             bool(query),
@@ -534,6 +550,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         distance_threshold: Optional[float] = 0.8,
     ) -> Dict[str, Any]:
         """Search support tickets only."""
+        limit = _coerce_positive_int(limit, default=10)
+        offset = _coerce_non_negative_int(offset, default=0)
         logger.info(
             "Searching support tickets: %s (limit=%s, offset=%s, version=%s)",
             query,

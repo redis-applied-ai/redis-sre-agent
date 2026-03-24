@@ -617,10 +617,30 @@ class TestRedisCommandToolProviderMemoryStats:
 
         with patch.object(provider, "get_client") as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.memory_stats = AsyncMock(side_effect=Exception("MEMORY command disabled"))
+            mock_client.memory_stats = AsyncMock(side_effect=Exception("Connection lost"))
             mock_get_client.return_value = mock_client
 
             result = await provider.memory_stats()
 
             assert result["status"] == "error"
-            assert "MEMORY command disabled" in result["error"]
+            assert "Connection lost" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_memory_stats_command_unavailable_logs_warning(self, caplog):
+        """Expected ACL/feature restrictions should be treated as unsupported."""
+        provider = RedisCommandToolProvider(connection_url="redis://localhost:6379")
+
+        with patch.object(provider, "get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.memory_stats = AsyncMock(
+                side_effect=Exception("command 'memory|stats' is not allowed")
+            )
+            mock_get_client.return_value = mock_client
+
+            with caplog.at_level("WARNING"):
+                result = await provider.memory_stats()
+
+        assert result["status"] == "error"
+        assert result["error_type"] == "unsupported_command"
+        assert "not allowed" in result["error"]
+        assert "MEMORY STATS unavailable on this Redis instance" in caplog.text

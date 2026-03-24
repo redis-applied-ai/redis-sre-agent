@@ -60,6 +60,20 @@ _SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
 _TEXT_PHRASE_QUERY_FIELDS = ("title", "summary", "content")
 
 
+def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+    """Best-effort conversion for pagination args that may arrive as null/strings."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(coerced, 0)
+
+
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    """Best-effort conversion for limits that must stay >= 1."""
+    return max(_coerce_non_negative_int(value, default=default), 1)
+
+
 class _RawTextQuery(BaseQuery):
     """Minimal raw-text query wrapper for literal phrase search."""
 
@@ -500,6 +514,8 @@ async def skills_check_helper(
 
     If query is provided, skill selection is relevance-ranked via vector search.
     """
+    limit = _coerce_positive_int(limit, default=20)
+    offset = _coerce_non_negative_int(offset, default=0)
     logger.info(
         "Listing skills (query=%s, version=%s, offset=%s, limit=%s)",
         bool(query),
@@ -764,6 +780,8 @@ async def search_support_tickets_helper(
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Search support tickets only."""
+    limit = _coerce_positive_int(limit, default=10)
+    offset = _coerce_non_negative_int(offset, default=0)
     # Fetch one extra page so per-ticket dedupe still has enough rows to fill
     # the requested page when multiple chunks collapse into the same ticket.
     effective_limit = limit + offset + max(limit, 1)
@@ -937,16 +955,30 @@ async def get_pinned_documents_helper(
         "version",
     ]
 
-    async def _query_pinned_rows(index_type: str) -> List[Dict[str, Any]]:
+    async def _query_rows(
+        index_type: str, *, filter_expression: Optional[FilterExpression] = None
+    ) -> List[Dict[str, Any]]:
         index = await _get_index_for_type(index_type, config=config)
         rows = await index.query(
             FilterQuery(
-                filter_expression=Tag("pinned") == "true",
+                filter_expression=filter_expression,
                 return_fields=return_fields,
                 num_results=2000,
             )
         )
         return [{**row, "_index_type": index_type} for row in rows]
+
+    async def _query_pinned_rows(index_type: str) -> List[Dict[str, Any]]:
+        try:
+            return await _query_rows(index_type, filter_expression=Tag("pinned") == "true")
+        except Exception as exc:
+            if "Unknown field" not in str(exc) or "pinned" not in str(exc):
+                raise
+            logger.info(
+                "Pinned field unavailable on %s index; falling back to unfiltered query",
+                index_type,
+            )
+            return await _query_rows(index_type, filter_expression=Tag("document_hash") != "")
 
     rows: List[Dict[str, Any]] = []
     for index_type in ("knowledge", "skills", "support_tickets"):
@@ -1090,6 +1122,8 @@ async def search_knowledge_base_helper(
     Returns:
         Dictionary with search results including task_id, query, results, etc.
     """
+    limit = _coerce_positive_int(limit, default=10)
+    offset = _coerce_non_negative_int(offset, default=0)
     logger.info(f"Searching SRE knowledge: '{query}' (version={version}, offset={offset})")
     normalized_index_type = index_type.strip().lower()
     index = await _get_index_for_type(normalized_index_type, config=config)

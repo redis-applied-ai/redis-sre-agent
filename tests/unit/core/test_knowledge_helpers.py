@@ -123,6 +123,51 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["doc_type"] == "runbook"
 
     @pytest.mark.asyncio
+    async def test_search_knowledge_base_treats_none_offset_as_zero(self):
+        """Knowledge helper should normalize nullable pagination values."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-1",
+                    "document_hash": "hash-1",
+                    "chunk_index": 0,
+                    "title": "Redis Memory",
+                    "content": "Redis memory management guide",
+                    "source": "docs",
+                    "category": "monitoring",
+                    "doc_type": "runbook",
+                    "version": "latest",
+                    "score": 0.95,
+                }
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="redis memory",
+                limit=3,
+                offset=None,
+            )
+
+        assert result["offset"] == 0
+        assert result["limit"] == 3
+        assert result["results_count"] == 1
+
+    @pytest.mark.asyncio
     async def test_search_knowledge_base_promotes_exact_name_match(self):
         """Exact tag matches should appear ahead of semantic-only matches."""
         mock_index = AsyncMock()
@@ -1682,3 +1727,65 @@ class TestPinnedDocumentsHelper:
             result = await get_pinned_documents_helper(version="latest", limit=10)
 
         assert result["results_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_pinned_documents_falls_back_when_pinned_field_missing(self):
+        """Older indices without a pinned field should not emit hard warnings or fail."""
+
+        class _FallbackIndex:
+            def __init__(self, rows):
+                self.rows = rows
+                self.calls = 0
+
+            async def query(self, query):
+                self.calls += 1
+                filter_expr = getattr(query, "_filter_expression", None)
+                if self.calls == 1 and "pinned" in str(filter_expr):
+                    raise RuntimeError(
+                        "Error while searching: Unknown field at offset 0 near pinned"
+                    )
+                return self.rows
+
+        knowledge_index = AsyncMock()
+        knowledge_index.query = AsyncMock(return_value=[])
+        skills_index = _FallbackIndex(
+            [
+                {
+                    "id": "skill-1",
+                    "document_hash": "skill-1",
+                    "chunk_index": 0,
+                    "title": "Pinned Skill",
+                    "content": "Dedicated skill content",
+                    "source": "skills/pinned.md",
+                    "name": "Pinned Skill",
+                    "priority": "critical",
+                    "pinned": "true",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+        tickets_index = _FallbackIndex([])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=knowledge_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=tickets_index,
+            ),
+        ):
+            result = await get_pinned_documents_helper(version="latest", limit=10)
+
+        assert result["results_count"] == 1
+        assert result["pinned_documents"][0]["name"] == "Pinned Skill"
+        assert skills_index.calls == 2

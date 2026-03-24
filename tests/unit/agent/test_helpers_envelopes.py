@@ -190,6 +190,39 @@ class TestBuildAdaptersForTooldefs:
         assert adapters[0].name == "test.tool"
 
     @pytest.mark.asyncio
+    async def test_preserves_optional_schema_defaults(self):
+        """Optional params should keep JSON-schema defaults for tool binding."""
+
+        class MockToolDef:
+            name = "test.tool"
+            description = "A test tool"
+            parameters = {
+                "properties": {
+                    "query": {"type": "string", "description": "Query text"},
+                    "offset": {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "default": 0,
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Version selector",
+                        "default": "latest",
+                    },
+                },
+                "required": ["query"],
+            }
+
+        mock_manager = MagicMock()
+        mock_manager.resolve_tool_call = AsyncMock(return_value={"result": "ok"})
+
+        adapters = await build_adapters_for_tooldefs(mock_manager, [MockToolDef()])
+        schema = adapters[0].args_schema.model_json_schema()
+
+        assert schema["properties"]["offset"]["default"] == 0
+        assert schema["properties"]["version"]["default"] == "latest"
+
+    @pytest.mark.asyncio
     async def test_empty_tooldefs(self):
         """Test with empty tool definitions."""
         mock_manager = MagicMock()
