@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from opentelemetry import trace
 from redisvl.query import BaseQuery, FilterQuery, HybridQuery, VectorQuery, VectorRangeQuery
 from redisvl.query.filter import FilterExpression, Tag
+from redisvl.query.query import TokenEscaper
 from ulid import ULID
 
 from redis_sre_agent.core.config import Settings
@@ -58,6 +59,8 @@ _SEARCH_RETURN_FIELDS = [
 _EXACT_MATCH_TAG_FIELDS = ("name", "document_hash", "source")
 _SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
 _TEXT_PHRASE_QUERY_FIELDS = ("title", "summary", "content")
+_RRF_K = 60
+_HYBRID_UNSUPPORTED_INDEX_TYPES: set[str] = set()
 
 
 def _coerce_non_negative_int(value: Any, *, default: int) -> int:
@@ -417,6 +420,131 @@ def _quoted_text_phrase_query(phrase: str) -> str:
         field_queries.append(f'@{field_name}:("{escaped_phrase}")')
 
     return "(" + " | ".join(field_queries) + ")"
+
+
+def _hybrid_text_query(query: str) -> str:
+    """Build a best-effort token query across searchable text fields."""
+    escaper = TokenEscaper()
+    tokens = [
+        escaper.escape(token.strip().strip(",").replace("“", "").replace("”", "").lower())
+        for token in str(query or "").split()
+    ]
+    tokens = [token for token in tokens if token]
+    if not tokens:
+        normalized_query, _ = _strip_outer_quotes(query)
+        if not normalized_query:
+            return "*"
+        tokens = [escaper.escape(normalized_query.lower())]
+
+    token_query = " | ".join(tokens)
+    return (
+        "(" + " | ".join(f"@{field}:({token_query})" for field in _TEXT_PHRASE_QUERY_FIELDS) + ")"
+    )
+
+
+def _doc_rrf_key(doc: Dict[str, Any]) -> tuple[Any, ...]:
+    """Stable chunk-level key for reciprocal-rank fusion."""
+    return (
+        doc.get("id"),
+        doc.get("document_hash"),
+        doc.get("chunk_index"),
+        doc.get("source"),
+    )
+
+
+def _reciprocal_rank_fuse(
+    ranked_lists: List[List[Dict[str, Any]]],
+    *,
+    limit: int,
+    rrf_k: int = _RRF_K,
+) -> List[Dict[str, Any]]:
+    """Merge ranked result sets with reciprocal-rank fusion."""
+    scores: Dict[tuple[Any, ...], float] = {}
+    docs_by_key: Dict[tuple[Any, ...], Dict[str, Any]] = {}
+    first_rank: Dict[tuple[Any, ...], int] = {}
+    first_list_index: Dict[tuple[Any, ...], int] = {}
+
+    for list_index, ranked_docs in enumerate(ranked_lists):
+        for rank, doc in enumerate(_dedupe_docs(ranked_docs), start=1):
+            key = _doc_rrf_key(doc)
+            if key not in docs_by_key:
+                docs_by_key[key] = dict(doc)
+                first_rank[key] = rank
+                first_list_index[key] = list_index
+            else:
+                docs_by_key[key].update(
+                    {field: value for field, value in doc.items() if value not in (None, "")}
+                )
+                first_rank[key] = min(first_rank[key], rank)
+
+            scores[key] = scores.get(key, 0.0) + (1.0 / (rrf_k + rank))
+
+    ordered_keys = sorted(
+        docs_by_key,
+        key=lambda key: (
+            -scores.get(key, 0.0),
+            first_list_index.get(key, 10**9),
+            first_rank.get(key, 10**9),
+            _doc_name(docs_by_key[key]).lower(),
+            str(docs_by_key[key].get("source", "")).lower(),
+            _doc_chunk_index(docs_by_key[key]),
+        ),
+    )
+
+    fused = []
+    for key in ordered_keys[:limit]:
+        doc = dict(docs_by_key[key])
+        doc["rrf_score"] = scores[key]
+        fused.append(doc)
+    return fused
+
+
+def _is_hybrid_query_unsupported_error(exc: Exception) -> bool:
+    """Whether Redis rejected the HybridQuery syntax/capability."""
+    message = str(exc or "").lower()
+    if "hybrid" not in message:
+        return False
+    return any(
+        marker in message
+        for marker in (
+            "syntax error",
+            "unknown argument",
+            "unsupported",
+            "not supported",
+            "unknown keyword",
+            "no such",
+        )
+    )
+
+
+async def _run_hybrid_rrf_fallback(
+    *,
+    index: Any,
+    query: str,
+    query_vector: List[float],
+    query_filter: Optional[FilterExpression],
+    return_fields: List[str],
+    num_results: int,
+) -> List[Dict[str, Any]]:
+    """Approximate HybridQuery semantics with separate RedisVL text/vector queries."""
+    text_results = await index.query(
+        _RawTextQuery(
+            _hybrid_text_query(query),
+            filter_expression=query_filter,
+            return_fields=return_fields,
+            num_results=num_results,
+        )
+    )
+    vector_results = await index.query(
+        VectorQuery(
+            vector=query_vector,
+            vector_field_name="vector",
+            return_fields=return_fields,
+            num_results=num_results,
+            filter_expression=query_filter,
+        )
+    )
+    return _reciprocal_rank_fuse([text_results, vector_results], limit=num_results)
 
 
 def _result_score(doc: Dict[str, Any]) -> float:
@@ -1196,10 +1324,25 @@ async def search_knowledge_base_helper(
         # Oversample when version filtering to improve recall after post-filtering.
         fetch_limit = min(fetch_limit * 4, 200)
 
-    def _build_query(query_filter, num_results: int):
+    async def _run_query(query_filter, num_results: int):
         if effective_hybrid_search:
+            if normalized_index_type in _HYBRID_UNSUPPORTED_INDEX_TYPES:
+                logger.info(
+                    "Using RedisVL RRF fallback for hybrid search on %s index: %s",
+                    normalized_index_type,
+                    query,
+                )
+                return await _run_hybrid_rrf_fallback(
+                    index=index,
+                    query=query,
+                    query_vector=query_vector,
+                    query_filter=query_filter,
+                    return_fields=return_fields,
+                    num_results=num_results,
+                )
+
             logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
-            return HybridQuery(
+            hybrid_query = HybridQuery(
                 vector=query_vector,
                 vector_field_name="vector",
                 text_field_name="content",
@@ -1208,6 +1351,25 @@ async def search_knowledge_base_helper(
                 return_fields=return_fields,
                 filter_expression=query_filter,
             )
+            try:
+                return await index.query(hybrid_query)
+            except Exception as exc:
+                if not _is_hybrid_query_unsupported_error(exc):
+                    raise
+                logger.warning(
+                    "HybridQuery unsupported on %s index; falling back to RedisVL RRF search: %s",
+                    normalized_index_type,
+                    exc,
+                )
+                _HYBRID_UNSUPPORTED_INDEX_TYPES.add(normalized_index_type)
+                return await _run_hybrid_rrf_fallback(
+                    index=index,
+                    query=query,
+                    query_vector=query_vector,
+                    query_filter=query_filter,
+                    return_fields=return_fields,
+                    num_results=num_results,
+                )
 
         # Build pure vector query
         # distance_threshold default is 0.5; None disables threshold (pure KNN)
@@ -1229,11 +1391,10 @@ async def search_knowledge_base_helper(
             )
         if query_filter is not None:
             q.set_filter(query_filter)
-        return q
+        return await index.query(q)
 
     # Perform vector search
     _t2 = time.monotonic()
-    query_obj = _build_query(filter_expr, fetch_limit)
     with tracer.start_as_current_span("knowledge.index.query") as _span:
         _span.set_attribute("limit", int(limit))
         _span.set_attribute("offset", int(offset))
@@ -1243,8 +1404,8 @@ async def search_knowledge_base_helper(
             "distance_threshold",
             float(distance_threshold) if distance_threshold is not None else -1.0,
         )
-        all_results = await index.query(query_obj)
         _span.set_attribute("query.filtered", bool(filter_expr is not None))
+        all_results = await _run_query(filter_expr, fetch_limit)
     _t3 = time.monotonic()
 
     merged_results = _dedupe_docs([*exact_matches, *precise_text_matches, *all_results])
@@ -1265,7 +1426,6 @@ async def search_knowledge_base_helper(
     # while preserving other filters such as version/doc_type.
     if category is not None and len(filtered_results) == 0:
         category_fallback_expr = Tag("version") == version if version is not None else None
-        category_fallback_query = _build_query(category_fallback_expr, fetch_limit)
         with tracer.start_as_current_span("knowledge.index.query") as _span:
             _span.set_attribute("limit", int(limit))
             _span.set_attribute("offset", int(offset))
@@ -1276,7 +1436,7 @@ async def search_knowledge_base_helper(
                 float(distance_threshold) if distance_threshold is not None else -1.0,
             )
             _span.set_attribute("query.filtered", bool(category_fallback_expr is not None))
-            category_fallback_results = await index.query(category_fallback_query)
+            category_fallback_results = await _run_query(category_fallback_expr, fetch_limit)
 
         fallback_exact_matches = (
             await _find_exact_document_matches(
