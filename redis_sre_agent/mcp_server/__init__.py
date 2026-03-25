@@ -34,6 +34,8 @@ Utility tools (return immediately):
 - redis_sre_get_support_ticket: Get full support-ticket content by ticket id
 - redis_sre_list_instances: List configured Redis instances
 - redis_sre_get_instance: Get a configured Redis instance by id
+- redis_sre_update_instance: Update a configured Redis instance
+- redis_sre_delete_instance: Delete a configured Redis instance
 - redis_sre_test_instance: Test a configured Redis instance connection
 - redis_sre_test_redis_url: Test a Redis URL without creating an instance
 - redis_sre_create_instance: Create a new Redis instance configuration

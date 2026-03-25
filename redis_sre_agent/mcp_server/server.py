@@ -74,6 +74,9 @@ After calling any of these, you MUST:
 | `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
 | `redis_sre_list_instances()` | List available Redis instances |
 | `redis_sre_get_instance()` | Get a configured Redis instance by id |
+| `redis_sre_create_instance()` | Create a Redis instance configuration |
+| `redis_sre_update_instance()` | Update a configured Redis instance |
+| `redis_sre_delete_instance()` | Delete a configured Redis instance |
 | `redis_sre_test_instance()` | Test a configured Redis instance connection |
 | `redis_sre_test_redis_url()` | Test a Redis URL without creating an instance |
 | `redis_sre_list_threads()` | List conversation threads (find previous chats) |
@@ -134,6 +137,7 @@ while True:
 - Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
 - Use `redis_sre_list_instances()` and `redis_sre_get_instance()` to inspect configured instances
+- Use `redis_sre_create_instance()`, `redis_sre_update_instance()`, and `redis_sre_delete_instance()` to manage instance configs
 - Use `redis_sre_test_instance()` and `redis_sre_test_redis_url()` for connectivity checks
 - Check the `updates` array to show users what the agent is doing""",
 )
@@ -2066,6 +2070,96 @@ async def redis_sre_create_instance(
     except Exception as e:
         logger.error(f"Create instance failed: {e}")
         return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_update_instance(
+    instance_id: str,
+    name: Optional[str] = None,
+    connection_url: Optional[str] = None,
+    environment: Optional[str] = None,
+    usage: Optional[str] = None,
+    description: Optional[str] = None,
+    repo_url: Optional[str] = None,
+    notes: Optional[str] = None,
+    monitoring_identifier: Optional[str] = None,
+    logging_identifier: Optional[str] = None,
+    instance_type: Optional[str] = None,
+    admin_url: Optional[str] = None,
+    admin_username: Optional[str] = None,
+    admin_password: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    redis_cloud_subscription_id: Optional[int] = None,
+    redis_cloud_database_id: Optional[int] = None,
+    redis_cloud_subscription_type: Optional[str] = None,
+    redis_cloud_database_name: Optional[str] = None,
+    status: Optional[str] = None,
+    version: Optional[str] = None,
+    memory: Optional[str] = None,
+    connections: Optional[int] = None,
+    user_id: Optional[str] = None,
+    set_extensions: Optional[Dict[str, Any]] = None,
+    unset_extensions: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Update an existing Redis instance configuration."""
+    from redis_sre_agent.core.instance_mutation_helpers import update_instance_helper
+
+    logger.info("MCP update_instance: %s", instance_id)
+
+    try:
+        return await update_instance_helper(
+            instance_id,
+            name=name,
+            connection_url=connection_url,
+            environment=environment,
+            usage=usage,
+            description=description,
+            repo_url=repo_url,
+            notes=notes,
+            monitoring_identifier=monitoring_identifier,
+            logging_identifier=logging_identifier,
+            instance_type=instance_type,
+            admin_url=admin_url,
+            admin_username=admin_username,
+            admin_password=admin_password,
+            cluster_id=cluster_id,
+            redis_cloud_subscription_id=redis_cloud_subscription_id,
+            redis_cloud_database_id=redis_cloud_database_id,
+            redis_cloud_subscription_type=redis_cloud_subscription_type,
+            redis_cloud_database_name=redis_cloud_database_name,
+            status=status,
+            version=version,
+            memory=memory,
+            connections=connections,
+            user_id=user_id,
+            set_extensions=set_extensions,
+            unset_extensions=unset_extensions,
+        )
+    except Exception as e:
+        logger.error("Update instance failed: %s", e)
+        return {
+            "error": str(e),
+            "id": instance_id,
+            "status": "failed",
+        }
+
+
+@mcp.tool()
+async def redis_sre_delete_instance(instance_id: str, confirm: bool = False) -> Dict[str, Any]:
+    """Delete a Redis instance configuration."""
+    from redis_sre_agent.core.instance_mutation_helpers import delete_instance_helper
+
+    logger.info("MCP delete_instance: %s", instance_id)
+
+    try:
+        return await delete_instance_helper(instance_id, confirm=confirm)
+    except Exception as e:
+        logger.error("Delete instance failed: %s", e)
+        return {
+            "error": str(e),
+            "id": instance_id,
+            "status": "failed",
+        }
 
 
 # ============================================================================

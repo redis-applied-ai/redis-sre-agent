@@ -10,6 +10,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_create_instance,
     redis_sre_database_chat,
     redis_sre_deep_triage,
+    redis_sre_delete_instance,
     redis_sre_delete_support_package,
     redis_sre_delete_task,
     redis_sre_evaluate_runbooks,
@@ -43,6 +44,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_search_support_tickets,
     redis_sre_test_instance,
     redis_sre_test_redis_url,
+    redis_sre_update_instance,
     redis_sre_upload_support_package,
 )
 
@@ -98,6 +100,8 @@ class TestMCPServerSetup:
         assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
         assert "redis_sre_create_instance" in tool_names
+        assert "redis_sre_update_instance" in tool_names
+        assert "redis_sre_delete_instance" in tool_names
         assert "redis_sre_test_instance" in tool_names
         assert "redis_sre_test_redis_url" in tool_names
 
@@ -1512,6 +1516,100 @@ class TestInstanceInspectionTools:
         assert result["success"] is False
         assert result["url"] == "redis://user:pass@host:6379/0"
         assert "error" in result
+
+
+class TestInstanceMutationTools:
+    """Test MCP tools for instance update and delete operations."""
+
+    @pytest.mark.asyncio
+    async def test_update_instance_delegates_to_helper(self):
+        """Update-instance should delegate to the shared helper."""
+        mock_result = {"id": "redis-prod-1", "status": "updated"}
+
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.update_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_update_instance(
+                instance_id="redis-prod-1",
+                description="Updated description",
+                set_extensions={"region": "us-west-2"},
+                unset_extensions=["old-key"],
+            )
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(
+            "redis-prod-1",
+            name=None,
+            connection_url=None,
+            environment=None,
+            usage=None,
+            description="Updated description",
+            repo_url=None,
+            notes=None,
+            monitoring_identifier=None,
+            logging_identifier=None,
+            instance_type=None,
+            admin_url=None,
+            admin_username=None,
+            admin_password=None,
+            cluster_id=None,
+            redis_cloud_subscription_id=None,
+            redis_cloud_database_id=None,
+            redis_cloud_subscription_type=None,
+            redis_cloud_database_name=None,
+            status=None,
+            version=None,
+            memory=None,
+            connections=None,
+            user_id=None,
+            set_extensions={"region": "us-west-2"},
+            unset_extensions=["old-key"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_instance_error_payload(self):
+        """Update-instance failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.update_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_update_instance(instance_id="redis-prod-1")
+
+        assert result == {"error": "boom", "id": "redis-prod-1", "status": "failed"}
+
+    @pytest.mark.asyncio
+    async def test_delete_instance_delegates_to_helper(self):
+        """Delete-instance should delegate to the shared helper."""
+        mock_result = {"id": "redis-prod-1", "status": "deleted"}
+
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.delete_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_delete_instance(instance_id="redis-prod-1", confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis-prod-1", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_delete_instance_error_payload(self):
+        """Delete-instance failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.delete_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_delete_instance(instance_id="redis-prod-1", confirm=True)
+
+        assert result == {"error": "boom", "id": "redis-prod-1", "status": "failed"}
 
 
 class TestGetThreadTool:
