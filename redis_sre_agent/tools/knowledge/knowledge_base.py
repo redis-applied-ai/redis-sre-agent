@@ -13,6 +13,8 @@ from redis_sre_agent.core.docket_tasks import (
     ingest_sre_document as _ingest_sre_document,
 )
 from redis_sre_agent.core.knowledge_helpers import (
+    _coerce_non_negative_int,
+    _coerce_positive_int,
     get_all_document_fragments,
     get_related_document_fragments,
     get_skill_helper,
@@ -362,6 +364,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         Returns:
             Search results with relevant knowledge base content
         """
+        limit = _coerce_positive_int(limit, default=10)
+        offset = _coerce_non_negative_int(offset, default=0)
         logger.info(
             f"Knowledge base search: {query} (limit={limit}, offset={offset}, version={version})"
         )
@@ -492,6 +496,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         version: Optional[str] = "latest",
     ) -> Dict[str, Any]:
         """List available skills from the knowledge base."""
+        limit = _coerce_positive_int(limit, default=20)
+        offset = _coerce_non_negative_int(offset, default=0)
         logger.info(
             "Checking skills (query=%s, limit=%s, offset=%s, version=%s)",
             bool(query),
@@ -534,6 +540,8 @@ class KnowledgeBaseToolProvider(ToolProvider):
         distance_threshold: Optional[float] = 0.8,
     ) -> Dict[str, Any]:
         """Search support tickets only."""
+        limit = _coerce_positive_int(limit, default=10)
+        offset = _coerce_non_negative_int(offset, default=0)
         logger.info(
             "Searching support tickets: %s (limit=%s, offset=%s, version=%s)",
             query,

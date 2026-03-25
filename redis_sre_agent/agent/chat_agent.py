@@ -292,6 +292,29 @@ class ChatAgent:
             },
         }
 
+    def _tool_call_progress_message(
+        self,
+        tool_mgr: ToolManager,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+    ) -> str:
+        """Build the user-facing progress message for a tool call."""
+        status_msg = tool_mgr.get_status_update(tool_name, tool_args)
+        if status_msg:
+            return status_msg
+
+        if tool_name == "expand_evidence":
+            query = str(tool_args.get("query") or "").strip()
+            message = (
+                "I have a preview of the last tool call's output. "
+                "I'm retrieving the full output now."
+            )
+            if query:
+                message += f" Applying JMESPath query: {query}"
+            return message
+
+        return f"Executing tool: {tool_name}"
+
     def _summarize_envelope_sync(self, env: Dict[str, Any]) -> Dict[str, Any]:
         """Set summary field for large envelope data, preserving full data.
 
@@ -483,13 +506,10 @@ class ChatAgent:
                         tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
                     ) or {}
                     if tool_name:
-                        # Try to get provider-supplied status message
-                        status_msg = tool_mgr.get_status_update(tool_name, tool_args)
-                        if status_msg:
-                            await emitter.emit(status_msg, "tool_call")
-                        else:
-                            # Default status message
-                            await emitter.emit(f"Executing tool: {tool_name}", "tool_call")
+                        status_msg = self._tool_call_progress_message(
+                            tool_mgr, tool_name, tool_args
+                        )
+                        await emitter.emit(status_msg, "tool_call")
 
             with tracer.start_as_current_span("chat_tool_node"):
                 lg_tool_node = LGToolNode(all_adapters)

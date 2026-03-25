@@ -341,9 +341,13 @@ export EMBEDDING_PROVIDER=local
 export EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 export VECTOR_DIM=384
 
-# Re-ingest knowledge base
-redis-sre-agent pipeline ingest --force
+# Rebuild artifacts from source_documents and re-ingest the knowledge base
+redis-sre-agent pipeline prepare-sources \
+  --source-dir ./source_documents \
+  --artifacts-path ./artifacts
 ```
+
+Use the same re-ingestion flow after upgrades that change indexed metadata or schema. The index is not auto-migrated at startup.
 
 ### Advanced: Encryption of secrets
 

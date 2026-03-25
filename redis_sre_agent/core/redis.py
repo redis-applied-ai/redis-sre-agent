@@ -1,7 +1,7 @@
 """Redis connection management - no caching to avoid event loop issues."""
 
 import logging
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from redis.asyncio import Redis
 from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
@@ -304,6 +304,111 @@ SRE_QA_SCHEMA = {
         },
     ],
 }
+
+
+def _decode_redis_value(value: Any) -> Any:
+    """Decode Redis byte payloads into plain Python values."""
+    if isinstance(value, bytes):
+        return value.decode()
+    if isinstance(value, list):
+        return [_decode_redis_value(item) for item in value]
+    return value
+
+
+def _pairs_to_dict(values: list[Any]) -> dict[str, Any]:
+    """Convert Redis alternating key/value arrays into dictionaries."""
+    result: dict[str, Any] = {}
+    normalized = _decode_redis_value(values)
+    for i in range(0, len(normalized) - 1, 2):
+        key = str(normalized[i])
+        result[key] = normalized[i + 1]
+    return result
+
+
+def _coerce_optional_int(value: Any) -> Any:
+    """Normalize numeric Redis metadata that may arrive as strings/bytes."""
+    if value in (None, ""):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _expected_field_definitions(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Build comparable field metadata from a schema dict."""
+    definitions: dict[str, dict[str, Any]] = {}
+    for field in schema.get("fields", []):
+        if not isinstance(field, dict):
+            continue
+        name = str(field.get("name", "")).strip()
+        if not name:
+            continue
+        field_type = str(field.get("type", "")).strip().upper()
+        definition: dict[str, Any] = {"type": field_type}
+        if field_type == "VECTOR":
+            attrs = field.get("attrs") or {}
+            definition["attrs"] = {
+                "algorithm": str(attrs.get("algorithm", "")).strip().upper(),
+                "data_type": str(attrs.get("datatype", "")).strip().upper(),
+                "dim": _coerce_optional_int(attrs.get("dims")),
+                "distance_metric": str(attrs.get("distance_metric", "")).strip().upper(),
+            }
+        definitions[name] = definition
+    return definitions
+
+
+def _actual_field_definitions(raw_info: list[Any]) -> dict[str, dict[str, Any]]:
+    """Extract comparable field metadata from FT.INFO output."""
+    decoded = _decode_redis_value(raw_info)
+    info = _pairs_to_dict(decoded)
+    attributes = info.get("attributes") or []
+    definitions: dict[str, dict[str, Any]] = {}
+
+    for attribute in attributes:
+        attr_dict = _pairs_to_dict(attribute)
+        name = str(attr_dict.get("attribute") or attr_dict.get("identifier") or "").strip()
+        if not name:
+            continue
+        field_type = str(attr_dict.get("type", "")).strip().upper()
+        definition: dict[str, Any] = {"type": field_type}
+        if field_type == "VECTOR":
+            definition["attrs"] = {
+                "algorithm": str(attr_dict.get("algorithm", "")).strip().upper(),
+                "data_type": str(attr_dict.get("data_type", "")).strip().upper(),
+                "dim": _coerce_optional_int(attr_dict.get("dim")),
+                "distance_metric": str(attr_dict.get("distance_metric", "")).strip().upper(),
+            }
+        definitions[name] = definition
+
+    return definitions
+
+
+def _compare_index_schema(
+    expected_fields: dict[str, dict[str, Any]],
+    actual_fields: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize schema drift between the expected and actual index definitions."""
+    expected_names = set(expected_fields)
+    actual_names = set(actual_fields)
+
+    missing_fields = sorted(expected_names - actual_names)
+    unexpected_fields = sorted(actual_names - expected_names)
+    mismatched_fields: dict[str, dict[str, Any]] = {}
+
+    for field_name in sorted(expected_names & actual_names):
+        expected = expected_fields[field_name]
+        actual = actual_fields[field_name]
+        if expected != actual:
+            mismatched_fields[field_name] = {"expected": expected, "actual": actual}
+
+    in_sync = not missing_fields and not unexpected_fields and not mismatched_fields
+    return {
+        "in_sync": in_sync,
+        "missing_fields": missing_fields,
+        "unexpected_fields": unexpected_fields,
+        "mismatched_fields": mismatched_fields,
+    }
 
 
 def get_redis_client(
@@ -616,6 +721,118 @@ async def test_vector_search(config: Optional[Settings] = None) -> bool:
         return False
 
 
+def _iter_index_configs():
+    """Yield canonical index metadata for management commands."""
+    yield ("knowledge", SRE_KNOWLEDGE_INDEX, get_knowledge_index, SRE_KNOWLEDGE_SCHEMA)
+    yield ("skills", SRE_SKILLS_INDEX, get_skills_index, SRE_SKILLS_SCHEMA)
+    yield (
+        "support_tickets",
+        SRE_SUPPORT_TICKETS_INDEX,
+        get_support_tickets_index,
+        SRE_SUPPORT_TICKETS_SCHEMA,
+    )
+    yield ("schedules", SRE_SCHEDULES_INDEX, get_schedules_index, SRE_SCHEDULES_SCHEMA)
+    yield ("threads", SRE_THREADS_INDEX, get_threads_index, SRE_THREADS_SCHEMA)
+    yield ("tasks", SRE_TASKS_INDEX, get_tasks_index, SRE_TASKS_SCHEMA)
+    yield ("instances", SRE_INSTANCES_INDEX, get_instances_index, SRE_INSTANCES_SCHEMA)
+    yield ("clusters", SRE_CLUSTERS_INDEX, get_clusters_index, SRE_CLUSTERS_SCHEMA)
+
+
+async def get_index_schema_status(
+    index_name: str | None = None,
+    config: Optional[Settings] = None,
+) -> dict[str, Any]:
+    """Inspect index schemas and report whether they match current definitions."""
+    result: dict[str, Any] = {"success": True, "indices": {}}
+
+    for name, idx_name, get_fn, schema in _iter_index_configs():
+        if index_name and name != index_name:
+            continue
+
+        entry: dict[str, Any] = {
+            "index_name": idx_name,
+            "expected_fields": sorted(_expected_field_definitions(schema)),
+        }
+
+        try:
+            idx = await get_fn(config=config)
+            exists = await idx.exists()
+            entry["exists"] = exists
+
+            if not exists:
+                entry["status"] = "missing"
+                result["indices"][name] = entry
+                continue
+
+            raw_info = await idx._redis_client.execute_command("FT.INFO", idx_name)
+            actual_fields = _actual_field_definitions(raw_info)
+            comparison = _compare_index_schema(
+                _expected_field_definitions(schema),
+                actual_fields,
+            )
+            entry.update(comparison)
+            entry["actual_fields"] = sorted(actual_fields)
+            entry["status"] = "in_sync" if comparison["in_sync"] else "drifted"
+        except Exception as exc:
+            entry["status"] = "error"
+            entry["error"] = str(exc)
+            result["success"] = False
+
+        result["indices"][name] = entry
+
+    return result
+
+
+async def sync_index_schemas(
+    index_name: str | None = None,
+    config: Optional[Settings] = None,
+) -> dict[str, Any]:
+    """Create or recreate only indices whose schema has drifted."""
+    status_result = await get_index_schema_status(index_name=index_name, config=config)
+    result: dict[str, Any] = {"success": status_result["success"], "indices": {}}
+
+    for name, idx_name, get_fn, _schema in _iter_index_configs():
+        if index_name and name != index_name:
+            continue
+
+        status = status_result["indices"].get(name, {})
+        current_status = status.get("status")
+        entry: dict[str, Any] = {
+            "index_name": idx_name,
+            "previous_status": current_status,
+        }
+
+        if current_status == "in_sync":
+            entry["action"] = "unchanged"
+            result["indices"][name] = entry
+            continue
+
+        if current_status == "error":
+            entry["action"] = "error"
+            entry["error"] = status.get("error")
+            result["indices"][name] = entry
+            result["success"] = False
+            continue
+
+        try:
+            idx = await get_fn(config=config)
+            if status.get("exists"):
+                await idx._redis_client.execute_command("FT.DROPINDEX", idx_name)
+                await idx.create()
+                entry["action"] = "recreated"
+            else:
+                await idx.create()
+                entry["action"] = "created"
+        except Exception as exc:
+            entry["action"] = "error"
+            entry["error"] = str(exc)
+            result["success"] = False
+
+        result["indices"][name] = entry
+
+    return result
+
+
 async def create_indices(config: Optional[Settings] = None) -> bool:
     """Create vector search indices if they don't exist.
 
@@ -628,80 +845,14 @@ async def create_indices(config: Optional[Settings] = None) -> bool:
         True if all indices were created successfully, False otherwise.
     """
     try:
-        # Create knowledge index
-        knowledge_index = await get_knowledge_index(config=config)
-        knowledge_exists = await knowledge_index.exists()
-
-        if not knowledge_exists:
-            await knowledge_index.create()
-            logger.debug(f"Created vector index: {SRE_KNOWLEDGE_INDEX}")
-        else:
-            logger.debug(f"Vector index already exists: {SRE_KNOWLEDGE_INDEX}")
-
-        # Create skills index
-        skills_index = await get_skills_index(config=config)
-        skills_exists = await skills_index.exists()
-        if not skills_exists:
-            await skills_index.create()
-            logger.debug(f"Created vector index: {SRE_SKILLS_INDEX}")
-        else:
-            logger.debug(f"Vector index already exists: {SRE_SKILLS_INDEX}")
-
-        # Create support tickets index
-        support_tickets_index = await get_support_tickets_index(config=config)
-        support_tickets_exists = await support_tickets_index.exists()
-        if not support_tickets_exists:
-            await support_tickets_index.create()
-            logger.debug(f"Created vector index: {SRE_SUPPORT_TICKETS_INDEX}")
-        else:
-            logger.debug(f"Vector index already exists: {SRE_SUPPORT_TICKETS_INDEX}")
-
-        # Create schedules index
-        schedules_index = await get_schedules_index(config=config)
-        schedules_exists = await schedules_index.exists()
-
-        if not schedules_exists:
-            await schedules_index.create()
-            logger.debug(f"Created schedules index: {SRE_SCHEDULES_INDEX}")
-        else:
-            logger.debug(f"Schedules index already exists: {SRE_SCHEDULES_INDEX}")
-
-        # Create threads index
-        threads_index = await get_threads_index(config=config)
-        threads_exists = await threads_index.exists()
-        if not threads_exists:
-            await threads_index.create()
-            logger.debug(f"Created threads index: {SRE_THREADS_INDEX}")
-        else:
-            logger.debug(f"Threads index already exists: {SRE_THREADS_INDEX}")
-
-        # Create tasks index
-        tasks_index = await get_tasks_index(config=config)
-        tasks_exists = await tasks_index.exists()
-        if not tasks_exists:
-            await tasks_index.create()
-            logger.debug(f"Created tasks index: {SRE_TASKS_INDEX}")
-        else:
-            logger.debug(f"Tasks index already exists: {SRE_TASKS_INDEX}")
-
-        # Create instances index
-        instances_index = await get_instances_index(config=config)
-        instances_exists = await instances_index.exists()
-        if not instances_exists:
-            await instances_index.create()
-            logger.debug(f"Created instances index: {SRE_INSTANCES_INDEX}")
-        else:
-            logger.debug(f"Instances index already exists: {SRE_INSTANCES_INDEX}")
-
-        # Create clusters index
-        clusters_index = await get_clusters_index(config=config)
-        clusters_exists = await clusters_index.exists()
-        if not clusters_exists:
-            await clusters_index.create()
-            logger.debug(f"Created clusters index: {SRE_CLUSTERS_INDEX}")
-        else:
-            logger.debug(f"Clusters index already exists: {SRE_CLUSTERS_INDEX}")
-
+        for _name, idx_name, get_fn, _schema in _iter_index_configs():
+            idx = await get_fn(config=config)
+            exists = await idx.exists()
+            if not exists:
+                await idx.create()
+                logger.debug("Created index: %s", idx_name)
+            else:
+                logger.debug("Index already exists: %s", idx_name)
         return True
     except Exception as e:
         logger.error(f"Failed to create indices: {e}")
@@ -729,18 +880,7 @@ async def recreate_indices(
     """
     result = {"success": True, "indices": {}}
 
-    index_configs = [
-        ("knowledge", SRE_KNOWLEDGE_INDEX, get_knowledge_index),
-        ("skills", SRE_SKILLS_INDEX, get_skills_index),
-        ("support_tickets", SRE_SUPPORT_TICKETS_INDEX, get_support_tickets_index),
-        ("schedules", SRE_SCHEDULES_INDEX, get_schedules_index),
-        ("threads", SRE_THREADS_INDEX, get_threads_index),
-        ("tasks", SRE_TASKS_INDEX, get_tasks_index),
-        ("instances", SRE_INSTANCES_INDEX, get_instances_index),
-        ("clusters", SRE_CLUSTERS_INDEX, get_clusters_index),
-    ]
-
-    for name, idx_name, get_fn in index_configs:
+    for name, idx_name, get_fn, _schema in _iter_index_configs():
         # Skip if a specific index was requested and this isn't it
         if index_name and name != index_name:
             continue

@@ -67,6 +67,11 @@ class TestIndexListCLI:
                 new_callable=AsyncMock,
                 return_value=mock_index,
             ),
+            patch(
+                "redis_sre_agent.core.redis.get_clusters_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
         ):
             result = cli_runner.invoke(index, ["list"])
 
@@ -117,6 +122,11 @@ class TestIndexListCLI:
                 new_callable=AsyncMock,
                 return_value=mock_index,
             ),
+            patch(
+                "redis_sre_agent.core.redis.get_clusters_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
         ):
             result = cli_runner.invoke(index, ["list", "--json"])
 
@@ -125,7 +135,7 @@ class TestIndexListCLI:
 
             output_data = json.loads(result.output)
             assert isinstance(output_data, list)
-            assert len(output_data) == 7  # 7 indices
+            assert len(output_data) == 8  # 8 indices
 
 
 class TestIndexRecreateCLI:
@@ -142,6 +152,7 @@ class TestIndexRecreateCLI:
         assert "--json" in result.output
         assert "knowledge" in result.output
         assert "schedules" in result.output
+        assert "clusters" in result.output
         assert "all" in result.output
 
     def test_recreate_requires_confirmation(self, cli_runner):
@@ -196,3 +207,100 @@ class TestIndexRecreateCLI:
 
             output_data = json.loads(result.output)
             assert output_data["success"] is True
+
+
+class TestIndexSchemaStatusCLI:
+    """Test index schema-status CLI command."""
+
+    def test_schema_status_help_shows_options(self, cli_runner):
+        """Test that schema-status help shows expected options."""
+        result = cli_runner.invoke(index, ["schema-status", "--help"])
+
+        assert result.exit_code == 0
+        assert "--index-name" in result.output
+        assert "--json" in result.output
+        assert "clusters" in result.output
+
+    def test_schema_status_json_output(self, cli_runner):
+        """Test that schema-status --json outputs JSON."""
+        mock_result = {
+            "success": True,
+            "indices": {
+                "skills": {
+                    "index_name": "sre_skills",
+                    "status": "drifted",
+                    "missing_fields": ["pinned"],
+                }
+            },
+        }
+
+        with patch(
+            "redis_sre_agent.core.redis.get_index_schema_status",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            result = cli_runner.invoke(index, ["schema-status", "--json"])
+
+        assert result.exit_code == 0
+        import json
+
+        output_data = json.loads(result.output)
+        assert output_data["indices"]["skills"]["missing_fields"] == ["pinned"]
+
+
+class TestIndexSyncSchemasCLI:
+    """Test index sync-schemas CLI command."""
+
+    def test_sync_schemas_help_shows_options(self, cli_runner):
+        """Test that sync-schemas help shows expected options."""
+        result = cli_runner.invoke(index, ["sync-schemas", "--help"])
+
+        assert result.exit_code == 0
+        assert "--index-name" in result.output
+        assert "--yes" in result.output
+        assert "--json" in result.output
+
+    def test_sync_schemas_requires_confirmation(self, cli_runner):
+        """Test that sync-schemas requires confirmation without -y."""
+        result = cli_runner.invoke(index, ["sync-schemas"], input="n\n")
+
+        assert result.exit_code == 0
+        assert "Aborted" in result.output
+
+    def test_sync_schemas_with_yes_flag(self, cli_runner):
+        """Test that -y skips confirmation and calls the sync helper."""
+        mock_result = {
+            "success": True,
+            "indices": {"skills": {"action": "recreated", "previous_status": "drifted"}},
+        }
+
+        with patch(
+            "redis_sre_agent.core.redis.sync_index_schemas",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_sync:
+            result = cli_runner.invoke(index, ["sync-schemas", "--index-name", "skills", "-y"])
+
+        assert result.exit_code == 0
+        mock_sync.assert_called_once_with("skills")
+        assert "Schema sync completed" in result.output
+
+    def test_sync_schemas_json_output(self, cli_runner):
+        """Test that sync-schemas --json outputs JSON."""
+        mock_result = {
+            "success": True,
+            "indices": {"skills": {"action": "recreated", "previous_status": "drifted"}},
+        }
+
+        with patch(
+            "redis_sre_agent.core.redis.sync_index_schemas",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            result = cli_runner.invoke(index, ["sync-schemas", "--json"])
+
+        assert result.exit_code == 0
+        import json
+
+        output_data = json.loads(result.output)
+        assert output_data["indices"]["skills"]["action"] == "recreated"

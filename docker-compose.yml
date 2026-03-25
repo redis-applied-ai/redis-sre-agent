@@ -166,7 +166,7 @@ services:
       - OPENAI_BASE_URL=http://litellm:4000/v1
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
       # OTEL: export spans to Tempo via OTLP HTTP
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
@@ -182,8 +182,11 @@ services:
       - .env:/app/.env
       - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
       - ./artifacts:/app/artifacts  # For data pipeline
+      - /var/run/docker.sock:/var/run/docker.sock  # Needed for command-based MCP servers
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
+    group_add:
+      - "0"  # Docker Desktop exposes the socket as root:root
     command: uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - sre-network
@@ -205,13 +208,15 @@ services:
       - OPENAI_BASE_URL=http://litellm:4000/v1
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
       # OpenTelemetry export to Tempo
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
       litellm:
         condition: service_healthy
+      tempo:
+        condition: service_started
     volumes:
       - .env:/app/.env
       - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
@@ -220,6 +225,8 @@ services:
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
       - uv_cache:/root/.cache/uv  # Persist UV cache for MCP server deps
+    group_add:
+      - "0"  # Docker Desktop exposes the socket as root:root
     # Run the worker directly from the project virtualenv instead of via
     # `uv run` to avoid querying /app/.venv/bin/python3 at runtime.
     command: redis-sre-agent worker start
@@ -242,7 +249,7 @@ services:
       --pass-environment
       --port=8082
       --host=0.0.0.0
-      docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+      -- docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
