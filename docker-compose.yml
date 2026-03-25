@@ -159,7 +159,6 @@ services:
       - TOOLS_LOKI_URL=http://loki:3100
       - GRAFANA_URL=http://grafana:3000
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # OTEL: export spans to Tempo via OTLP HTTP
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
@@ -195,7 +194,6 @@ services:
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - TOOLS_LOKI_URL=http://loki:3100
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # OpenTelemetry export to Tempo
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
