@@ -14,6 +14,7 @@ from redis_sre_agent.core.docket_tasks import (
     process_agent_turn,
     process_chat_turn,
     process_knowledge_query,
+    process_pipeline_operation,
     register_sre_tasks,
     run_agent_with_progress,
     scheduler_task,
@@ -29,7 +30,7 @@ class TestSRETaskCollection:
 
     def test_sre_task_collection_populated(self):
         """Test that SRE task collection contains expected tasks."""
-        assert len(SRE_TASK_COLLECTION) == 7
+        assert len(SRE_TASK_COLLECTION) == 8
 
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
@@ -39,6 +40,7 @@ class TestSRETaskCollection:
             "process_agent_turn",
             "process_chat_turn",  # New: MCP chat task
             "process_knowledge_query",  # New: MCP knowledge query task
+            "process_pipeline_operation",
             "embed_qa_record",  # Q&A embedding task
         ]
 
@@ -704,6 +706,73 @@ class TestProcessKnowledgeQuery:
         assert len(messages) == 1
         assert messages[0]["content"] == "Knowledge response text"
         assert isinstance(messages[0]["content"], str)
+
+
+class TestProcessPipelineOperation:
+    """Test process_pipeline_operation task."""
+
+    @pytest.mark.asyncio
+    async def test_process_pipeline_operation_success(self):
+        """Pipeline task should persist results and mark completion."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.run_pipeline_operation_helper",
+                new_callable=AsyncMock,
+                return_value={"operation": "scrape", "success": True},
+            ) as mock_helper,
+        ):
+            result = await process_pipeline_operation(
+                operation="scrape",
+                task_id="task-123",
+                thread_id="thread-456",
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs"],
+            )
+
+        assert result == {"operation": "scrape", "success": True}
+        mock_helper.assert_awaited_once()
+        mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.IN_PROGRESS)
+        mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.DONE)
+        mock_task_manager.set_task_result.assert_awaited_once_with(
+            "task-123",
+            {"operation": "scrape", "success": True},
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_pipeline_operation_error(self):
+        """Pipeline task should persist task errors and re-raise failures."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.run_pipeline_operation_helper",
+                new_callable=AsyncMock,
+                side_effect=Exception("pipeline failed"),
+            ),
+        ):
+            with pytest.raises(Exception, match="pipeline failed"):
+                await process_pipeline_operation(
+                    operation="ingest",
+                    task_id="task-123",
+                    thread_id="thread-456",
+                    batch_date="2026-03-25",
+                )
+
+        mock_task_manager.set_task_error.assert_awaited_once_with("task-123", "pipeline failed")
 
 
 class TestSchedulerTask:

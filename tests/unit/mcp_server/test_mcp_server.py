@@ -6,6 +6,7 @@ import pytest
 
 from redis_sre_agent.mcp_server.server import (
     mcp,
+    redis_sre_cleanup_pipeline_batches,
     redis_sre_create_instance,
     redis_sre_database_chat,
     redis_sre_deep_triage,
@@ -13,6 +14,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_delete_task,
     redis_sre_extract_support_package,
     redis_sre_general_chat,
+    redis_sre_generate_pipeline_runbooks,
     redis_sre_get_knowledge_fragments,
     redis_sre_get_pipeline_batch,
     redis_sre_get_pipeline_status,
@@ -27,6 +29,10 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_list_instances,
     redis_sre_list_support_packages,
     redis_sre_list_threads,
+    redis_sre_prepare_source_documents,
+    redis_sre_run_pipeline_full,
+    redis_sre_run_pipeline_ingest,
+    redis_sre_run_pipeline_scrape,
     redis_sre_search_support_tickets,
     redis_sre_upload_support_package,
 )
@@ -55,6 +61,12 @@ class TestMCPServerSetup:
         assert "redis_sre_get_related_knowledge_fragments" in tool_names
         assert "redis_sre_get_pipeline_status" in tool_names
         assert "redis_sre_get_pipeline_batch" in tool_names
+        assert "redis_sre_run_pipeline_scrape" in tool_names
+        assert "redis_sre_run_pipeline_ingest" in tool_names
+        assert "redis_sre_run_pipeline_full" in tool_names
+        assert "redis_sre_prepare_source_documents" in tool_names
+        assert "redis_sre_generate_pipeline_runbooks" in tool_names
+        assert "redis_sre_cleanup_pipeline_batches" in tool_names
         assert "redis_sre_upload_support_package" in tool_names
         assert "redis_sre_list_support_packages" in tool_names
         assert "redis_sre_extract_support_package" in tool_names
@@ -590,6 +602,176 @@ class TestPipelineInspectionTools:
             assert result["batch_date"] == "2026-03-25"
             assert result["artifacts_path"] == "/tmp/artifacts"
             assert "error" in result
+
+
+class TestPipelineExecutionTools:
+    """Test task-backed pipeline execution MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_scrape_queues_task(self):
+        """Scrape tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {
+                "thread_id": "thread-123",
+                "task_id": "task-456",
+                "status": "queued",
+                "operation": "scrape",
+            }
+
+            result = await redis_sre_run_pipeline_scrape(
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+                user_id="user-123",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="scrape",
+                user_id="user-123",
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_ingest_queues_task(self):
+        """Ingest tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_run_pipeline_ingest(
+                batch_date="2026-03-25",
+                artifacts_path="/tmp/artifacts",
+                latest_only=True,
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="ingest",
+                user_id=None,
+                batch_date="2026-03-25",
+                artifacts_path="/tmp/artifacts",
+                latest_only=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_full_queues_task(self):
+        """Full tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_run_pipeline_full(
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs_local"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="full",
+                user_id=None,
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs_local"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+            )
+
+    @pytest.mark.asyncio
+    async def test_prepare_source_documents_queues_task(self):
+        """Prepare-sources tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_prepare_source_documents(
+                source_dir="/tmp/source_documents",
+                batch_date="2026-03-25",
+                prepare_only=True,
+                artifacts_path="/tmp/artifacts",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="prepare_sources",
+                user_id=None,
+                source_dir="/tmp/source_documents",
+                batch_date="2026-03-25",
+                prepare_only=True,
+                artifacts_path="/tmp/artifacts",
+            )
+
+    @pytest.mark.asyncio
+    async def test_generate_pipeline_runbooks_queues_task(self):
+        """Runbooks tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_generate_pipeline_runbooks(
+                url="https://example.com/runbook",
+                artifacts_path="/tmp/artifacts",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="runbooks",
+                user_id=None,
+                url="https://example.com/runbook",
+                test_url=None,
+                list_urls=False,
+                artifacts_path="/tmp/artifacts",
+            )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_pipeline_batches_requires_confirm(self):
+        """Cleanup tool should reject destructive execution without confirmation."""
+        result = await redis_sre_cleanup_pipeline_batches(
+            keep_days=7,
+            artifacts_path="/tmp/artifacts",
+        )
+
+        assert result["status"] == "failed"
+        assert "confirm=True" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_pipeline_batches_queues_task(self):
+        """Cleanup tool should queue once confirmation is provided."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_cleanup_pipeline_batches(
+                keep_days=7,
+                artifacts_path="/tmp/artifacts",
+                confirm=True,
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="cleanup",
+                user_id=None,
+                keep_days=7,
+                artifacts_path="/tmp/artifacts",
+            )
 
 
 class TestSupportPackageManagementTools:

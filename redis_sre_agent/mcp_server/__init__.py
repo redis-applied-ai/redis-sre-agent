@@ -10,6 +10,12 @@ Task-based tools (require polling redis_sre_get_task_status):
 - redis_sre_general_chat: Quick Q&A with full toolset including external MCP tools
 - redis_sre_database_chat: Redis-focused chat with selective MCP tool exclusion
 - redis_sre_knowledge_query: Ask the Knowledge Agent a question
+- redis_sre_run_pipeline_scrape: Run the scraping pipeline in the background
+- redis_sre_run_pipeline_ingest: Ingest a batch in the background
+- redis_sre_run_pipeline_full: Run scraping and ingestion together in the background
+- redis_sre_prepare_source_documents: Prepare and optionally ingest source documents
+- redis_sre_generate_pipeline_runbooks: Run pipeline runbook operations in the background
+- redis_sre_cleanup_pipeline_batches: Remove old pipeline batches in the background
 
 Utility tools (return immediately):
 - redis_sre_knowledge_search: Direct search of knowledge base docs

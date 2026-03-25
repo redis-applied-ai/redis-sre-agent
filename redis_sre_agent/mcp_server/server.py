@@ -38,6 +38,12 @@ the background. You MUST watch each task for:
 | `redis_sre_general_chat()` | Quick Q&A with full toolset (including external MCP tools) | 10-30 seconds |
 | `redis_sre_database_chat()` | Redis-focused chat (no external MCP tools) | 10-30 seconds |
 | `redis_sre_knowledge_query()` | Answer questions using knowledge base | 10-30 seconds |
+| `redis_sre_run_pipeline_scrape()` | Run the scraping pipeline | Varies |
+| `redis_sre_run_pipeline_ingest()` | Ingest a prepared batch | Varies |
+| `redis_sre_run_pipeline_full()` | Run scraping and ingestion together | Varies |
+| `redis_sre_prepare_source_documents()` | Prepare and optionally ingest local source docs | Varies |
+| `redis_sre_generate_pipeline_runbooks()` | Run pipeline runbook operations | Varies |
+| `redis_sre_cleanup_pipeline_batches()` | Remove old pipeline batches | Varies |
 
 **Note**: Deep triage performs comprehensive analysis including metrics collection, log analysis,
 knowledge base searches, and multi-topic recommendation synthesis. Complex queries or
@@ -112,6 +118,7 @@ while True:
 - Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
 - Use fragment tools when you need the full document or nearby chunk context for a search hit
+- Use task-backed pipeline tools for scrape/ingest/prepare/runbook/cleanup workflows
 - Use `redis_sre_get_pipeline_status()` and `redis_sre_get_pipeline_batch()` for ingestion inspection
 - Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
@@ -455,6 +462,193 @@ async def redis_sre_database_chat(
             "error": str(e),
             "status": "failed",
             "message": f"Failed to start database chat: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_run_pipeline_scrape(
+    artifacts_path: str = "./artifacts",
+    scrapers: Optional[List[str]] = None,
+    latest_only: bool = False,
+    docs_path: str = "./redis-docs",
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to run the scraping pipeline."""
+    from redis_sre_agent.core.pipeline_execution_helpers import queue_pipeline_operation_task
+
+    logger.info("MCP pipeline scrape request")
+
+    try:
+        return await queue_pipeline_operation_task(
+            operation="scrape",
+            user_id=user_id,
+            artifacts_path=artifacts_path,
+            scrapers=scrapers,
+            latest_only=latest_only,
+            docs_path=docs_path,
+        )
+    except Exception as e:
+        logger.error("Pipeline scrape failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start pipeline scrape: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_run_pipeline_ingest(
+    batch_date: Optional[str] = None,
+    artifacts_path: str = "./artifacts",
+    latest_only: bool = False,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to run pipeline ingestion for a batch."""
+    from redis_sre_agent.core.pipeline_execution_helpers import queue_pipeline_operation_task
+
+    logger.info("MCP pipeline ingest request")
+
+    try:
+        return await queue_pipeline_operation_task(
+            operation="ingest",
+            user_id=user_id,
+            batch_date=batch_date,
+            artifacts_path=artifacts_path,
+            latest_only=latest_only,
+        )
+    except Exception as e:
+        logger.error("Pipeline ingest failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start pipeline ingest: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_run_pipeline_full(
+    artifacts_path: str = "./artifacts",
+    scrapers: Optional[List[str]] = None,
+    latest_only: bool = False,
+    docs_path: str = "./redis-docs",
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to run the full scraping plus ingestion pipeline."""
+    from redis_sre_agent.core.pipeline_execution_helpers import queue_pipeline_operation_task
+
+    logger.info("MCP pipeline full request")
+
+    try:
+        return await queue_pipeline_operation_task(
+            operation="full",
+            user_id=user_id,
+            artifacts_path=artifacts_path,
+            scrapers=scrapers,
+            latest_only=latest_only,
+            docs_path=docs_path,
+        )
+    except Exception as e:
+        logger.error("Pipeline full failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start full pipeline: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_prepare_source_documents(
+    source_dir: str = "source_documents",
+    batch_date: Optional[str] = None,
+    prepare_only: bool = False,
+    artifacts_path: str = "./artifacts",
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to prepare source documents as pipeline artifacts."""
+    from redis_sre_agent.core.pipeline_execution_helpers import queue_pipeline_operation_task
+
+    logger.info("MCP prepare source documents request")
+
+    try:
+        return await queue_pipeline_operation_task(
+            operation="prepare_sources",
+            user_id=user_id,
+            source_dir=source_dir,
+            batch_date=batch_date,
+            prepare_only=prepare_only,
+            artifacts_path=artifacts_path,
+        )
+    except Exception as e:
+        logger.error("Prepare source documents failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start source preparation: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_generate_pipeline_runbooks(
+    url: Optional[str] = None,
+    test_url: Optional[str] = None,
+    list_urls: bool = False,
+    artifacts_path: str = "./artifacts",
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to run pipeline runbook generation operations."""
+    from redis_sre_agent.core.pipeline_execution_helpers import queue_pipeline_operation_task
+
+    logger.info("MCP pipeline runbooks request")
+
+    try:
+        return await queue_pipeline_operation_task(
+            operation="runbooks",
+            user_id=user_id,
+            url=url,
+            test_url=test_url,
+            list_urls=list_urls,
+            artifacts_path=artifacts_path,
+        )
+    except Exception as e:
+        logger.error("Pipeline runbooks failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start pipeline runbooks: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_cleanup_pipeline_batches(
+    keep_days: int = 30,
+    artifacts_path: str = "./artifacts",
+    confirm: bool = False,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to clean up old pipeline batches."""
+    from redis_sre_agent.core.pipeline_execution_helpers import queue_pipeline_operation_task
+
+    logger.info("MCP pipeline cleanup request")
+
+    if not confirm:
+        return {
+            "status": "failed",
+            "message": "Cleanup is destructive. Re-run with confirm=True to continue.",
+        }
+
+    try:
+        return await queue_pipeline_operation_task(
+            operation="cleanup",
+            user_id=user_id,
+            keep_days=keep_days,
+            artifacts_path=artifacts_path,
+        )
+    except Exception as e:
+        logger.error("Pipeline cleanup failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start pipeline cleanup: {e}",
         }
 
 

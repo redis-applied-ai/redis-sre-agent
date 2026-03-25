@@ -454,6 +454,66 @@ async def process_knowledge_query(
 
 
 @sre_task
+async def process_pipeline_operation(
+    operation: str,
+    task_id: str,
+    thread_id: str,
+    batch_date: Optional[str] = None,
+    artifacts_path: str = "./artifacts",
+    scrapers: Optional[List[str]] = None,
+    latest_only: bool = False,
+    docs_path: str = "./redis-docs",
+    source_dir: str = "source_documents",
+    prepare_only: bool = False,
+    keep_days: int = 30,
+    url: Optional[str] = None,
+    test_url: Optional[str] = None,
+    list_urls: bool = False,
+    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """Run a task-backed pipeline operation and persist its result."""
+    from redis_sre_agent.core.pipeline_execution_helpers import run_pipeline_operation_helper
+
+    logger.info("Processing pipeline operation %s for task %s", operation, task_id)
+
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+
+    await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
+
+    try:
+        emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
+        result = await run_pipeline_operation_helper(
+            operation=operation,
+            batch_date=batch_date,
+            artifacts_path=artifacts_path,
+            scrapers=scrapers,
+            latest_only=latest_only,
+            docs_path=docs_path,
+            source_dir=source_dir,
+            prepare_only=prepare_only,
+            keep_days=keep_days,
+            url=url,
+            test_url=test_url,
+            list_urls=list_urls,
+            progress_emitter=emitter,
+        )
+        await task_manager.set_task_result(task_id, result)
+        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+        return result
+    except Exception as e:
+        logger.error(
+            "Pipeline operation %s failed for task %s (attempt %s): %s",
+            operation,
+            task_id,
+            retry.attempt,
+            e,
+        )
+        await task_manager.set_task_error(task_id, str(e))
+        raise
+
+
+@sre_task
 async def scheduler_task(
     global_limit="scheduler",  # Need a sentinel value for concurrency limit argument
     perpetual: Perpetual = Perpetual(every=timedelta(seconds=30), automatic=True),
