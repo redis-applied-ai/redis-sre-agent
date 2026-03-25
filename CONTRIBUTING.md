@@ -48,7 +48,7 @@ Edit `.env` with your configuration. At minimum:
 make local-services
 ```
 
-This starts Redis 8, Prometheus, Grafana, Loki, LiteLLM proxy, and more. No separate Redis setup needed.
+This starts Redis 8, Prometheus, Grafana, Loki, Tempo, and the SRE agent services. No separate Redis setup needed.
 
 **Option B: Local Development (without Docker Compose)**
 
@@ -91,7 +91,6 @@ make local-services-down
 | SRE Agent UI | http://localhost:3002 |
 | Grafana | http://localhost:3001 (admin/admin) |
 | Prometheus | http://localhost:9090 |
-| LiteLLM UI | http://localhost:4000/ui (admin/admin) |
 
 ## Running Tests
 

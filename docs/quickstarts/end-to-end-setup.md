@@ -22,16 +22,15 @@ Update the `.env` file to include your OpenAI key:
 OPENAI_API_KEY=your_key
 ```
 
-Generate master keys for the SRE agent and LiteLLM proxy:
+Generate a master key for the SRE agent:
 
 ```bash
 python -c 'import os, base64; print("REDIS_SRE_MASTER_KEY=" + base64.b64encode(os.urandom(32)).decode())'
-python -c 'import os, base64; print("LITELLM_MASTER_KEY=" + base64.b64encode(os.urandom(32)).decode())'
 ```
 
-Copy the output and add both lines to your `.env` file.
+Copy the output into your `.env` file.
 
-**Note:** The example environment file sets default models. If you are using newer models, confirm that they are available in the LiteLLM config at `/monitoring/litellm/config.yaml`.
+**Note:** The example environment file sets default models. If you are using a custom OpenAI-compatible endpoint, confirm the configured model names are available there.
 
 ## Docker Compose
 
@@ -48,7 +47,6 @@ Here's what each service does:
 - **sre-agent**: The SRE agent API
 - **sre-worker**: The SRE agent worker
 - **sre-ui**: The web UI for interacting with the agent
-- **litellm**: LLM proxy for OpenAI API calls
 - **prometheus**: Prometheus instance for metrics
 - **grafana**: Grafana instance for dashboards
 - **loki**: Loki instance for log aggregation
