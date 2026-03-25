@@ -508,8 +508,6 @@ def _reciprocal_rank_fuse(
 def _is_hybrid_query_unsupported_error(exc: Exception) -> bool:
     """Whether Redis rejected the HybridQuery syntax/capability."""
     message = str(exc or "").lower()
-    if "hybrid" not in message:
-        return False
     return any(
         marker in message
         for marker in (

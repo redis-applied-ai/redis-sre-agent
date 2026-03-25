@@ -663,7 +663,7 @@ class TestSearchKnowledgeBaseHelper:
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             side_effect=[
-                RuntimeError("Syntax error at offset 42 near HYBRID_POLICY"),
+                RuntimeError("Syntax error at offset 42 near YIELD_DISTANCE_AS"),
                 [
                     {
                         "id": "doc-text",
