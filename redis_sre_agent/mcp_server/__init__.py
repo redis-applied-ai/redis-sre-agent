@@ -13,6 +13,8 @@ Task-based tools (require polling redis_sre_get_task_status):
 
 Utility tools (return immediately):
 - redis_sre_knowledge_search: Direct search of knowledge base docs
+- redis_sre_get_knowledge_fragments: Get all chunks for a document hash
+- redis_sre_get_related_knowledge_fragments: Get nearby chunks around a fragment
 - redis_sre_get_pipeline_status: Show pipeline artifacts and recent ingestion state
 - redis_sre_get_pipeline_batch: Show manifest and ingestion details for a batch
 - redis_sre_list_support_packages: List uploaded support packages

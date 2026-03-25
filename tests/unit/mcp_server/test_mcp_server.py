@@ -13,8 +13,10 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_delete_task,
     redis_sre_extract_support_package,
     redis_sre_general_chat,
+    redis_sre_get_knowledge_fragments,
     redis_sre_get_pipeline_batch,
     redis_sre_get_pipeline_status,
+    redis_sre_get_related_knowledge_fragments,
     redis_sre_get_support_package_info,
     redis_sre_get_support_ticket,
     redis_sre_get_task_citations,
@@ -49,6 +51,8 @@ class TestMCPServerSetup:
         assert "redis_sre_general_chat" in tool_names
         assert "redis_sre_database_chat" in tool_names
         assert "redis_sre_knowledge_search" in tool_names
+        assert "redis_sre_get_knowledge_fragments" in tool_names
+        assert "redis_sre_get_related_knowledge_fragments" in tool_names
         assert "redis_sre_get_pipeline_status" in tool_names
         assert "redis_sre_get_pipeline_batch" in tool_names
         assert "redis_sre_upload_support_package" in tool_names
@@ -401,6 +405,105 @@ class TestKnowledgeSearchTool:
             assert "error" in result
             assert result["results"] == []
             assert result["total_results"] == 0
+
+
+class TestKnowledgeFragmentTools:
+    """Test document fragment MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_knowledge_fragments_success(self):
+        """Full fragment retrieval returns helper payload."""
+        mock_result = {
+            "document_hash": "doc-123",
+            "fragments_count": 2,
+            "fragments": [{"chunk_index": 0}, {"chunk_index": 1}],
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_knowledge_fragments(document_hash="doc-123")
+
+            assert result["document_hash"] == "doc-123"
+            assert result["fragments_count"] == 2
+            mock_helper.assert_awaited_once_with(
+                "doc-123",
+                include_metadata=True,
+                index_type="knowledge",
+                version=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_knowledge_fragments_error_payload_passthrough(self):
+        """Fragment retrieval preserves helper error payload."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {
+                "document_hash": "doc-123",
+                "error": "No fragments found for this document",
+                "fragments": [],
+            }
+
+            result = await redis_sre_get_knowledge_fragments(document_hash="doc-123")
+
+            assert result["document_hash"] == "doc-123"
+            assert result["error"] == "No fragments found for this document"
+
+    @pytest.mark.asyncio
+    async def test_get_related_knowledge_fragments_success(self):
+        """Related fragment retrieval returns helper payload."""
+        mock_result = {
+            "document_hash": "doc-123",
+            "target_chunk_index": 4,
+            "related_fragments_count": 3,
+            "related_fragments": [{"chunk_index": 3}, {"chunk_index": 4}, {"chunk_index": 5}],
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_related_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_related_knowledge_fragments(
+                document_hash="doc-123",
+                chunk_index=4,
+                window=1,
+            )
+
+            assert result["target_chunk_index"] == 4
+            assert result["related_fragments_count"] == 3
+            mock_helper.assert_awaited_once_with(
+                "doc-123",
+                current_chunk_index=4,
+                context_window=1,
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_related_knowledge_fragments_error_payload_passthrough(self):
+        """Related fragment retrieval preserves helper error payload."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_related_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {
+                "document_hash": "doc-123",
+                "error": "lookup failed",
+                "related_fragments": [],
+            }
+
+            result = await redis_sre_get_related_knowledge_fragments(
+                document_hash="doc-123",
+                chunk_index=4,
+            )
+
+            assert result["document_hash"] == "doc-123"
+            assert result["error"] == "lookup failed"
 
 
 class TestPipelineInspectionTools:

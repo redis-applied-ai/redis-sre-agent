@@ -53,6 +53,8 @@ After calling any of these, you MUST:
 | Tool | Purpose |
 |------|---------|
 | `redis_sre_knowledge_search()` | Direct search of docs (raw results) |
+| `redis_sre_get_knowledge_fragments()` | Get all chunks for a document hash |
+| `redis_sre_get_related_knowledge_fragments()` | Get nearby chunks around a document fragment |
 | `redis_sre_get_pipeline_status()` | Show pipeline artifacts and recent ingestion state |
 | `redis_sre_get_pipeline_batch()` | Show manifest and ingestion details for a batch |
 | `redis_sre_list_support_packages()` | List uploaded support packages |
@@ -109,6 +111,7 @@ while True:
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
 - Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
+- Use fragment tools when you need the full document or nearby chunk context for a search hit
 - Use `redis_sre_get_pipeline_status()` and `redis_sre_get_pipeline_batch()` for ingestion inspection
 - Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
@@ -452,6 +455,87 @@ async def redis_sre_database_chat(
             "error": str(e),
             "status": "failed",
             "message": f"Failed to start database chat: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_knowledge_fragments(
+    document_hash: str,
+    include_metadata: bool = True,
+    index_type: str = "knowledge",
+    version: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get all document fragments for a document hash.
+
+    Args:
+        document_hash: Document hash to fetch.
+        include_metadata: Include document metadata in the response.
+        index_type: Index type to query.
+        version: Optional version filter.
+
+    Returns:
+        Fragment payload for the requested document hash.
+    """
+    from redis_sre_agent.core.knowledge_helpers import get_all_document_fragments
+
+    logger.info(
+        "MCP get_knowledge_fragments: document_hash=%s index_type=%s version=%s",
+        document_hash,
+        index_type,
+        version,
+    )
+
+    try:
+        return await get_all_document_fragments(
+            document_hash,
+            include_metadata=include_metadata,
+            index_type=index_type,
+            version=version,
+        )
+    except Exception as e:
+        logger.error("Get knowledge fragments failed: %s", e)
+        return {
+            "document_hash": document_hash,
+            "error": str(e),
+            "fragments": [],
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_related_knowledge_fragments(
+    document_hash: str, chunk_index: int, window: int = 2
+) -> Dict[str, Any]:
+    """Get related fragments around a target chunk.
+
+    Args:
+        document_hash: Document hash to fetch.
+        chunk_index: Target chunk index.
+        window: Number of chunks before/after to include.
+
+    Returns:
+        Related fragment payload for the requested chunk.
+    """
+    from redis_sre_agent.core.knowledge_helpers import get_related_document_fragments
+
+    logger.info(
+        "MCP get_related_knowledge_fragments: document_hash=%s chunk_index=%s window=%s",
+        document_hash,
+        chunk_index,
+        window,
+    )
+
+    try:
+        return await get_related_document_fragments(
+            document_hash,
+            current_chunk_index=chunk_index,
+            context_window=window,
+        )
+    except Exception as e:
+        logger.error("Get related knowledge fragments failed: %s", e)
+        return {
+            "document_hash": document_hash,
+            "error": str(e),
+            "related_fragments": [],
         }
 
 
