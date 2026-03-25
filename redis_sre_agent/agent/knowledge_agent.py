@@ -25,8 +25,8 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.tools.manager import ToolManager
 
-from .helpers import build_result_envelope
-from .knowledge_context import build_startup_knowledge_context
+from .helpers import build_result_envelope, extract_citations
+from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -140,6 +140,7 @@ class KnowledgeOnlyAgent:
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
             startup_prompt_initialized = state.get("startup_prompt_initialized", False)
+            signals_envelopes = list(state.get("signals_envelopes") or [])
 
             # Cache and reuse startup prompt for this workflow execution to avoid repeated
             # knowledge-context lookups in tool-call loops.
@@ -165,6 +166,10 @@ class KnowledgeOnlyAgent:
                         query=context_query,
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
+                    )
+                    signals_envelopes = merge_internal_tool_envelopes(
+                        signals_envelopes,
+                        getattr(startup_context, "internal_tool_envelopes", []),
                     )
                     startup_system_prompt = (
                         f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
@@ -265,6 +270,7 @@ class KnowledgeOnlyAgent:
                 # No per-iteration progress message; providers will emit status updates
                 state["startup_system_prompt"] = startup_system_prompt
                 state["startup_prompt_initialized"] = startup_prompt_initialized
+                state["signals_envelopes"] = signals_envelopes
                 return state
 
             except Exception as e:
@@ -276,6 +282,7 @@ class KnowledgeOnlyAgent:
                 state["current_tool_calls"] = []
                 state["startup_system_prompt"] = startup_system_prompt
                 state["startup_prompt_initialized"] = startup_prompt_initialized
+                state["signals_envelopes"] = signals_envelopes
                 return state
 
         async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
@@ -558,7 +565,10 @@ class KnowledgeOnlyAgent:
                 "startup_prompt_initialized": True,
                 "tool_calls_executed": 0,
                 "knowledge_search_results": [],
-                "signals_envelopes": [],
+                "signals_envelopes": merge_internal_tool_envelopes(
+                    [],
+                    getattr(startup_context, "internal_tool_envelopes", []),
+                ),
             }
 
             # Create MemorySaver for this query
@@ -581,11 +591,9 @@ class KnowledgeOnlyAgent:
                 # Run the workflow (with recursion limit to match settings)
                 final_state = await app.ainvoke(initial_state, config=thread_config)
 
-                # Extract knowledge search results for citation tracking
-                search_results = final_state.get("knowledge_search_results", [])
-
                 # Get tool envelopes for decision traces
                 tool_envelopes = final_state.get("signals_envelopes", [])
+                search_results = extract_citations(tool_envelopes)
 
                 # Extract the final response
                 messages = final_state.get("messages", [])

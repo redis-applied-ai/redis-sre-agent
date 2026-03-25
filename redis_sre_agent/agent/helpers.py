@@ -11,6 +11,13 @@ from typing import Any, Dict, List, Optional
 import jmespath
 from jmespath.exceptions import JMESPathError
 
+KNOWLEDGE_SEARCH_RETRIEVAL_KIND = "knowledge_search"
+KNOWLEDGE_SEARCH_RETRIEVAL_LABEL = "Knowledge search"
+STARTUP_CONTEXT_CITATION_GROUP = "startup_context_loaded"
+STARTUP_CONTEXT_CITATION_GROUP_LABEL = "Startup context loaded"
+DISCOVERED_CONTEXT_CITATION_GROUP = "discovered_context"
+DISCOVERED_CONTEXT_CITATION_GROUP_LABEL = "Discovered context"
+
 
 def parse_json_maybe_fenced(text: str) -> Any:
     """Parse JSON that may be wrapped in markdown code fences (``` or ```json).
@@ -309,6 +316,7 @@ def extract_citations(envelopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     for envelope in envelopes:
         tool_key = envelope.get("tool_key", "")
+        name = str(envelope.get("name", ""))
 
         # Match knowledge search tools by tool_key containing "knowledge"
         if "knowledge" not in tool_key.lower():
@@ -323,12 +331,75 @@ def extract_citations(envelopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not isinstance(results, list):
             continue
 
+        default_retrieval_kind = str(data.get("retrieval_kind", "")).strip()
+        default_retrieval_label = str(data.get("retrieval_label", "")).strip()
+        if not default_retrieval_kind:
+            if "pinned_context" in tool_key.lower() or "pinned_context" in name.lower():
+                default_retrieval_kind = "pinned_context"
+                default_retrieval_label = default_retrieval_label or "Pinned context"
+            elif "search" in tool_key.lower() or "search" in name.lower():
+                default_retrieval_kind = KNOWLEDGE_SEARCH_RETRIEVAL_KIND
+                default_retrieval_label = default_retrieval_label or KNOWLEDGE_SEARCH_RETRIEVAL_LABEL
+
         # Add each result as a citation (preserving all fields)
         for result in results:
             if isinstance(result, dict):
-                citations.append(result)
+                citation = dict(result)
+                if default_retrieval_kind:
+                    citation.setdefault("retrieval_kind", default_retrieval_kind)
+                if default_retrieval_label:
+                    citation.setdefault("retrieval_label", default_retrieval_label)
+                citations.append(citation)
 
     return citations
+
+
+def build_citation_groups(citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Group citations into startup context and discovered context buckets."""
+    grouped = {
+        DISCOVERED_CONTEXT_CITATION_GROUP: {
+            "group_key": DISCOVERED_CONTEXT_CITATION_GROUP,
+            "label": DISCOVERED_CONTEXT_CITATION_GROUP_LABEL,
+            "citations": [],
+        },
+        STARTUP_CONTEXT_CITATION_GROUP: {
+            "group_key": STARTUP_CONTEXT_CITATION_GROUP,
+            "label": STARTUP_CONTEXT_CITATION_GROUP_LABEL,
+            "citations": [],
+        },
+    }
+
+    for citation in citations or []:
+        retrieval_kind = str(citation.get("retrieval_kind", "")).strip().lower()
+        group_key = (
+            STARTUP_CONTEXT_CITATION_GROUP
+            if retrieval_kind == "pinned_context"
+            else DISCOVERED_CONTEXT_CITATION_GROUP
+        )
+        grouped[group_key]["citations"].append(citation)
+
+    ordered_groups: List[Dict[str, Any]] = []
+    for group_key in (
+        DISCOVERED_CONTEXT_CITATION_GROUP,
+        STARTUP_CONTEXT_CITATION_GROUP,
+    ):
+        group = grouped[group_key]
+        citations_for_group = list(group["citations"])
+        if not citations_for_group:
+            continue
+        ordered_groups.append(
+            {
+                **group,
+                "count": len(citations_for_group),
+            }
+        )
+
+    return ordered_groups
+
+
+def extract_citation_groups(envelopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Extract and group citations from tool envelopes."""
+    return build_citation_groups(extract_citations(envelopes))
 
 
 def query_tool_data(envelopes: List[Dict[str, Any]], tool_key: str, query: str) -> Any:

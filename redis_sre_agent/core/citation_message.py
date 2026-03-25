@@ -7,6 +7,8 @@ in previous responses.
 
 from typing import Any, Dict, List, Optional
 
+from redis_sre_agent.agent.helpers import build_citation_groups
+
 
 def should_include_citations(search_results: Optional[List[Dict[str, Any]]]) -> bool:
     """Determine if citations should be included in the thread.
@@ -56,3 +58,50 @@ def format_citation_message(search_results: Optional[List[Dict[str, Any]]]) -> s
         lines.append(line)
 
     return "\n".join(lines)
+
+
+def format_citation_group_message(citation_group: Dict[str, Any]) -> str:
+    """Format one citation group as a system message body."""
+    citations = list(citation_group.get("citations") or [])
+    if not citations:
+        return ""
+
+    lines = [f"**{citation_group.get('label', 'Sources')}**"]
+    for result in citations:
+        title = result.get("title", "Untitled")
+        source = result.get("source", "Unknown source")
+        doc_hash = result.get("document_hash", "")
+        score = result.get("score")
+
+        if score is not None:
+            line = f'• "{title}" ({source}) [hash:{doc_hash}] - relevance: {score}'
+        else:
+            line = f'• "{title}" ({source}) [hash:{doc_hash}]'
+
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def build_citation_message_payloads(
+    search_results: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Build separate system-message payloads for each citation group."""
+    if not should_include_citations(search_results):
+        return []
+
+    payloads: List[Dict[str, Any]] = []
+    for citation_group in build_citation_groups(list(search_results or [])):
+        payloads.append(
+            {
+                "content": format_citation_group_message(citation_group),
+                "metadata": {
+                    "message_type": "citations",
+                    "citation_group": citation_group["group_key"],
+                    "citation_group_label": citation_group["label"],
+                    "citations": citation_group["citations"],
+                    "count": citation_group["count"],
+                },
+            }
+        )
+    return payloads

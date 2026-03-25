@@ -357,9 +357,11 @@ class TestProcessAgentTurn:
 
             # Find the system message and verify it contains citation info
             system_msg = next(msg for msg in test_thread.messages if msg.role == "system")
-            assert "Sources for previous response" in system_msg.content
+            assert "Discovered context" in system_msg.content
             assert "Redis Memory Guide" in system_msg.content
             assert "abc123def456" in system_msg.content
+            assert system_msg.metadata is not None
+            assert system_msg.metadata["metadata"]["citation_group"] == "discovered_context"
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_no_citation_message_when_no_search_results(self):
