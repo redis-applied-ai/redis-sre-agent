@@ -372,7 +372,7 @@ class Settings(BaseSettings):
 
     # MCP Server Configuration
     # No external MCP servers are enabled by default.
-    # Configure MCP_SERVERS or config.yaml explicitly for local tools like agent-memory.
+    # Configure MCP_SERVERS or config.yaml explicitly for any MCP integrations.
     mcp_servers: Dict[str, Union[MCPServerConfig, Dict[str, Any]]] = Field(
         default_factory=dict,
         description="MCP (Model Context Protocol) servers to connect to. "
@@ -380,21 +380,6 @@ class Settings(BaseSettings):
         "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
         "'tools': {'search_memories': {'capability': 'logs'}}}}",
     )
-
-    def model_post_init(self, __context: Any) -> None:
-        """Adjust configuration after all fields are loaded.
-
-        In air-gap mode (embedding_provider='local'), use pre-installed binaries
-        instead of 'uv tool run' which requires network access to PyPI.
-        """
-        if self.embedding_provider == "local":
-            # Air-gap mode: use pre-installed agent-memory binary directly
-            if "redis-memory-server" in self.mcp_servers:
-                server_config = self.mcp_servers["redis-memory-server"]
-                if isinstance(server_config, dict):
-                    # Change from 'uv tool run' to direct binary call
-                    server_config["command"] = "agent-memory"
-                    server_config["args"] = ["mcp"]
 
     @classmethod
     def settings_customise_sources(
