@@ -74,6 +74,7 @@ After calling any of these, you MUST:
 | `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
 | `redis_sre_cache_stats()` | Show tool cache statistics |
 | `redis_sre_cache_clear()` | Clear cached tool outputs |
+| `redis_sre_audit_cli_mcp_parity()` | Audit in-scope CLI commands against MCP coverage |
 | `redis_sre_version()` | Show Redis SRE Agent version metadata |
 | `redis_sre_list_instances()` | List available Redis instances |
 | `redis_sre_get_instance()` | Get a configured Redis instance by id |
@@ -1696,6 +1697,20 @@ async def redis_sre_cache_clear(
             "status": "failed",
             "instance_id": instance_id,
         }
+
+
+@mcp.tool()
+def redis_sre_audit_cli_mcp_parity() -> Dict[str, Any]:
+    """Audit in-scope CLI leaf commands against MCP tool coverage."""
+    from redis_sre_agent.core.cli_mcp_parity import audit_cli_mcp_parity
+
+    logger.info("MCP CLI/MCP parity audit request")
+
+    try:
+        return audit_cli_mcp_parity()
+    except Exception as e:
+        logger.error("CLI/MCP parity audit failed: %s", e)
+        return {"error": str(e), "status": "failed"}
 
 
 @mcp.tool()

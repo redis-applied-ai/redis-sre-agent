@@ -6,6 +6,7 @@ import pytest
 
 from redis_sre_agent.mcp_server.server import (
     mcp,
+    redis_sre_audit_cli_mcp_parity,
     redis_sre_backfill_empty_thread_subjects,
     redis_sre_backfill_instance_links,
     redis_sre_backfill_scheduled_thread_subjects,
@@ -136,6 +137,7 @@ class TestMCPServerSetup:
         assert "redis_sre_test_redis_url" in tool_names
         assert "redis_sre_cache_stats" in tool_names
         assert "redis_sre_cache_clear" in tool_names
+        assert "redis_sre_audit_cli_mcp_parity" in tool_names
         assert "redis_sre_version" in tool_names
         assert "redis_sre_query" in tool_names
         assert "redis_sre_list_clusters" in tool_names
@@ -162,6 +164,31 @@ class TestMCPServerSetup:
         assert "redis_sre_backfill_scheduled_thread_subjects" in tool_names
         assert "redis_sre_backfill_empty_thread_subjects" in tool_names
         assert "redis_sre_purge_threads" in tool_names
+
+
+class TestCliMcpParityAuditTool:
+    """Test the redis_sre_audit_cli_mcp_parity MCP tool."""
+
+    def test_audit_cli_mcp_parity_success(self):
+        expected = {"status": "ok", "missing_cli_mappings": [], "missing_mcp_tools": {}}
+
+        with patch(
+            "redis_sre_agent.core.cli_mcp_parity.audit_cli_mcp_parity",
+            return_value=expected,
+        ) as mock_audit:
+            result = redis_sre_audit_cli_mcp_parity()
+
+        assert result == expected
+        mock_audit.assert_called_once_with()
+
+    def test_audit_cli_mcp_parity_failure(self):
+        with patch(
+            "redis_sre_agent.core.cli_mcp_parity.audit_cli_mcp_parity",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = redis_sre_audit_cli_mcp_parity()
+
+        assert result == {"error": "boom", "status": "failed"}
 
 
 class TestDeepTriageTool:

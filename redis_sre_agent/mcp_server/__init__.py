@@ -34,6 +34,7 @@ Utility tools (return immediately):
 - redis_sre_get_support_ticket: Get full support-ticket content by ticket id
 - redis_sre_cache_stats: Show tool cache statistics
 - redis_sre_cache_clear: Clear cached tool outputs
+- redis_sre_audit_cli_mcp_parity: Audit in-scope CLI commands against MCP coverage
 - redis_sre_version: Show Redis SRE Agent version metadata
 - redis_sre_query: Queue a routed query with optional thread, target, and support-package context
 - redis_sre_list_clusters: List configured Redis clusters
