@@ -17,6 +17,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_general_chat,
     redis_sre_generate_pipeline_runbooks,
     redis_sre_generate_runbook,
+    redis_sre_get_instance,
     redis_sre_get_knowledge_fragments,
     redis_sre_get_pipeline_batch,
     redis_sre_get_pipeline_status,
@@ -40,6 +41,8 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_run_pipeline_ingest,
     redis_sre_run_pipeline_scrape,
     redis_sre_search_support_tickets,
+    redis_sre_test_instance,
+    redis_sre_test_redis_url,
     redis_sre_upload_support_package,
 )
 
@@ -83,6 +86,7 @@ class TestMCPServerSetup:
         assert "redis_sre_search_support_tickets" in tool_names
         assert "redis_sre_get_support_ticket" in tool_names
         assert "redis_sre_knowledge_query" in tool_names
+        assert "redis_sre_get_instance" in tool_names
         assert "redis_sre_get_thread" in tool_names
         assert "redis_sre_get_thread_sources" in tool_names
         assert "redis_sre_get_thread_trace" in tool_names
@@ -94,6 +98,8 @@ class TestMCPServerSetup:
         assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
         assert "redis_sre_create_instance" in tool_names
+        assert "redis_sre_test_instance" in tool_names
+        assert "redis_sre_test_redis_url" in tool_names
 
 
 class TestDeepTriageTool:
@@ -1410,6 +1416,102 @@ class TestCreateInstanceTool:
 
             assert result["status"] == "failed"
             assert "already exists" in result["error"]
+
+
+class TestInstanceInspectionTools:
+    """Test MCP tools for instance inspection and connectivity checks."""
+
+    @pytest.mark.asyncio
+    async def test_get_instance_delegates_to_helper(self):
+        """Get-instance should delegate to the shared helper."""
+        mock_result = {"id": "redis-prod-1", "name": "Production Redis"}
+
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.get_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_instance(instance_id="redis-prod-1")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis-prod-1")
+
+    @pytest.mark.asyncio
+    async def test_get_instance_error_payload(self):
+        """Get-instance failures should return a structured error payload."""
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.get_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("lookup failed")
+
+            result = await redis_sre_get_instance(instance_id="redis-prod-1")
+
+        assert result["id"] == "redis-prod-1"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_test_instance_delegates_to_helper(self):
+        """Configured instance connectivity tests should delegate to the helper."""
+        mock_result = {"success": True, "instance_id": "redis-prod-1"}
+
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.check_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_test_instance(instance_id="redis-prod-1")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis-prod-1")
+
+    @pytest.mark.asyncio
+    async def test_test_instance_error_payload(self):
+        """Configured instance connectivity failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.check_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("probe failed")
+
+            result = await redis_sre_test_instance(instance_id="redis-prod-1")
+
+        assert result["success"] is False
+        assert result["id"] == "redis-prod-1"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_test_redis_url_delegates_to_helper(self):
+        """Direct Redis URL checks should delegate to the helper."""
+        mock_result = {"success": True, "url": "redis://***:***@host:6379/0"}
+
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.check_redis_url_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_test_redis_url(connection_url="redis://user:pass@host:6379/0")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis://user:pass@host:6379/0")
+
+    @pytest.mark.asyncio
+    async def test_test_redis_url_error_payload(self):
+        """Direct Redis URL failures should return a structured payload."""
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.check_redis_url_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("probe failed")
+
+            result = await redis_sre_test_redis_url(connection_url="redis://user:pass@host:6379/0")
+
+        assert result["success"] is False
+        assert result["url"] == "redis://user:pass@host:6379/0"
+        assert "error" in result
 
 
 class TestGetThreadTool:

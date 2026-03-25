@@ -73,6 +73,9 @@ After calling any of these, you MUST:
 | `redis_sre_search_support_tickets()` | Search support-ticket docs only |
 | `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
 | `redis_sre_list_instances()` | List available Redis instances |
+| `redis_sre_get_instance()` | Get a configured Redis instance by id |
+| `redis_sre_test_instance()` | Test a configured Redis instance connection |
+| `redis_sre_test_redis_url()` | Test a Redis URL without creating an instance |
 | `redis_sre_list_threads()` | List conversation threads (find previous chats) |
 | `redis_sre_get_thread_sources()` | Get recorded knowledge fragments for a thread |
 | `redis_sre_get_thread_trace()` | Get tool-call trace for a message |
@@ -130,7 +133,8 @@ while True:
 - Use `redis_sre_get_pipeline_status()` and `redis_sre_get_pipeline_batch()` for ingestion inspection
 - Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
-- Use `redis_sre_list_instances()` to find instance IDs before calling other tools
+- Use `redis_sre_list_instances()` and `redis_sre_get_instance()` to inspect configured instances
+- Use `redis_sre_test_instance()` and `redis_sre_test_redis_url()` for connectivity checks
 - Check the `updates` array to show users what the agent is doing""",
 )
 
@@ -1917,6 +1921,59 @@ async def redis_sre_list_instances(
             "error": str(e),
             "instances": [],
             "total": 0,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_instance(instance_id: str) -> Dict[str, Any]:
+    """Get a configured Redis instance by ID."""
+    from redis_sre_agent.core.instance_inspection_helpers import get_instance_helper
+
+    logger.info("MCP get_instance: %s", instance_id)
+
+    try:
+        return await get_instance_helper(instance_id)
+    except Exception as e:
+        logger.error("Get instance failed: %s", e)
+        return {
+            "error": str(e),
+            "id": instance_id,
+        }
+
+
+@mcp.tool()
+async def redis_sre_test_redis_url(connection_url: str) -> Dict[str, Any]:
+    """Test a Redis connection URL without creating an instance."""
+    from redis_sre_agent.core.instance_inspection_helpers import check_redis_url_helper
+
+    logger.info("MCP test_redis_url request")
+
+    try:
+        return await check_redis_url_helper(connection_url)
+    except Exception as e:
+        logger.error("Test redis url failed: %s", e)
+        return {
+            "success": False,
+            "error": str(e),
+            "url": connection_url,
+        }
+
+
+@mcp.tool()
+async def redis_sre_test_instance(instance_id: str) -> Dict[str, Any]:
+    """Test connection to a configured Redis instance by ID."""
+    from redis_sre_agent.core.instance_inspection_helpers import check_instance_helper
+
+    logger.info("MCP test_instance: %s", instance_id)
+
+    try:
+        return await check_instance_helper(instance_id)
+    except Exception as e:
+        logger.error("Test instance failed: %s", e)
+        return {
+            "success": False,
+            "error": str(e),
+            "id": instance_id,
         }
 
 
