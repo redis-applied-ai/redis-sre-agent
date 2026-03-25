@@ -32,6 +32,9 @@ Utility tools (return immediately):
 - redis_sre_delete_support_package: Delete a support package
 - redis_sre_search_support_tickets: Search support-ticket docs only
 - redis_sre_get_support_ticket: Get full support-ticket content by ticket id
+- redis_sre_cache_stats: Show tool cache statistics
+- redis_sre_cache_clear: Clear cached tool outputs
+- redis_sre_version: Show Redis SRE Agent version metadata
 - redis_sre_list_instances: List configured Redis instances
 - redis_sre_get_instance: Get a configured Redis instance by id
 - redis_sre_update_instance: Update a configured Redis instance

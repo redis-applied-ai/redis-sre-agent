@@ -6,6 +6,8 @@ import pytest
 
 from redis_sre_agent.mcp_server.server import (
     mcp,
+    redis_sre_cache_clear,
+    redis_sre_cache_stats,
     redis_sre_cleanup_pipeline_batches,
     redis_sre_create_instance,
     redis_sre_database_chat,
@@ -46,6 +48,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_test_redis_url,
     redis_sre_update_instance,
     redis_sre_upload_support_package,
+    redis_sre_version,
 )
 
 
@@ -104,6 +107,9 @@ class TestMCPServerSetup:
         assert "redis_sre_delete_instance" in tool_names
         assert "redis_sre_test_instance" in tool_names
         assert "redis_sre_test_redis_url" in tool_names
+        assert "redis_sre_cache_stats" in tool_names
+        assert "redis_sre_cache_clear" in tool_names
+        assert "redis_sre_version" in tool_names
 
 
 class TestDeepTriageTool:
@@ -1581,6 +1587,80 @@ class TestInstanceMutationTools:
             result = await redis_sre_update_instance(instance_id="redis-prod-1")
 
         assert result == {"error": "boom", "id": "redis-prod-1", "status": "failed"}
+
+
+class TestCacheAndVersionTools:
+    """Test MCP tools for cache management and version reporting."""
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_delegates_to_helper(self):
+        """Cache stats should delegate to the shared helper."""
+        mock_result = {"total_keys": 7, "instances": ["redis-prod-1"]}
+
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_stats_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_cache_stats(instance_id="redis-prod-1")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(instance_id="redis-prod-1")
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_error_payload(self):
+        """Cache stats failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_stats_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_cache_stats(instance_id="redis-prod-1")
+
+        assert result == {"error": "boom", "status": "failed", "instance_id": "redis-prod-1"}
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_delegates_to_helper(self):
+        """Cache clear should delegate to the shared helper."""
+        mock_result = {"status": "cleared", "scope": "all", "deleted": 11}
+
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_clear_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_cache_clear(clear_all=True, confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(instance_id=None, clear_all=True, confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_error_payload(self):
+        """Cache clear failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_clear_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_cache_clear(instance_id="redis-prod-1", confirm=True)
+
+        assert result == {"error": "boom", "status": "failed", "instance_id": "redis-prod-1"}
+
+    def test_version_delegates_to_helper(self):
+        """Version tool should delegate to the shared helper."""
+        mock_result = {"name": "redis-sre-agent", "version": "0.0-test"}
+
+        with patch("redis_sre_agent.core.cache_helpers.version_helper") as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = redis_sre_version()
+
+        assert result == mock_result
+        mock_helper.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_delete_instance_delegates_to_helper(self):

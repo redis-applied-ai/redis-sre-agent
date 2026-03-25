@@ -72,6 +72,9 @@ After calling any of these, you MUST:
 | `redis_sre_delete_support_package()` | Delete a support package |
 | `redis_sre_search_support_tickets()` | Search support-ticket docs only |
 | `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
+| `redis_sre_cache_stats()` | Show tool cache statistics |
+| `redis_sre_cache_clear()` | Clear cached tool outputs |
+| `redis_sre_version()` | Show Redis SRE Agent version metadata |
 | `redis_sre_list_instances()` | List available Redis instances |
 | `redis_sre_get_instance()` | Get a configured Redis instance by id |
 | `redis_sre_create_instance()` | Create a Redis instance configuration |
@@ -136,6 +139,8 @@ while True:
 - Use `redis_sre_get_pipeline_status()` and `redis_sre_get_pipeline_batch()` for ingestion inspection
 - Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
+- Use `redis_sre_cache_stats()` to inspect cache state and `redis_sre_cache_clear()` to clear cached tool outputs
+- Use `redis_sre_version()` for basic package/version inspection
 - Use `redis_sre_list_instances()` and `redis_sre_get_instance()` to inspect configured instances
 - Use `redis_sre_create_instance()`, `redis_sre_update_instance()`, and `redis_sre_delete_instance()` to manage instance configs
 - Use `redis_sre_test_instance()` and `redis_sre_test_redis_url()` for connectivity checks
@@ -1234,6 +1239,64 @@ async def redis_sre_search_support_tickets(
             "ticket_count": 0,
             "total_results": 0,
         }
+
+
+@mcp.tool()
+async def redis_sre_cache_stats(instance_id: Optional[str] = None) -> Dict[str, Any]:
+    """Show tool cache statistics for one instance or all instances."""
+    from redis_sre_agent.core.cache_helpers import cache_stats_helper
+
+    logger.info("MCP cache_stats: instance_id=%s", instance_id)
+
+    try:
+        return await cache_stats_helper(instance_id=instance_id)
+    except Exception as e:
+        logger.error("Cache stats failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "instance_id": instance_id,
+        }
+
+
+@mcp.tool()
+async def redis_sre_cache_clear(
+    instance_id: Optional[str] = None,
+    clear_all: bool = False,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Clear cached tool outputs for one instance or all instances."""
+    from redis_sre_agent.core.cache_helpers import cache_clear_helper
+
+    logger.info(
+        "MCP cache_clear: instance_id=%s clear_all=%s confirm=%s",
+        instance_id,
+        clear_all,
+        confirm,
+    )
+
+    try:
+        return await cache_clear_helper(
+            instance_id=instance_id,
+            clear_all=clear_all,
+            confirm=confirm,
+        )
+    except Exception as e:
+        logger.error("Cache clear failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "instance_id": instance_id,
+        }
+
+
+@mcp.tool()
+def redis_sre_version() -> Dict[str, str]:
+    """Show Redis SRE Agent version metadata."""
+    from redis_sre_agent.core.cache_helpers import version_helper
+
+    logger.info("MCP version request")
+    return version_helper()
 
 
 @mcp.tool()
