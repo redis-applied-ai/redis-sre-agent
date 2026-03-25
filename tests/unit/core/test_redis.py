@@ -292,6 +292,45 @@ class TestRedisInfrastructure:
         assert result["indices"]["skills"]["missing_fields"] == ["pinned"]
 
     @pytest.mark.asyncio
+    async def test_get_index_schema_status_normalizes_vector_dim_from_redis_info(self):
+        """Vector dim should not trigger false drift when Redis returns it as a string."""
+        from redis_sre_agent.core.config import settings
+
+        mock_index = AsyncMock()
+        mock_index.exists.return_value = True
+        mock_index._redis_client = AsyncMock()
+
+        attributes = []
+        for field in SRE_KNOWLEDGE_SCHEMA["fields"]:
+            name = field["name"]
+            field_type = str(field["type"]).upper()
+            attribute = [b"attribute", str(name).encode(), b"type", field_type.encode()]
+            if field_type == "VECTOR":
+                attrs = field["attrs"]
+                attribute.extend(
+                    [
+                        b"algorithm",
+                        str(attrs["algorithm"]).upper().encode(),
+                        b"data_type",
+                        str(attrs["datatype"]).upper().encode(),
+                        b"dim",
+                        str(settings.vector_dim).encode(),
+                        b"distance_metric",
+                        str(attrs["distance_metric"]).upper().encode(),
+                    ]
+                )
+            attributes.append(attribute)
+
+        mock_index._redis_client.execute_command.return_value = [b"attributes", attributes]
+
+        with patch("redis_sre_agent.core.redis.get_knowledge_index", return_value=mock_index):
+            result = await get_index_schema_status(index_name="knowledge")
+
+        assert result["success"] is True
+        assert result["indices"]["knowledge"]["status"] == "in_sync"
+        assert result["indices"]["knowledge"]["mismatched_fields"] == {}
+
+    @pytest.mark.asyncio
     async def test_sync_index_schemas_recreates_drifted_index(self):
         """Schema sync should recreate an index whose fields have drifted."""
         mock_index = AsyncMock()

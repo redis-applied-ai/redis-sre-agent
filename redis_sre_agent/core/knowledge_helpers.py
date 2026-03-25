@@ -77,6 +77,12 @@ def _coerce_positive_int(value: Any, *, default: int) -> int:
     return max(_coerce_non_negative_int(value, default=default), 1)
 
 
+def _is_unknown_field_error(exc: Exception, field_name: str) -> bool:
+    """Return True when a RediSearch query failed because a field is missing."""
+    message = str(exc).lower()
+    return "unknown field" in message and field_name.lower() in message
+
+
 class _RawTextQuery(BaseQuery):
     """Minimal raw-text query wrapper for literal phrase search."""
 
@@ -1100,7 +1106,7 @@ async def get_pinned_documents_helper(
         try:
             return await _query_rows(index_type, filter_expression=Tag("pinned") == "true")
         except Exception as exc:
-            if "Unknown field" not in str(exc) or "pinned" not in str(exc):
+            if not _is_unknown_field_error(exc, "pinned"):
                 raise
             logger.info(
                 "Pinned field unavailable on %s index; falling back to unfiltered query",

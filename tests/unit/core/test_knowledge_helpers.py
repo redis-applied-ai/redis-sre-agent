@@ -1878,7 +1878,7 @@ class TestPinnedDocumentsHelper:
                 filter_expr = getattr(query, "_filter_expression", None)
                 if self.calls == 1 and "pinned" in str(filter_expr):
                     raise RuntimeError(
-                        "Error while searching: Unknown field at offset 0 near pinned"
+                        "Error while searching: unknown field at offset 0 near pinned"
                     )
                 return self.rows
 

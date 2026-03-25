@@ -140,6 +140,13 @@ def _normalize_otlp_trace_endpoint(endpoint: str) -> str:
     return urlunparse(parsed._replace(path="/v1/traces"))
 
 
+def _get_otlp_trace_endpoint() -> Optional[str]:
+    """Return the configured OTLP trace endpoint, preferring trace-specific config."""
+    return os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or os.environ.get(
+        "OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+
+
 def setup_tracing(
     service_name: str,
     service_version: str = "0.1.0",
@@ -148,10 +155,12 @@ def setup_tracing(
 
     Returns True if tracing was enabled, False otherwise.
     """
-    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    otlp_endpoint = _get_otlp_trace_endpoint()
     if not otlp_endpoint:
         logger.info(
-            f"OpenTelemetry tracing disabled for {service_name} (no OTEL_EXPORTER_OTLP_ENDPOINT)"
+            "OpenTelemetry tracing disabled for %s "
+            "(no OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT)",
+            service_name,
         )
         return False
 

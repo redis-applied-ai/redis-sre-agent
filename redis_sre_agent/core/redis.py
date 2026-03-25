@@ -325,6 +325,16 @@ def _pairs_to_dict(values: list[Any]) -> dict[str, Any]:
     return result
 
 
+def _coerce_optional_int(value: Any) -> Any:
+    """Normalize numeric Redis metadata that may arrive as strings/bytes."""
+    if value in (None, ""):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def _expected_field_definitions(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Build comparable field metadata from a schema dict."""
     definitions: dict[str, dict[str, Any]] = {}
@@ -341,7 +351,7 @@ def _expected_field_definitions(schema: dict[str, Any]) -> dict[str, dict[str, A
             definition["attrs"] = {
                 "algorithm": str(attrs.get("algorithm", "")).strip().upper(),
                 "data_type": str(attrs.get("datatype", "")).strip().upper(),
-                "dim": attrs.get("dims"),
+                "dim": _coerce_optional_int(attrs.get("dims")),
                 "distance_metric": str(attrs.get("distance_metric", "")).strip().upper(),
             }
         definitions[name] = definition
@@ -366,7 +376,7 @@ def _actual_field_definitions(raw_info: list[Any]) -> dict[str, dict[str, Any]]:
             definition["attrs"] = {
                 "algorithm": str(attr_dict.get("algorithm", "")).strip().upper(),
                 "data_type": str(attr_dict.get("data_type", "")).strip().upper(),
-                "dim": attr_dict.get("dim"),
+                "dim": _coerce_optional_int(attr_dict.get("dim")),
                 "distance_metric": str(attr_dict.get("distance_metric", "")).strip().upper(),
             }
         definitions[name] = definition

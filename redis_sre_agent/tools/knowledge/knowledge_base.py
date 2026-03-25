@@ -13,6 +13,8 @@ from redis_sre_agent.core.docket_tasks import (
     ingest_sre_document as _ingest_sre_document,
 )
 from redis_sre_agent.core.knowledge_helpers import (
+    _coerce_non_negative_int,
+    _coerce_positive_int,
     get_all_document_fragments,
     get_related_document_fragments,
     get_skill_helper,
@@ -27,18 +29,6 @@ from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-
-def _coerce_non_negative_int(value: Any, *, default: int) -> int:
-    try:
-        coerced = int(value)
-    except (TypeError, ValueError):
-        return default
-    return max(coerced, 0)
-
-
-def _coerce_positive_int(value: Any, *, default: int) -> int:
-    return max(_coerce_non_negative_int(value, default=default), 1)
 
 
 class KnowledgeBaseToolProvider(ToolProvider):

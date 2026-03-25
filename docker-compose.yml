@@ -166,7 +166,7 @@ services:
       - OPENAI_BASE_URL=http://litellm:4000/v1
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
       # OTEL: export spans to Tempo via OTLP HTTP
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
@@ -208,7 +208,7 @@ services:
       - OPENAI_BASE_URL=http://litellm:4000/v1
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
       # OpenTelemetry export to Tempo
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
