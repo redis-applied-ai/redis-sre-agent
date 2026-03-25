@@ -263,7 +263,42 @@ class TestSetupTracing:
         with patch.dict("os.environ", {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318"}):
             result = setup_tracing("test-service", "1.0.0")
             assert result is True
+            mock_exporter.assert_called_once_with(
+                endpoint="http://localhost:4318/v1/traces",
+                headers=None,
+            )
             mock_redis.return_value.instrument.assert_called_once()
+
+    @patch("redis_sre_agent.observability.tracing.RedisInstrumentor")
+    @patch("redis_sre_agent.observability.tracing.HTTPXClientInstrumentor")
+    @patch("redis_sre_agent.observability.tracing.AioHttpClientInstrumentor")
+    @patch("redis_sre_agent.observability.tracing.AsyncioInstrumentor")
+    @patch("redis_sre_agent.observability.tracing.OpenAIInstrumentor")
+    @patch("redis_sre_agent.observability.tracing.trace")
+    @patch("redis_sre_agent.observability.tracing.BatchSpanProcessor")
+    @patch("redis_sre_agent.observability.tracing.OTLPSpanExporter")
+    @patch("redis_sre_agent.observability.tracing.TracerProvider")
+    def test_preserves_explicit_trace_path(
+        self,
+        mock_provider,
+        mock_exporter,
+        mock_processor,
+        mock_trace,
+        mock_openai,
+        mock_asyncio,
+        mock_aiohttp,
+        mock_httpx,
+        mock_redis,
+    ):
+        """Should keep explicit OTLP trace paths unchanged."""
+        endpoint = "http://localhost:4318/custom/path"
+        with patch.dict("os.environ", {"OTEL_EXPORTER_OTLP_ENDPOINT": endpoint}):
+            result = setup_tracing("test-service", "1.0.0")
+            assert result is True
+            mock_exporter.assert_called_once_with(
+                endpoint=endpoint,
+                headers=None,
+            )
 
 
 class TestGetTracer:
