@@ -12,12 +12,16 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_cleanup_pipeline_batches,
     redis_sre_create_cluster,
     redis_sre_create_instance,
+    redis_sre_create_schedule,
     redis_sre_database_chat,
     redis_sre_deep_triage,
     redis_sre_delete_cluster,
     redis_sre_delete_instance,
+    redis_sre_delete_schedule,
     redis_sre_delete_support_package,
     redis_sre_delete_task,
+    redis_sre_disable_schedule,
+    redis_sre_enable_schedule,
     redis_sre_evaluate_runbooks,
     redis_sre_extract_support_package,
     redis_sre_general_chat,
@@ -30,6 +34,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_get_pipeline_batch,
     redis_sre_get_pipeline_status,
     redis_sre_get_related_knowledge_fragments,
+    redis_sre_get_schedule,
     redis_sre_get_support_package_info,
     redis_sre_get_support_ticket,
     redis_sre_get_task,
@@ -43,6 +48,8 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_list_clusters,
     redis_sre_list_indices,
     redis_sre_list_instances,
+    redis_sre_list_schedule_runs,
+    redis_sre_list_schedules,
     redis_sre_list_support_packages,
     redis_sre_list_tasks,
     redis_sre_list_threads,
@@ -53,12 +60,14 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_run_pipeline_full,
     redis_sre_run_pipeline_ingest,
     redis_sre_run_pipeline_scrape,
+    redis_sre_run_schedule_now,
     redis_sre_search_support_tickets,
     redis_sre_sync_index_schemas,
     redis_sre_test_instance,
     redis_sre_test_redis_url,
     redis_sre_update_cluster,
     redis_sre_update_instance,
+    redis_sre_update_schedule,
     redis_sre_upload_support_package,
     redis_sre_version,
 )
@@ -134,6 +143,15 @@ class TestMCPServerSetup:
         assert "redis_sre_get_index_schema_status" in tool_names
         assert "redis_sre_recreate_indices" in tool_names
         assert "redis_sre_sync_index_schemas" in tool_names
+        assert "redis_sre_list_schedules" in tool_names
+        assert "redis_sre_get_schedule" in tool_names
+        assert "redis_sre_create_schedule" in tool_names
+        assert "redis_sre_update_schedule" in tool_names
+        assert "redis_sre_enable_schedule" in tool_names
+        assert "redis_sre_disable_schedule" in tool_names
+        assert "redis_sre_delete_schedule" in tool_names
+        assert "redis_sre_run_schedule_now" in tool_names
+        assert "redis_sre_list_schedule_runs" in tool_names
 
 
 class TestDeepTriageTool:
@@ -1984,6 +2002,158 @@ class TestClusterTools:
 
         assert result == {"clusters_created": 1}
         mock_helper.assert_awaited_once_with(dry_run=True, force=False)
+
+
+class TestScheduleTools:
+    """Test MCP tools for schedule inspection and mutation."""
+
+    @pytest.mark.asyncio
+    async def test_list_schedules_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.list_schedules_helper",
+            new_callable=AsyncMock,
+            return_value={"schedules": []},
+        ) as mock_helper:
+            result = await redis_sre_list_schedules(limit=25)
+
+        assert result == {"schedules": []}
+        mock_helper.assert_awaited_once_with(limit=25)
+
+    @pytest.mark.asyncio
+    async def test_get_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.get_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1"},
+        ) as mock_helper:
+            result = await redis_sre_get_schedule("schedule-1")
+
+        assert result == {"id": "schedule-1"}
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_create_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.create_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "created"},
+        ) as mock_helper:
+            result = await redis_sre_create_schedule(
+                name="Nightly Check",
+                interval_type="hours",
+                interval_value=12,
+                instructions="Check memory usage",
+            )
+
+        assert result["status"] == "created"
+        mock_helper.assert_awaited_once_with(
+            name="Nightly Check",
+            interval_type="hours",
+            interval_value=12,
+            instructions="Check memory usage",
+            redis_instance_id=None,
+            description=None,
+            enabled=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.update_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "updated"},
+        ) as mock_helper:
+            result = await redis_sre_update_schedule("schedule-1", enabled=False)
+
+        assert result["status"] == "updated"
+        mock_helper.assert_awaited_once_with(
+            "schedule-1",
+            name=None,
+            description=None,
+            instructions=None,
+            redis_instance_id=None,
+            interval_type=None,
+            interval_value=None,
+            enabled=False,
+            recalc_next_run=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_enable_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.enable_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "enabled"},
+        ) as mock_helper:
+            result = await redis_sre_enable_schedule("schedule-1")
+
+        assert result["status"] == "enabled"
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_disable_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.disable_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "disabled"},
+        ) as mock_helper:
+            result = await redis_sre_disable_schedule("schedule-1")
+
+        assert result["status"] == "disabled"
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_delete_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.delete_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "deleted"},
+        ) as mock_helper:
+            result = await redis_sre_delete_schedule("schedule-1", confirm=True)
+
+        assert result["status"] == "deleted"
+        mock_helper.assert_awaited_once_with("schedule-1", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_run_schedule_now_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.run_schedule_now_helper",
+            new_callable=AsyncMock,
+            return_value={"schedule_id": "schedule-1", "status": "pending"},
+        ) as mock_helper:
+            result = await redis_sre_run_schedule_now("schedule-1")
+
+        assert result["status"] == "pending"
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_list_schedule_runs_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.list_schedule_runs_helper",
+            new_callable=AsyncMock,
+            return_value={"schedule_id": "schedule-1", "runs": []},
+        ) as mock_helper:
+            result = await redis_sre_list_schedule_runs("schedule-1", limit=10)
+
+        assert result == {"schedule_id": "schedule-1", "runs": []}
+        mock_helper.assert_awaited_once_with("schedule-1", limit=10)
+
+    @pytest.mark.asyncio
+    async def test_schedule_tool_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.create_schedule_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_create_schedule(
+                name="Nightly Check",
+                interval_type="hours",
+                interval_value=12,
+                instructions="Check memory usage",
+            )
+
+        assert result == {"error": "boom", "status": "failed"}
 
 
 class TestGetThreadTool:

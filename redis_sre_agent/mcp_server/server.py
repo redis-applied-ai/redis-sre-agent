@@ -660,6 +660,147 @@ async def redis_sre_backfill_instance_links(
 
 
 @mcp.tool()
+async def redis_sre_list_schedules(limit: int = 50) -> Dict[str, Any]:
+    """List configured schedules."""
+    from redis_sre_agent.core.schedule_helpers import list_schedules_helper
+
+    try:
+        return await list_schedules_helper(limit=limit)
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_get_schedule(schedule_id: str) -> Dict[str, Any]:
+    """Get a configured schedule by id."""
+    from redis_sre_agent.core.schedule_helpers import get_schedule_helper
+
+    try:
+        return await get_schedule_helper(schedule_id)
+    except Exception as e:
+        return {"error": str(e), "id": schedule_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_create_schedule(
+    name: str,
+    interval_type: str,
+    interval_value: int,
+    instructions: str,
+    redis_instance_id: Optional[str] = None,
+    description: Optional[str] = None,
+    enabled: bool = True,
+) -> Dict[str, Any]:
+    """Create a new schedule."""
+    from redis_sre_agent.core.schedule_helpers import create_schedule_helper
+
+    try:
+        return await create_schedule_helper(
+            name=name,
+            interval_type=interval_type,
+            interval_value=interval_value,
+            instructions=instructions,
+            redis_instance_id=redis_instance_id,
+            description=description,
+            enabled=enabled,
+        )
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_update_schedule(
+    schedule_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    instructions: Optional[str] = None,
+    redis_instance_id: Optional[str] = None,
+    interval_type: Optional[str] = None,
+    interval_value: Optional[int] = None,
+    enabled: Optional[bool] = None,
+    recalc_next_run: bool = True,
+) -> Dict[str, Any]:
+    """Update an existing schedule."""
+    from redis_sre_agent.core.schedule_helpers import update_schedule_helper
+
+    try:
+        return await update_schedule_helper(
+            schedule_id,
+            name=name,
+            description=description,
+            instructions=instructions,
+            redis_instance_id=redis_instance_id,
+            interval_type=interval_type,
+            interval_value=interval_value,
+            enabled=enabled,
+            recalc_next_run=recalc_next_run,
+        )
+    except Exception as e:
+        return {"error": str(e), "id": schedule_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_enable_schedule(schedule_id: str) -> Dict[str, Any]:
+    """Enable a schedule."""
+    from redis_sre_agent.core.schedule_helpers import enable_schedule_helper
+
+    try:
+        return await enable_schedule_helper(schedule_id)
+    except Exception as e:
+        return {"error": str(e), "id": schedule_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_disable_schedule(schedule_id: str) -> Dict[str, Any]:
+    """Disable a schedule."""
+    from redis_sre_agent.core.schedule_helpers import disable_schedule_helper
+
+    try:
+        return await disable_schedule_helper(schedule_id)
+    except Exception as e:
+        return {"error": str(e), "id": schedule_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_delete_schedule(
+    schedule_id: str,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Delete a schedule."""
+    from redis_sre_agent.core.schedule_helpers import delete_schedule_helper
+
+    try:
+        return await delete_schedule_helper(schedule_id, confirm=confirm)
+    except Exception as e:
+        return {"error": str(e), "id": schedule_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_run_schedule_now(schedule_id: str) -> Dict[str, Any]:
+    """Trigger a schedule to run immediately."""
+    from redis_sre_agent.core.schedule_helpers import run_schedule_now_helper
+
+    try:
+        return await run_schedule_now_helper(schedule_id)
+    except Exception as e:
+        return {"error": str(e), "id": schedule_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_list_schedule_runs(
+    schedule_id: str,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """List recent runs for a schedule."""
+    from redis_sre_agent.core.schedule_helpers import list_schedule_runs_helper
+
+    try:
+        return await list_schedule_runs_helper(schedule_id, limit=limit)
+    except Exception as e:
+        return {"error": str(e), "id": schedule_id, "status": "failed"}
+
+
+@mcp.tool()
 async def redis_sre_run_pipeline_scrape(
     artifacts_path: str = "./artifacts",
     scrapers: Optional[List[str]] = None,

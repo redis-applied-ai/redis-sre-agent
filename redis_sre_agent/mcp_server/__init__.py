@@ -42,6 +42,15 @@ Utility tools (return immediately):
 - redis_sre_update_cluster: Update a configured Redis cluster
 - redis_sre_delete_cluster: Delete a configured Redis cluster
 - redis_sre_backfill_instance_links: Backfill cluster links for existing instances
+- redis_sre_list_schedules: List configured schedules
+- redis_sre_get_schedule: Get a configured schedule by id
+- redis_sre_create_schedule: Create a new schedule
+- redis_sre_update_schedule: Update an existing schedule
+- redis_sre_enable_schedule: Enable a schedule
+- redis_sre_disable_schedule: Disable a schedule
+- redis_sre_delete_schedule: Delete a schedule with confirmation
+- redis_sre_run_schedule_now: Trigger a schedule immediately
+- redis_sre_list_schedule_runs: List recent runs for a schedule
 - redis_sre_list_indices: List RediSearch indices and their document counts
 - redis_sre_get_index_schema_status: Show schema drift status for one or all indices
 - redis_sre_recreate_indices: Recreate RediSearch indices with confirmation
