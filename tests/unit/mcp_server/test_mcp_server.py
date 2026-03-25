@@ -27,6 +27,8 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_get_task_citations,
     redis_sre_get_task_status,
     redis_sre_get_thread,
+    redis_sre_get_thread_sources,
+    redis_sre_get_thread_trace,
     redis_sre_knowledge_query,
     redis_sre_knowledge_search,
     redis_sre_list_instances,
@@ -82,6 +84,8 @@ class TestMCPServerSetup:
         assert "redis_sre_get_support_ticket" in tool_names
         assert "redis_sre_knowledge_query" in tool_names
         assert "redis_sre_get_thread" in tool_names
+        assert "redis_sre_get_thread_sources" in tool_names
+        assert "redis_sre_get_thread_trace" in tool_names
         assert "redis_sre_list_threads" in tool_names
         assert "redis_sre_get_task_status" in tool_names
         assert "redis_sre_get_task_citations" in tool_names
@@ -1840,6 +1844,88 @@ class TestListThreadsTool:
             latest = result["threads"][0]["latest_message"]
             assert len(latest) == 103  # 100 chars + "..."
             assert latest.endswith("...")
+
+
+class TestThreadInspectionTools:
+    """Test MCP tools for thread sources and trace inspection."""
+
+    @pytest.mark.asyncio
+    async def test_get_thread_sources_delegates_to_helper(self):
+        """Thread sources should delegate to the shared helper."""
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": None,
+            "fragments": [{"id": "frag-1"}],
+            "count": 1,
+        }
+
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_sources_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_thread_sources(thread_id="thread-123")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(thread_id="thread-123", task_id=None)
+
+    @pytest.mark.asyncio
+    async def test_get_thread_sources_error_payload(self):
+        """Unexpected failures should return a structured error payload."""
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_sources_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("lookup failed")
+
+            result = await redis_sre_get_thread_sources(thread_id="thread-123", task_id="task-1")
+
+        assert result["thread_id"] == "thread-123"
+        assert result["task_id"] == "task-1"
+        assert result["fragments"] == []
+        assert result["count"] == 0
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_get_thread_trace_delegates_to_helper(self):
+        """Thread trace should delegate to the shared helper."""
+        mock_result = {
+            "message_id": "msg-123",
+            "tool_calls": [{"name": "redis_info"}],
+            "tool_call_count": 1,
+            "citations": [],
+            "citation_count": 0,
+        }
+
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_trace_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_thread_trace(message_id="msg-123", include_tool_data=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(message_id="msg-123", include_tool_data=True)
+
+    @pytest.mark.asyncio
+    async def test_get_thread_trace_error_payload(self):
+        """Unexpected trace failures should return a structured error payload."""
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_trace_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("trace failed")
+
+            result = await redis_sre_get_thread_trace(message_id="msg-123")
+
+        assert result["message_id"] == "msg-123"
+        assert result["tool_calls"] == []
+        assert result["tool_call_count"] == 0
+        assert result["citations"] == []
+        assert result["citation_count"] == 0
+        assert "error" in result
 
 
 class TestGetTaskStatusTool:

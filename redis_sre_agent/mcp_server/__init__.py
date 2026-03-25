@@ -38,6 +38,8 @@ Utility tools (return immediately):
 - redis_sre_list_tasks: List tasks with status filtering
 - redis_sre_get_task_status: Check task progress, notifications, and results
 - redis_sre_get_thread: Get full conversation history and results
+- redis_sre_get_thread_sources: Get recorded knowledge fragments for a thread
+- redis_sre_get_thread_trace: Get tool-call trace and citations for a message
 """
 
 from redis_sre_agent.mcp_server.server import mcp

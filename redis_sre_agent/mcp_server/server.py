@@ -74,6 +74,8 @@ After calling any of these, you MUST:
 | `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
 | `redis_sre_list_instances()` | List available Redis instances |
 | `redis_sre_list_threads()` | List conversation threads (find previous chats) |
+| `redis_sre_get_thread_sources()` | Get recorded knowledge fragments for a thread |
+| `redis_sre_get_thread_trace()` | Get tool-call trace for a message |
 | `redis_sre_get_task_status()` | Check task progress |
 | `redis_sre_get_task_citations()` | Get task citation/tool-call data |
 | `redis_sre_get_task()` | Get a full task payload by task id |
@@ -121,6 +123,7 @@ while True:
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
 - Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
 - Use `redis_sre_get_task()` and `redis_sre_list_tasks()` for direct task inspection without polling semantics
+- Use `redis_sre_get_thread_sources()` and `redis_sre_get_thread_trace()` for thread provenance inspection
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
 - Use fragment tools when you need the full document or nearby chunk context for a search hit
 - Use task-backed pipeline and runbook tools for scrape/ingest/prepare/runbook/cleanup workflows
@@ -1547,6 +1550,58 @@ async def redis_sre_list_threads(
             "total": 0,
             "limit": limit,
             "offset": offset,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_thread_sources(
+    thread_id: str,
+    task_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get knowledge fragments recorded for a thread, optionally for one task turn."""
+    from redis_sre_agent.core.thread_inspection_helpers import get_thread_sources_helper
+
+    logger.info(f"MCP get_thread_sources: thread_id={thread_id}, task_id={task_id}")
+
+    try:
+        return await get_thread_sources_helper(thread_id=thread_id, task_id=task_id)
+    except Exception as e:
+        logger.error(f"Get thread sources failed: {e}")
+        return {
+            "error": str(e),
+            "thread_id": thread_id,
+            "task_id": task_id,
+            "fragments": [],
+            "count": 0,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_thread_trace(
+    message_id: str,
+    include_tool_data: bool = False,
+) -> Dict[str, Any]:
+    """Get the decision trace and derived citations for a single message."""
+    from redis_sre_agent.core.thread_inspection_helpers import get_thread_trace_helper
+
+    logger.info(
+        f"MCP get_thread_trace: message_id={message_id}, include_tool_data={include_tool_data}"
+    )
+
+    try:
+        return await get_thread_trace_helper(
+            message_id=message_id,
+            include_tool_data=include_tool_data,
+        )
+    except Exception as e:
+        logger.error(f"Get thread trace failed: {e}")
+        return {
+            "error": str(e),
+            "message_id": message_id,
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "citations": [],
+            "citation_count": 0,
         }
 
 
