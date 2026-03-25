@@ -801,6 +801,100 @@ async def redis_sre_list_schedule_runs(
 
 
 @mcp.tool()
+async def redis_sre_reindex_threads(
+    drop: bool = False,
+    limit: int = 0,
+    start: int = 0,
+) -> Dict[str, Any]:
+    """Recreate the threads index and backfill search documents."""
+    from redis_sre_agent.core.thread_maintenance_helpers import reindex_threads_helper
+
+    try:
+        return await reindex_threads_helper(drop=drop, limit=limit, start=start)
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_backfill_threads(
+    limit: int = 0,
+    start: int = 0,
+) -> Dict[str, Any]:
+    """Backfill the threads index from existing thread data."""
+    from redis_sre_agent.core.thread_maintenance_helpers import backfill_threads_helper
+
+    try:
+        return await backfill_threads_helper(limit=limit, start=start)
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_backfill_scheduled_thread_subjects(
+    limit: int = 0,
+    start: int = 0,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Backfill scheduled thread subjects and tags."""
+    from redis_sre_agent.core.thread_maintenance_helpers import (
+        backfill_scheduled_thread_subjects_helper,
+    )
+
+    try:
+        return await backfill_scheduled_thread_subjects_helper(
+            limit=limit,
+            start=start,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_backfill_empty_thread_subjects(
+    limit: int = 0,
+    start: int = 0,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Backfill empty or placeholder thread subjects."""
+    from redis_sre_agent.core.thread_maintenance_helpers import (
+        backfill_empty_thread_subjects_helper,
+    )
+
+    try:
+        return await backfill_empty_thread_subjects_helper(
+            limit=limit,
+            start=start,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_purge_threads(
+    older_than: Optional[str] = None,
+    purge_all: bool = False,
+    include_tasks: bool = True,
+    dry_run: bool = False,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Purge threads in bulk with safeguards."""
+    from redis_sre_agent.core.thread_maintenance_helpers import purge_threads_helper
+
+    try:
+        return await purge_threads_helper(
+            older_than=older_than,
+            purge_all=purge_all,
+            include_tasks=include_tasks,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
 async def redis_sre_run_pipeline_scrape(
     artifacts_path: str = "./artifacts",
     scrapers: Optional[List[str]] = None,

@@ -6,7 +6,10 @@ import pytest
 
 from redis_sre_agent.mcp_server.server import (
     mcp,
+    redis_sre_backfill_empty_thread_subjects,
     redis_sre_backfill_instance_links,
+    redis_sre_backfill_scheduled_thread_subjects,
+    redis_sre_backfill_threads,
     redis_sre_cache_clear,
     redis_sre_cache_stats,
     redis_sre_cleanup_pipeline_batches,
@@ -55,8 +58,10 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_list_threads,
     redis_sre_prepare_source_documents,
     redis_sre_purge_tasks,
+    redis_sre_purge_threads,
     redis_sre_query,
     redis_sre_recreate_indices,
+    redis_sre_reindex_threads,
     redis_sre_run_pipeline_full,
     redis_sre_run_pipeline_ingest,
     redis_sre_run_pipeline_scrape,
@@ -152,6 +157,11 @@ class TestMCPServerSetup:
         assert "redis_sre_delete_schedule" in tool_names
         assert "redis_sre_run_schedule_now" in tool_names
         assert "redis_sre_list_schedule_runs" in tool_names
+        assert "redis_sre_reindex_threads" in tool_names
+        assert "redis_sre_backfill_threads" in tool_names
+        assert "redis_sre_backfill_scheduled_thread_subjects" in tool_names
+        assert "redis_sre_backfill_empty_thread_subjects" in tool_names
+        assert "redis_sre_purge_threads" in tool_names
 
 
 class TestDeepTriageTool:
@@ -2152,6 +2162,102 @@ class TestScheduleTools:
                 interval_value=12,
                 instructions="Check memory usage",
             )
+
+        assert result == {"error": "boom", "status": "failed"}
+
+
+class TestThreadMaintenanceTools:
+    """Test MCP tools for thread maintenance workflows."""
+
+    @pytest.mark.asyncio
+    async def test_reindex_threads_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.reindex_threads_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "completed", "processed": 2},
+        ) as mock_helper:
+            result = await redis_sre_reindex_threads(drop=True, limit=5, start=10)
+
+        assert result["processed"] == 2
+        mock_helper.assert_awaited_once_with(drop=True, limit=5, start=10)
+
+    @pytest.mark.asyncio
+    async def test_backfill_threads_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.backfill_threads_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "completed", "processed": 2},
+        ) as mock_helper:
+            result = await redis_sre_backfill_threads(limit=5, start=10)
+
+        assert result["processed"] == 2
+        mock_helper.assert_awaited_once_with(limit=5, start=10)
+
+    @pytest.mark.asyncio
+    async def test_backfill_scheduled_thread_subjects_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.backfill_scheduled_thread_subjects_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "dry_run", "subjects_updated": 2},
+        ) as mock_helper:
+            result = await redis_sre_backfill_scheduled_thread_subjects(
+                limit=5,
+                start=10,
+                dry_run=True,
+            )
+
+        assert result["subjects_updated"] == 2
+        mock_helper.assert_awaited_once_with(limit=5, start=10, dry_run=True)
+
+    @pytest.mark.asyncio
+    async def test_backfill_empty_thread_subjects_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.backfill_empty_thread_subjects_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "dry_run", "subjects_updated": 2},
+        ) as mock_helper:
+            result = await redis_sre_backfill_empty_thread_subjects(
+                limit=5,
+                start=10,
+                dry_run=True,
+            )
+
+        assert result["subjects_updated"] == 2
+        mock_helper.assert_awaited_once_with(limit=5, start=10, dry_run=True)
+
+    @pytest.mark.asyncio
+    async def test_purge_threads_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.purge_threads_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "purged", "deleted": 2},
+        ) as mock_helper:
+            result = await redis_sre_purge_threads(
+                older_than="7d",
+                purge_all=False,
+                include_tasks=True,
+                dry_run=False,
+                confirm=True,
+            )
+
+        assert result["deleted"] == 2
+        mock_helper.assert_awaited_once_with(
+            older_than="7d",
+            purge_all=False,
+            include_tasks=True,
+            dry_run=False,
+            confirm=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_thread_maintenance_tool_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.reindex_threads_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_reindex_threads()
 
         assert result == {"error": "boom", "status": "failed"}
 

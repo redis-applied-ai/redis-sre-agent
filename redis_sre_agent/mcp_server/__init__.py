@@ -51,6 +51,11 @@ Utility tools (return immediately):
 - redis_sre_delete_schedule: Delete a schedule with confirmation
 - redis_sre_run_schedule_now: Trigger a schedule immediately
 - redis_sre_list_schedule_runs: List recent runs for a schedule
+- redis_sre_reindex_threads: Recreate the threads index and backfill documents
+- redis_sre_backfill_threads: Backfill the threads index from existing thread data
+- redis_sre_backfill_scheduled_thread_subjects: Set schedule-derived subjects and tags
+- redis_sre_backfill_empty_thread_subjects: Derive subjects for empty/placeholder threads
+- redis_sre_purge_threads: Purge threads in bulk with safeguards
 - redis_sre_list_indices: List RediSearch indices and their document counts
 - redis_sre_get_index_schema_status: Show schema drift status for one or all indices
 - redis_sre_recreate_indices: Recreate RediSearch indices with confirmation
