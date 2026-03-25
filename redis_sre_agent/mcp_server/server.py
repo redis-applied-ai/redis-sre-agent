@@ -1302,6 +1302,88 @@ def redis_sre_version() -> Dict[str, str]:
 
 
 @mcp.tool()
+async def redis_sre_list_indices(index_name: Optional[str] = None) -> Dict[str, Any]:
+    """List known RediSearch indices and their current status."""
+    from redis_sre_agent.core.index_helpers import list_indices_helper
+
+    logger.info("MCP list_indices: index_name=%s", index_name)
+
+    try:
+        return await list_indices_helper(index_name=index_name)
+    except Exception as e:
+        logger.error("List indices failed: %s", e)
+        return {
+            "success": False,
+            "status": "failed",
+            "error": str(e),
+            "index_name": index_name or "all",
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_index_schema_status(index_name: Optional[str] = None) -> Dict[str, Any]:
+    """Show whether index schemas match the current code definitions."""
+    from redis_sre_agent.core.index_helpers import get_index_schema_status_helper
+
+    logger.info("MCP get_index_schema_status: index_name=%s", index_name)
+
+    try:
+        return await get_index_schema_status_helper(index_name=index_name)
+    except Exception as e:
+        logger.error("Get index schema status failed: %s", e)
+        return {
+            "success": False,
+            "status": "failed",
+            "error": str(e),
+            "index_name": index_name or "all",
+        }
+
+
+@mcp.tool()
+async def redis_sre_recreate_indices(
+    index_name: Optional[str] = None,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Drop and recreate RediSearch indices after explicit confirmation."""
+    from redis_sre_agent.core.index_helpers import recreate_indices_helper
+
+    logger.info("MCP recreate_indices: index_name=%s confirm=%s", index_name, confirm)
+
+    try:
+        return await recreate_indices_helper(index_name=index_name, confirm=confirm)
+    except Exception as e:
+        logger.error("Recreate indices failed: %s", e)
+        return {
+            "success": False,
+            "status": "failed",
+            "error": str(e),
+            "index_name": index_name or "all",
+        }
+
+
+@mcp.tool()
+async def redis_sre_sync_index_schemas(
+    index_name: Optional[str] = None,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Create or recreate only drifted indices after explicit confirmation."""
+    from redis_sre_agent.core.index_helpers import sync_index_schemas_helper
+
+    logger.info("MCP sync_index_schemas: index_name=%s confirm=%s", index_name, confirm)
+
+    try:
+        return await sync_index_schemas_helper(index_name=index_name, confirm=confirm)
+    except Exception as e:
+        logger.error("Sync index schemas failed: %s", e)
+        return {
+            "success": False,
+            "status": "failed",
+            "error": str(e),
+            "index_name": index_name or "all",
+        }
+
+
+@mcp.tool()
 async def redis_sre_get_support_ticket(ticket_id: str) -> Dict[str, Any]:
     """Retrieve complete support-ticket content by ticket id.
 

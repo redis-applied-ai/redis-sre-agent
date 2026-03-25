@@ -35,6 +35,10 @@ Utility tools (return immediately):
 - redis_sre_cache_stats: Show tool cache statistics
 - redis_sre_cache_clear: Clear cached tool outputs
 - redis_sre_version: Show Redis SRE Agent version metadata
+- redis_sre_list_indices: List RediSearch indices and their document counts
+- redis_sre_get_index_schema_status: Show schema drift status for one or all indices
+- redis_sre_recreate_indices: Recreate RediSearch indices with confirmation
+- redis_sre_sync_index_schemas: Recreate only missing or drifted indices with confirmation
 - redis_sre_list_instances: List configured Redis instances
 - redis_sre_get_instance: Get a configured Redis instance by id
 - redis_sre_update_instance: Update a configured Redis instance

@@ -20,6 +20,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_general_chat,
     redis_sre_generate_pipeline_runbooks,
     redis_sre_generate_runbook,
+    redis_sre_get_index_schema_status,
     redis_sre_get_instance,
     redis_sre_get_knowledge_fragments,
     redis_sre_get_pipeline_batch,
@@ -35,16 +36,19 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_get_thread_trace,
     redis_sre_knowledge_query,
     redis_sre_knowledge_search,
+    redis_sre_list_indices,
     redis_sre_list_instances,
     redis_sre_list_support_packages,
     redis_sre_list_tasks,
     redis_sre_list_threads,
     redis_sre_prepare_source_documents,
     redis_sre_purge_tasks,
+    redis_sre_recreate_indices,
     redis_sre_run_pipeline_full,
     redis_sre_run_pipeline_ingest,
     redis_sre_run_pipeline_scrape,
     redis_sre_search_support_tickets,
+    redis_sre_sync_index_schemas,
     redis_sre_test_instance,
     redis_sre_test_redis_url,
     redis_sre_update_instance,
@@ -112,6 +116,10 @@ class TestMCPServerSetup:
         assert "redis_sre_cache_stats" in tool_names
         assert "redis_sre_cache_clear" in tool_names
         assert "redis_sre_version" in tool_names
+        assert "redis_sre_list_indices" in tool_names
+        assert "redis_sre_get_index_schema_status" in tool_names
+        assert "redis_sre_recreate_indices" in tool_names
+        assert "redis_sre_sync_index_schemas" in tool_names
 
 
 class TestDeepTriageTool:
@@ -1692,6 +1700,138 @@ class TestCacheAndVersionTools:
             result = await redis_sre_delete_instance(instance_id="redis-prod-1", confirm=True)
 
         assert result == {"error": "boom", "id": "redis-prod-1", "status": "failed"}
+
+
+class TestIndexTools:
+    """Test MCP tools for index inspection and maintenance."""
+
+    @pytest.mark.asyncio
+    async def test_list_indices_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": []}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.list_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_list_indices(index_name="knowledge")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge")
+
+    @pytest.mark.asyncio
+    async def test_list_indices_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.list_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_list_indices(index_name="knowledge")
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_index_schema_status_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": {}}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.get_index_schema_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_index_schema_status(index_name="knowledge")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge")
+
+    @pytest.mark.asyncio
+    async def test_get_index_schema_status_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.get_index_schema_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_get_index_schema_status(index_name="knowledge")
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
+
+    @pytest.mark.asyncio
+    async def test_recreate_indices_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": {"knowledge": "recreated"}}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.recreate_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_recreate_indices(index_name="knowledge", confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_recreate_indices_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.recreate_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_recreate_indices(index_name="knowledge", confirm=True)
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
+
+    @pytest.mark.asyncio
+    async def test_sync_index_schemas_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": {"knowledge": {"action": "created"}}}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.sync_index_schemas_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_sync_index_schemas(index_name="knowledge", confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_sync_index_schemas_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.sync_index_schemas_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_sync_index_schemas(index_name="knowledge", confirm=True)
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
 
 
 class TestGetThreadTool:
