@@ -9,8 +9,13 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_create_instance,
     redis_sre_database_chat,
     redis_sre_deep_triage,
+    redis_sre_delete_support_package,
     redis_sre_delete_task,
+    redis_sre_extract_support_package,
     redis_sre_general_chat,
+    redis_sre_get_pipeline_batch,
+    redis_sre_get_pipeline_status,
+    redis_sre_get_support_package_info,
     redis_sre_get_support_ticket,
     redis_sre_get_task_citations,
     redis_sre_get_task_status,
@@ -18,8 +23,10 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_knowledge_query,
     redis_sre_knowledge_search,
     redis_sre_list_instances,
+    redis_sre_list_support_packages,
     redis_sre_list_threads,
     redis_sre_search_support_tickets,
+    redis_sre_upload_support_package,
 )
 
 
@@ -42,6 +49,13 @@ class TestMCPServerSetup:
         assert "redis_sre_general_chat" in tool_names
         assert "redis_sre_database_chat" in tool_names
         assert "redis_sre_knowledge_search" in tool_names
+        assert "redis_sre_get_pipeline_status" in tool_names
+        assert "redis_sre_get_pipeline_batch" in tool_names
+        assert "redis_sre_upload_support_package" in tool_names
+        assert "redis_sre_list_support_packages" in tool_names
+        assert "redis_sre_extract_support_package" in tool_names
+        assert "redis_sre_delete_support_package" in tool_names
+        assert "redis_sre_get_support_package_info" in tool_names
         assert "redis_sre_search_support_tickets" in tool_names
         assert "redis_sre_get_support_ticket" in tool_names
         assert "redis_sre_knowledge_query" in tool_names
@@ -387,6 +401,240 @@ class TestKnowledgeSearchTool:
             assert "error" in result
             assert result["results"] == []
             assert result["total_results"] == 0
+
+
+class TestPipelineInspectionTools:
+    """Test pipeline inspection MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_status_success(self):
+        """Pipeline status returns helper payload."""
+        mock_result = {
+            "artifacts_path": "/tmp/artifacts",
+            "current_batch_date": "2026-03-25",
+            "available_batches": ["2026-03-24", "2026-03-25"],
+            "scrapers": {"redis_docs": {"source": "redis.io"}},
+            "ingestion": {"batches_ingested": 1},
+        }
+
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_pipeline_status()
+
+            assert result["current_batch_date"] == "2026-03-25"
+            assert result["available_batches"] == ["2026-03-24", "2026-03-25"]
+            mock_helper.assert_called_once_with(artifacts_path="./artifacts")
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_status_error_handling(self):
+        """Pipeline status returns structured error payload on failure."""
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("status failed")
+
+            result = await redis_sre_get_pipeline_status(artifacts_path="/tmp/artifacts")
+
+            assert result["artifacts_path"] == "/tmp/artifacts"
+            assert result["available_batches"] == []
+            assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_batch_success(self):
+        """Pipeline batch returns helper payload."""
+        mock_result = {
+            "batch_date": "2026-03-25",
+            "artifacts_path": "/tmp/artifacts",
+            "total_documents": 12,
+            "categories": {"oss": 10},
+            "document_types": {"documentation": 8},
+            "ingestion": {"available": True, "status": "success", "chunks_indexed": 42},
+        }
+
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_batch_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_pipeline_batch(batch_date="2026-03-25")
+
+            assert result["batch_date"] == "2026-03-25"
+            assert result["ingestion"]["status"] == "success"
+            mock_helper.assert_called_once_with(
+                batch_date="2026-03-25", artifacts_path="./artifacts"
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_batch_error_handling(self):
+        """Pipeline batch returns structured error payload on failure."""
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_batch_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("batch failed")
+
+            result = await redis_sre_get_pipeline_batch(
+                batch_date="2026-03-25",
+                artifacts_path="/tmp/artifacts",
+            )
+
+            assert result["batch_date"] == "2026-03-25"
+            assert result["artifacts_path"] == "/tmp/artifacts"
+            assert "error" in result
+
+
+class TestSupportPackageManagementTools:
+    """Test support-package management MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_upload_support_package_success(self, tmp_path):
+        """Upload returns package id and status."""
+        archive = tmp_path / "support-package.tar.gz"
+        archive.write_bytes(b"dummy")
+
+        mock_manager = AsyncMock()
+        mock_manager.upload.return_value = "pkg-123"
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_upload_support_package(file_path=str(archive))
+
+            assert result == {
+                "package_id": "pkg-123",
+                "filename": "support-package.tar.gz",
+                "status": "uploaded",
+            }
+            mock_manager.upload.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_upload_support_package_missing_file(self):
+        """Upload validates file existence."""
+        result = await redis_sre_upload_support_package(file_path="/tmp/does-not-exist.tar.gz")
+
+        assert result["status"] == "failed"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_list_support_packages_success(self):
+        """List support packages returns serialized metadata."""
+        from datetime import datetime, timezone
+
+        from redis_sre_agent.tools.support_package.storage.protocols import PackageMetadata
+
+        mock_manager = AsyncMock()
+        mock_manager.list_packages.return_value = [
+            PackageMetadata(
+                package_id="pkg-123",
+                filename="support-package.tar.gz",
+                size_bytes=1024,
+                uploaded_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
+                storage_path="/tmp/pkg-123",
+                checksum="abc123",
+            )
+        ]
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_list_support_packages()
+
+            assert result["total"] == 1
+            assert result["packages"][0]["package_id"] == "pkg-123"
+            assert result["packages"][0]["size_bytes"] == 1024
+
+    @pytest.mark.asyncio
+    async def test_extract_support_package_success(self):
+        """Extract returns output path."""
+        from pathlib import Path
+
+        mock_manager = AsyncMock()
+        mock_manager.extract.return_value = Path("/tmp/extracted/pkg-123")
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_extract_support_package(package_id="pkg-123")
+
+            assert result == {
+                "package_id": "pkg-123",
+                "path": "/tmp/extracted/pkg-123",
+                "status": "extracted",
+            }
+
+    @pytest.mark.asyncio
+    async def test_delete_support_package_requires_confirm(self):
+        """Delete is gated by explicit confirmation."""
+        result = await redis_sre_delete_support_package(package_id="pkg-123")
+
+        assert result["status"] == "failed"
+        assert "confirm" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_support_package_success(self):
+        """Delete returns deleted status."""
+        mock_manager = AsyncMock()
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_delete_support_package(package_id="pkg-123", confirm=True)
+
+            assert result == {"package_id": "pkg-123", "status": "deleted"}
+            mock_manager.delete.assert_awaited_once_with("pkg-123")
+
+    @pytest.mark.asyncio
+    async def test_get_support_package_info_success(self):
+        """Info returns metadata plus extraction state."""
+        from datetime import datetime, timezone
+
+        from redis_sre_agent.tools.support_package.storage.protocols import PackageMetadata
+
+        mock_manager = AsyncMock()
+        mock_manager.get_metadata.return_value = PackageMetadata(
+            package_id="pkg-123",
+            filename="support-package.tar.gz",
+            size_bytes=2048,
+            uploaded_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
+            storage_path="/tmp/pkg-123",
+            checksum="abc123",
+        )
+        mock_manager.is_extracted.return_value = True
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_get_support_package_info(package_id="pkg-123")
+
+            assert result["package_id"] == "pkg-123"
+            assert result["is_extracted"] is True
+            assert result["checksum"] == "abc123"
+
+    @pytest.mark.asyncio
+    async def test_get_support_package_info_not_found(self):
+        """Info returns not_found payload when metadata is missing."""
+        mock_manager = AsyncMock()
+        mock_manager.get_metadata.return_value = None
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_get_support_package_info(package_id="pkg-123")
+
+            assert result["status"] == "not_found"
+            assert result["package_id"] == "pkg-123"
 
 
 class TestKnowledgeQueryTool:

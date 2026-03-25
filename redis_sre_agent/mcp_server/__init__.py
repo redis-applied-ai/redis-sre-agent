@@ -13,6 +13,13 @@ Task-based tools (require polling redis_sre_get_task_status):
 
 Utility tools (return immediately):
 - redis_sre_knowledge_search: Direct search of knowledge base docs
+- redis_sre_get_pipeline_status: Show pipeline artifacts and recent ingestion state
+- redis_sre_get_pipeline_batch: Show manifest and ingestion details for a batch
+- redis_sre_list_support_packages: List uploaded support packages
+- redis_sre_get_support_package_info: Get metadata for a support package
+- redis_sre_upload_support_package: Upload a support package
+- redis_sre_extract_support_package: Extract a support package
+- redis_sre_delete_support_package: Delete a support package
 - redis_sre_search_support_tickets: Search support-ticket docs only
 - redis_sre_get_support_ticket: Get full support-ticket content by ticket id
 - redis_sre_list_instances: List configured Redis instances

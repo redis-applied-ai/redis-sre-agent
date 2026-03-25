@@ -53,6 +53,13 @@ After calling any of these, you MUST:
 | Tool | Purpose |
 |------|---------|
 | `redis_sre_knowledge_search()` | Direct search of docs (raw results) |
+| `redis_sre_get_pipeline_status()` | Show pipeline artifacts and recent ingestion state |
+| `redis_sre_get_pipeline_batch()` | Show manifest and ingestion details for a batch |
+| `redis_sre_list_support_packages()` | List uploaded support packages |
+| `redis_sre_get_support_package_info()` | Get metadata for a support package |
+| `redis_sre_upload_support_package()` | Upload a support package |
+| `redis_sre_extract_support_package()` | Extract a support package |
+| `redis_sre_delete_support_package()` | Delete a support package |
 | `redis_sre_search_support_tickets()` | Search support-ticket docs only |
 | `redis_sre_get_support_ticket()` | Get full support-ticket content by ticket id |
 | `redis_sre_list_instances()` | List available Redis instances |
@@ -102,6 +109,8 @@ while True:
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
 - Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
+- Use `redis_sre_get_pipeline_status()` and `redis_sre_get_pipeline_batch()` for ingestion inspection
+- Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
 - Use `redis_sre_list_instances()` to find instance IDs before calling other tools
 - Check the `updates` array to show users what the agent is doing""",
@@ -443,6 +452,269 @@ async def redis_sre_database_chat(
             "error": str(e),
             "status": "failed",
             "message": f"Failed to start database chat: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_list_support_packages(limit: int = 100) -> Dict[str, Any]:
+    """List uploaded support packages.
+
+    Args:
+        limit: Maximum number of packages to return.
+
+    Returns:
+        packages: Serialized package metadata
+        total: Number of returned packages
+    """
+    from redis_sre_agent.core.support_package_helpers import get_support_package_manager
+
+    logger.info("MCP list_support_packages: limit=%s", limit)
+
+    try:
+        limit = max(1, limit)
+        manager = get_support_package_manager()
+        packages = await manager.list_packages()
+        return {
+            "packages": [pkg.model_dump(mode="json") for pkg in packages[:limit]],
+            "total": min(len(packages), limit),
+            "limit": limit,
+        }
+    except Exception as e:
+        logger.error("List support packages failed: %s", e)
+        return {
+            "error": str(e),
+            "packages": [],
+            "total": 0,
+            "limit": limit,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_support_package_info(package_id: str) -> Dict[str, Any]:
+    """Get information about a support package.
+
+    Args:
+        package_id: Support package id.
+
+    Returns:
+        Serialized metadata plus extraction state.
+    """
+    from redis_sre_agent.core.support_package_helpers import get_support_package_manager
+
+    logger.info("MCP get_support_package_info: package_id=%s", package_id)
+
+    try:
+        manager = get_support_package_manager()
+        metadata = await manager.get_metadata(package_id)
+        if not metadata:
+            return {
+                "package_id": package_id,
+                "status": "not_found",
+                "error": "Package not found",
+            }
+
+        payload = metadata.model_dump(mode="json")
+        payload["is_extracted"] = await manager.is_extracted(package_id)
+        return payload
+    except Exception as e:
+        logger.error("Get support package info failed: %s", e)
+        return {
+            "package_id": package_id,
+            "status": "failed",
+            "error": str(e),
+        }
+
+
+@mcp.tool()
+async def redis_sre_upload_support_package(
+    file_path: str, package_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Upload a support package.
+
+    Args:
+        file_path: Local path to a `.tar.gz` support package.
+        package_id: Optional custom package id.
+
+    Returns:
+        package_id: Stored package id
+        filename: Original filename
+        status: Upload status
+    """
+    from pathlib import Path
+
+    from redis_sre_agent.core.support_package_helpers import get_support_package_manager
+
+    logger.info("MCP upload_support_package: file_path=%s, package_id=%s", file_path, package_id)
+
+    try:
+        source_path = Path(file_path)
+        if not source_path.exists():
+            return {
+                "file_path": file_path,
+                "status": "failed",
+                "error": f"File not found: {file_path}",
+            }
+
+        manager = get_support_package_manager()
+        result_id = await manager.upload(source_path, package_id=package_id)
+        return {
+            "package_id": result_id,
+            "filename": source_path.name,
+            "status": "uploaded",
+        }
+    except Exception as e:
+        logger.error("Upload support package failed: %s", e)
+        return {
+            "file_path": file_path,
+            "status": "failed",
+            "error": str(e),
+        }
+
+
+@mcp.tool()
+async def redis_sre_extract_support_package(package_id: str) -> Dict[str, Any]:
+    """Extract a support package.
+
+    Args:
+        package_id: Support package id.
+
+    Returns:
+        package_id: Support package id
+        path: Extracted directory
+        status: Extraction status
+    """
+    from redis_sre_agent.core.support_package_helpers import get_support_package_manager
+
+    logger.info("MCP extract_support_package: package_id=%s", package_id)
+
+    try:
+        manager = get_support_package_manager()
+        extract_path = await manager.extract(package_id)
+        return {
+            "package_id": package_id,
+            "path": str(extract_path),
+            "status": "extracted",
+        }
+    except Exception as e:
+        logger.error("Extract support package failed: %s", e)
+        return {
+            "package_id": package_id,
+            "status": "failed",
+            "error": str(e),
+        }
+
+
+@mcp.tool()
+async def redis_sre_delete_support_package(
+    package_id: str, confirm: bool = False
+) -> Dict[str, Any]:
+    """Delete a support package.
+
+    Args:
+        package_id: Support package id.
+        confirm: Explicit confirmation for deletion.
+
+    Returns:
+        package_id: Support package id
+        status: Delete status
+    """
+    from redis_sre_agent.core.support_package_helpers import get_support_package_manager
+
+    logger.info("MCP delete_support_package: package_id=%s confirm=%s", package_id, confirm)
+
+    if not confirm:
+        return {
+            "package_id": package_id,
+            "status": "failed",
+            "error": "Deletion requires confirm=true",
+        }
+
+    try:
+        manager = get_support_package_manager()
+        await manager.delete(package_id)
+        return {
+            "package_id": package_id,
+            "status": "deleted",
+        }
+    except Exception as e:
+        logger.error("Delete support package failed: %s", e)
+        return {
+            "package_id": package_id,
+            "status": "failed",
+            "error": str(e),
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_pipeline_status(artifacts_path: str = "./artifacts") -> Dict[str, Any]:
+    """Get pipeline status and available batches.
+
+    Use this to inspect the current ingestion artifact state without shell access.
+
+    Args:
+        artifacts_path: Artifact root path. Defaults to './artifacts'.
+
+    Returns:
+        artifacts_path: Root artifact path
+        current_batch_date: Today's batch folder name
+        available_batches: Known batch directories
+        scrapers: Configured scraper metadata
+        ingestion: Recent ingestion summary
+    """
+    from redis_sre_agent.core.pipeline_helpers import get_pipeline_status_helper
+
+    logger.info("MCP get_pipeline_status: artifacts_path=%s", artifacts_path)
+
+    try:
+        result = await get_pipeline_status_helper(artifacts_path=artifacts_path)
+        result["artifacts_path"] = str(result.get("artifacts_path", artifacts_path))
+        return result
+    except Exception as e:
+        logger.error("Get pipeline status failed: %s", e)
+        return {
+            "error": str(e),
+            "artifacts_path": artifacts_path,
+            "available_batches": [],
+            "scrapers": {},
+            "ingestion": {},
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_pipeline_batch(
+    batch_date: str, artifacts_path: str = "./artifacts"
+) -> Dict[str, Any]:
+    """Get detailed information for a specific pipeline batch.
+
+    This exposes the batch manifest and any ingestion summary for the target batch.
+
+    Args:
+        batch_date: Batch date in YYYY-MM-DD format
+        artifacts_path: Artifact root path. Defaults to './artifacts'.
+
+    Returns:
+        batch_date: Requested batch date
+        total_documents: Number of documents in the batch manifest
+        categories: Category counts for the batch
+        document_types: Document-type counts for the batch
+        ingestion: Ingestion status/details if present
+    """
+    from redis_sre_agent.core.pipeline_helpers import get_pipeline_batch_helper
+
+    logger.info(
+        "MCP get_pipeline_batch: batch_date=%s, artifacts_path=%s",
+        batch_date,
+        artifacts_path,
+    )
+
+    try:
+        return await get_pipeline_batch_helper(batch_date=batch_date, artifacts_path=artifacts_path)
+    except Exception as e:
+        logger.error("Get pipeline batch failed: %s", e)
+        return {
+            "error": str(e),
+            "batch_date": batch_date,
+            "artifacts_path": artifacts_path,
         }
 
 
