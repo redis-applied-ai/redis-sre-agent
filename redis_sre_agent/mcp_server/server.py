@@ -89,6 +89,7 @@ After calling any of these, you MUST:
 | `redis_sre_get_task_citations()` | Get task citation/tool-call data |
 | `redis_sre_get_task()` | Get a full task payload by task id |
 | `redis_sre_list_tasks()` | List tasks with status filtering |
+| `redis_sre_purge_tasks()` | Purge tasks in bulk with safeguards |
 | `redis_sre_get_thread()` | Get conversation history |
 
 ## Standard Workflow
@@ -132,6 +133,7 @@ while True:
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
 - Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
 - Use `redis_sre_get_task()` and `redis_sre_list_tasks()` for direct task inspection without polling semantics
+- Use `redis_sre_purge_tasks()` for bulk task cleanup with explicit confirmation
 - Use `redis_sre_get_thread_sources()` and `redis_sre_get_thread_trace()` for thread provenance inspection
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
 - Use fragment tools when you need the full document or nearby chunk context for a search hit
@@ -1730,6 +1732,42 @@ async def redis_sre_list_tasks(
             "error": str(e),
             "status": "failed",
             "message": f"Failed to list tasks: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_purge_tasks(
+    status: Optional[str] = None,
+    older_than: Optional[str] = None,
+    purge_all: bool = False,
+    dry_run: bool = False,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Purge tasks in bulk with safeguards and optional dry-run mode."""
+    from redis_sre_agent.core.task_purge_helpers import purge_tasks_helper
+
+    logger.info(
+        "MCP purge_tasks: status=%s older_than=%s purge_all=%s dry_run=%s confirm=%s",
+        status,
+        older_than,
+        purge_all,
+        dry_run,
+        confirm,
+    )
+
+    try:
+        return await purge_tasks_helper(
+            status=status,
+            older_than=older_than,
+            purge_all=purge_all,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
+    except Exception as e:
+        logger.error("Purge tasks failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
         }
 
 

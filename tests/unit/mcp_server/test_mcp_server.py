@@ -40,6 +40,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_list_tasks,
     redis_sre_list_threads,
     redis_sre_prepare_source_documents,
+    redis_sre_purge_tasks,
     redis_sre_run_pipeline_full,
     redis_sre_run_pipeline_ingest,
     redis_sre_run_pipeline_scrape,
@@ -100,6 +101,7 @@ class TestMCPServerSetup:
         assert "redis_sre_get_task_citations" in tool_names
         assert "redis_sre_get_task" in tool_names
         assert "redis_sre_list_tasks" in tool_names
+        assert "redis_sre_purge_tasks" in tool_names
         assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
         assert "redis_sre_create_instance" in tool_names
@@ -2442,3 +2444,46 @@ class TestDeleteTaskTool:
             assert result["status"] == "error"
             assert result["task_id"] == "task-err"
             assert "boom" in result["error"]
+
+
+class TestPurgeTasksTool:
+    """Test the redis_sre_purge_tasks MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_purge_tasks_delegates_to_helper(self):
+        mock_result = {"status": "purged", "deleted": 2}
+
+        with patch(
+            "redis_sre_agent.core.task_purge_helpers.purge_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_purge_tasks(
+                status="done",
+                older_than="7d",
+                purge_all=False,
+                dry_run=False,
+                confirm=True,
+            )
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(
+            status="done",
+            older_than="7d",
+            purge_all=False,
+            dry_run=False,
+            confirm=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_purge_tasks_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.task_purge_helpers.purge_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_purge_tasks(confirm=True, purge_all=True)
+
+        assert result == {"error": "boom", "status": "failed"}

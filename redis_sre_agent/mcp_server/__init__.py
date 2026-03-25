@@ -44,6 +44,7 @@ Utility tools (return immediately):
 - redis_sre_create_instance: Create a new Redis instance configuration
 - redis_sre_get_task: Get a full task payload by task ID
 - redis_sre_list_tasks: List tasks with status filtering
+- redis_sre_purge_tasks: Purge tasks in bulk with safeguards
 - redis_sre_get_task_status: Check task progress, notifications, and results
 - redis_sre_get_thread: Get full conversation history and results
 - redis_sre_get_thread_sources: Get recorded knowledge fragments for a thread
