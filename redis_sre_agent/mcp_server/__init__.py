@@ -16,6 +16,8 @@ Task-based tools (require polling redis_sre_get_task_status):
 - redis_sre_prepare_source_documents: Prepare and optionally ingest source documents
 - redis_sre_generate_pipeline_runbooks: Run pipeline runbook operations in the background
 - redis_sre_cleanup_pipeline_batches: Remove old pipeline batches in the background
+- redis_sre_generate_runbook: Generate a Redis SRE runbook in the background
+- redis_sre_evaluate_runbooks: Evaluate runbook markdown files in the background
 
 Utility tools (return immediately):
 - redis_sre_knowledge_search: Direct search of knowledge base docs

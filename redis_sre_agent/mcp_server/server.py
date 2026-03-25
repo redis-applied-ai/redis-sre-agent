@@ -44,6 +44,8 @@ the background. You MUST watch each task for:
 | `redis_sre_prepare_source_documents()` | Prepare and optionally ingest local source docs | Varies |
 | `redis_sre_generate_pipeline_runbooks()` | Run pipeline runbook operations | Varies |
 | `redis_sre_cleanup_pipeline_batches()` | Remove old pipeline batches | Varies |
+| `redis_sre_generate_runbook()` | Generate a Redis SRE runbook | Varies |
+| `redis_sre_evaluate_runbooks()` | Evaluate runbook markdown files | Varies |
 
 **Note**: Deep triage performs comprehensive analysis including metrics collection, log analysis,
 knowledge base searches, and multi-topic recommendation synthesis. Complex queries or
@@ -118,7 +120,7 @@ while True:
 - Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
 - Use fragment tools when you need the full document or nearby chunk context for a search hit
-- Use task-backed pipeline tools for scrape/ingest/prepare/runbook/cleanup workflows
+- Use task-backed pipeline and runbook tools for scrape/ingest/prepare/runbook/cleanup workflows
 - Use `redis_sre_get_pipeline_status()` and `redis_sre_get_pipeline_batch()` for ingestion inspection
 - Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
@@ -649,6 +651,74 @@ async def redis_sre_cleanup_pipeline_batches(
             "error": str(e),
             "status": "failed",
             "message": f"Failed to start pipeline cleanup: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_generate_runbook(
+    topic: str,
+    scenario_description: str,
+    severity: str = "warning",
+    category: str = "operational_runbook",
+    output_file: Optional[str] = None,
+    requirements: Optional[List[str]] = None,
+    max_iterations: int = 2,
+    auto_save: bool = True,
+    ingest: bool = False,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to generate a Redis SRE runbook."""
+    from redis_sre_agent.core.runbook_execution_helpers import queue_runbook_operation_task
+
+    logger.info("MCP runbook generate request")
+
+    try:
+        return await queue_runbook_operation_task(
+            operation="generate",
+            user_id=user_id,
+            topic=topic,
+            scenario_description=scenario_description,
+            severity=severity,
+            category=category,
+            output_file=output_file,
+            requirements=requirements,
+            max_iterations=max_iterations,
+            auto_save=auto_save,
+            ingest=ingest,
+        )
+    except Exception as e:
+        logger.error("Runbook generate failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start runbook generation: {e}",
+        }
+
+
+@mcp.tool()
+async def redis_sre_evaluate_runbooks(
+    input_dir: str = "source_documents/runbooks",
+    output_file: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a task to evaluate runbook markdown files."""
+    from redis_sre_agent.core.runbook_execution_helpers import queue_runbook_operation_task
+
+    logger.info("MCP runbook evaluate request")
+
+    try:
+        return await queue_runbook_operation_task(
+            operation="evaluate",
+            user_id=user_id,
+            input_dir=input_dir,
+            output_file=output_file,
+        )
+    except Exception as e:
+        logger.error("Runbook evaluation failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start runbook evaluation: {e}",
         }
 
 

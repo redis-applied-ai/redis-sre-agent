@@ -12,9 +12,11 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_deep_triage,
     redis_sre_delete_support_package,
     redis_sre_delete_task,
+    redis_sre_evaluate_runbooks,
     redis_sre_extract_support_package,
     redis_sre_general_chat,
     redis_sre_generate_pipeline_runbooks,
+    redis_sre_generate_runbook,
     redis_sre_get_knowledge_fragments,
     redis_sre_get_pipeline_batch,
     redis_sre_get_pipeline_status,
@@ -67,6 +69,8 @@ class TestMCPServerSetup:
         assert "redis_sre_prepare_source_documents" in tool_names
         assert "redis_sre_generate_pipeline_runbooks" in tool_names
         assert "redis_sre_cleanup_pipeline_batches" in tool_names
+        assert "redis_sre_generate_runbook" in tool_names
+        assert "redis_sre_evaluate_runbooks" in tool_names
         assert "redis_sre_upload_support_package" in tool_names
         assert "redis_sre_list_support_packages" in tool_names
         assert "redis_sre_extract_support_package" in tool_names
@@ -771,6 +775,70 @@ class TestPipelineExecutionTools:
                 user_id=None,
                 keep_days=7,
                 artifacts_path="/tmp/artifacts",
+            )
+
+
+class TestRunbookExecutionTools:
+    """Test task-backed runbook execution MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_generate_runbook_queues_task(self):
+        """Generate tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.runbook_execution_helpers.queue_runbook_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_generate_runbook(
+                topic="Memory Pressure",
+                scenario_description="Redis memory saturation on primaries",
+                severity="critical",
+                category="operational_runbook",
+                output_file="/tmp/runbook.md",
+                requirements=["Include memory diagnostics"],
+                max_iterations=3,
+                auto_save=False,
+                ingest=True,
+                user_id="user-123",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="generate",
+                user_id="user-123",
+                topic="Memory Pressure",
+                scenario_description="Redis memory saturation on primaries",
+                severity="critical",
+                category="operational_runbook",
+                output_file="/tmp/runbook.md",
+                requirements=["Include memory diagnostics"],
+                max_iterations=3,
+                auto_save=False,
+                ingest=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_evaluate_runbooks_queues_task(self):
+        """Evaluate tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.runbook_execution_helpers.queue_runbook_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_evaluate_runbooks(
+                input_dir="/tmp/runbooks",
+                output_file="/tmp/evaluation.json",
+                user_id="user-123",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="evaluate",
+                user_id="user-123",
+                input_dir="/tmp/runbooks",
+                output_file="/tmp/evaluation.json",
             )
 
 
