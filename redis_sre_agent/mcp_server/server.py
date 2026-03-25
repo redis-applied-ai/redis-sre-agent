@@ -489,6 +489,40 @@ async def redis_sre_database_chat(
 
 
 @mcp.tool()
+async def redis_sre_query(
+    query: str,
+    instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    support_package_id: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    agent: str = "auto",
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a routed query task with thread continuation and support-package targeting."""
+    from redis_sre_agent.core.query_helpers import queue_query_task_helper
+
+    logger.info("MCP query request: %s...", query[:100])
+
+    try:
+        return await queue_query_task_helper(
+            query=query,
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            support_package_id=support_package_id,
+            thread_id=thread_id,
+            agent=agent,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.error(f"Query failed: {e}")
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to start query: {e}",
+        }
+
+
+@mcp.tool()
 async def redis_sre_run_pipeline_scrape(
     artifacts_path: str = "./artifacts",
     scrapers: Optional[List[str]] = None,

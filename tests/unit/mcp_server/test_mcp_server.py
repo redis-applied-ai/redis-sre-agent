@@ -43,6 +43,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_list_threads,
     redis_sre_prepare_source_documents,
     redis_sre_purge_tasks,
+    redis_sre_query,
     redis_sre_recreate_indices,
     redis_sre_run_pipeline_full,
     redis_sre_run_pipeline_ingest,
@@ -116,6 +117,7 @@ class TestMCPServerSetup:
         assert "redis_sre_cache_stats" in tool_names
         assert "redis_sre_cache_clear" in tool_names
         assert "redis_sre_version" in tool_names
+        assert "redis_sre_query" in tool_names
         assert "redis_sre_list_indices" in tool_names
         assert "redis_sre_get_index_schema_status" in tool_names
         assert "redis_sre_recreate_indices" in tool_names
@@ -1831,6 +1833,56 @@ class TestIndexTools:
             "status": "failed",
             "error": "boom",
             "index_name": "knowledge",
+        }
+
+
+class TestQueryTool:
+    """Test the unified query MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_query_delegates_to_helper(self):
+        mock_result = {"thread_id": "thread-123", "task_id": "task-123", "status": "queued"}
+
+        with patch(
+            "redis_sre_agent.core.query_helpers.queue_query_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_query(
+                query="Investigate memory usage",
+                instance_id="redis-prod-1",
+                support_package_id="pkg-1",
+                thread_id="thread-123",
+                agent="knowledge",
+                user_id="user-1",
+            )
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(
+            query="Investigate memory usage",
+            instance_id="redis-prod-1",
+            cluster_id=None,
+            support_package_id="pkg-1",
+            thread_id="thread-123",
+            agent="knowledge",
+            user_id="user-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_query_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.query_helpers.queue_query_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_query(query="Investigate memory usage")
+
+        assert result == {
+            "error": "boom",
+            "status": "failed",
+            "message": "Failed to start query: boom",
         }
 
 

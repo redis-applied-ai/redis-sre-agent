@@ -947,11 +947,19 @@ async def process_agent_turn(
             routing_context["cluster_id"] = active_cluster_id
             routing_context.pop("instance_id", None)
 
-        agent_type = await route_to_appropriate_agent(
-            query=message,
-            context=routing_context,
-            user_preferences=None,  # Could be extended to include user preferences
-        )
+        requested_agent_type = (context or {}).get("requested_agent_type")
+        if requested_agent_type == "triage":
+            agent_type = AgentType.REDIS_TRIAGE
+        elif requested_agent_type == "chat":
+            agent_type = AgentType.REDIS_CHAT
+        elif requested_agent_type == "knowledge":
+            agent_type = AgentType.KNOWLEDGE_ONLY
+        else:
+            agent_type = await route_to_appropriate_agent(
+                query=message,
+                context=routing_context,
+                user_preferences=None,  # Could be extended to include user preferences
+            )
 
         logger.info(f"Routing query to {agent_type.value} agent")
 

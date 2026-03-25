@@ -1133,6 +1133,78 @@ class TestProcessAgentTurn:
             otel_trace_id=None,
         )
 
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_honors_requested_agent_type(self):
+        """Requested agent type should bypass router auto-selection."""
+        mock_redis = AsyncMock()
+
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.metadata.session_id = "session-1"
+        mock_thread.messages = []
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="new-task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+
+        mock_chat_agent = AsyncMock()
+        mock_response = AgentResponse(
+            response="Chat response",
+            search_results=[],
+            tool_envelopes=[],
+        )
+        mock_chat_agent.process_query = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new_callable=AsyncMock,
+            ) as mock_router,
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            result = await process_agent_turn(
+                thread_id="thread-123",
+                message="Use chat",
+                task_id="provided-task-123",
+                context={"requested_agent_type": "chat"},
+            )
+
+        mock_router.assert_not_called()
+        mock_chat_agent.process_query.assert_awaited_once()
+        assert result["message_id"] == "01HXTESTMESSAGEID1234567890"
+
 
 class TestRunAgentWithProgress:
     """Test run_agent_with_progress function."""
