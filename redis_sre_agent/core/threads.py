@@ -133,7 +133,7 @@ Examples:
 Subject:"""
 
         try:
-            llm = create_nano_llm()
+            llm = create_nano_llm(max_tokens=20)
             response = await llm.ainvoke(prompt)
             subject = self._normalize_thread_subject(response.content)
             logger.debug(f"Generated subject: {subject}")

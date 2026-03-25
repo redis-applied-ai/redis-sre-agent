@@ -506,6 +506,7 @@ class TestGenerateThreadSubject:
             )
 
             assert subject == "Redis memory at 95%"
+            mock_create_nano_llm.assert_called_once_with(max_tokens=20)
             mock_llm.ainvoke.assert_awaited_once()
 
     @pytest.mark.asyncio
