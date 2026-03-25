@@ -186,76 +186,6 @@ async def _emit_tool_envelopes(emitter: TaskEmitter, tool_envelopes: list[Mappin
         )
 
 
-def _parse_chat_mcp_command(message: str) -> tuple[str, dict[str, Any]] | None:
-    stripped = message.strip()
-    if not stripped.startswith("/mcp "):
-        return None
-    _, _, remainder = stripped.partition(" ")
-    tool_name_raw, _, args_raw = remainder.strip().partition(" ")
-    tool_name = tool_name_raw.strip()
-    if not tool_name:
-        raise RuntimeError("Usage: /mcp <tool_name> [json-object-arguments]")
-    if not args_raw.strip():
-        return tool_name, {}
-    try:
-        parsed = json.loads(args_raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Invalid JSON arguments for /mcp command: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise RuntimeError("/mcp arguments must decode to a JSON object")
-    return tool_name, parsed
-
-
-async def _dispatch_chat_mcp_command(
-    *,
-    context_id: str,
-    message: str,
-    emitter: TaskEmitter,
-) -> dict[str, Any] | None:
-    parsed = _parse_chat_mcp_command(message)
-    if parsed is None:
-        return None
-    tool_name, arguments = parsed
-    await emitter.emit_async(
-        f"Running MCP tool {tool_name}",
-        update_type="progress",
-        stage="tool",
-        metadata={"tool": tool_name},
-    )
-    await emitter.emit_tool_call_async(
-        tool_name,
-        call_id=f"chat-{tool_name}",
-        status="started",
-        arguments=arguments,
-    )
-    tool_response = await _dispatch_mcp_tool({"tool": tool_name, "arguments": arguments})
-    rendered_result = json.dumps(tool_response["result"], indent=2, sort_keys=True, default=str)
-    reply = f"MCP tool `{tool_name}` result:\n{rendered_result}"
-    await emitter.emit_tool_call_async(
-        tool_name,
-        call_id=f"chat-{tool_name}",
-        status="completed",
-        arguments=arguments,
-        output_summary=rendered_result[:500],
-    )
-    _append_conversation_history(
-        context_id,
-        {"role": "user", "content": message},
-        {"role": "assistant", "content": reply},
-    )
-    return {
-        "ok": True,
-        "mode": "a2a",
-        "agent": "mcp",
-        "reply": reply,
-        "response": reply,
-        "contextId": context_id,
-        "citations": [],
-        "toolCalls": 1,
-        "mcpResult": tool_response["result"],
-    }
-
-
 def _normalize_context(task_input: Mapping[str, Any]) -> dict[str, Any]:
     context: dict[str, Any] = {}
     for key in ("instance_id", "cluster_id", "user_id"):
@@ -303,14 +233,6 @@ async def _dispatch_chat_query(
     context_id = _safe_context_id(explicit_context_id, fallback=task_run_id)
     user_id = str(task_input.get("user_id") or DEFAULT_USER_ID)
     runtime_progress = RuntimeProgressEmitter(emitter)
-
-    mcp_chat_response = await _dispatch_chat_mcp_command(
-        context_id=context_id,
-        message=message,
-        emitter=emitter,
-    )
-    if mcp_chat_response is not None:
-        return mcp_chat_response
 
     from redis_sre_agent.agent.chat_agent import get_chat_agent
     from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent

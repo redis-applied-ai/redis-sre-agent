@@ -1,31 +1,52 @@
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy
 
 WORKDIR /workspace
 
+COPY pyproject.toml uv.lock README.md LICENSE.txt /workspace/
+
+RUN uv sync --frozen --no-dev --no-install-project
+
 COPY . /workspace
 
-RUN python -m pip install --no-cache-dir --upgrade pip
-RUN python - <<'PY'
+RUN uv sync --frozen --no-dev
+
+RUN /workspace/.venv/bin/python - <<'PY'
+import importlib.metadata
 import subprocess
 import sys
-deps = [
-    "cryptography>=45.0.0,<46",
-    "langchain-core>=0.3.25",
-    "mcp>=1.23.3",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "PyYAML>=6.0.0",
-    "python-dotenv>=1.0.0",
-    "python-ulid>=3.0.0",
-    "redis>=4.5.0",
-    "redisvl>=0.9.0,<1.0",
-]
-subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", *deps])
+
+installed = sorted(
+    {
+        dist.metadata["Name"]
+        for dist in importlib.metadata.distributions()
+        if dist.metadata["Name"].startswith("nvidia-")
+        or dist.metadata["Name"] in {"torch", "triton"}
+    }
+)
+if installed:
+    subprocess.check_call(
+        ["uv", "pip", "uninstall", "--python", sys.executable, *installed]
+    )
+subprocess.check_call(
+    [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        "--no-cache-dir",
+        "--index-url",
+        "https://download.pytorch.org/whl/cpu",
+        "torch==2.8.0",
+    ]
+)
 PY
-RUN python - <<'PY'
+
+RUN /workspace/.venv/bin/python - <<'PY'
 import pathlib
 import shutil
 import site
@@ -38,5 +59,17 @@ if target.exists():
     shutil.rmtree(target)
 shutil.copytree(src, target)
 PY
+
+RUN rm -rf /root/.cache /workspace/.cache
+
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/workspace/.venv/bin:$PATH"
+
+WORKDIR /workspace
+
+COPY --from=builder /workspace /workspace
 
 CMD ["python", "runtime_agent.py"]

@@ -96,7 +96,7 @@ async def test_runtime_sre_agent_dispatches_mcp_tools(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_runtime_sre_agent_chat_dispatches_mcp_command(
+async def test_runtime_sre_agent_chat_does_not_tunnel_mcp_commands(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -104,32 +104,62 @@ async def test_runtime_sre_agent_chat_dispatches_mcp_command(
     emitter = _FakeTaskEmitter()
 
     monkeypatch.setenv("RAK_APP_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        module,
-        "_load_mcp_tool_registry",
-        lambda: {"redis_sre_knowledge_search": _fake_search_tool},
+
+    class _AgentResponse:
+        def __init__(self, response: str) -> None:
+            self.response = response
+            self.search_results = []
+            self.tool_envelopes = []
+
+    class _ChatAgent:
+        async def process_query(self, query: str, **kwargs: Any) -> _AgentResponse:
+            return _AgentResponse(f"chat:{query}")
+
+    class _PatchedAgentType:
+        REDIS_TRIAGE = "triage"
+        REDIS_CHAT = "chat"
+        KNOWLEDGE_ONLY = "knowledge"
+
+    async def _fake_route(*_: Any, **__: Any):
+        return _PatchedAgentType.REDIS_CHAT
+
+    monkeypatch.setattr(module, "_resolve_agent_context", _fake_resolve_agent_context)
+    monkeypatch.setattr(module, "_emit_tool_envelopes", _fake_emit_tool_envelopes)
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.agent.chat_agent",
+        type("_M", (), {"get_chat_agent": lambda *_, **__: _ChatAgent()})(),
+    )
+    monkeypatch.setitem(sys.modules, "redis_sre_agent.agent.knowledge_agent", type("_M", (), {"get_knowledge_agent": lambda: _ChatAgent()})())
+    monkeypatch.setitem(sys.modules, "redis_sre_agent.agent.langgraph_agent", type("_M", (), {"get_sre_agent": lambda: _ChatAgent()})())
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.agent.router",
+        type(
+            "_R",
+            (),
+            {
+                "AgentType": type("AgentType", (_PatchedAgentType,), {}),
+                "route_to_appropriate_agent": _fake_route,
+            },
+        )(),
     )
 
     result = await module.runtime_sre_agent(
         {
-            "message": '/mcp redis_sre_knowledge_search {"query":"memory pressure"}',
-            "contextId": "ctx-mcp",
+            "message": "/mcp redis_sre_knowledge_search",
+            "contextId": "ctx-chat",
         },
         emitter,
     )
 
     assert result["mode"] == "a2a"
-    assert result["agent"] == "mcp"
-    assert result["mcpResult"] == {"query": "memory pressure", "hits": 1}
-    assert "memory pressure" in result["reply"]
-    assert emitter.tool_calls[-1]["name"] == "redis_sre_knowledge_search"
-    history_path = tmp_path / "conversations" / "ctx-mcp.json"
+    assert result["agent"] == "chat"
+    assert result["reply"] == "chat:/mcp redis_sre_knowledge_search"
+    assert emitter.tool_calls == []
+    history_path = tmp_path / "conversations" / "ctx-chat.json"
     saved = json.loads(history_path.read_text(encoding="utf-8"))
-    assert saved[-1]["content"].startswith("MCP tool `redis_sre_knowledge_search` result:")
-
-
-async def _fake_search_tool(*, query: str) -> dict[str, Any]:
-    return {"query": query, "hits": 1}
+    assert saved[-1]["content"] == "chat:/mcp redis_sre_knowledge_search"
 
 
 @pytest.mark.asyncio
