@@ -57,8 +57,8 @@ make local-services-logs # Tail logs
 ## Environment Variables
 See `.env.example` for full configuration. Key variables:
 - `OPENAI_API_KEY`: Required for LLM functionality
+- `OPENAI_BASE_URL`: Optional OpenAI-compatible endpoint override
 - `REDIS_URL`: Redis connection string (default: redis://localhost:7843/0)
-- `LITELLM_MASTER_KEY`: Auth key for LiteLLM proxy (Docker only)
 
 ## Knowledge Base
 - **Data sources**: redis.io/kb articles, local redis-docs clone, `source_documents/`

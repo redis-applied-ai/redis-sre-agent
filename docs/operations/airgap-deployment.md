@@ -20,7 +20,7 @@ The air-gapped deployment uses:
 | Component | Description | Notes |
 |-----------|-------------|-------|
 | Redis | Redis 7+ with RediSearch module | For agent state, task queue, vector storage |
-| LLM Proxy | OpenAI-compatible API | Azure OpenAI, vLLM, Ollama, LiteLLM, etc. |
+| LLM Proxy | OpenAI-compatible API | Azure OpenAI, vLLM, Ollama, custom gateway, etc. |
 
 ### Optional Infrastructure
 
