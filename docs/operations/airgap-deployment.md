@@ -450,12 +450,11 @@ The air-gap image includes pre-installed MCP servers that work without internet:
 
 | Server | Status | Notes |
 |--------|--------|-------|
-| `redis-memory-server` | ✅ Enabled | Pre-installed via `uv tool install`, uses Redis for storage |
 | `github` | ✅ Enabled | Pre-installed via `npm install -g`, requires `GITHUB_PERSONAL_ACCESS_TOKEN` |
 
-Both servers are pre-installed in the image so they don't need to download
-anything at runtime. The GitHub MCP server uses `mcp-server-github` (the
-globally installed binary) instead of `npx`.
+Configured MCP servers do not need to download anything at runtime. The GitHub
+MCP server uses `mcp-server-github` (the globally installed binary) instead of
+`npx`.
 
 !!! note "GitHub Token Required"
     The GitHub MCP server requires `GITHUB_PERSONAL_ACCESS_TOKEN` to be set.

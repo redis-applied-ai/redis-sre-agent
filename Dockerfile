@@ -45,8 +45,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     mkdir -p /app/artifacts && \
     # Ensure /opt/uv exists even if uv uses the system Python
     mkdir -p /opt/uv && \
-    # Pre-install agent-memory-server to avoid slow startup when MCP server launches
-    uv tool install agent-memory-server && \
     # Attempt to build artifacts, but don't fail build if it requires runtime services
     (uv run --no-sync redis-sre-agent pipeline prepare-sources \
     --source-dir /app/source_documents \
@@ -113,7 +111,6 @@ COPY --from=builder --chown=app:app /app /app
 
 # Add the virtual environment and uv tools to PATH
 # This allows us to run "uvicorn" or "python" directly without "uv run"
-# Also includes pre-installed tools like agent-memory-server
 ENV PATH="/app/.venv/bin:/opt/uv/tools/bin:$PATH"
 
 # Install the entrypoint script

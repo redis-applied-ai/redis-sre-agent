@@ -103,20 +103,6 @@ Add MCP servers in `config.yaml`:
 
 ```yaml
 mcp_servers:
-  # Memory server (stdio transport - launches process)
-  redis-memory-server:
-    command: uv
-    args: ["tool", "run", "--from", "agent-memory-server", "agent-memory", "mcp"]
-    env:
-      REDIS_URL: redis://localhost:6399
-    tools:
-      # Optional: customize tool descriptions for better LLM understanding
-      search_long_term_memories:
-        description: |
-          Search memories for past incidents, resolutions, and context about
-          this Redis instance. Use when investigating recurring issues.
-          {original}
-
   # GitHub MCP server (HTTP transport - remote endpoint)
   github:
     url: "https://api.githubcopilot.com/mcp/"

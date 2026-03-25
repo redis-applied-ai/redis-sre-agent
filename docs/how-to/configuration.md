@@ -54,25 +54,6 @@ log_level: INFO
 
 # MCP (Model Context Protocol) servers configuration
 mcp_servers:
-  # Memory server for long-term agent memory
-  redis-memory-server:
-    command: uv
-    args:
-      - tool
-      - run
-      - --from
-      - agent-memory-server
-      - agent-memory
-      - mcp
-    env:
-      REDIS_URL: redis://localhost:6399
-    tools:
-      search_long_term_memory:
-        description: |
-          Search saved memories about Redis instances. ALWAYS use this
-          before troubleshooting to recall past issues and solutions.
-          {original}
-
   # GitHub MCP server (remote) - uses GitHub's hosted MCP endpoint
   # Requires a GitHub Personal Access Token with appropriate permissions
   # Uses Streamable HTTP transport (default for URL-based connections)

@@ -125,7 +125,7 @@ For configuration precedence, `.env` behavior, YAML discovery order, and setup e
 
 | Field | Environment Variable | Type | Default | Notes |
 |---|---|---|---|---|
-| `mcp_servers` | `MCP_SERVERS` | `dict[str, MCPServerConfig]` | Built-in `redis-memory-server` config | JSON object of MCP server definitions. |
+| `mcp_servers` | `MCP_SERVERS` | `dict[str, MCPServerConfig]` | Empty dict | JSON object of MCP server definitions. No MCP integrations are enabled unless you configure them. |
 
 `MCPServerConfig` object keys:
 

@@ -66,8 +66,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     mkdir -p /app/artifacts /app/redis-docs && \
     # Ensure /opt/uv exists
     mkdir -p /opt/uv && \
-    # Pre-install agent-memory-server for MCP memory functionality
-    uv tool install agent-memory-server && \
     # Clone redis-docs for knowledge base (shallow clone to save space)
     git clone --depth 1 https://github.com/redis/docs.git /app/redis-docs && \
     # Scrape redis-docs into artifacts
@@ -163,7 +161,6 @@ ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
 
 # Add virtual environment and uv tools to PATH
-# Includes pre-installed tools like agent-memory-server
 ENV PATH="/app/.venv/bin:/opt/uv/tools/bin:$PATH"
 
 # Install entrypoint script
