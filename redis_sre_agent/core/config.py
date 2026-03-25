@@ -371,63 +371,10 @@ class Settings(BaseSettings):
     )
 
     # MCP Server Configuration
-    # The agent-memory-server should be pre-installed via 'uv tool install agent-memory-server'.
-    # Override via MCP_SERVERS environment variable (JSON) if needed.
+    # No external MCP servers are enabled by default.
+    # Configure MCP_SERVERS or config.yaml explicitly for local tools like agent-memory.
     mcp_servers: Dict[str, Union[MCPServerConfig, Dict[str, Any]]] = Field(
-        default_factory=lambda: {
-            "redis-memory-server": {
-                "command": "agent-memory",
-                "args": ["mcp"],
-                "env": {"REDIS_URL": "${REDIS_URL}"},
-                # Only include specific tools, with context-aware descriptions.
-                # Use {original} to include the tool's original description.
-                "tools": {
-                    "get_current_datetime": {
-                        "description": (
-                            "Get the current date and time. Use this when you need to "
-                            "record timestamps for Redis instance events or incidents.\n\n"
-                            "{original}"
-                        ),
-                    },
-                    "create_long_term_memories": {
-                        "description": (
-                            "Save long-term memories about Redis instances. Use this to "
-                            "record: past incidents and their resolutions, configuration "
-                            "changes, performance baselines, known issues, maintenance "
-                            "history, and lessons learned. Always include the instance_id "
-                            "in the memory text for future retrieval.\n\n{original}"
-                        ),
-                    },
-                    "search_long_term_memory": {
-                        "description": (
-                            "Search saved memories about Redis instances. ALWAYS use this "
-                            "before troubleshooting a Redis instance to recall past issues, "
-                            "solutions, and context. Search by instance_id, error patterns, "
-                            "or symptoms.\n\n{original}"
-                        ),
-                    },
-                    "get_long_term_memory": {
-                        "description": (
-                            "Retrieve a specific memory by ID. Use this to get full details "
-                            "of a memory found via search.\n\n{original}"
-                        ),
-                    },
-                    "edit_long_term_memory": {
-                        "description": (
-                            "Update an existing memory. Use this to add new information to "
-                            "a past incident record, update resolution status, or correct "
-                            "outdated information.\n\n{original}"
-                        ),
-                    },
-                    "delete_long_term_memories": {
-                        "description": (
-                            "Delete memories that are no longer relevant. Use sparingly - "
-                            "prefer editing to add context rather than deleting.\n\n{original}"
-                        ),
-                    },
-                },
-            }
-        },
+        default_factory=dict,
         description="MCP (Model Context Protocol) servers to connect to. "
         "Each key is the server name, and the value is the server configuration. "
         "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
