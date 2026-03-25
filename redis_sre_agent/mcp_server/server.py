@@ -523,6 +523,143 @@ async def redis_sre_query(
 
 
 @mcp.tool()
+async def redis_sre_list_clusters(
+    environment: Optional[str] = None,
+    status: Optional[str] = None,
+    cluster_type: Optional[str] = None,
+    user_id: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """List configured Redis clusters with optional filtering."""
+    from redis_sre_agent.core.cluster_helpers import list_clusters_helper
+
+    return await list_clusters_helper(
+        environment=environment,
+        status=status,
+        cluster_type=cluster_type,
+        user_id=user_id,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@mcp.tool()
+async def redis_sre_get_cluster(cluster_id: str) -> Dict[str, Any]:
+    """Get a configured Redis cluster by ID."""
+    from redis_sre_agent.core.cluster_helpers import get_cluster_helper
+
+    return await get_cluster_helper(cluster_id)
+
+
+@mcp.tool()
+async def redis_sre_create_cluster(
+    name: str,
+    environment: str,
+    description: str,
+    cluster_type: str = "unknown",
+    notes: Optional[str] = None,
+    admin_url: Optional[str] = None,
+    admin_username: Optional[str] = None,
+    admin_password: Optional[str] = None,
+    status: Optional[str] = None,
+    version: Optional[str] = None,
+    last_checked: Optional[str] = None,
+    created_by: str = "user",
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a new Redis cluster configuration."""
+    from redis_sre_agent.core.cluster_helpers import create_cluster_helper
+
+    try:
+        return await create_cluster_helper(
+            name=name,
+            environment=environment,
+            description=description,
+            cluster_type=cluster_type,
+            notes=notes,
+            admin_url=admin_url,
+            admin_username=admin_username,
+            admin_password=admin_password,
+            status=status,
+            version=version,
+            last_checked=last_checked,
+            created_by=created_by,
+            user_id=user_id,
+        )
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_update_cluster(
+    cluster_id: str,
+    name: Optional[str] = None,
+    cluster_type: Optional[str] = None,
+    environment: Optional[str] = None,
+    description: Optional[str] = None,
+    notes: Optional[str] = None,
+    admin_url: Optional[str] = None,
+    admin_username: Optional[str] = None,
+    admin_password: Optional[str] = None,
+    status: Optional[str] = None,
+    version: Optional[str] = None,
+    last_checked: Optional[str] = None,
+    created_by: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Update an existing Redis cluster configuration."""
+    from redis_sre_agent.core.cluster_helpers import update_cluster_helper
+
+    try:
+        return await update_cluster_helper(
+            cluster_id,
+            name=name,
+            cluster_type=cluster_type,
+            environment=environment,
+            description=description,
+            notes=notes,
+            admin_url=admin_url,
+            admin_username=admin_username,
+            admin_password=admin_password,
+            status=status,
+            version=version,
+            last_checked=last_checked,
+            created_by=created_by,
+            user_id=user_id,
+        )
+    except Exception as e:
+        return {"error": str(e), "id": cluster_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_delete_cluster(cluster_id: str, confirm: bool = False) -> Dict[str, Any]:
+    """Delete a configured Redis cluster."""
+    from redis_sre_agent.core.cluster_helpers import delete_cluster_helper
+
+    try:
+        return await delete_cluster_helper(cluster_id, confirm=confirm)
+    except Exception as e:
+        return {"error": str(e), "id": cluster_id, "status": "failed"}
+
+
+@mcp.tool()
+async def redis_sre_backfill_instance_links(
+    dry_run: bool = False,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Backfill cluster links for existing instance records."""
+    from redis_sre_agent.core.cluster_helpers import backfill_instance_links_helper
+
+    try:
+        return await backfill_instance_links_helper(dry_run=dry_run, force=force)
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
 async def redis_sre_run_pipeline_scrape(
     artifacts_path: str = "./artifacts",
     scrapers: Optional[List[str]] = None,

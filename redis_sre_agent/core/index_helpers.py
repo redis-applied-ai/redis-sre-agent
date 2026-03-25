@@ -71,10 +71,7 @@ async def list_indices_helper(
 
             try:
                 raw_info = await idx._redis_client.execute_command("FT.INFO", idx_name)
-                info = {
-                    _decode(raw_info[i]): raw_info[i + 1]
-                    for i in range(0, len(raw_info), 2)
-                }
+                info = {_decode(raw_info[i]): raw_info[i + 1] for i in range(0, len(raw_info), 2)}
                 entry["num_docs"] = int(_decode(info.get("num_docs", 0)))
             except Exception:
                 entry["num_docs"] = "?"

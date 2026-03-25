@@ -6,12 +6,15 @@ import pytest
 
 from redis_sre_agent.mcp_server.server import (
     mcp,
+    redis_sre_backfill_instance_links,
     redis_sre_cache_clear,
     redis_sre_cache_stats,
     redis_sre_cleanup_pipeline_batches,
+    redis_sre_create_cluster,
     redis_sre_create_instance,
     redis_sre_database_chat,
     redis_sre_deep_triage,
+    redis_sre_delete_cluster,
     redis_sre_delete_instance,
     redis_sre_delete_support_package,
     redis_sre_delete_task,
@@ -20,6 +23,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_general_chat,
     redis_sre_generate_pipeline_runbooks,
     redis_sre_generate_runbook,
+    redis_sre_get_cluster,
     redis_sre_get_index_schema_status,
     redis_sre_get_instance,
     redis_sre_get_knowledge_fragments,
@@ -36,6 +40,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_get_thread_trace,
     redis_sre_knowledge_query,
     redis_sre_knowledge_search,
+    redis_sre_list_clusters,
     redis_sre_list_indices,
     redis_sre_list_instances,
     redis_sre_list_support_packages,
@@ -52,6 +57,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_sync_index_schemas,
     redis_sre_test_instance,
     redis_sre_test_redis_url,
+    redis_sre_update_cluster,
     redis_sre_update_instance,
     redis_sre_upload_support_package,
     redis_sre_version,
@@ -118,6 +124,12 @@ class TestMCPServerSetup:
         assert "redis_sre_cache_clear" in tool_names
         assert "redis_sre_version" in tool_names
         assert "redis_sre_query" in tool_names
+        assert "redis_sre_list_clusters" in tool_names
+        assert "redis_sre_get_cluster" in tool_names
+        assert "redis_sre_create_cluster" in tool_names
+        assert "redis_sre_update_cluster" in tool_names
+        assert "redis_sre_delete_cluster" in tool_names
+        assert "redis_sre_backfill_instance_links" in tool_names
         assert "redis_sre_list_indices" in tool_names
         assert "redis_sre_get_index_schema_status" in tool_names
         assert "redis_sre_recreate_indices" in tool_names
@@ -1884,6 +1896,94 @@ class TestQueryTool:
             "status": "failed",
             "message": "Failed to start query: boom",
         }
+
+
+class TestClusterTools:
+    """Test MCP tools for cluster inspection and mutation."""
+
+    @pytest.mark.asyncio
+    async def test_list_clusters_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.list_clusters_helper",
+            new_callable=AsyncMock,
+            return_value={"clusters": []},
+        ) as mock_helper:
+            result = await redis_sre_list_clusters(environment="production")
+
+        assert result == {"clusters": []}
+        mock_helper.assert_awaited_once_with(
+            environment="production",
+            status=None,
+            cluster_type=None,
+            user_id=None,
+            search=None,
+            limit=100,
+            offset=0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.get_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1"},
+        ) as mock_helper:
+            result = await redis_sre_get_cluster("cluster-1")
+
+        assert result == {"id": "cluster-1"}
+        mock_helper.assert_awaited_once_with("cluster-1")
+
+    @pytest.mark.asyncio
+    async def test_create_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.create_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1", "status": "created"},
+        ) as mock_helper:
+            result = await redis_sre_create_cluster(
+                name="prod-cluster",
+                environment="production",
+                description="Primary cluster",
+            )
+
+        assert result["status"] == "created"
+        mock_helper.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.update_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1", "status": "updated"},
+        ) as mock_helper:
+            result = await redis_sre_update_cluster("cluster-1", status="healthy")
+
+        assert result["status"] == "updated"
+        mock_helper.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.delete_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1", "status": "deleted"},
+        ) as mock_helper:
+            result = await redis_sre_delete_cluster("cluster-1", confirm=True)
+
+        assert result["status"] == "deleted"
+        mock_helper.assert_awaited_once_with("cluster-1", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_backfill_cluster_links_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.backfill_instance_links_helper",
+            new_callable=AsyncMock,
+            return_value={"clusters_created": 1},
+        ) as mock_helper:
+            result = await redis_sre_backfill_instance_links(dry_run=True, force=False)
+
+        assert result == {"clusters_created": 1}
+        mock_helper.assert_awaited_once_with(dry_run=True, force=False)
 
 
 class TestGetThreadTool:

@@ -43,9 +43,7 @@ class TestListIndicesHelper:
     async def test_list_indices_helper_collects_index_status(self):
         existing_idx = AsyncMock()
         existing_idx.exists = AsyncMock(return_value=True)
-        existing_idx._redis_client.execute_command = AsyncMock(
-            return_value=[b"num_docs", b"7"]
-        )
+        existing_idx._redis_client.execute_command = AsyncMock(return_value=[b"num_docs", b"7"])
         existing_get = AsyncMock(return_value=existing_idx)
 
         missing_idx = AsyncMock()
@@ -210,7 +208,10 @@ class TestIndexOperationsHelpers:
             "redis_sre_agent.core.index_helpers.sync_index_schemas",
             new_callable=AsyncMock,
         ) as mock_sync:
-            mock_sync.return_value = {"success": True, "indices": {"knowledge": {"action": "created"}}}
+            mock_sync.return_value = {
+                "success": True,
+                "indices": {"knowledge": {"action": "created"}},
+            }
 
             result = await sync_index_schemas_helper(index_name=None, confirm=True)
 
