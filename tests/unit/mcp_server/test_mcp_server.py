@@ -23,6 +23,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_get_related_knowledge_fragments,
     redis_sre_get_support_package_info,
     redis_sre_get_support_ticket,
+    redis_sre_get_task,
     redis_sre_get_task_citations,
     redis_sre_get_task_status,
     redis_sre_get_thread,
@@ -30,6 +31,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_knowledge_search,
     redis_sre_list_instances,
     redis_sre_list_support_packages,
+    redis_sre_list_tasks,
     redis_sre_list_threads,
     redis_sre_prepare_source_documents,
     redis_sre_run_pipeline_full,
@@ -83,6 +85,8 @@ class TestMCPServerSetup:
         assert "redis_sre_list_threads" in tool_names
         assert "redis_sre_get_task_status" in tool_names
         assert "redis_sre_get_task_citations" in tool_names
+        assert "redis_sre_get_task" in tool_names
+        assert "redis_sre_list_tasks" in tool_names
         assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
         assert "redis_sre_create_instance" in tool_names
@@ -1895,6 +1899,76 @@ class TestGetTaskStatusTool:
 
             assert result["status"] == "not_found"
             assert "error" in result
+
+
+class TestTaskInspectionTools:
+    """Test direct task inspection MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_task_delegates_to_helper(self):
+        """Task detail tool should delegate to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.get_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {"task_id": "task-123", "status": "done"}
+
+            result = await redis_sre_get_task(task_id="task-123")
+
+        assert result == {"task_id": "task-123", "status": "done"}
+        mock_helper.assert_awaited_once_with("task-123")
+
+    @pytest.mark.asyncio
+    async def test_get_task_not_found(self):
+        """Task detail tool should return a structured not-found payload."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.get_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = ValueError("Task task-999 not found")
+
+            result = await redis_sre_get_task(task_id="task-999")
+
+        assert result["status"] == "not_found"
+        assert result["task_id"] == "task-999"
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_delegates_to_helper(self):
+        """Task listing tool should delegate to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.list_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {"tasks": [], "count": 0}
+
+            result = await redis_sre_list_tasks(
+                user_id="user-123",
+                status="done",
+                show_all=False,
+                limit=25,
+            )
+
+        assert result == {"tasks": [], "count": 0}
+        mock_helper.assert_awaited_once_with(
+            user_id="user-123",
+            status="done",
+            show_all=False,
+            limit=25,
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_invalid_filter(self):
+        """Task listing tool should return structured validation failures."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.list_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = ValueError("Invalid task status filter: bogus")
+
+            result = await redis_sre_list_tasks(status="bogus")
+
+        assert result["status"] == "failed"
+        assert "Invalid task status filter" in result["message"]
 
 
 class TestGetTaskCitationsTool:

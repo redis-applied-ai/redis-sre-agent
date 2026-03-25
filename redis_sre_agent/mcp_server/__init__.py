@@ -34,6 +34,8 @@ Utility tools (return immediately):
 - redis_sre_get_support_ticket: Get full support-ticket content by ticket id
 - redis_sre_list_instances: List configured Redis instances
 - redis_sre_create_instance: Create a new Redis instance configuration
+- redis_sre_get_task: Get a full task payload by task ID
+- redis_sre_list_tasks: List tasks with status filtering
 - redis_sre_get_task_status: Check task progress, notifications, and results
 - redis_sre_get_thread: Get full conversation history and results
 """

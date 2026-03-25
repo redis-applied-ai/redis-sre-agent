@@ -76,6 +76,8 @@ After calling any of these, you MUST:
 | `redis_sre_list_threads()` | List conversation threads (find previous chats) |
 | `redis_sre_get_task_status()` | Check task progress |
 | `redis_sre_get_task_citations()` | Get task citation/tool-call data |
+| `redis_sre_get_task()` | Get a full task payload by task id |
+| `redis_sre_list_tasks()` | List tasks with status filtering |
 | `redis_sre_get_thread()` | Get conversation history |
 
 ## Standard Workflow
@@ -118,6 +120,7 @@ while True:
 
 - **Always poll redis_sre_get_task_status()** - results are on the task, not returned directly
 - Use `redis_sre_get_task_citations()` only when you need tool provenance or citation data
+- Use `redis_sre_get_task()` and `redis_sre_list_tasks()` for direct task inspection without polling semantics
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
 - Use fragment tools when you need the full document or nearby chunk context for a search hit
 - Use task-backed pipeline and runbook tools for scrape/ingest/prepare/runbook/cleanup workflows
@@ -1544,6 +1547,63 @@ async def redis_sre_list_threads(
             "total": 0,
             "limit": limit,
             "offset": offset,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_task(task_id: str) -> Dict[str, Any]:
+    """Get a full task payload by task ID."""
+    from redis_sre_agent.core.task_inspection_helpers import get_task_helper
+
+    logger.info("MCP get_task: %s", task_id)
+
+    try:
+        return await get_task_helper(task_id)
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "task_id": task_id,
+            "status": "not_found",
+        }
+    except Exception as e:
+        logger.error("Get task failed: %s", e)
+        return {
+            "error": str(e),
+            "task_id": task_id,
+        }
+
+
+@mcp.tool()
+async def redis_sre_list_tasks(
+    user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    show_all: bool = False,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """List recent tasks with optional status filtering."""
+    from redis_sre_agent.core.task_inspection_helpers import list_tasks_helper
+
+    logger.info("MCP list_tasks request")
+
+    try:
+        return await list_tasks_helper(
+            user_id=user_id,
+            status=status,
+            show_all=show_all,
+            limit=limit,
+        )
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": str(e),
+        }
+    except Exception as e:
+        logger.error("List tasks failed: %s", e)
+        return {
+            "error": str(e),
+            "status": "failed",
+            "message": f"Failed to list tasks: {e}",
         }
 
 
