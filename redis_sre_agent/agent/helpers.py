@@ -339,7 +339,9 @@ def extract_citations(envelopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 default_retrieval_label = default_retrieval_label or "Pinned context"
             elif "search" in tool_key.lower() or "search" in name.lower():
                 default_retrieval_kind = KNOWLEDGE_SEARCH_RETRIEVAL_KIND
-                default_retrieval_label = default_retrieval_label or KNOWLEDGE_SEARCH_RETRIEVAL_LABEL
+                default_retrieval_label = (
+                    default_retrieval_label or KNOWLEDGE_SEARCH_RETRIEVAL_LABEL
+                )
 
         # Add each result as a citation (preserving all fields)
         for result in results:

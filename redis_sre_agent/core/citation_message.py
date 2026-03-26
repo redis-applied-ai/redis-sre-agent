@@ -42,22 +42,25 @@ def format_citation_message(search_results: Optional[List[Dict[str, Any]]]) -> s
         return ""
 
     lines = ["**Sources for previous response**"]
+    lines.extend(_format_citation_lines(list(search_results or [])))
+    return "\n".join(lines)
 
-    for result in search_results:
+
+def _format_citation_lines(citations: List[Dict[str, Any]]) -> List[str]:
+    """Format citation entries into display lines shared by message renderers."""
+    lines: List[str] = []
+    for result in citations:
         title = result.get("title", "Untitled")
         source = result.get("source", "Unknown source")
         doc_hash = result.get("document_hash", "")
         score = result.get("score")
 
-        # Format the citation line
         if score is not None:
-            line = f'• "{title}" ({source}) [hash:{doc_hash}] - relevance: {score}'
+            lines.append(f'• "{title}" ({source}) [hash:{doc_hash}] - relevance: {score}')
         else:
-            line = f'• "{title}" ({source}) [hash:{doc_hash}]'
+            lines.append(f'• "{title}" ({source}) [hash:{doc_hash}]')
 
-        lines.append(line)
-
-    return "\n".join(lines)
+    return lines
 
 
 def format_citation_group_message(citation_group: Dict[str, Any]) -> str:
@@ -67,19 +70,7 @@ def format_citation_group_message(citation_group: Dict[str, Any]) -> str:
         return ""
 
     lines = [f"**{citation_group.get('label', 'Sources')}**"]
-    for result in citations:
-        title = result.get("title", "Untitled")
-        source = result.get("source", "Unknown source")
-        doc_hash = result.get("document_hash", "")
-        score = result.get("score")
-
-        if score is not None:
-            line = f'• "{title}" ({source}) [hash:{doc_hash}] - relevance: {score}'
-        else:
-            line = f'• "{title}" ({source}) [hash:{doc_hash}]'
-
-        lines.append(line)
-
+    lines.extend(_format_citation_lines(citations))
     return "\n".join(lines)
 
 
