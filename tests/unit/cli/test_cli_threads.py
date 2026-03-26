@@ -228,9 +228,48 @@ class TestThreadTrace:
         assert result.exit_code == 0, result.output
         # Should show citations section
         assert "Citations" in result.output
+        assert "Group" in result.output
         # Should show citation details
         assert "Memory Best Practices" in result.output
         assert "redis.io" in result.output
+        assert "Discovered context" in result.output
+
+    def test_thread_trace_shows_startup_context_group(self):
+        """Pinned startup envelopes should appear in their own citation group."""
+        runner = CliRunner()
+        trace = _make_decision_trace()
+        trace["tool_envelopes"].append(
+            {
+                "tool_key": "knowledge.pinned_context",
+                "name": "pinned_context",
+                "description": "Pinned startup context",
+                "args": {},
+                "status": "success",
+                "data": {
+                    "retrieval_kind": "pinned_context",
+                    "results": [
+                        {
+                            "title": "Pinned Runbook",
+                            "source": "file:///tmp/pinned.md",
+                            "document_hash": "hash123",
+                        }
+                    ],
+                },
+            }
+        )
+
+        async def fake_get_message_trace(_self, message_id: str):  # noqa: ARG001
+            return trace
+
+        with patch(
+            "redis_sre_agent.core.threads.ThreadManager.get_message_trace",
+            new=fake_get_message_trace,
+        ):
+            result = runner.invoke(cli_main, ["thread", "trace", "01HX9876543210ZYXWVUTSRQ"])
+
+        assert result.exit_code == 0, result.output
+        assert "Pinned Runbook" in result.output
+        assert "Startup context loaded" in result.output
 
     def test_thread_trace_with_show_data(self):
         """Test thread trace with --show-data flag."""

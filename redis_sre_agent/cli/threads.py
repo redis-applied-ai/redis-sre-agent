@@ -10,6 +10,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from redis_sre_agent.agent.helpers import extract_citation_groups
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import (
     SRE_THREADS_INDEX,
@@ -822,28 +823,21 @@ def thread_trace(message_id: str, as_json: bool, show_data: bool):
 
         console.print()
 
-        # Derive citations from knowledge tool envelopes
-        citations = []
-        for envelope in tool_envelopes:
-            tool_key = envelope.get("tool_key", "")
-            name = envelope.get("name", "")
-            if "knowledge" in tool_key.lower() and "search" in name.lower():
-                data = envelope.get("data", {})
-                results = data.get("results", [])
-                for result in results:
-                    citations.append(
-                        {
-                            "title": result.get("title"),
-                            "source": result.get("source"),
-                            "score": result.get("score"),
-                            "document_id": result.get("id"),
-                        }
-                    )
+        citation_groups = extract_citation_groups(tool_envelopes)
+        citations = [
+            {
+                **citation,
+                "group_label": citation_group["label"],
+            }
+            for citation_group in citation_groups
+            for citation in citation_group.get("citations", [])
+        ]
 
         if citations:
             ct_table = Table(title=f"Citations ({len(citations)})")
             ct_table.add_column("#", no_wrap=True)
             ct_table.add_column("Title", overflow="fold")
+            ct_table.add_column("Group", no_wrap=True)
             ct_table.add_column("Source", no_wrap=True)
             ct_table.add_column("Score", no_wrap=True)
 
@@ -851,10 +845,11 @@ def thread_trace(message_id: str, as_json: bool, show_data: bool):
                 title = ct.get("title") or ct.get("document_id") or "Untitled"
                 if len(title) > 50:
                     title = title[:47] + "..."
+                group_label = ct.get("group_label") or "-"
                 source = ct.get("source") or "-"
                 score = ct.get("score")
                 score_str = f"{score:.3f}" if score is not None else "-"
-                ct_table.add_row(str(i), title, source, score_str)
+                ct_table.add_row(str(i), title, group_label, source, score_str)
 
             console.print(ct_table)
         else:

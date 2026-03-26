@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from .helpers import build_result_envelope
-from .knowledge_context import build_startup_knowledge_context
+from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -436,6 +436,7 @@ class ChatAgent:
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
             startup_prompt_initialized = state.get("startup_prompt_initialized", False)
+            signals_envelopes = list(state.get("signals_envelopes") or [])
 
             if (
                 startup_system_prompt is None
@@ -460,6 +461,10 @@ class ChatAgent:
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
                     )
+                    signals_envelopes = merge_internal_tool_envelopes(
+                        signals_envelopes,
+                        getattr(startup_context, "internal_tool_envelopes", []),
+                    )
                     startup_system_prompt = (
                         f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"
                         if startup_context.strip()
@@ -480,6 +485,7 @@ class ChatAgent:
                 "iteration_count": iteration_count + 1,
                 "startup_system_prompt": startup_system_prompt,
                 "startup_prompt_initialized": startup_prompt_initialized,
+                "signals_envelopes": signals_envelopes,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -716,7 +722,10 @@ User Query: {query}"""
                 "max_iterations": max_iterations,
                 "startup_system_prompt": system_prompt,
                 "startup_prompt_initialized": True,
-                "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
+                "signals_envelopes": merge_internal_tool_envelopes(
+                    [],
+                    getattr(startup_context, "internal_tool_envelopes", []),
+                ),
             }
 
             thread_config = {"configurable": {"thread_id": session_id}}

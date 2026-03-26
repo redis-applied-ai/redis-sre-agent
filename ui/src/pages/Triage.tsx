@@ -107,8 +107,19 @@ const Triage = () => {
   };
 
   const isCitationMessage = (content: string) => {
-    return content.startsWith("**Sources for previous response**");
+    return /^\*\*(Sources for previous response|Discovered context|Startup context loaded)\*\*/.test(
+      content,
+    );
   };
+  const citationHeading = (content: string) => {
+    const match = content.match(/^\*\*([^*]+)\*\*/);
+    return match?.[1] || "Sources";
+  };
+  const citationBody = (content: string) =>
+    content.replace(
+      /^\*\*(Sources for previous response|Discovered context|Startup context loaded)\*\*\n?/,
+      "",
+    );
   const pollingIntervalRef = useRef<number | null>(null);
 
   const userId = "sre-user-1"; // In a real app, this would come from auth
@@ -1073,7 +1084,7 @@ const Triage = () => {
                                   className="w-full px-3 py-2 flex items-center justify-between text-left text-redis-dusk-03 hover:text-redis-dusk-02 transition-colors"
                                 >
                                   <span className="font-semibold">
-                                    📚 Sources for previous response
+                                    📚 {citationHeading(msg.content)}
                                   </span>
                                   <span
                                     className={`transform transition-transform ${expandedCitations.has(msg.id) ? "rotate-180" : ""}`}
@@ -1104,10 +1115,7 @@ const Triage = () => {
                                           ),
                                         }}
                                       >
-                                        {msg.content.replace(
-                                          /^\*\*Sources for previous response\*\*\n?/,
-                                          "",
-                                        )}
+                                        {citationBody(msg.content)}
                                       </ReactMarkdown>
                                     </div>
                                   </div>

@@ -16,7 +16,7 @@ from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.core.citation_message import (
-    format_citation_message,
+    build_citation_message_payloads,
     should_include_citations,
 )
 from redis_sre_agent.core.clusters import get_cluster_by_id
@@ -260,8 +260,14 @@ def query(
 
             # Add citation system message if there are search results
             if should_include_citations(search_results):
-                citation_msg = format_citation_message(search_results)
-                messages_to_save.append({"role": "system", "content": citation_msg})
+                for citation_msg in build_citation_message_payloads(search_results):
+                    messages_to_save.append(
+                        {
+                            "role": "system",
+                            "content": citation_msg["content"],
+                            "metadata": citation_msg["metadata"],
+                        }
+                    )
 
             # Save messages to thread
             await thread_manager.append_messages(active_thread_id, messages_to_save)
