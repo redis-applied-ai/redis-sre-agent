@@ -90,9 +90,7 @@ def write_config_file(path: Path, config_format: str, values: dict[str, object])
         return
 
     if config_format == "toml":
-        content = "\n".join(
-            f"{key} = {_to_toml_value(value)}" for key, value in values.items()
-        )
+        content = "\n".join(f"{key} = {_to_toml_value(value)}" for key, value in values.items())
         path.write_text(f"{content}\n", encoding="utf-8")
         return
 
@@ -833,7 +831,9 @@ class TestMultiFormatConfigLoading:
             assert settings.debug is True
             assert settings.log_level == "DEBUG"
 
-    def test_default_config_path_loads_json_when_no_yaml_or_toml_exists(self, tmp_path, monkeypatch):
+    def test_default_config_path_loads_json_when_no_yaml_or_toml_exists(
+        self, tmp_path, monkeypatch
+    ):
         """Test that default-path discovery falls through to later supported formats."""
         from redis_sre_agent.core.config import Settings
 
