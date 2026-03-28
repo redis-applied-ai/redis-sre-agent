@@ -1,7 +1,9 @@
 """Unit tests for configuration management."""
 
+import json
 import os
 import tempfile
+from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
@@ -64,6 +66,37 @@ def get_clean_settings(**kwargs):
         allowed_hosts: list[str] = Field(default=["*"], description="Allowed hosts for CORS")
 
     return TestSettings(**kwargs)
+
+
+def _to_toml_value(value: object) -> str:
+    """Serialize simple test values into TOML literals."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    raise TypeError(f"Unsupported TOML test value: {value!r}")
+
+
+def write_config_file(path: Path, config_format: str, values: dict[str, object]) -> None:
+    """Write supported test config formats without extra dependencies."""
+    if config_format == "yaml":
+        path.write_text(yaml.safe_dump(values), encoding="utf-8")
+        return
+
+    if config_format == "json":
+        path.write_text(json.dumps(values), encoding="utf-8")
+        return
+
+    if config_format == "toml":
+        content = "\n".join(
+            f"{key} = {_to_toml_value(value)}" for key, value in values.items()
+        )
+        path.write_text(f"{content}\n", encoding="utf-8")
+        return
+
+    raise ValueError(f"Unsupported config format: {config_format}")
 
 
 class TestSettings:
@@ -628,13 +661,19 @@ class TestYamlConfigLoading:
             os.unlink(config_path)
 
     def test_default_config_paths_are_checked(self):
-        """Test that default config paths are checked when SRE_AGENT_CONFIG is not set."""
+        """Test that default config paths include supported formats in order."""
         from redis_sre_agent.core.config import DEFAULT_CONFIG_PATHS
 
-        # Verify the default paths exist in the module
-        assert "config.yaml" in DEFAULT_CONFIG_PATHS
-        assert "config.yml" in DEFAULT_CONFIG_PATHS
-        assert "sre_agent_config.yaml" in DEFAULT_CONFIG_PATHS
+        assert DEFAULT_CONFIG_PATHS == [
+            "config.yaml",
+            "config.yml",
+            "config.toml",
+            "config.json",
+            "sre_agent_config.yaml",
+            "sre_agent_config.yml",
+            "sre_agent_config.toml",
+            "sre_agent_config.json",
+        ]
 
     def test_yaml_with_simple_settings(self):
         """Test loading simple settings from YAML.
@@ -732,3 +771,158 @@ class TestYamlConfigLoading:
                 assert data == {}
         finally:
             os.unlink(config_path)
+
+
+class TestMultiFormatConfigLoading:
+    """Test YAML, TOML, and JSON configuration loading."""
+
+    @pytest.mark.parametrize("config_format", ["yaml", "toml", "json"])
+    def test_supported_config_formats_load_via_explicit_path(self, tmp_path, config_format):
+        """Test that SRE_AGENT_CONFIG can point at any supported config format."""
+        from redis_sre_agent.core.config import Settings
+
+        config_path = tmp_path / f"settings.{config_format}"
+        write_config_file(
+            config_path,
+            config_format,
+            {
+                "app_name": f"{config_format}-app",
+                "debug": True,
+                "recursion_limit": 200,
+            },
+        )
+
+        with patch.dict(
+            os.environ,
+            {"SRE_AGENT_CONFIG": str(config_path), "OPENAI_API_KEY": "test-key"},
+            clear=True,
+        ):
+            settings = Settings(_env_file=None)
+
+            assert settings.app_name == f"{config_format}-app"
+            assert settings.debug is True
+            assert settings.recursion_limit == 200
+
+    @pytest.mark.parametrize("config_format", ["yaml", "toml", "json"])
+    def test_env_vars_override_supported_config_formats(self, tmp_path, config_format):
+        """Test that env vars keep higher precedence than file-based config."""
+        from redis_sre_agent.core.config import Settings
+
+        config_path = tmp_path / f"settings.{config_format}"
+        write_config_file(
+            config_path,
+            config_format,
+            {
+                "debug": False,
+                "log_level": "WARNING",
+            },
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "SRE_AGENT_CONFIG": str(config_path),
+                "OPENAI_API_KEY": "test-key",
+                "DEBUG": "true",
+                "LOG_LEVEL": "DEBUG",
+            },
+            clear=True,
+        ):
+            settings = Settings(_env_file=None)
+
+            assert settings.debug is True
+            assert settings.log_level == "DEBUG"
+
+    def test_default_config_path_loads_json_when_no_yaml_or_toml_exists(self, tmp_path, monkeypatch):
+        """Test that default-path discovery falls through to later supported formats."""
+        from redis_sre_agent.core.config import Settings
+
+        write_config_file(
+            tmp_path / "config.json",
+            "json",
+            {
+                "app_name": "json-default",
+                "recursion_limit": 321,
+            },
+        )
+
+        monkeypatch.chdir(tmp_path)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            settings = Settings(_env_file=None)
+
+            assert settings.app_name == "json-default"
+            assert settings.recursion_limit == 321
+
+    def test_first_existing_default_config_path_wins_across_formats(self, tmp_path, monkeypatch):
+        """Test that the configured default-path order is respected."""
+        from redis_sre_agent.core.config import Settings
+
+        write_config_file(tmp_path / "config.toml", "toml", {"app_name": "toml-default"})
+        write_config_file(tmp_path / "config.json", "json", {"app_name": "json-default"})
+
+        monkeypatch.chdir(tmp_path)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            settings = Settings(_env_file=None)
+
+            assert settings.app_name == "toml-default"
+
+    def test_sre_agent_config_override_beats_default_path(self, tmp_path, monkeypatch):
+        """Test that an explicit path overrides discovered default config files."""
+        from redis_sre_agent.core.config import Settings
+
+        write_config_file(tmp_path / "config.yaml", "yaml", {"app_name": "yaml-default"})
+        explicit_path = tmp_path / "custom.json"
+        write_config_file(explicit_path, "json", {"app_name": "json-explicit"})
+
+        monkeypatch.chdir(tmp_path)
+        with patch.dict(
+            os.environ,
+            {"SRE_AGENT_CONFIG": str(explicit_path), "OPENAI_API_KEY": "test-key"},
+            clear=True,
+        ):
+            settings = Settings(_env_file=None)
+
+            assert settings.app_name == "json-explicit"
+
+    @pytest.mark.parametrize("config_filename", ["missing.yaml", "missing.toml", "missing.json"])
+    def test_missing_explicit_config_file_is_ignored(self, tmp_path, config_filename):
+        """Test that a missing explicit config file does not break settings creation."""
+        from redis_sre_agent.core.config import Settings
+
+        config_path = tmp_path / config_filename
+        with patch.dict(
+            os.environ,
+            {"SRE_AGENT_CONFIG": str(config_path), "OPENAI_API_KEY": "test-key"},
+            clear=True,
+        ):
+            settings = Settings(_env_file=None)
+
+            assert settings.app_name == "Redis SRE Agent"
+            assert settings.debug is False
+
+    @pytest.mark.parametrize(
+        ("config_format", "invalid_content"),
+        [
+            ("yaml", "invalid: yaml: content: [[[\n"),
+            ("toml", "invalid = [\n"),
+            ("json", "{invalid json\n"),
+        ],
+    )
+    def test_invalid_explicit_config_file_is_ignored(
+        self, tmp_path, config_format, invalid_content
+    ):
+        """Test that invalid config files do not break settings construction."""
+        from redis_sre_agent.core.config import Settings
+
+        config_path = tmp_path / f"invalid.{config_format}"
+        config_path.write_text(invalid_content, encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {"SRE_AGENT_CONFIG": str(config_path), "OPENAI_API_KEY": "test-key"},
+            clear=True,
+        ):
+            settings = Settings(_env_file=None)
+
+            assert settings.app_name == "Redis SRE Agent"
+            assert settings.debug is False
