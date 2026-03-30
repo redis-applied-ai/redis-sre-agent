@@ -188,7 +188,7 @@ redis-sre-agent mcp serve --transport stdio
 Add external MCP servers to give the agent additional capabilities:
 
 ```yaml
-# config.yaml
+# config.yaml (YAML shown; config.toml and config.json are also supported)
 mcp_servers:
   # GitHub MCP server
   github:

@@ -99,7 +99,7 @@ Add external MCP servers to give the agent additional tools. The agent connects 
 
 ### Configuration
 
-Add MCP servers in `config.yaml`:
+Add MCP servers in a config file. YAML is shown here because nested MCP configuration is easier to read in YAML:
 
 ```yaml
 mcp_servers:
@@ -151,4 +151,4 @@ tool_manager = ToolManager(
 )
 ```
 
-See `config.yaml.example` for full MCP configuration examples.
+See `config.yaml.example` for full YAML MCP configuration examples.
