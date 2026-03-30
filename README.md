@@ -22,9 +22,16 @@ Redis SRE Agent is an AI teammate for Redis operations. It answers questions fro
 ## Quick Start
 
 ### Prerequisites
-- Python 3.12+, Redis 8+ or 7.x with RediSearch module, `uv` package manager
+- Python 3.12+, Redis with Redis Search / Redis Query Engine 2.4+, `uv` package manager
 - OpenAI API key or OpenAI-compatible proxy
 - Optional: Prometheus, Loki, and Grafana access for monitoring integration
+
+### Redis Compatibility
+
+- Minimum supported search engine: Redis Search / Redis Query Engine 2.4+
+- Redis 8.x is recommended; Redis 7.x is supported when the deployed Redis Search module is 2.4 or newer
+
+For more details on Redis/Search compatibility and fallback behavior, see [Operational Gotchas](docs/operations/gotchas.md#redis-enterprise-vs-redis-oss).
 
 ### Development Setup
 ```bash
@@ -39,8 +46,8 @@ uv sync
 cp .env.example .env
 # Edit .env with your API keys and configuration
 
-# Start Redis 8
-docker run -d -p 7843:6379 redis:8-alpine
+# Start Redis with Redis Search
+docker run -d -p 7843:6379 redis/redis-stack-server:latest
 
 # Start worker
 uv run redis-sre-agent worker
