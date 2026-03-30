@@ -1708,7 +1708,9 @@ class TestSupportTicketHelpers:
 
         assert len(result) == 1
         assert result[0]["document_hash"] == "ticket-hash"
-        assert support_tickets_index.query.await_count == len(knowledge_helpers._EXACT_MATCH_TAG_FIELDS)
+        assert support_tickets_index.query.await_count == len(
+            knowledge_helpers._EXACT_MATCH_TAG_FIELDS
+        )
 
         expected_field_filters = (
             r"@name:{foo\|bar\/baz\[prod\]}",
@@ -1722,8 +1724,8 @@ class TestSupportTicketHelpers:
 
         for expected_filter, observed_filter in zip(expected_field_filters, observed_filters):
             assert expected_filter in observed_filter
-            assert '@doc_type:{support_ticket}' in observed_filter
-            assert '@version:{latest}' in observed_filter
+            assert "@doc_type:{support_ticket}" in observed_filter
+            assert "@version:{latest}" in observed_filter
             assert '"foo|bar/baz[prod]"' not in observed_filter
 
     @pytest.mark.asyncio

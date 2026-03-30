@@ -69,9 +69,7 @@ _HYBRID_QUERY_UNSUPPORTED_MARKERS = (
     "not supported",
 )
 _HYBRID_MISSING_COMMAND_MARKERS = ("unknown command", "no such command")
-_TAG_EXACT_MATCH_ESCAPER = TokenEscaper(
-    re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?\|]")
-)
+_TAG_EXACT_MATCH_ESCAPER = TokenEscaper(re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?\|]"))
 
 
 def _coerce_non_negative_int(value: Any, *, default: int) -> int:
