@@ -61,6 +61,17 @@ _SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
 _TEXT_PHRASE_QUERY_FIELDS = ("title", "summary", "content")
 _RRF_K = 60
 _HYBRID_UNSUPPORTED_INDEX_TYPES: set[str] = set()
+_HYBRID_QUERY_UNSUPPORTED_MARKERS = (
+    "syntax error",
+    "unknown argument",
+    "unknown keyword",
+    "unsupported",
+    "not supported",
+)
+_HYBRID_MISSING_COMMAND_MARKERS = ("unknown command", "no such command")
+_TAG_EXACT_MATCH_ESCAPER = TokenEscaper(
+    re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?\|]")
+)
 
 
 def _coerce_non_negative_int(value: Any, *, default: int) -> int:
@@ -295,14 +306,31 @@ def _normalize_exact_match_value(value: str, index_type: str) -> str:
     return str(value or "").strip()
 
 
-def _quote_tag_value(value: str) -> str:
-    """Quote a RediSearch TAG value so punctuation is treated literally."""
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
 def _tag_equals_expression(field_name: str, value: str) -> FilterExpression:
-    """Build an exact TAG match expression that survives punctuation like `|`."""
-    return FilterExpression(f"@{field_name}:{{{_quote_tag_value(value)}}}")
+    """Build a canonical TAG equality expression with explicit escaping."""
+    escaped_value = _TAG_EXACT_MATCH_ESCAPER.escape(str(value or ""))
+    return FilterExpression(f"@{field_name}:{{{escaped_value}}}")
+
+
+def _exact_match_filter_expression(
+    field_name: str,
+    normalized_query: str,
+    *,
+    version: Optional[str],
+    category: Optional[str],
+    doc_type: Optional[str],
+) -> FilterExpression:
+    """Build a field-scoped exact-match filter with the shared TAG constraints."""
+    filter_expr = _tag_equals_expression(field_name, normalized_query)
+
+    if version is not None:
+        filter_expr = filter_expr & _tag_equals_expression("version", version)
+    if category is not None:
+        filter_expr = filter_expr & _tag_equals_expression("category", category)
+    if doc_type is not None:
+        filter_expr = filter_expr & _tag_equals_expression("doc_type", doc_type.strip().lower())
+
+    return filter_expr
 
 
 def _looks_like_precise_search_query(query: str, index_type: str) -> bool:
@@ -365,28 +393,24 @@ async def _find_exact_document_matches(
 
     index = await _get_index_for_type(normalized_index_type, config=config)
 
-    filter_expr = None
+    rows: List[Dict[str, Any]] = []
     for field_name in _EXACT_MATCH_TAG_FIELDS:
-        field_expr = _tag_equals_expression(field_name, normalized_query)
-        filter_expr = field_expr if filter_expr is None else (filter_expr | field_expr)
-
-    if version is not None:
-        version_expr = _tag_equals_expression("version", version)
-        filter_expr = version_expr if filter_expr is None else (filter_expr & version_expr)
-    if category is not None:
-        category_expr = _tag_equals_expression("category", category)
-        filter_expr = category_expr if filter_expr is None else (filter_expr & category_expr)
-    if doc_type is not None:
-        doc_type_expr = _tag_equals_expression("doc_type", doc_type.strip().lower())
-        filter_expr = doc_type_expr if filter_expr is None else (filter_expr & doc_type_expr)
-
-    rows = await index.query(
-        FilterQuery(
-            filter_expression=filter_expr,
-            return_fields=_SEARCH_RETURN_FIELDS,
-            num_results=50,
+        rows.extend(
+            await index.query(
+                FilterQuery(
+                    filter_expression=_exact_match_filter_expression(
+                        field_name,
+                        normalized_query,
+                        version=version,
+                        category=category,
+                        doc_type=doc_type,
+                    ),
+                    return_fields=_SEARCH_RETURN_FIELDS,
+                    num_results=50,
+                    dialect=2,
+                )
+            )
         )
-    )
 
     candidates = [
         doc
@@ -508,16 +532,11 @@ def _reciprocal_rank_fuse(
 def _is_hybrid_query_unsupported_error(exc: Exception) -> bool:
     """Whether Redis rejected the HybridQuery syntax/capability."""
     message = str(exc or "").lower()
-    return any(
-        marker in message
-        for marker in (
-            "syntax error",
-            "unknown argument",
-            "unsupported",
-            "not supported",
-            "unknown keyword",
-            "no such",
-        )
+    if any(marker in message for marker in _HYBRID_QUERY_UNSUPPORTED_MARKERS):
+        return True
+
+    return "ft.hybrid" in message and any(
+        marker in message for marker in _HYBRID_MISSING_COMMAND_MARKERS
     )
 
 
@@ -1666,13 +1685,8 @@ async def get_all_document_fragments(
         normalized_index_type = index_type.strip().lower()
         index = await _get_index_for_type(normalized_index_type, config=config)
 
-        # Use FT.SEARCH to find all chunks for this document
-        # document_hash is indexed as a TAG field, so we can filter on it.
-        # Tag values that include punctuation (e.g., '-') must be quoted.
-        from redisvl.query import FilterQuery
-
         filter_query = FilterQuery(
-            filter_expression=str(_tag_equals_expression("document_hash", document_hash)),
+            filter_expression=_tag_equals_expression("document_hash", document_hash),
             return_fields=[
                 "title",
                 "content",
@@ -1691,6 +1705,7 @@ async def get_all_document_fragments(
                 "version",
             ],
             num_results=1000,  # Set high limit to get all chunks
+            dialect=2,
         )
 
         # Execute search
