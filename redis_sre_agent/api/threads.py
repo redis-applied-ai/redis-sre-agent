@@ -26,6 +26,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _derive_thread_subject_source(req: ThreadCreateRequest) -> Optional[str]:
+    """Pick the best available user text to derive a generated thread subject."""
+    context = req.context or {}
+    original_query = context.get("original_query")
+    if isinstance(original_query, str) and original_query.strip():
+        return original_query.strip()
+
+    for message in req.messages or []:
+        if message.role == "user" and message.content.strip():
+            return message.content.strip()
+
+    return None
+
+
 @router.get("/threads")
 async def list_threads(
     user_id: Optional[str] = None, limit: int = 50, offset: int = 0
@@ -92,6 +106,10 @@ async def create_thread(req: ThreadCreateRequest) -> ThreadResponse:
             except Exception:
                 # Fallback for mocks/tests that patch update_thread_context only
                 await tm.update_thread_context(thread_id, {"subject": req.subject})
+        else:
+            subject_source = _derive_thread_subject_source(req)
+            if subject_source:
+                await tm.update_thread_subject(thread_id, subject_source)
 
         # Optionally append initial messages
         if req.messages:
