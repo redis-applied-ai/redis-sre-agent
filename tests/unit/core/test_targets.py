@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from redis_sre_agent.core import targets as target_module
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.targets import (
     ResolvedTargetMatch,
@@ -85,6 +86,54 @@ async def test_resolve_target_query_ranks_matching_environment_and_detects_ambig
     assert ambiguous.status == "clarification_required"
     assert ambiguous.clarification_required is True
     assert len(ambiguous.matches) == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_parses_hints_once_and_avoids_alias_substring_matches():
+    ambiguous_alias = TargetCatalogDoc(
+        target_id="instance:alias-only",
+        target_kind="instance",
+        resource_id="alias-only",
+        display_name="alias-only",
+        name="alias-only",
+        environment=None,
+        usage=None,
+        target_type=None,
+        capabilities=["redis"],
+        search_text="unrelated target",
+        search_aliases=["a"],
+    )
+    real_match = TargetCatalogDoc(
+        target_id="instance:checkout-cache",
+        target_kind="instance",
+        resource_id="checkout-cache",
+        display_name="checkout-cache-prod",
+        name="checkout-cache-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis"],
+        search_text="checkout cache prod production cache",
+        search_aliases=["checkout"],
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.core.targets.get_target_catalog",
+            new=AsyncMock(return_value=[ambiguous_alias, real_match]),
+        ),
+        patch(
+            "redis_sre_agent.core.targets._parse_query_hints",
+            wraps=target_module._parse_query_hints,
+        ) as parse_hints,
+    ):
+        resolved = await resolve_target_query(query="checkout cache", allow_multiple=False)
+
+    assert parse_hints.call_count == 1
+    assert resolved.status == "resolved"
+    assert len(resolved.selected_matches) == 1
+    assert resolved.selected_matches[0].resource_id == "checkout-cache"
+    assert all(match.resource_id != "alias-only" for match in resolved.matches)
 
 
 @pytest.mark.asyncio

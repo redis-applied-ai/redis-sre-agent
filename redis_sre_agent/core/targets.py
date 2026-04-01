@@ -534,8 +534,9 @@ def _score_target_doc(
     doc: TargetCatalogDoc,
     *,
     preferred_capabilities: Optional[Sequence[str]] = None,
+    hints: Optional[Dict[str, Any]] = None,
 ) -> tuple[float, List[str]]:
-    hints = _parse_query_hints(query)
+    hints = hints or _parse_query_hints(query)
     normalized = hints["normalized"]
     query_tokens = hints["tokens"]
     reasons: List[str] = []
@@ -556,7 +557,11 @@ def _score_target_doc(
         reasons.append(f"matched alias={exact_alias_matches[0]}")
 
     partial_alias_matches = [
-        alias for alias in doc.search_aliases if _normalize(alias) in normalized
+        alias
+        for alias in doc.search_aliases
+        if (alias_tokens := set(_tokenize(alias)))
+        and alias_tokens <= query_tokens
+        and _normalize(alias) != normalized
     ]
     if partial_alias_matches and not exact_alias_matches:
         score += 3.0
@@ -626,12 +631,14 @@ async def resolve_target_query(
     if not docs:
         return TargetResolutionResult(status="no_match")
 
+    hints = _parse_query_hints(query)
     ranked: List[ResolvedTargetMatch] = []
     for doc in docs:
         score, reasons = _score_target_doc(
             query,
             doc,
             preferred_capabilities=preferred_capabilities,
+            hints=hints,
         )
         if score < 2.5:
             continue
