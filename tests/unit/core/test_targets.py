@@ -137,6 +137,36 @@ async def test_resolve_target_query_parses_hints_once_and_avoids_alias_substring
 
 
 @pytest.mark.asyncio
+async def test_resolve_target_query_keeps_token_overlap_from_all_aliases():
+    target = TargetCatalogDoc(
+        target_id="instance:prod-cache",
+        target_kind="instance",
+        resource_id="prod-cache",
+        display_name="prod-cache",
+        name="prod-cache",
+        environment="production",
+        usage=None,
+        target_type="oss_single",
+        capabilities=["redis"],
+        search_text="primary production target",
+        search_aliases=["alpha", "checkout cache"],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[target]),
+    ):
+        resolved = await resolve_target_query(query="checkout cache", allow_multiple=False)
+
+    assert resolved.status == "resolved"
+    assert resolved.selected_matches[0].resource_id == "prod-cache"
+    assert any(
+        reason == "matched tokens=cache,checkout"
+        for reason in resolved.selected_matches[0].match_reasons
+    )
+
+
+@pytest.mark.asyncio
 async def test_attach_target_matches_persists_safe_thread_context():
     match = ResolvedTargetMatch(
         target_kind="instance",

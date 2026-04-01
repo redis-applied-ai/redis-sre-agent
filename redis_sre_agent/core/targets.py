@@ -556,13 +556,13 @@ def _score_target_doc(
         score += 7.0
         reasons.append(f"matched alias={exact_alias_matches[0]}")
 
-    partial_alias_matches = [
-        alias
-        for alias in doc.search_aliases
-        if (alias_tokens := set(_tokenize(alias)))
-        and alias_tokens <= query_tokens
-        and _normalize(alias) != normalized
-    ]
+    partial_alias_matches: List[str] = []
+    for alias in doc.search_aliases:
+        alias_token_set = set(_tokenize(alias))
+        if not alias_token_set:
+            continue
+        if alias_token_set <= query_tokens and _normalize(alias) != normalized:
+            partial_alias_matches.append(alias)
     if partial_alias_matches and not exact_alias_matches:
         score += 3.0
         reasons.append(f"matched alias={partial_alias_matches[0]}")
