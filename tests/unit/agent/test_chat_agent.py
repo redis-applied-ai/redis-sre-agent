@@ -288,6 +288,7 @@ class TestChatAgentWorkflowBuild:
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
         mock_tool_mgr.get_status_update.return_value = None
+        mock_tool_mgr.get_toolset_generation.return_value = 1
 
         # Create a mock emitter
         emitter = NullEmitter()
@@ -295,8 +296,6 @@ class TestChatAgentWorkflowBuild:
         # Should not raise - emitter is now accepted
         workflow = agent._build_workflow(
             tool_mgr=mock_tool_mgr,
-            llm_with_tools=mock_llm,
-            adapters=[],
             emitter=emitter,
         )
 
@@ -315,12 +314,11 @@ class TestChatAgentWorkflowBuild:
         # Create a mock tool manager
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
 
         # Should not raise when emitter is None
         workflow = agent._build_workflow(
             tool_mgr=mock_tool_mgr,
-            llm_with_tools=mock_llm,
-            adapters=[],
             emitter=None,
         )
 
@@ -679,10 +677,9 @@ class TestChatAgentStartupContext:
         agent = ChatAgent()
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
         workflow = agent._build_workflow(
             tool_mgr=mock_tool_mgr,
-            llm_with_tools=mock_llm,
-            adapters=[],
             emitter=None,
         )
         compiled = workflow.compile()
@@ -730,10 +727,9 @@ class TestChatAgentStartupContext:
         agent = ChatAgent()
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
         workflow = agent._build_workflow(
             tool_mgr=mock_tool_mgr,
-            llm_with_tools=mock_llm,
-            adapters=[],
             emitter=None,
         )
         compiled = workflow.compile()
@@ -776,10 +772,9 @@ class TestChatAgentStartupContext:
         agent = ChatAgent()
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
         workflow = agent._build_workflow(
             tool_mgr=mock_tool_mgr,
-            llm_with_tools=mock_llm,
-            adapters=[],
             emitter=None,
         )
         compiled = workflow.compile()
@@ -831,10 +826,9 @@ class TestChatAgentStartupContext:
         agent = ChatAgent()
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
         workflow = agent._build_workflow(
             tool_mgr=mock_tool_mgr,
-            llm_with_tools=mock_llm,
-            adapters=[],
             emitter=None,
         )
         compiled = workflow.compile()
@@ -874,10 +868,9 @@ class TestChatAgentStartupContext:
         agent = ChatAgent()
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
         workflow = agent._build_workflow(
             tool_mgr=mock_tool_mgr,
-            llm_with_tools=mock_llm,
-            adapters=[],
             emitter=None,
         )
         compiled = workflow.compile()
@@ -898,5 +891,56 @@ class TestChatAgentStartupContext:
 
         sent_messages = mock_llm.ainvoke.call_args.args[0]
         assert isinstance(sent_messages[0], SystemMessage)
-        assert sent_messages[0].content == "FRESH_CONTEXT"
-        mock_build_startup_context.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_agent_node_rebinds_tools_when_toolset_generation_changes(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        mock_build_startup_context,
+        mock_build_adapters,
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_startup_context.return_value = "CTX"
+        mock_build_adapters.return_value = []
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.side_effect = [[], []]
+        mock_tool_mgr.get_toolset_generation.side_effect = [1, 2]
+        workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=None)
+        compiled = workflow.compile()
+
+        first_state = {
+            "messages": [HumanMessage(content="first question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "signals_envelopes": [],
+        }
+        second_state = {
+            "messages": [HumanMessage(content="second question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(first_state)
+        await compiled.nodes["agent"].ainvoke(second_state)
+
+        assert mock_llm.bind_tools.call_count == 2

@@ -43,7 +43,7 @@ def test_query_cli_help_shows_options():
     assert "-c" in result.output
 
 
-def test_query_without_instance_uses_knowledge_agent(mock_thread_manager, mock_redis_client):
+def test_query_without_instance_uses_chat_agent(mock_thread_manager, mock_redis_client):
     runner = CliRunner()
 
     mock_agent = MagicMock()
@@ -52,9 +52,7 @@ def test_query_without_instance_uses_knowledge_agent(mock_thread_manager, mock_r
     )
 
     with (
-        patch(
-            "redis_sre_agent.cli.query.get_knowledge_agent", return_value=mock_agent
-        ) as mock_get_knowledge,
+        patch("redis_sre_agent.cli.query.get_chat_agent", return_value=mock_agent) as mock_get_chat,
         patch("redis_sre_agent.cli.query.get_sre_agent") as mock_get_sre,
         patch(
             "redis_sre_agent.cli.query.get_instance_by_id",
@@ -66,7 +64,7 @@ def test_query_without_instance_uses_knowledge_agent(mock_thread_manager, mock_r
         result = runner.invoke(query, ["What is Redis SRE?"])
 
     assert result.exit_code == 0, result.output
-    mock_get_knowledge.assert_called_once()
+    mock_get_chat.assert_called_once_with(redis_instance=None, redis_cluster=None)
     mock_get_sre.assert_not_called()
     mock_get_instance.assert_not_awaited()
     mock_agent.process_query.assert_awaited_once()

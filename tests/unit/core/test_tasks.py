@@ -601,9 +601,7 @@ class TestProcessKnowledgeQuery:
             patch(
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
-            patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
-            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             result = await process_knowledge_query(
@@ -635,9 +633,7 @@ class TestProcessKnowledgeQuery:
             patch(
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
-            patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
-            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             with pytest.raises(Exception, match="Knowledge error"):
@@ -678,9 +674,7 @@ class TestProcessKnowledgeQuery:
             patch(
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
-            patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
-            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             result = await process_knowledge_query(
@@ -930,13 +924,13 @@ class TestProcessAgentTurn:
         mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
 
-        mock_knowledge_agent = AsyncMock()
+        mock_chat_agent = AsyncMock()
         mock_response = AgentResponse(
-            response="Knowledge response",
+            response="Chat response",
             search_results=[],
             tool_envelopes=[{"name": "redis_info", "status": "success"}],
         )
-        mock_knowledge_agent.process_query = AsyncMock(return_value=mock_response)
+        mock_chat_agent.process_query = AsyncMock(return_value=mock_response)
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
@@ -949,8 +943,8 @@ class TestProcessAgentTurn:
                 return_value=None,
             ),
             patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent",
-                return_value=mock_knowledge_agent,
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
             ),
             patch(
                 "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"

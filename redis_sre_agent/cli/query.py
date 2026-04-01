@@ -56,8 +56,8 @@ def query(
 
     \b
     The agent is automatically selected based on the query, or use --agent:
-      - knowledge: General Redis questions (no instance needed)
-      - chat: Quick questions with a Redis instance
+      - knowledge: Legacy knowledge-only mode
+      - chat: Default general-purpose agent, with or without explicit scope
       - triage: Full health checks and diagnostics
       - auto: Let the router decide (default)
     """
