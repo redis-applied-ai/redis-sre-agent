@@ -179,6 +179,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Needed for command-based MCP servers
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
+      - /Users/andrew.brookins/src/re-analyzer:/work/re-analyzer  # Mount Analyzer repo for MCP server startup
     group_add:
       - "0"  # Docker Desktop exposes the socket as root:root
     command: uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
@@ -213,6 +214,7 @@ services:
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
       - uv_cache:/root/.cache/uv  # Persist UV cache for MCP server deps
+      - /Users/andrew.brookins/src/re-analyzer:/work/re-analyzer  # Mount Analyzer repo for MCP server startup
     group_add:
       - "0"  # Docker Desktop exposes the socket as root:root
     # Run the worker directly from the project virtualenv instead of via

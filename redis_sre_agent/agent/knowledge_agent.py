@@ -8,6 +8,7 @@ This agent uses the same ToolManager system as the main agent, but only loads
 knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus).
 """
 
+import json
 import logging
 from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
@@ -18,7 +19,7 @@ from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.core.llm_helpers import create_llm
+from redis_sre_agent.core.llm_helpers import create_llm, create_mini_llm
 from redis_sre_agent.core.progress import (
     NullEmitter,
     ProgressEmitter,
@@ -31,6 +32,48 @@ from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _summarize_envelope_for_empty_response(envelope: Dict[str, Any]) -> str:
+    """Build a short deterministic summary when the model returns no text."""
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        return "completed"
+
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict):
+        return "completed"
+
+    if isinstance(payload.get("items"), list):
+        return f"returned {len(payload['items'])} items"
+
+    if "count" in payload:
+        return f"returned count={payload['count']}"
+
+    if "item" in payload:
+        return "returned 1 item" if payload.get("item") is not None else "returned no item"
+
+    return "completed"
+
+
+def _fallback_response_from_tool_envelopes(tool_envelopes: List[Dict[str, Any]]) -> str:
+    """Never return an empty answer after successful tool use."""
+    if not tool_envelopes:
+        return (
+            "I wasn't able to produce a final answer. Please try narrowing the request "
+            "or ask for one package section at a time."
+        )
+
+    lines = [
+        "I gathered evidence from tools, but the model returned an empty summary. Key results:",
+    ]
+    for envelope in tool_envelopes[:5]:
+        tool_name = str(envelope.get("name") or envelope.get("tool_key") or "unknown_tool").strip()
+        lines.append(f"- {tool_name}: {_summarize_envelope_for_empty_response(envelope)}")
+    if len(tool_envelopes) > 5:
+        lines.append(f"- {len(tool_envelopes) - 5} more tool result(s) omitted.")
+
+    return "\n".join(lines)
 
 
 # Knowledge-focused system prompt
@@ -113,12 +156,58 @@ class KnowledgeOnlyAgent:
 
         # LLM optimized for knowledge tasks
         self.llm = create_llm()
+        self.mini_llm = create_mini_llm()
 
         # Tools will be loaded per-query using ToolManager (without redis_instance)
         # This loads only the always-on providers (knowledge, utilities)
         self.llm_with_tools = self.llm  # Will be rebound with tools per query
 
         logger.info("Knowledge-only agent initialized (tools loaded per-query)")
+
+    async def _compose_blank_summary(self, query: str, tool_envelopes: List[Dict[str, Any]]) -> str:
+        """Use a small model to summarize tool evidence when the main model returns blank."""
+        if not tool_envelopes:
+            return ""
+
+        payload = json.dumps(tool_envelopes[:5], default=str)
+        messages = [
+            SystemMessage(
+                content=(
+                    "You are a careful technical editor. Summarize tool results into a short "
+                    "operator-facing answer. Use only the provided tool payload. Do not invent "
+                    "facts. If the payload is insufficient, say what is missing."
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"User query:\n{query}\n\n"
+                    "Tool result envelopes (JSON):\n"
+                    f"{payload}\n\n"
+                    "Return a concise plain-text summary only."
+                )
+            ),
+        ]
+
+        try:
+            response = await self.mini_llm.ainvoke(messages)
+        except Exception as exc:
+            logger.warning("Knowledge blank-summary composer failed: %s", exc)
+            return ""
+
+        content = response.content or ""
+        if isinstance(content, list):
+            try:
+                parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        parts.append(str(part.get("text") or part.get("content") or ""))
+                    else:
+                        parts.append(str(part))
+                content = "".join(parts)
+            except Exception:
+                content = str(content)
+
+        return str(content or "").strip()
 
     def _build_workflow(
         self, tool_mgr: ToolManager, llm_with_tools: ChatOpenAI, emitter: ProgressEmitter
@@ -289,9 +378,36 @@ class KnowledgeOnlyAgent:
                 return state
 
             try:
+                from redis_sre_agent.core.config import settings as _settings
+
+                budget = int(_settings.max_tool_calls_per_stage)
+            except Exception:
+                budget = 3
+            prev_exec = int(state.get("tool_calls_executed", 0) or 0)
+            remaining_budget = max(0, budget - prev_exec)
+            pending_tool_calls = list(last_message.tool_calls or [])
+
+            if remaining_budget <= 0:
+                logger.warning("Knowledge agent tool budget exhausted before tool execution")
+                return state
+
+            tool_calls_to_execute = pending_tool_calls[:remaining_budget]
+            if len(tool_calls_to_execute) < len(pending_tool_calls):
+                logger.warning(
+                    "Knowledge agent trimming tool calls to fit budget: executing %s of %s",
+                    len(tool_calls_to_execute),
+                    len(pending_tool_calls),
+                )
+                last_message = AIMessage(
+                    content=str(last_message.content or ""),
+                    tool_calls=tool_calls_to_execute,
+                )
+                messages = list(messages[:-1]) + [last_message]
+
+            try:
                 # Emit provider-supplied status updates before executing tools
                 try:
-                    pending = last_message.tool_calls or []
+                    pending = tool_calls_to_execute
                     if self.progress_callback:
                         for tc in pending:
                             tool_name = tc.get("name")
@@ -312,13 +428,12 @@ class KnowledgeOnlyAgent:
                         "tool_calls.names": ",".join(_tool_names),
                     },
                 ):
-                    tool_results = await tool_mgr.execute_tool_calls(last_message.tool_calls)
+                    tool_results = await tool_mgr.execute_tool_calls(tool_calls_to_execute)
 
                 # Convert results to ToolMessage format expected by LangGraph
                 from langchain_core.messages import ToolMessage
 
                 # Track budget usage for tool calls
-                prev_exec = state.get("tool_calls_executed", 0)
                 state["tool_calls_executed"] = prev_exec + len(tool_results or [])
 
                 tool_messages = []
@@ -326,7 +441,7 @@ class KnowledgeOnlyAgent:
                 accumulated_results = list(state.get("knowledge_search_results") or [])
                 envelopes = list(state.get("signals_envelopes") or [])
 
-                for tool_call, result in zip(last_message.tool_calls, tool_results):
+                for tool_call, result in zip(tool_calls_to_execute, tool_results):
                     tool_name = str(tool_call.get("name", ""))
                     tool_args = dict(tool_call.get("args") or {})
 
@@ -406,7 +521,7 @@ class KnowledgeOnlyAgent:
 
                 # Create ToolMessage for each pending tool call so the LLM receives error feedback
                 tool_messages = []
-                for tool_call in last_message.tool_calls:
+                for tool_call in tool_calls_to_execute:
                     tool_messages.append(
                         ToolMessage(
                             content=error_content,
@@ -436,11 +551,7 @@ class KnowledgeOnlyAgent:
             except Exception:
                 _budget = 3
             prev_exec = int(state.get("tool_calls_executed", 0) or 0)
-            pending = int(len(state.get("current_tool_calls", []) or []))
             if prev_exec >= _budget:
-                return END
-            # If executing the pending calls would exceed budget, stop before entering tools
-            if pending and (prev_exec + pending) > _budget:
                 return END
 
             # If the last message has tool calls, execute them
@@ -598,6 +709,12 @@ class KnowledgeOnlyAgent:
                         response = str(last_message.content)
                 else:
                     response = "I apologize, but I wasn't able to process your query. Please try asking a more specific question about SRE practices or troubleshooting."
+
+                if not str(response or "").strip():
+                    response = await self._compose_blank_summary(query, tool_envelopes)
+
+                if not str(response or "").strip():
+                    response = _fallback_response_from_tool_envelopes(tool_envelopes)
 
                 # Emit completion notification
                 await emitter.emit(

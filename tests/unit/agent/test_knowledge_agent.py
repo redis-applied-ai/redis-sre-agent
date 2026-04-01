@@ -472,6 +472,199 @@ class TestKnowledgeAgentMethods:
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_executes_budgeted_subset_of_tool_calls(
+        self, mock_create_llm, mock_tool_manager_cls, mock_build_startup_context, monkeypatch
+    ):
+        """A tool-call budget should not cause a blank final response."""
+        monkeypatch.setattr(
+            "redis_sre_agent.core.config.settings.max_tool_calls_per_stage",
+            3,
+            raising=False,
+        )
+        mock_build_startup_context.return_value = ""
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.bind.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"id": "tc-1", "name": "tool_one", "args": {"step": 1}},
+                        {"id": "tc-2", "name": "tool_two", "args": {"step": 2}},
+                        {"id": "tc-3", "name": "tool_three", "args": {"step": 3}},
+                        {"id": "tc-4", "name": "tool_four", "args": {"step": 4}},
+                    ],
+                ),
+                AIMessage(content="final synthesized answer", tool_calls=[]),
+            ]
+        )
+        mock_create_llm.return_value = mock_llm
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.execute_tool_calls = AsyncMock(
+            return_value=[
+                {"status": "success", "data": {"step": 1}},
+                {"status": "success", "data": {"step": 2}},
+                {"status": "success", "data": {"step": 3}},
+            ]
+        )
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        agent = KnowledgeOnlyAgent()
+        with patch(
+            "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+            new=AsyncMock(return_value=[]),
+        ):
+            response = await agent.process_query(
+                query="deep drill analyzer package",
+                session_id="session-1",
+                user_id="user-1",
+            )
+
+        assert response.response == "final synthesized answer"
+        assert len(response.tool_envelopes) == 3
+        mock_tool_mgr.execute_tool_calls.assert_awaited_once()
+        executed_calls = mock_tool_mgr.execute_tool_calls.await_args.args[0]
+        assert [call["id"] for call in executed_calls] == ["tc-1", "tc-2", "tc-3"]
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_mini_llm")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_composes_summary_when_model_returns_blank_after_tools(
+        self,
+        mock_create_llm,
+        mock_create_mini_llm,
+        mock_tool_manager_cls,
+        mock_build_startup_context,
+    ):
+        mock_build_startup_context.return_value = ""
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.bind.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"id": "tc-1", "name": "analyzer_get_package_health_checks", "args": {}},
+                        {"id": "tc-2", "name": "analyzer_get_package_alerts", "args": {}},
+                    ],
+                ),
+                AIMessage(content="", tool_calls=[]),
+            ]
+        )
+        mock_create_llm.return_value = mock_llm
+
+        composer_llm = MagicMock()
+        composer_llm.ainvoke = AsyncMock(
+            return_value=AIMessage(
+                content="Health checks are mostly OK and there are no active alerts."
+            )
+        )
+        mock_create_mini_llm.return_value = composer_llm
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.execute_tool_calls = AsyncMock(
+            return_value=[
+                {"status": "success", "data": {"items": [{"status": "warn"}], "count": 1}},
+                {"status": "success", "data": {"items": [], "count": 0}},
+            ]
+        )
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        agent = KnowledgeOnlyAgent()
+        with patch(
+            "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+            new=AsyncMock(return_value=[]),
+        ):
+            response = await agent.process_query(
+                query="summarize analyzer package",
+                session_id="session-compose",
+                user_id="user-compose",
+            )
+
+        assert response.response == "Health checks are mostly OK and there are no active alerts."
+        composer_llm.ainvoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_mini_llm")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_falls_back_when_model_returns_blank_after_tools(
+        self,
+        mock_create_llm,
+        mock_create_mini_llm,
+        mock_tool_manager_cls,
+        mock_build_startup_context,
+    ):
+        mock_build_startup_context.return_value = ""
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.bind.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"id": "tc-1", "name": "analyzer_list_clusters", "args": {}},
+                        {"id": "tc-2", "name": "analyzer_list_packages", "args": {}},
+                    ],
+                ),
+                AIMessage(content="", tool_calls=[]),
+            ]
+        )
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = MagicMock(
+            ainvoke=AsyncMock(return_value=AIMessage(content=""))
+        )
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.execute_tool_calls = AsyncMock(
+            return_value=[
+                {"status": "success", "data": {"items": [{"name": "cluster-a"}], "count": 1}},
+                {"status": "success", "data": {"items": [{"id": "pkg-1"}], "count": 1}},
+            ]
+        )
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        agent = KnowledgeOnlyAgent()
+        with patch(
+            "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+            new=AsyncMock(return_value=[]),
+        ):
+            response = await agent.process_query(
+                query="list analyzer inventory",
+                session_id="session-2",
+                user_id="user-2",
+            )
+
+        assert "model returned an empty summary" in response.response
+        assert "analyzer_list_clusters" in response.response
+        assert "analyzer_list_packages" in response.response
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
     @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
     async def test_startup_context_not_shared_between_independent_invocations(
         self, mock_create_llm, mock_build_startup_context
