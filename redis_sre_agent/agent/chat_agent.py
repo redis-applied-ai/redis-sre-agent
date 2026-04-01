@@ -112,6 +112,7 @@ class ChatAgentState(TypedDict):
     max_iterations: int
     startup_system_prompt: Optional[str]
     startup_prompt_initialized: NotRequired[bool]
+    toolset_generation: NotRequired[int]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -412,18 +413,27 @@ class ChatAgent:
         # Mutable container for envelopes - expand_evidence references this
         # so it can access envelopes as they're added by tool calls
         envelopes_container: Dict[str, List[Dict[str, Any]]] = {"envelopes": []}
-        runtime_tools: Dict[str, Any] = {
-            "generation": None,
-            "tooldefs_by_name": {},
-            "all_adapters": [],
-            "llm_with_expand": None,
-            "tool_node": None,
-        }
+        runtime_tools_by_generation: Dict[int, Dict[str, Any]] = {}
 
-        async def ensure_runtime_tools() -> Dict[str, Any]:
-            generation = tool_mgr.get_toolset_generation()
-            if runtime_tools["generation"] == generation:
-                return runtime_tools
+        async def ensure_runtime_tools(
+            requested_generation: Optional[int] = None,
+        ) -> Dict[str, Any]:
+            current_generation = tool_mgr.get_toolset_generation()
+            generation = requested_generation or current_generation
+            cached = runtime_tools_by_generation.get(generation)
+            if cached is not None:
+                return cached
+
+            if requested_generation is not None and requested_generation != current_generation:
+                logger.warning(
+                    "Requested chat tool generation %s is unavailable; using current generation %s",
+                    requested_generation,
+                    current_generation,
+                )
+                generation = current_generation
+                cached = runtime_tools_by_generation.get(generation)
+                if cached is not None:
+                    return cached
 
             from .helpers import build_adapters_for_tooldefs as _build_adapters
 
@@ -436,12 +446,15 @@ class ChatAgent:
                 description=expand_spec["description"],
             )
             all_adapters = list(adapters) + [expand_tool]
-            runtime_tools["generation"] = generation
-            runtime_tools["tooldefs_by_name"] = {t.name: t for t in tooldefs}
-            runtime_tools["all_adapters"] = all_adapters
-            runtime_tools["llm_with_expand"] = self.llm.bind_tools(all_adapters)
-            runtime_tools["tool_node"] = LGToolNode(all_adapters)
-            return runtime_tools
+            runtime = {
+                "generation": generation,
+                "tooldefs_by_name": {t.name: t for t in tooldefs},
+                "all_adapters": all_adapters,
+                "llm_with_expand": self.llm.bind_tools(all_adapters),
+                "tool_node": LGToolNode(all_adapters),
+            }
+            runtime_tools_by_generation[generation] = runtime
+            return runtime
 
         async def agent_node(state: ChatAgentState) -> Dict[str, Any]:
             """Main agent node - invokes LLM with tools."""
@@ -495,6 +508,7 @@ class ChatAgent:
                 "iteration_count": iteration_count + 1,
                 "startup_system_prompt": startup_system_prompt,
                 "startup_prompt_initialized": startup_prompt_initialized,
+                "toolset_generation": runtime["generation"],
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -502,7 +516,7 @@ class ChatAgent:
 
         async def tool_node(state: ChatAgentState) -> Dict[str, Any]:
             """Execute tool calls from the agent."""
-            runtime = await ensure_runtime_tools()
+            runtime = await ensure_runtime_tools(state.get("toolset_generation"))
             tooldefs_by_name = runtime["tooldefs_by_name"]
             messages = state["messages"]
             envelopes = list(state.get("signals_envelopes") or [])
@@ -585,6 +599,7 @@ class ChatAgent:
             return {
                 "messages": list(messages) + messages_for_llm,
                 "current_tool_calls": [],
+                "toolset_generation": runtime["generation"],
                 "signals_envelopes": envelopes,
             }
 
@@ -729,6 +744,7 @@ User Query: {query}"""
                 "max_iterations": max_iterations,
                 "startup_system_prompt": system_prompt,
                 "startup_prompt_initialized": True,
+                "toolset_generation": 0,
                 "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
             }
 

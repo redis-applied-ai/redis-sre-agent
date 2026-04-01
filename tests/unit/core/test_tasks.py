@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from redisvl.query import VectorRangeQuery
 
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.core.docket_tasks import (
     SRE_TASK_COLLECTION,
+    _thread_messages_to_conversation_history,
     get_redis_url,
     ingest_sre_document,
     process_agent_turn,
@@ -22,6 +24,7 @@ from redis_sre_agent.core.docket_tasks import (
     test_task_system,
 )
 from redis_sre_agent.core.tasks import TaskStatus
+from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
 
 
 class TestSRETaskCollection:
@@ -590,6 +593,14 @@ class TestProcessKnowledgeQuery:
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.set_task_result = AsyncMock()
         mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(
+            return_value=Thread(
+                thread_id="thread-456",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+        )
         mock_thread_manager.append_messages = AsyncMock()
 
         mock_agent = AsyncMock()
@@ -614,6 +625,8 @@ class TestProcessKnowledgeQuery:
         assert result["response"] == "Knowledge response"
         mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.IN_PROGRESS)
         mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.DONE)
+        _, kwargs = mock_agent.process_query.call_args
+        assert kwargs["conversation_history"] is None
 
     @pytest.mark.asyncio
     async def test_process_knowledge_query_error(self):
@@ -623,6 +636,7 @@ class TestProcessKnowledgeQuery:
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
         mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
 
         mock_agent = AsyncMock()
         mock_agent.process_query = AsyncMock(side_effect=Exception("Knowledge error"))
@@ -658,6 +672,7 @@ class TestProcessKnowledgeQuery:
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.set_task_result = AsyncMock()
         mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
         mock_thread_manager.append_messages = AsyncMock()
 
         # Return an actual AgentResponse object (not a string)
@@ -698,6 +713,70 @@ class TestProcessKnowledgeQuery:
         assert len(messages) == 1
         assert messages[0]["content"] == "Knowledge response text"
         assert isinstance(messages[0]["content"], str)
+
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_passes_conversation_history(self):
+        """Compatibility path should preserve thread conversation history."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(
+            return_value=Thread(
+                thread_id="thread-456",
+                messages=[
+                    Message(role="user", content="How does replication work?"),
+                    Message(role="assistant", content="It copies writes to replicas."),
+                ],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+        )
+        mock_thread_manager.append_messages = AsyncMock()
+
+        agent_response = AgentResponse(response="Follow-up answer", search_results=[])
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            await process_knowledge_query(
+                query="What about failover?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        _, kwargs = mock_agent.process_query.call_args
+        history = kwargs["conversation_history"]
+        assert history is not None
+        assert len(history) == 2
+        assert isinstance(history[0], HumanMessage)
+        assert history[0].content == "How does replication work?"
+        assert isinstance(history[1], AIMessage)
+        assert history[1].content == "It copies writes to replicas."
+
+
+def test_thread_messages_to_conversation_history_filters_non_dialog_roles():
+    history = _thread_messages_to_conversation_history(
+        [
+            Message(role="user", content="Question"),
+            Message(role="assistant", content="Answer"),
+            Message(role="system", content="Ignored"),
+        ]
+    )
+
+    assert len(history) == 2
+    assert isinstance(history[0], HumanMessage)
+    assert isinstance(history[1], AIMessage)
 
 
 class TestSchedulerTask:

@@ -45,6 +45,17 @@ def sre_task(func):
     return func
 
 
+def _thread_messages_to_conversation_history(thread_messages: List[Message]) -> List[Any]:
+    """Convert persisted thread messages into LangChain conversation history."""
+    history: List[Any] = []
+    for msg in thread_messages:
+        if msg.role == "user":
+            history.append(HumanMessage(content=msg.content))
+        elif msg.role == "assistant":
+            history.append(AIMessage(content=msg.content))
+    return history
+
+
 # NOTE: analyze_system_metrics was removed as it was never actually provided
 # as a tool to the LLM. Metrics/diagnostics will be implemented via the
 # ToolProvider system in a future PR.
@@ -382,6 +393,11 @@ async def process_knowledge_query(
         # Create task emitter for notifications
         emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
 
+        conversation_history = None
+        thread = await thread_manager.get_thread(thread_id)
+        if thread and thread.messages:
+            conversation_history = _thread_messages_to_conversation_history(thread.messages)
+
         # Run chat agent without explicit target scope. This preserves the
         # legacy entrypoint while keeping runtime behavior on the two-agent model.
         agent = get_chat_agent()
@@ -391,6 +407,7 @@ async def process_knowledge_query(
             user_id=user_id or "mcp-user",
             context={"task_id": task_id},
             progress_emitter=emitter,
+            conversation_history=conversation_history,
         )
 
         # Store result on task (convert AgentResponse to dict for JSON serialization)

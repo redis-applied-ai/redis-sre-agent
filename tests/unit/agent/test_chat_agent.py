@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from redis_sre_agent.agent.chat_agent import (
     CHAT_SYSTEM_PROMPT,
@@ -258,6 +258,7 @@ class TestChatAgentState:
             "iteration_count": 0,
             "max_iterations": 10,
             "startup_system_prompt": None,
+            "toolset_generation": 0,
             "signals_envelopes": [],
         }
 
@@ -268,6 +269,7 @@ class TestChatAgentState:
         assert "iteration_count" in state
         assert "max_iterations" in state
         assert "startup_system_prompt" in state
+        assert "toolset_generation" in state
         assert "signals_envelopes" in state
 
 
@@ -944,3 +946,64 @@ class TestChatAgentStartupContext:
         await compiled.nodes["agent"].ainvoke(second_state)
 
         assert mock_llm.bind_tools.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.LGToolNode")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_tool_node_uses_agent_generation_when_toolset_changes_mid_turn(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        mock_tool_node_class,
+        mock_build_startup_context,
+        mock_build_adapters,
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(
+            return_value=AIMessage(
+                content="calling tool",
+                tool_calls=[{"id": "call-1", "name": "demo", "args": {}}],
+            )
+        )
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_startup_context.return_value = "CTX"
+        mock_build_adapters.return_value = []
+
+        cached_tool_node = MagicMock()
+        cached_tool_node.ainvoke = AsyncMock(
+            return_value={
+                "messages": [ToolMessage(content="ok", tool_call_id="call-1", name="demo")]
+            }
+        )
+        mock_tool_node_class.return_value = cached_tool_node
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.side_effect = [1, 2]
+        workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=None)
+        compiled = workflow.compile()
+
+        first_state = {
+            "messages": [HumanMessage(content="first question")],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "signals_envelopes": [],
+        }
+
+        agent_state = await compiled.nodes["agent"].ainvoke(first_state)
+        tool_state = await compiled.nodes["tools"].ainvoke(agent_state)
+
+        assert agent_state["toolset_generation"] == 1
+        cached_tool_node.ainvoke.assert_awaited_once()
+        assert mock_tool_node_class.call_count == 1
+        assert tool_state["toolset_generation"] == 1
