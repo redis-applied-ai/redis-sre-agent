@@ -87,6 +87,14 @@ jobs:
           )
           PY
 
+      - name: Install UI test dependencies
+        working-directory: ui
+        run: npm ci --ignore-scripts
+
+      - name: Install Playwright browser
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
       - name: Start smoke stack
         run: docker compose up -d --build sre-worker sre-ui
 
@@ -102,14 +110,6 @@ jobs:
 
           echo "API health never became ready"
           exit 1
-
-      - name: Install UI test dependencies
-        working-directory: ui
-        run: npm ci --ignore-scripts
-
-      - name: Install Playwright browser
-        working-directory: ui
-        run: npx playwright install --with-deps chromium
 
       - name: Run smoke UI check
         working-directory: ui
