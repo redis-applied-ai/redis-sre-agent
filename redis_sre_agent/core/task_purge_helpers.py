@@ -62,6 +62,7 @@ async def purge_tasks_helper(
         for key in keys or []:
             redis_key = _decode(key)
             task_id = redis_key[len(f"{SRE_TASKS_INDEX}:") :]
+            scanned += 1
 
             try:
                 st_raw, upd_raw, created_raw = await client.hmget(
@@ -82,7 +83,6 @@ async def purge_tasks_helper(
                 eligible = eligible and (created_at > 0 and created_at < cutoff_ts)
 
             if not eligible:
-                scanned += 1
                 continue
 
             matched_count += 1
@@ -94,7 +94,6 @@ async def purge_tasks_helper(
                     deleted += 1
                 except Exception:
                     pass
-            scanned += 1
 
         if cursor == 0:
             break
