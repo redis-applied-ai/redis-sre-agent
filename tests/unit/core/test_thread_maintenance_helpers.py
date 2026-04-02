@@ -528,6 +528,41 @@ class TestThreadSubjectBackfills:
         }
         thread_manager.set_thread_subject.assert_awaited_once_with("thread-3", "Recovered subject")
 
+    @pytest.mark.asyncio
+    async def test_backfill_empty_subjects_treats_start_as_skip_count(self):
+        from redis_sre_agent.core.thread_maintenance_helpers import (
+            backfill_empty_thread_subjects_helper,
+        )
+
+        client = AsyncMock()
+        client.scan.side_effect = [(0, [b"sre_threads:thread-1", b"sre_threads:thread-2"])]
+        thread_manager = AsyncMock()
+        thread_manager.get_thread.return_value = _thread_state(
+            subject="", context={"original_query": "Recovered subject"}
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.get_redis_client",
+                return_value=client,
+            ),
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+        ):
+            result = await backfill_empty_thread_subjects_helper(limit=0, start=1, dry_run=False)
+
+        assert result == {
+            "status": "completed",
+            "scanned": 1,
+            "subjects_updated": 1,
+            "dry_run": False,
+        }
+        client.scan.assert_awaited_once_with(cursor=0, match="sre_threads:*", count=1000)
+        thread_manager.get_thread.assert_awaited_once_with("thread-2")
+        thread_manager.set_thread_subject.assert_awaited_once_with("thread-2", "Recovered subject")
+
 
 class TestThreadPurgeHelper:
     @pytest.mark.asyncio

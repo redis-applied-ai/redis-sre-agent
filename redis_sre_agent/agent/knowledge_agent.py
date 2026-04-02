@@ -386,9 +386,7 @@ class KnowledgeOnlyAgent:
             prev_exec = int(state.get("tool_calls_executed", 0) or 0)
             remaining_budget = max(0, budget - prev_exec)
             pending_tool_calls = list(last_message.tool_calls or [])
-            dropped_tool_calls = (
-                pending_tool_calls[remaining_budget:] if remaining_budget > 0 else []
-            )
+            dropped_tool_calls = pending_tool_calls[remaining_budget:]
 
             if remaining_budget <= 0:
                 logger.warning("Knowledge agent tool budget exhausted before tool execution")
@@ -439,7 +437,7 @@ class KnowledgeOnlyAgent:
                     pass
 
                 # Execute tools using ToolManager (wrapped in OTel span)
-                _tool_names = [tc.get("name", "") for tc in (last_message.tool_calls or [])]
+                _tool_names = [tc.get("name", "") for tc in tool_calls_to_execute]
                 with tracer.start_as_current_span(
                     "knowledge.tools.execute",
                     attributes={

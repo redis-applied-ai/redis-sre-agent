@@ -207,8 +207,9 @@ async def backfill_empty_thread_subjects_helper(
     client = redis_client or get_redis_client()
     thread_manager = ThreadManager(redis_client=client)
     scanned = 0
+    skipped = 0
     updated = 0
-    cursor = start
+    cursor = 0
 
     while True:
         cursor, keys = await client.scan(cursor=cursor, match=f"{SRE_THREADS_INDEX}:*", count=1000)
@@ -216,6 +217,10 @@ async def backfill_empty_thread_subjects_helper(
             break
 
         for key in keys or []:
+            if skipped < start:
+                skipped += 1
+                continue
+
             if limit and scanned >= limit:
                 return {
                     "status": "dry_run" if dry_run else "completed",
