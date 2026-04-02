@@ -230,7 +230,39 @@ async def test_resolve_target_query_keeps_token_overlap_from_all_aliases():
     assert resolved.status == "resolved"
     assert resolved.selected_matches[0].resource_id == "prod-cache"
     assert any(
-        reason == "matched tokens=cache,checkout"
+        reason == "matched tokens=checkout" for reason in resolved.selected_matches[0].match_reasons
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_excludes_hint_tokens_from_token_overlap():
+    target = TargetCatalogDoc(
+        target_id="instance:enterprise-cache",
+        target_kind="instance",
+        resource_id="enterprise-cache",
+        display_name="enterprise-cache",
+        name="enterprise-cache",
+        environment="production",
+        usage="cache",
+        target_type="redis_enterprise",
+        capabilities=["redis"],
+        search_text="production cache enterprise instance",
+        search_aliases=[],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[target]),
+    ):
+        resolved = await resolve_target_query(
+            query="prod cache instance enterprise",
+            allow_multiple=False,
+        )
+
+    assert resolved.status == "resolved"
+    assert resolved.selected_matches[0].resource_id == "enterprise-cache"
+    assert all(
+        not reason.startswith("matched tokens=")
         for reason in resolved.selected_matches[0].match_reasons
     )
 

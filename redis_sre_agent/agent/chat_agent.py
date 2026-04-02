@@ -737,6 +737,7 @@ User Query: {query}"""
 
             initial_messages.append(HumanMessage(content=enhanced_query))
 
+            initial_generation = tool_mgr.get_toolset_generation()
             initial_state: ChatAgentState = {
                 "messages": initial_messages,
                 "session_id": session_id,
@@ -746,7 +747,7 @@ User Query: {query}"""
                 "max_iterations": max_iterations,
                 "startup_system_prompt": system_prompt,
                 "startup_prompt_initialized": True,
-                "toolset_generation": 1,
+                "toolset_generation": initial_generation,
                 "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
             }
 

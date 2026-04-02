@@ -576,8 +576,15 @@ def _score_target_doc(
         score += 3.0
         reasons.append(f"matched alias={partial_alias_matches[0]}")
 
+    hint_tokens = (
+        set(hints["environments"])
+        | set(hints["usages"])
+        | set(hints["preferred_kinds"])
+        | {token for target_type in hints["target_types"] for token in _tokenize(target_type)}
+    )
     token_overlap = sorted(
-        query_tokens & (name_tokens | alias_tokens | set(_tokenize(doc.search_text)))
+        (query_tokens - hint_tokens)
+        & (name_tokens | alias_tokens | set(_tokenize(doc.search_text)))
     )
     if token_overlap:
         overlap_score = min(4.0, len(token_overlap) * 0.9)

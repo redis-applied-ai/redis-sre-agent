@@ -623,6 +623,7 @@ class TestChatAgentStartupContext:
         mock_tool_manager.__aenter__.return_value = mock_tool_manager
         mock_tool_manager.__aexit__.return_value = None
         mock_tool_manager.get_tools.return_value = [mock_tool]
+        mock_tool_manager.get_toolset_generation.return_value = 3
 
         fake_app = AsyncMock()
         fake_app.ainvoke.return_value = {
@@ -656,6 +657,7 @@ class TestChatAgentStartupContext:
         system_message = initial_state["messages"][0]
         assert "Pinned documents:" in str(system_message.content)
         assert CHAT_SYSTEM_PROMPT in str(system_message.content)
+        assert initial_state["toolset_generation"] == 3
 
         mock_startup_context.assert_awaited_once()
         startup_kwargs = mock_startup_context.await_args.kwargs
