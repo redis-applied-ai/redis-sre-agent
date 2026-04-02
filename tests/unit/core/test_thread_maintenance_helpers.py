@@ -581,11 +581,8 @@ class TestThreadPurgeHelper:
         from redis_sre_agent.core.thread_maintenance_helpers import purge_threads_helper
 
         client = AsyncMock()
-        client.scan.side_effect = [
-            (0, [b"sre_threads:thread-1"]),
-            (0, [b"sre_tasks:task-doc-1"]),
-        ]
-        client.hget.side_effect = [b"1", b"thread-1"]
+        client.scan.side_effect = [(0, [b"sre_threads:thread-1"])]
+        client.hget.side_effect = [b"1"]
         client.zrevrange.return_value = [b"task-1"]
 
         thread_manager = AsyncMock()
@@ -624,13 +621,9 @@ class TestThreadPurgeHelper:
         from redis_sre_agent.core.thread_maintenance_helpers import purge_threads_helper
 
         client = AsyncMock()
-        client.scan.side_effect = [
-            (0, [b"sre_threads:thread-1"]),
-            (0, [b"sre_tasks:task-doc-1"]),
-        ]
-        client.hget.side_effect = [b"1", RuntimeError("ignore me")]
+        client.scan.side_effect = [(0, [b"sre_threads:thread-1"])]
+        client.hget.side_effect = [b"1"]
         client.zrevrange.return_value = [b"task-1"]
-        client.delete.side_effect = RuntimeError("ignore me")
 
         thread_manager = AsyncMock()
         thread_manager.delete_thread.return_value = False
@@ -671,13 +664,11 @@ class TestThreadPurgeHelper:
             (0, []),
             (0, [b"sre_threads:thread-1", b"sre_threads:thread-2"]),
             (0, [b"sre_threads:thread-3"]),
-            (0, [b"sre_tasks:task-doc-1"]),
         ]
         client.hget.side_effect = [
             b"9999999999",
             RuntimeError("bad timestamp"),
             b"1",
-            RuntimeError("bad task doc"),
         ]
 
         thread_manager = AsyncMock()
@@ -730,16 +721,13 @@ class TestThreadPurgeHelper:
 
     @pytest.mark.asyncio
     async def test_purge_threads_helper_ignores_stray_task_doc_delete_errors(self):
+        """Thread purges should not scan the full task keyspace per thread."""
         from redis_sre_agent.core.thread_maintenance_helpers import purge_threads_helper
 
         client = AsyncMock()
-        client.scan.side_effect = [
-            (0, [b"sre_threads:thread-1"]),
-            (0, [b"sre_tasks:task-doc-1"]),
-        ]
-        client.hget.return_value = b"thread-1"
+        client.scan.side_effect = [(0, [b"sre_threads:thread-1"])]
+        client.hget.return_value = b"1"
         client.zrevrange.return_value = []
-        client.delete.side_effect = [RuntimeError("task doc delete failed"), None]
 
         thread_manager = AsyncMock()
         thread_manager.delete_thread.return_value = True
@@ -765,3 +753,4 @@ class TestThreadPurgeHelper:
             "dry_run": False,
             "include_tasks": True,
         }
+        client.scan.assert_awaited_once()

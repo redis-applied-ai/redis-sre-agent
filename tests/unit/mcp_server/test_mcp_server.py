@@ -1599,7 +1599,7 @@ class TestInstanceInspectionTools:
             result = await redis_sre_test_redis_url(connection_url="redis://user:pass@host:6379/0")
 
         assert result["success"] is False
-        assert result["url"] == "redis://user:pass@host:6379/0"
+        assert result["url"] == "redis://***:***@host:6379/0"
         assert "error" in result
 
 

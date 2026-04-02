@@ -13,7 +13,6 @@ from redis_sre_agent.core.helper_utils import (
 )
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import (
-    SRE_TASKS_INDEX,
     SRE_THREADS_INDEX,
     get_redis_client,
     get_threads_index,
@@ -323,22 +322,6 @@ async def purge_threads_helper(
                             deleted_tasks += 1
                         except Exception:
                             pass
-
-                    task_cursor = 0
-                    while True:
-                        task_cursor, task_keys = await client.scan(
-                            cursor=task_cursor, match=f"{SRE_TASKS_INDEX}:*", count=1000
-                        )
-                        for task_key in task_keys or []:
-                            task_doc_key = _decode(task_key)
-                            try:
-                                owning_thread = await client.hget(task_doc_key, "thread_id")
-                                if _decode(owning_thread) == thread_id:
-                                    await client.delete(task_doc_key)
-                            except Exception:
-                                pass
-                        if task_cursor == 0:
-                            break
 
                 if await thread_manager.delete_thread(thread_id):
                     try:
