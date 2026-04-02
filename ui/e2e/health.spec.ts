@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 // Basic health and app boot smoke
-// Requires local Python API on :8000 and Vite dev server will proxy to it.
+// Supports either a local Vite dev server or the compose-backed UI/API stack.
 
 test('dashboard shows agent status when backend is up', async ({ page }) => {
   await page.goto('/');

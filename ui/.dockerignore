@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+playwright-report
+test-results
+ui-kit/node_modules
+ui-kit/dist
+.DS_Store

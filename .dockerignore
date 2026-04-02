@@ -1,0 +1,16 @@
+.git
+.agents
+.venv
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+artifacts
+docs
+redis-docs
+redis-enterprise
+site
+ui/node_modules
+ui/ui-kit/node_modules
+ui/dist
+ui/ui-kit/dist

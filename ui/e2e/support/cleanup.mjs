@@ -1,4 +1,4 @@
-const base = process.env.API_BASE_URL || 'http://localhost:8000/api/v1';
+const base = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
 
 const E2E_PATTERNS = [/^e2e\b/i, /^e2e\s+hello/i, /^e2e\s+streaming/i, /^e2e\s+persistence/i, /^e2e\s+schedule/i, /^e2e\s+update\s+test/i];
 

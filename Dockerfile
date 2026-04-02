@@ -15,9 +15,15 @@ ENV UV_LINK_MODE=copy
 # interpreters from pointing into /root/.local, which "app" cannot execute.
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
-# Install system dependencies required ONLY for building/fetching (like git)
-# We don't need Docker CLI here unless your build script relies on it.
+# Install system dependencies required for building/fetching.
+# `redis-enterprise` ships a native extension and needs a C toolchain when
+# wheels are unavailable for the target architecture.
 RUN apt-get update && apt-get install -y \
+    --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    pkg-config \
     git \
     curl \
     && rm -rf /var/lib/apt/lists/*

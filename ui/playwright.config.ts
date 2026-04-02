@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const useExistingServer = process.env.PLAYWRIGHT_USE_EXISTING_SERVER === '1';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -8,7 +10,7 @@ export default defineConfig({
   globalSetup: './e2e/support/global-setup.mjs',
   globalTeardown: './e2e/support/global-teardown.mjs',
   use: {
-		baseURL: 'http://localhost:3002',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3002',
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -19,13 +21,17 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'npm run dev',
-    port: 3000,
-    reuseExistingServer: true,
-    timeout: 120_000,
-    env: {
-      VITE_API_URL: process.env.VITE_API_URL || 'http://localhost:8000',
+  webServer: useExistingServer
+    ? undefined
+    : {
+        command: 'npm run dev',
+        port: 3000,
+        reuseExistingServer: true,
+        timeout: 120_000,
+        env: {
+          VITE_API_URL: process.env.VITE_API_URL || 'http://localhost:8080',
+          VITE_API_BASE_URL:
+            process.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1',
+        },
     },
-  },
 });
