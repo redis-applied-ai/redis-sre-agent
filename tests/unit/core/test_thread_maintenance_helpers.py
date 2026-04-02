@@ -1,6 +1,6 @@
 """Tests for thread maintenance MCP helpers."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -652,6 +652,44 @@ class TestThreadPurgeHelper:
             "dry_run": False,
             "include_tasks": True,
         }
+
+    @pytest.mark.asyncio
+    async def test_purge_threads_helper_excludes_threads_exactly_at_cutoff(self):
+        from redis_sre_agent.core.thread_maintenance_helpers import purge_threads_helper
+
+        fixed_now = datetime(2026, 4, 2, 12, 0, tzinfo=timezone.utc)
+        cutoff_created_at = (fixed_now - timedelta(days=1)).isoformat().encode()
+
+        client = AsyncMock()
+        client.scan.side_effect = [(0, [b"sre_threads:thread-1"])]
+        client.hget.return_value = cutoff_created_at
+
+        thread_manager = AsyncMock()
+
+        with (
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.get_redis_client",
+                return_value=client,
+            ),
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+            patch("redis_sre_agent.core.thread_maintenance_helpers.datetime") as mock_datetime,
+        ):
+            mock_datetime.now.return_value = fixed_now
+            result = await purge_threads_helper(older_than="1d", confirm=True)
+
+        assert result == {
+            "status": "purged",
+            "scanned": 1,
+            "deleted": 0,
+            "deleted_tasks": 0,
+            "matched": [],
+            "dry_run": False,
+            "include_tasks": True,
+        }
+        thread_manager.delete_thread.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_purge_threads_helper_deletes_threads_and_tasks(self):

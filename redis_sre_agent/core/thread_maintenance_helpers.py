@@ -310,7 +310,7 @@ async def purge_threads_helper(
                 try:
                     created_at = await client.hget(redis_key, "created_at")
                     created_ts = _parse_timestamp(created_at)
-                    eligible = created_ts > 0 and created_ts <= cutoff_ts
+                    eligible = created_ts > 0 and created_ts < cutoff_ts
                 except Exception:
                     eligible = False
 
