@@ -608,6 +608,8 @@ class TestThreadPurgeHelper:
             "deleted": 0,
             "deleted_tasks": 0,
             "matched": ["thread-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": True,
             "include_tasks": True,
         }
@@ -649,6 +651,8 @@ class TestThreadPurgeHelper:
             "deleted": 1,
             "deleted_tasks": 0,
             "matched": ["thread-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": True,
         }
@@ -686,6 +690,8 @@ class TestThreadPurgeHelper:
             "deleted": 0,
             "deleted_tasks": 0,
             "matched": [],
+            "matched_count": 0,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": True,
         }
@@ -725,6 +731,8 @@ class TestThreadPurgeHelper:
             "deleted": 1,
             "deleted_tasks": 1,
             "matched": ["thread-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": True,
         }
@@ -766,6 +774,8 @@ class TestThreadPurgeHelper:
             "deleted": 0,
             "deleted_tasks": 0,
             "matched": ["thread-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": True,
         }
@@ -812,6 +822,8 @@ class TestThreadPurgeHelper:
             "deleted": 0,
             "deleted_tasks": 0,
             "matched": [],
+            "matched_count": 0,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": True,
         }
@@ -821,6 +833,8 @@ class TestThreadPurgeHelper:
             "deleted": 0,
             "deleted_tasks": 0,
             "matched": [],
+            "matched_count": 0,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": False,
         }
@@ -830,6 +844,8 @@ class TestThreadPurgeHelper:
             "deleted": 1,
             "deleted_tasks": 0,
             "matched": ["thread-3"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": True,
         }
@@ -865,7 +881,39 @@ class TestThreadPurgeHelper:
             "deleted": 1,
             "deleted_tasks": 0,
             "matched": ["thread-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
             "include_tasks": True,
         }
         client.scan.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_purge_threads_helper_caps_matched_preview(self):
+        from redis_sre_agent.core.thread_maintenance_helpers import purge_threads_helper
+
+        client = AsyncMock()
+        keys = [f"sre_threads:thread-{i}".encode() for i in range(105)]
+        client.scan.side_effect = [(0, keys)]
+        client.zrevrange.return_value = []
+
+        thread_manager = AsyncMock()
+        thread_manager.delete_thread.return_value = True
+
+        with (
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.get_redis_client",
+                return_value=client,
+            ),
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+        ):
+            result = await purge_threads_helper(purge_all=True, dry_run=True)
+
+        assert result["matched_count"] == 105
+        assert result["matched_truncated"] is True
+        assert len(result["matched"]) == 100
+        assert result["matched"][0] == "thread-0"
+        assert result["matched"][-1] == "thread-99"

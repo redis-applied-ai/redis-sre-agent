@@ -70,6 +70,8 @@ class TestPurgeTasksHelper:
             "scanned": 1,
             "deleted": 0,
             "matched": ["task-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": True,
         }
 
@@ -114,6 +116,8 @@ class TestPurgeTasksHelper:
             "scanned": 2,
             "deleted": 1,
             "matched": ["task-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
         }
         mock_delete.assert_awaited_once_with(task_id="task-1", redis_client=redis_client)
@@ -159,6 +163,8 @@ class TestPurgeTasksHelper:
             "scanned": 2,
             "deleted": 1,
             "matched": ["task-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
         }
         mock_delete.assert_awaited_once_with(task_id="task-1", redis_client=redis_client)
@@ -192,6 +198,8 @@ class TestPurgeTasksHelper:
             "scanned": 1,
             "deleted": 1,
             "matched": ["task-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
         }
         mock_delete.assert_awaited_once_with(task_id="task-1", redis_client=redis_client)
@@ -218,6 +226,8 @@ class TestPurgeTasksHelper:
             "scanned": 1,
             "deleted": 0,
             "matched": ["task-1"],
+            "matched_count": 1,
+            "matched_truncated": False,
             "dry_run": False,
         }
         mock_delete.assert_awaited_once_with(task_id="task-1", redis_client=redis_client)
@@ -238,5 +248,26 @@ class TestPurgeTasksHelper:
             "scanned": 0,
             "deleted": 0,
             "matched": [],
+            "matched_count": 0,
+            "matched_truncated": False,
             "dry_run": False,
         }
+
+    @pytest.mark.asyncio
+    async def test_purge_tasks_helper_caps_matched_preview(self):
+        redis_client = AsyncMock()
+        keys = [f"sre_tasks:task-{i}".encode() for i in range(105)]
+        redis_client.scan = AsyncMock(side_effect=[(0, keys)])
+        redis_client.hmget = AsyncMock(return_value=[b"done", b"1", b"1"])
+
+        result = await purge_tasks_helper(
+            purge_all=True,
+            dry_run=True,
+            redis_client=redis_client,
+        )
+
+        assert result["matched_count"] == 105
+        assert result["matched_truncated"] is True
+        assert len(result["matched"]) == 100
+        assert result["matched"][0] == "task-0"
+        assert result["matched"][-1] == "task-99"

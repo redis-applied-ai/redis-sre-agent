@@ -17,6 +17,8 @@ from redis_sre_agent.core.helper_utils import (
 from redis_sre_agent.core.redis import SRE_TASKS_INDEX, get_redis_client
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
 
+_MAX_MATCHED_PREVIEW = 100
+
 
 async def purge_tasks_helper(
     *,
@@ -49,6 +51,7 @@ async def purge_tasks_helper(
     cursor = 0
     scanned = 0
     deleted = 0
+    matched_count = 0
     matched: list[str] = []
 
     while True:
@@ -82,7 +85,9 @@ async def purge_tasks_helper(
                 scanned += 1
                 continue
 
-            matched.append(task_id)
+            matched_count += 1
+            if len(matched) < _MAX_MATCHED_PREVIEW:
+                matched.append(task_id)
             if not dry_run:
                 try:
                     await delete_task_core(task_id=task_id, redis_client=client)
@@ -99,5 +104,7 @@ async def purge_tasks_helper(
         "scanned": scanned,
         "deleted": deleted,
         "matched": matched,
+        "matched_count": matched_count,
+        "matched_truncated": matched_count > len(matched),
         "dry_run": dry_run,
     }

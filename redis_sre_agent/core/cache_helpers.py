@@ -19,7 +19,7 @@ def get_tool_cache(instance_id: Optional[str] = None) -> ToolCache:
 
 async def cache_stats_helper(instance_id: Optional[str] = None) -> Dict[str, Any]:
     """Return cache statistics for one instance or all instances."""
-    cache = get_tool_cache(instance_id if instance_id else "__all__")
+    cache = get_tool_cache(instance_id)
     if instance_id:
         return await cache.stats()
     return await cache.stats_all()
@@ -46,7 +46,7 @@ async def cache_clear_helper(
         }
 
     if clear_all:
-        cache = get_tool_cache("__all__")
+        cache = get_tool_cache()
         deleted = await cache.clear_all()
         return {
             "status": "cleared",

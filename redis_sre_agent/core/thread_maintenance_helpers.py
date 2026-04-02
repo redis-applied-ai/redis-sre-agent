@@ -23,6 +23,8 @@ from redis_sre_agent.core.redis import (
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
 from redis_sre_agent.core.threads import ThreadManager
 
+_MAX_MATCHED_PREVIEW = 100
+
 
 def _derive_subject(state: Any) -> Optional[str]:
     context = getattr(state, "context", {}) or {}
@@ -294,6 +296,7 @@ async def purge_threads_helper(
     scanned = 0
     deleted = 0
     deleted_tasks = 0
+    matched_count = 0
     matched: list[str] = []
 
     while True:
@@ -318,7 +321,9 @@ async def purge_threads_helper(
                 scanned += 1
                 continue
 
-            matched.append(thread_id)
+            matched_count += 1
+            if len(matched) < _MAX_MATCHED_PREVIEW:
+                matched.append(thread_id)
             if not dry_run:
                 if include_tasks:
                     task_ids = await client.zrevrange(
@@ -349,6 +354,8 @@ async def purge_threads_helper(
         "deleted": deleted,
         "deleted_tasks": deleted_tasks,
         "matched": matched,
+        "matched_count": matched_count,
+        "matched_truncated": matched_count > len(matched),
         "dry_run": dry_run,
         "include_tasks": include_tasks,
     }

@@ -44,7 +44,7 @@ class TestCacheStatsHelper:
             result = await cache_stats_helper()
 
         assert result == {"total_keys": 7, "instances": ["redis-prod-1"]}
-        mock_get_cache.assert_called_once_with("__all__")
+        mock_get_cache.assert_called_once_with(None)
         cache.stats_all.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -104,7 +104,7 @@ class TestCacheClearHelper:
             result = await cache_clear_helper(clear_all=True, confirm=True)
 
         assert result == {"status": "cleared", "scope": "all", "deleted": 11}
-        mock_get_cache.assert_called_once_with("__all__")
+        mock_get_cache.assert_called_once_with()
         cache.clear_all.assert_awaited_once()
 
     @pytest.mark.asyncio
