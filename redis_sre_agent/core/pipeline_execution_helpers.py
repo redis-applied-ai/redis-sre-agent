@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from docket import Docket
 
 from redis_sre_agent.core.helper_utils import emit_progress as _emit_progress
+from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import create_task
 from redis_sre_agent.pipelines.ingestion.processor import IngestionPipeline
@@ -69,13 +70,6 @@ def _build_pipeline_task_message(operation: str, kwargs: Dict[str, Any]) -> str:
             return "List configured pipeline runbook URLs"
         return "Generate pipeline runbooks"
     return f"Run pipeline {operation}"
-
-
-async def get_redis_url() -> str:
-    """Resolve the Redis URL for Docket without a module import cycle."""
-    from redis_sre_agent.core.docket_tasks import get_redis_url as resolve_redis_url
-
-    return await resolve_redis_url()
 
 
 def _get_pipeline_task_callable() -> Any:

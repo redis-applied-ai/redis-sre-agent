@@ -17,6 +17,13 @@ async def emit_progress(
         await progress_emitter.emit(message, update_type, metadata or {})
 
 
+async def get_docket_redis_url() -> str:
+    """Resolve the Redis URL for Docket without a module import cycle."""
+    from redis_sre_agent.core.docket_tasks import get_redis_url as resolve_redis_url
+
+    return await resolve_redis_url()
+
+
 def decode_text(value: Any) -> str:
     """Decode Redis byte values into strings."""
     if isinstance(value, bytes):

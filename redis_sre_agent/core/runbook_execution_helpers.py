@@ -14,6 +14,7 @@ from docket import Docket
 
 from redis_sre_agent.agent.runbook_generator import GeneratedRunbook, RunbookGenerator
 from redis_sre_agent.core.helper_utils import emit_progress as _emit_progress
+from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
 from redis_sre_agent.core.knowledge_helpers import ingest_sre_document_helper
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import create_task
@@ -61,13 +62,6 @@ def _build_runbook_task_message(operation: str, kwargs: Dict[str, Any]) -> str:
     if operation == "evaluate":
         return f"Evaluate runbooks in {kwargs.get('input_dir', 'source_documents/runbooks')}"
     return f"Runbook operation {operation}"
-
-
-async def get_redis_url() -> str:
-    """Resolve the Redis URL for Docket without a module import cycle."""
-    from redis_sre_agent.core.docket_tasks import get_redis_url as resolve_redis_url
-
-    return await resolve_redis_url()
 
 
 def _get_runbook_task_callable() -> Any:

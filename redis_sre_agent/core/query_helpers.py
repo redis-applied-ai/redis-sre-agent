@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from docket import Docket
 
 from redis_sre_agent.core.clusters import get_cluster_by_id
+from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
 from redis_sre_agent.core.instances import get_instance_by_id
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.support_package_helpers import get_support_package_manager
@@ -24,13 +25,6 @@ def _normalize_agent_selection(agent: Optional[str]) -> str:
         valid = ", ".join(sorted(VALID_QUERY_AGENTS))
         raise ValueError(f"Invalid agent '{agent}'. Valid values: {valid}")
     return normalized
-
-
-async def get_redis_url() -> str:
-    """Resolve the Redis URL for Docket without a module import cycle."""
-    from redis_sre_agent.core.docket_tasks import get_redis_url as resolve_redis_url
-
-    return await resolve_redis_url()
 
 
 def _get_query_task_callable() -> Any:
