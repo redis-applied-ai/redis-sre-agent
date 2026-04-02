@@ -223,7 +223,7 @@ def _cluster_capabilities(cluster: RedisCluster) -> List[str]:
         if hasattr(cluster.cluster_type, "value")
         else cluster.cluster_type
     )
-    capabilities = []
+    capabilities = ["redis", "diagnostics", "metrics", "logs"]
     if cluster_type == "redis_enterprise":
         capabilities.append("admin")
     if cluster_type == "redis_cloud":
@@ -681,13 +681,14 @@ async def resolve_target_query(
     else:
         if len(limited) > 1 and limited[1].score >= top.score - 0.75:
             clarification_required = True
+            selected = limited[: min(3, max_results)]
         else:
             selected = [top]
 
     status = (
-        "resolved"
-        if selected
-        else ("clarification_required" if clarification_required else "no_match")
+        "clarification_required"
+        if clarification_required
+        else ("resolved" if selected else "no_match")
     )
     return TargetResolutionResult(
         status=status,

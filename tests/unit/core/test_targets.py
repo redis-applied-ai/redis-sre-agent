@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from redis_sre_agent.core import targets as target_module
+from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.targets import (
     ResolvedTargetMatch,
     TargetCatalogDoc,
     attach_target_matches,
     build_ephemeral_target_bindings,
+    build_target_doc_from_cluster,
     build_target_doc_from_instance,
     resolve_target_query,
     sync_target_catalog,
@@ -59,6 +61,23 @@ def test_build_target_doc_from_instance_normalizes_environment_aliases():
     assert doc.environment == "production"
 
 
+def test_build_target_doc_from_cluster_includes_base_capabilities():
+    cluster = RedisCluster(
+        id="cluster-prod-checkout",
+        name="checkout-cluster-prod",
+        cluster_type="oss_cluster",
+        environment="production",
+        description="Checkout Redis cluster",
+    )
+
+    doc = build_target_doc_from_cluster(cluster)
+
+    assert "redis" in doc.capabilities
+    assert "diagnostics" in doc.capabilities
+    assert "metrics" in doc.capabilities
+    assert "logs" in doc.capabilities
+
+
 @pytest.mark.asyncio
 async def test_resolve_target_query_ranks_matching_environment_and_detects_ambiguity():
     prod = TargetCatalogDoc(
@@ -103,6 +122,11 @@ async def test_resolve_target_query_ranks_matching_environment_and_detects_ambig
     assert ambiguous.status == "clarification_required"
     assert ambiguous.clarification_required is True
     assert len(ambiguous.matches) == 2
+    assert len(ambiguous.selected_matches) == 2
+    assert [match.resource_id for match in ambiguous.selected_matches] == [
+        "redis-prod-checkout-cache",
+        "redis-stage-checkout-cache",
+    ]
 
 
 @pytest.mark.asyncio
