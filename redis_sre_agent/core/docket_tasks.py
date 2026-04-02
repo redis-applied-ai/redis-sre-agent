@@ -15,7 +15,7 @@ from redis_sre_agent.agent.langgraph_agent import (
 )
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.core.citation_message import (
-    format_citation_message,
+    build_citation_message_payloads,
     should_include_citations,
 )
 from redis_sre_agent.core.clusters import get_cluster_by_id
@@ -1062,14 +1062,16 @@ async def process_agent_turn(
         # Add citation system message if there are search results
         # This allows the LLM to see which sources were used and retrieve more info
         if should_include_citations(search_results):
-            citation_msg = format_citation_message(search_results)
-            conversation_state["messages"].append(
-                {
-                    "role": "system",
-                    "content": citation_msg,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-            )
+            citation_timestamp = datetime.now(timezone.utc).isoformat()
+            for citation_msg in build_citation_message_payloads(search_results):
+                conversation_state["messages"].append(
+                    {
+                        "role": "system",
+                        "content": citation_msg["content"],
+                        "timestamp": citation_timestamp,
+                        "metadata": citation_msg["metadata"],
+                    }
+                )
 
         # Update thread context with new conversation state
         # Only save user/assistant/system messages - tool messages are internal to LangGraph

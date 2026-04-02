@@ -4,6 +4,7 @@ Tests written first for the feature that appends citation messages to threads.
 """
 
 from redis_sre_agent.core.citation_message import (
+    build_citation_message_payloads,
     format_citation_message,
     should_include_citations,
 )
@@ -123,3 +124,28 @@ class TestFormatCitationMessage:
 
         # Hash should be present in the message
         assert "a" * 64 in message
+
+    def test_builds_separate_payloads_for_discovered_and_startup_context(self):
+        results = [
+            {
+                "title": "Redis Memory Management",
+                "source": "redis.io/docs/memory",
+                "document_hash": "abc123def",
+                "score": 0.95,
+                "retrieval_kind": "knowledge_search",
+            },
+            {
+                "title": "Pinned Runbook",
+                "source": "file:///tmp/pinned.md",
+                "document_hash": "pinned123",
+                "retrieval_kind": "pinned_context",
+            },
+        ]
+
+        payloads = build_citation_message_payloads(results)
+
+        assert len(payloads) == 2
+        assert payloads[0]["metadata"]["citation_group"] == "discovered_context"
+        assert payloads[0]["content"].startswith("**Discovered context**")
+        assert payloads[1]["metadata"]["citation_group"] == "startup_context_loaded"
+        assert payloads[1]["content"].startswith("**Startup context loaded**")

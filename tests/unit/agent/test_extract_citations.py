@@ -4,7 +4,11 @@ This module tests the extract_citations function that derives citation data
 from knowledge tool envelopes, replacing the separate CitationTrace tracking.
 """
 
-from redis_sre_agent.agent.helpers import extract_citations
+from redis_sre_agent.agent.helpers import (
+    build_citation_groups,
+    extract_citation_groups,
+    extract_citations,
+)
 from redis_sre_agent.agent.models import AgentResponse
 
 
@@ -191,6 +195,87 @@ class TestExtractCitations:
         assert len(citations) == 1
         assert citations[0]["title"] == "Dict-based Doc"
 
+    def test_extract_citations_marks_pinned_context_results(self):
+        """Pinned startup envelopes should round-trip as citations."""
+        envelopes = [
+            {
+                "tool_key": "knowledge.pinned_context",
+                "name": "pinned_context",
+                "status": "success",
+                "data": {
+                    "retrieval_kind": "pinned_context",
+                    "results": [
+                        {
+                            "title": "Pinned Runbook",
+                            "source": "file:///tmp/pinned.md",
+                            "document_hash": "hash123",
+                        }
+                    ],
+                },
+            }
+        ]
+
+        citations = extract_citations(envelopes)
+
+        assert len(citations) == 1
+        assert citations[0]["title"] == "Pinned Runbook"
+        assert citations[0]["retrieval_kind"] == "pinned_context"
+
+    def test_extract_citation_groups_splits_startup_and_discovered_context(self):
+        """Citations should be grouped by how they entered context."""
+        envelopes = [
+            {
+                "tool_key": "knowledge.pinned_context",
+                "name": "pinned_context",
+                "status": "success",
+                "data": {
+                    "retrieval_kind": "pinned_context",
+                    "results": [
+                        {
+                            "title": "Pinned Runbook",
+                            "source": "file:///tmp/pinned.md",
+                            "document_hash": "hash123",
+                        }
+                    ],
+                },
+            },
+            {
+                "tool_key": "knowledge_search",
+                "name": "search",
+                "status": "success",
+                "data": {
+                    "results": [
+                        {
+                            "title": "Redis Memory Management",
+                            "source": "redis.io",
+                            "document_hash": "abc123",
+                            "score": 0.92,
+                        }
+                    ]
+                },
+            },
+        ]
+
+        citation_groups = extract_citation_groups(envelopes)
+
+        assert [group["group_key"] for group in citation_groups] == [
+            "discovered_context",
+            "startup_context_loaded",
+        ]
+        assert citation_groups[0]["citations"][0]["title"] == "Redis Memory Management"
+        assert citation_groups[1]["citations"][0]["title"] == "Pinned Runbook"
+
+    def test_build_citation_groups_preserves_group_counts(self):
+        citation_groups = build_citation_groups(
+            [
+                {"title": "Doc A", "retrieval_kind": "knowledge_search"},
+                {"title": "Doc B", "retrieval_kind": "pinned_context"},
+            ]
+        )
+
+        assert citation_groups[0]["count"] == 1
+        assert citation_groups[1]["count"] == 1
+
 
 class TestAgentResponseSearchResults:
     """Test AgentResponse search_results derivation from tool_envelopes."""
@@ -217,6 +302,31 @@ class TestAgentResponseSearchResults:
 
         assert len(response.search_results) == 1
         assert response.search_results[0]["title"] == "Doc 1"
+
+    def test_search_results_include_pinned_context_when_derived_from_envelopes(self):
+        response = AgentResponse(
+            response="Test response",
+            tool_envelopes=[
+                {
+                    "tool_key": "knowledge.pinned_context",
+                    "name": "pinned_context",
+                    "status": "success",
+                    "data": {
+                        "retrieval_kind": "pinned_context",
+                        "results": [
+                            {
+                                "title": "Pinned Runbook",
+                                "source": "file:///tmp/pinned.md",
+                                "document_hash": "hash123",
+                            }
+                        ],
+                    },
+                }
+            ],
+        )
+
+        assert len(response.search_results) == 1
+        assert response.search_results[0]["retrieval_kind"] == "pinned_context"
 
     def test_search_results_empty_when_no_knowledge_tools(self):
         """Test that search_results is empty when no knowledge tools used."""

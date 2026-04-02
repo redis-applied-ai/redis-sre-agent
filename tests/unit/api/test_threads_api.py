@@ -28,6 +28,54 @@ class TestThreadsAPI:
         assert resp.status_code == 500
         assert "Redis connection failed" in resp.json()["detail"]
 
+    def test_create_thread_generates_subject_from_original_query(self, client):
+        """POST /api/v1/threads derives a subject when only original_query is provided."""
+        from redis_sre_agent.core.threads import Thread, ThreadMetadata
+
+        mock_tm = MagicMock()
+        mock_tm.create_thread = AsyncMock(return_value="th1")
+        mock_tm.update_thread_subject = AsyncMock(return_value=True)
+        mock_tm.get_thread = AsyncMock(
+            return_value=Thread(thread_id="th1", context={}, metadata=ThreadMetadata())
+        )
+
+        with patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm):
+            resp = client.post(
+                "/api/v1/threads",
+                json={"context": {"original_query": "Investigate Redis memory spike"}},
+            )
+
+        assert resp.status_code == 201
+        mock_tm.update_thread_subject.assert_awaited_once_with(
+            "th1", "Investigate Redis memory spike"
+        )
+
+    def test_create_thread_generates_subject_from_first_user_message(self, client):
+        """POST /api/v1/threads uses the first user message when no subject is provided."""
+        from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
+
+        mock_tm = MagicMock()
+        mock_tm.create_thread = AsyncMock(return_value="th1")
+        mock_tm.update_thread_subject = AsyncMock(return_value=True)
+        mock_tm.append_messages = AsyncMock(return_value=True)
+        mock_tm.get_thread = AsyncMock(
+            return_value=Thread(
+                thread_id="th1",
+                messages=[Message(role="user", content="Check Redis latency")],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+        )
+
+        with patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm):
+            resp = client.post(
+                "/api/v1/threads",
+                json={"messages": [{"role": "user", "content": "Check Redis latency"}]},
+            )
+
+        assert resp.status_code == 201
+        mock_tm.update_thread_subject.assert_awaited_once_with("th1", "Check Redis latency")
+
     def test_get_thread_not_found(self, client):
         """GET /api/v1/threads/{id} returns 404 when ThreadManager returns None."""
         mock_tm = MagicMock()
