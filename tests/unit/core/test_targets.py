@@ -106,6 +106,34 @@ async def test_resolve_target_query_ranks_matching_environment_and_detects_ambig
 
 
 @pytest.mark.asyncio
+async def test_resolve_target_query_resolves_single_included_candidate_below_three_points():
+    low_score_match = TargetCatalogDoc(
+        target_id="instance:redis-prod-checkout-cache",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-prod",
+        name="checkout-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis"],
+        search_text="",
+        search_aliases=[],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[low_score_match]),
+    ):
+        resolved = await resolve_target_query(query="cache", allow_multiple=False)
+
+    assert resolved.status == "resolved"
+    assert resolved.clarification_required is False
+    assert len(resolved.selected_matches) == 1
+    assert resolved.selected_matches[0].resource_id == "redis-prod-checkout-cache"
+
+
+@pytest.mark.asyncio
 async def test_resolve_target_query_parses_hints_once_and_avoids_alias_substring_matches():
     ambiguous_alias = TargetCatalogDoc(
         target_id="instance:alias-only",

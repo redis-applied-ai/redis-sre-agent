@@ -681,7 +681,7 @@ async def resolve_target_query(
     else:
         if len(limited) > 1 and limited[1].score >= top.score - 0.75:
             clarification_required = True
-        elif top.score >= 3.0:
+        else:
             selected = [top]
 
     status = (
