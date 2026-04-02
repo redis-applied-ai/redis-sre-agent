@@ -430,7 +430,11 @@ async def sync_target_catalog(
                         decoded = (
                             key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key)
                         )
-                        target_id = decoded.split(":", 1)[1]
+                        if not decoded.startswith(prefix):
+                            continue
+                        target_id = decoded.removeprefix(prefix)
+                        if not target_id:
+                            continue
                         if target_id not in keep_ids:
                             stale_ids.append(target_id)
                 if cursor == 0:

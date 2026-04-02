@@ -13,6 +13,7 @@ from redis_sre_agent.core.targets import (
     build_ephemeral_target_bindings,
     build_target_doc_from_instance,
     resolve_target_query,
+    sync_target_catalog,
 )
 from redis_sre_agent.core.threads import Thread, ThreadMetadata
 
@@ -283,3 +284,48 @@ def test_build_ephemeral_target_bindings_generates_opaque_handles():
     assert len(bindings) == 1
     assert bindings[0].target_handle.startswith("tgt_")
     assert bindings[0].resource_id == "cluster-1"
+
+
+@pytest.mark.asyncio
+async def test_sync_target_catalog_scan_fallback_only_deletes_prefixed_stale_keys():
+    instance = RedisInstance(
+        id="redis-prod-checkout-cache",
+        name="checkout-cache-prod",
+        connection_url="redis://cache.internal:6379/0",
+        environment="production",
+        usage="cache",
+        description="Primary checkout cache",
+        instance_type="oss_single",
+    )
+    mock_client = AsyncMock()
+    mock_client.scan = AsyncMock(
+        side_effect=[
+            (
+                0,
+                [
+                    b"sre_targets:instance:stale-target",
+                    b"sre_targets:instance:redis-prod-checkout-cache",
+                    b"not-sre_targets:instance:should-not-delete",
+                    b"sre_targets:",
+                ],
+            )
+        ]
+    )
+    mock_client.delete = AsyncMock()
+
+    with (
+        patch("redis_sre_agent.core.targets.get_redis_client", return_value=mock_client),
+        patch(
+            "redis_sre_agent.core.targets._ensure_targets_index_exists",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_targets_index",
+            new=AsyncMock(side_effect=RuntimeError("index unavailable")),
+        ),
+    ):
+        result = await sync_target_catalog(instances=[instance], clusters=[])
+
+    assert result is True
+    deleted_keys = [call.args[0] for call in mock_client.delete.await_args_list]
+    assert deleted_keys == ["sre_targets:instance:stale-target"]

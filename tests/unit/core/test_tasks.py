@@ -764,6 +764,40 @@ class TestProcessKnowledgeQuery:
         assert isinstance(history[1], AIMessage)
         assert history[1].content == "It copies writes to replicas."
 
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_respects_configured_max_iterations(self):
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
+        mock_thread_manager.append_messages = AsyncMock()
+
+        agent_response = AgentResponse(response="Answer", search_results=[])
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch("redis_sre_agent.core.docket_tasks.settings.max_iterations", 5),
+        ):
+            await process_knowledge_query(
+                query="What are Redis best practices?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        _, kwargs = mock_agent.process_query.call_args
+        assert kwargs["max_iterations"] == 5
+
 
 def test_thread_messages_to_conversation_history_filters_non_dialog_roles():
     history = _thread_messages_to_conversation_history(

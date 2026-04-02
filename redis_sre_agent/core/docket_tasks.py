@@ -401,10 +401,12 @@ async def process_knowledge_query(
         # Run chat agent without explicit target scope. This preserves the
         # legacy entrypoint while keeping runtime behavior on the two-agent model.
         agent = get_chat_agent()
+        chat_max_iterations = min(int(settings.max_iterations or 15), 10)
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
             user_id=user_id or "mcp-user",
+            max_iterations=chat_max_iterations,
             context={"task_id": task_id},
             progress_emitter=emitter,
             conversation_history=conversation_history,
