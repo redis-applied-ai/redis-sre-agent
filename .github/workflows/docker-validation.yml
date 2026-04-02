@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".dockerignore"
       - ".github/workflows/docker-validation.yml"
       - "Dockerfile"
       - "docker-compose.yml"
@@ -12,9 +13,11 @@ on:
       - "uv.lock"
       - "redis_sre_agent/**"
       - "ui/**"
+      - "ui/.dockerignore"
   pull_request:
     branches: [main]
     paths:
+      - ".dockerignore"
       - ".github/workflows/docker-validation.yml"
       - "Dockerfile"
       - "docker-compose.yml"
@@ -23,6 +26,7 @@ on:
       - "uv.lock"
       - "redis_sre_agent/**"
       - "ui/**"
+      - "ui/.dockerignore"
 
 jobs:
   backend-image:
