@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -12,8 +13,10 @@ from redis_sre_agent.core import schedules as core_schedules
 from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.tasks import TaskManager, TaskStatus
+from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 from redis_sre_agent.core.threads import ThreadManager
+
+_SCHEDULE_RUNS_PAGE_SIZE = 100
 
 
 def _normalize_task_status(status: Any) -> str:
@@ -215,6 +218,13 @@ async def run_schedule_now_helper(schedule_id: str) -> Dict[str, Any]:
     except Exception:
         pass
 
+    task_result = await create_task(
+        message=schedule.get("instructions") or "",
+        thread_id=thread_id,
+        context=run_context,
+        redis_client=redis_client,
+    )
+    task_id = str(task_result["task_id"])
     docket_task_id = None
     async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
         task_key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
@@ -226,6 +236,7 @@ async def run_schedule_now_helper(schedule_id: str) -> Dict[str, Any]:
                 thread_id=thread_id,
                 message=schedule.get("instructions") or "",
                 context=run_context,
+                task_id=task_id,
             )
         except Exception as e:
             if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
@@ -238,6 +249,7 @@ async def run_schedule_now_helper(schedule_id: str) -> Dict[str, Any]:
         "status": "pending",
         "scheduled_at": current_time.isoformat(),
         "thread_id": thread_id,
+        "task_id": task_id,
         "docket_task_id": str(docket_task_id) if docket_task_id is not None else None,
     }
 
@@ -251,57 +263,89 @@ async def list_schedule_runs_helper(schedule_id: str, limit: int = 50) -> Dict[s
     thread_manager = ThreadManager(redis_client=redis_client)
     task_manager = TaskManager(redis_client=redis_client)
 
-    summaries = await thread_manager.list_threads(user_id="scheduler", limit=200)
     runs = []
+    offset = 0
 
-    for summary in summaries:
-        thread_id = summary["thread_id"]
-        state = await thread_manager.get_thread(thread_id)
-        context = (state.context or {}) if state else {}
-        if not state or context.get("schedule_id") != schedule_id:
-            continue
-
-        task_id = None
-        task_status = TaskStatus.QUEUED.value
-        started_at = summary.get("created_at")
-        completed_at = None
-        error = None
-
-        try:
-            task_ids = await redis_client.zrevrange(RedisKeys.thread_tasks_index(thread_id), 0, 0)
-            if task_ids:
-                task_id = task_ids[0]
-                if isinstance(task_id, bytes):
-                    task_id = task_id.decode()
-        except Exception:
-            task_id = None
-
-        if task_id:
-            try:
-                task = await task_manager.get_task_state(task_id)
-            except Exception:
-                task = None
-            if task:
-                task_status = _normalize_task_status(task.status)
-                started_at = task.metadata.created_at or started_at
-                if task_status == TaskStatus.DONE.value:
-                    completed_at = task.metadata.updated_at
-                error = task.error_message
-
-        runs.append(
-            {
-                "thread_id": thread_id,
-                "task_id": task_id,
-                "schedule_id": schedule_id,
-                "status": task_status,
-                "scheduled_at": context.get("scheduled_at") or summary.get("created_at"),
-                "started_at": started_at,
-                "completed_at": completed_at,
-                "created_at": summary.get("created_at"),
-                "subject": summary.get("subject") or "Scheduled Run",
-                "error": error,
-            }
+    while True:
+        summaries = await thread_manager.list_threads(
+            user_id="scheduler",
+            limit=_SCHEDULE_RUNS_PAGE_SIZE,
+            offset=offset,
         )
+        if not summaries:
+            break
+
+        offset += len(summaries)
+        states = await asyncio.gather(
+            *(thread_manager.get_thread(summary["thread_id"]) for summary in summaries),
+            return_exceptions=True,
+        )
+
+        matching_runs: list[tuple[Dict[str, Any], Dict[str, Any]]] = []
+        for summary, state in zip(summaries, states):
+            if isinstance(state, Exception) or not state:
+                continue
+            context = state.context or {}
+            if context.get("schedule_id") != schedule_id:
+                continue
+            matching_runs.append((summary, context))
+
+        task_id_results = await asyncio.gather(
+            *(
+                redis_client.zrevrange(RedisKeys.thread_tasks_index(summary["thread_id"]), 0, 0)
+                for summary, _ in matching_runs
+            ),
+            return_exceptions=True,
+        )
+
+        task_ids: list[str | None] = []
+        for task_id_result in task_id_results:
+            if isinstance(task_id_result, Exception) or not task_id_result:
+                task_ids.append(None)
+                continue
+            task_id = task_id_result[0]
+            task_ids.append(task_id.decode() if isinstance(task_id, bytes) else task_id)
+
+        task_state_results = await asyncio.gather(
+            *(
+                task_manager.get_task_state(task_id) if task_id else asyncio.sleep(0, result=None)
+                for task_id in task_ids
+            ),
+            return_exceptions=True,
+        )
+
+        for (summary, context), task_id, task_state in zip(
+            matching_runs, task_ids, task_state_results
+        ):
+            task_status = TaskStatus.QUEUED.value
+            started_at = summary.get("created_at")
+            completed_at = None
+            error = None
+
+            if not isinstance(task_state, Exception) and task_state:
+                task_status = _normalize_task_status(task_state.status)
+                started_at = task_state.metadata.created_at or started_at
+                if task_status == TaskStatus.DONE.value:
+                    completed_at = task_state.metadata.updated_at
+                error = task_state.error_message
+
+            runs.append(
+                {
+                    "thread_id": summary["thread_id"],
+                    "task_id": task_id,
+                    "schedule_id": schedule_id,
+                    "status": task_status,
+                    "scheduled_at": context.get("scheduled_at") or summary.get("created_at"),
+                    "started_at": started_at,
+                    "completed_at": completed_at,
+                    "created_at": summary.get("created_at"),
+                    "subject": summary.get("subject") or "Scheduled Run",
+                    "error": error,
+                }
+            )
+
+        if len(summaries) < _SCHEDULE_RUNS_PAGE_SIZE:
+            break
 
     runs.sort(key=lambda run: run.get("scheduled_at") or "", reverse=True)
     return {"schedule_id": schedule_id, "runs": runs[:limit], "total": len(runs), "limit": limit}

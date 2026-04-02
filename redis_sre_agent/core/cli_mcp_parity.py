@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Iterable
 
 import click
@@ -116,7 +117,7 @@ def list_in_scope_cli_command_paths() -> set[str]:
 
 def list_mcp_tool_names() -> set[str]:
     """Return registered MCP tool names."""
-    return {tool.name for tool in mcp._tool_manager._tools.values()}
+    return {tool.name for tool in asyncio.run(mcp.list_tools())}
 
 
 def audit_cli_mcp_parity(

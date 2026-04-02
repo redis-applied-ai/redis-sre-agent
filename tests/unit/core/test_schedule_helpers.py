@@ -431,6 +431,11 @@ class TestScheduleRunHelpers:
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
             ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value={"task_id": "task-1"},
+            ) as mock_create_task,
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
             result = await run_schedule_now_helper("schedule-1")
@@ -438,6 +443,9 @@ class TestScheduleRunHelpers:
         assert result["status"] == "pending"
         assert result["thread_id"] == "thread-1"
         assert result["docket_task_id"] == "docket-1"
+        assert result["task_id"] == "task-1"
+        mock_create_task.assert_awaited_once()
+        assert queued.await_args.kwargs["task_id"] == "task-1"
         queued.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -490,6 +498,11 @@ class TestScheduleRunHelpers:
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
             ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value={"task_id": "task-1"},
+            ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
             result = await run_schedule_now_helper("schedule-1")
@@ -532,6 +545,11 @@ class TestScheduleRunHelpers:
             patch(
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value={"task_id": "task-1"},
             ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
@@ -578,6 +596,11 @@ class TestScheduleRunHelpers:
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
             ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value={"task_id": "task-1"},
+            ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
             result = await run_schedule_now_helper("schedule-1")
@@ -620,6 +643,11 @@ class TestScheduleRunHelpers:
             patch(
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value={"task_id": "task-1"},
             ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
@@ -783,6 +811,75 @@ class TestScheduleRunHelpers:
 
         assert result["runs"][0]["task_id"] == "task-1"
         assert result["runs"][0]["status"] == "queued"
+
+    @pytest.mark.asyncio
+    async def test_list_schedule_runs_helper_paginates_past_first_page(self):
+        from redis_sre_agent.core.schedule_helpers import list_schedule_runs_helper
+
+        redis_client = AsyncMock()
+        redis_client.zrevrange.return_value = [b"task-2"]
+
+        thread_manager = AsyncMock()
+        thread_manager.list_threads.side_effect = [
+            [
+                {
+                    "thread_id": "thread-1",
+                    "created_at": "2026-03-24T00:00:00+00:00",
+                    "updated_at": "2026-03-24T00:10:00+00:00",
+                    "subject": "Other",
+                }
+            ],
+            [
+                {
+                    "thread_id": "thread-2",
+                    "created_at": "2026-03-25T00:00:00+00:00",
+                    "updated_at": "2026-03-25T00:10:00+00:00",
+                    "subject": "Nightly Check",
+                }
+            ],
+            [],
+        ]
+        thread_manager.get_thread.side_effect = [
+            SimpleNamespace(context={"schedule_id": "schedule-2"}),
+            SimpleNamespace(context={"schedule_id": "schedule-1"}),
+        ]
+
+        task_manager = AsyncMock()
+        task_manager.get_task_state.return_value = TaskState(
+            task_id="task-2",
+            thread_id="thread-2",
+            status=TaskStatus.DONE,
+            metadata=TaskMetadata(
+                created_at="2026-03-25T00:00:01+00:00",
+                updated_at="2026-03-25T00:05:00+00:00",
+            ),
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.schedule_helpers.core_schedules.get_schedule",
+                new_callable=AsyncMock,
+                return_value=_schedule(),
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.get_redis_client",
+                return_value=redis_client,
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.TaskManager",
+                return_value=task_manager,
+            ),
+            patch("redis_sre_agent.core.schedule_helpers._SCHEDULE_RUNS_PAGE_SIZE", 1),
+        ):
+            result = await list_schedule_runs_helper("schedule-1", limit=5)
+
+        assert result["total"] == 1
+        assert result["runs"][0]["thread_id"] == "thread-2"
+        assert thread_manager.list_threads.await_args_list[1].kwargs["offset"] == 1
 
     @pytest.mark.asyncio
     async def test_list_schedule_runs_helper_ignores_threads_with_missing_context(self):
