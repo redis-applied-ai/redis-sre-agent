@@ -369,6 +369,8 @@ class KnowledgeOnlyAgent:
 
         async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
             """Execute tools with error handling using ToolManager."""
+            from langchain_core.messages import ToolMessage
+
             messages = state["messages"]
             last_message = messages[-1] if messages else None
 
@@ -388,9 +390,44 @@ class KnowledgeOnlyAgent:
             pending_tool_calls = list(last_message.tool_calls or [])
             dropped_tool_calls = pending_tool_calls[remaining_budget:]
 
+            def _append_dropped_tool_messages(tool_messages: list[Any]) -> None:
+                if not dropped_tool_calls:
+                    return
+
+                try:
+                    import json as _json
+
+                    dropped_content = _json.dumps(
+                        {
+                            "status": "error",
+                            "error_type": "tool_budget_trimmed",
+                            "error_message": (
+                                "Knowledge agent skipped this tool call because the per-stage "
+                                "tool budget was exhausted."
+                            ),
+                            "suggestion": (
+                                "Summarize the evidence already gathered or ask the user to narrow "
+                                "the request before requesting more tools."
+                            ),
+                        }
+                    )
+                except Exception:
+                    dropped_content = (
+                        '{"status":"error","error_type":"tool_budget_trimmed",'
+                        '"error_message":"Knowledge agent skipped this tool call because the per-stage '
+                        'tool budget was exhausted."}'
+                    )
+
+                for tool_call in dropped_tool_calls:
+                    tool_messages.append(
+                        ToolMessage(
+                            content=dropped_content,
+                            tool_call_id=tool_call["id"],
+                        )
+                    )
+
             if remaining_budget <= 0:
                 logger.warning("Knowledge agent tool budget exhausted before tool execution")
-                from langchain_core.messages import ToolMessage
 
                 error_payload = {
                     "status": "error",
@@ -446,9 +483,6 @@ class KnowledgeOnlyAgent:
                     },
                 ):
                     tool_results = await tool_mgr.execute_tool_calls(tool_calls_to_execute)
-
-                # Convert results to ToolMessage format expected by LangGraph
-                from langchain_core.messages import ToolMessage
 
                 # Track budget usage for tool calls
                 state["tool_calls_executed"] = prev_exec + len(tool_results or [])
@@ -511,38 +545,7 @@ class KnowledgeOnlyAgent:
                         # Don't let telemetry failures break tool handling
                         pass
 
-                if dropped_tool_calls:
-                    try:
-                        import json as _json
-
-                        dropped_content = _json.dumps(
-                            {
-                                "status": "error",
-                                "error_type": "tool_budget_trimmed",
-                                "error_message": (
-                                    "Knowledge agent skipped this tool call because the per-stage "
-                                    "tool budget was exhausted."
-                                ),
-                                "suggestion": (
-                                    "Summarize the evidence already gathered or ask the user to narrow "
-                                    "the request before requesting more tools."
-                                ),
-                            }
-                        )
-                    except Exception:
-                        dropped_content = (
-                            '{"status":"error","error_type":"tool_budget_trimmed",'
-                            '"error_message":"Knowledge agent skipped this tool call because the per-stage '
-                            'tool budget was exhausted."}'
-                        )
-
-                    for tool_call in dropped_tool_calls:
-                        tool_messages.append(
-                            ToolMessage(
-                                content=dropped_content,
-                                tool_call_id=tool_call["id"],
-                            )
-                        )
+                _append_dropped_tool_messages(tool_messages)
 
                 state["messages"] = messages + tool_messages
                 state["knowledge_search_results"] = accumulated_results
@@ -553,8 +556,6 @@ class KnowledgeOnlyAgent:
                 logger.error(f"Tool execution failed: {e}")
                 # Return error as ToolMessage so the LLM can decide how to handle it
                 # This allows the LLM to retry, explain the error, or take alternative actions
-                from langchain_core.messages import ToolMessage
-
                 error_payload = {
                     "status": "error",
                     "error_type": type(e).__name__,
@@ -579,38 +580,7 @@ class KnowledgeOnlyAgent:
                         )
                     )
 
-                if dropped_tool_calls:
-                    try:
-                        import json as _json
-
-                        dropped_content = _json.dumps(
-                            {
-                                "status": "error",
-                                "error_type": "tool_budget_trimmed",
-                                "error_message": (
-                                    "Knowledge agent skipped this tool call because the per-stage "
-                                    "tool budget was exhausted."
-                                ),
-                                "suggestion": (
-                                    "Summarize the evidence already gathered or ask the user to narrow "
-                                    "the request before requesting more tools."
-                                ),
-                            }
-                        )
-                    except Exception:
-                        dropped_content = (
-                            '{"status":"error","error_type":"tool_budget_trimmed",'
-                            '"error_message":"Knowledge agent skipped this tool call because the per-stage '
-                            'tool budget was exhausted."}'
-                        )
-
-                    for tool_call in dropped_tool_calls:
-                        tool_messages.append(
-                            ToolMessage(
-                                content=dropped_content,
-                                tool_call_id=tool_call["id"],
-                            )
-                        )
+                _append_dropped_tool_messages(tool_messages)
 
                 state["messages"] = messages + tool_messages
                 # Clear current_tool_calls to keep state consistent with other error/success paths
