@@ -752,7 +752,9 @@ async def attach_target_matches(
 ) -> tuple[List[TargetBinding], int]:
     """Persist safe target handles on a thread and return attached bindings."""
     thread_manager = ThreadManager(redis_client=get_redis_client())
+    current_thread = await thread_manager.get_thread(thread_id)
     current_state = await get_thread_target_state(thread_id)
+    current_context = current_thread.context if current_thread else {}
 
     existing_by_resource = {
         (binding.target_kind, binding.resource_id): binding
@@ -801,8 +803,12 @@ async def attach_target_matches(
         "active_target_handle": active_handle or "",
         "target_toolset_generation": generation,
         "target_bindings": [binding.model_dump(mode="json") for binding in bindings_to_store],
-        "instance_id": "",
-        "cluster_id": "",
+        "instance_id": (
+            str(current_context.get("instance_id") or "") if not replace_existing else ""
+        ),
+        "cluster_id": (
+            str(current_context.get("cluster_id") or "") if not replace_existing else ""
+        ),
     }
 
     if active_binding and len(attached_handles) == 1:

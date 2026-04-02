@@ -209,6 +209,61 @@ async def test_attach_target_matches_persists_safe_thread_context():
     assert "secret" not in str(update_payload)
 
 
+@pytest.mark.asyncio
+async def test_attach_target_matches_append_mode_preserves_existing_scope_ids():
+    matches = [
+        ResolvedTargetMatch(
+            target_kind="cluster",
+            resource_id="cluster-a",
+            display_name="cluster-a",
+            environment="production",
+            target_type="redis_enterprise",
+            capabilities=["admin"],
+            confidence=0.91,
+            match_reasons=["matched name=cluster-a"],
+        ),
+        ResolvedTargetMatch(
+            target_kind="cluster",
+            resource_id="cluster-b",
+            display_name="cluster-b",
+            environment="production",
+            target_type="redis_enterprise",
+            capabilities=["admin"],
+            confidence=0.9,
+            match_reasons=["matched name=cluster-b"],
+        ),
+    ]
+    mock_thread_manager = AsyncMock()
+    mock_thread_manager.get_thread = AsyncMock(
+        return_value=Thread(
+            thread_id="thread-1",
+            messages=[],
+            context={"instance_id": "redis-prod-checkout-cache", "cluster_id": ""},
+            metadata=ThreadMetadata(),
+        )
+    )
+    mock_thread_manager.update_thread_context = AsyncMock(return_value=True)
+
+    with patch(
+        "redis_sre_agent.core.targets.ThreadManager",
+        return_value=mock_thread_manager,
+    ):
+        bindings, generation = await attach_target_matches(
+            thread_id="thread-1",
+            matches=matches,
+            task_id="task-1",
+            replace_existing=False,
+        )
+
+    assert len(bindings) == 2
+    assert generation == 2
+
+    update_payload = mock_thread_manager.update_thread_context.await_args.args[1]
+    assert update_payload["instance_id"] == "redis-prod-checkout-cache"
+    assert update_payload["cluster_id"] == ""
+    assert len(update_payload["attached_target_handles"]) == 2
+
+
 def test_build_ephemeral_target_bindings_generates_opaque_handles():
     matches = [
         ResolvedTargetMatch(

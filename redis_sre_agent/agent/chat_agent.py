@@ -419,7 +419,9 @@ class ChatAgent:
             requested_generation: Optional[int] = None,
         ) -> Dict[str, Any]:
             current_generation = tool_mgr.get_toolset_generation()
-            generation = requested_generation or current_generation
+            generation = (
+                requested_generation if requested_generation is not None else current_generation
+            )
             cached = runtime_tools_by_generation.get(generation)
             if cached is not None:
                 return cached
