@@ -997,7 +997,7 @@ async def process_agent_turn(
                 user_id=thread.metadata.user_id or "unknown",
                 session_id=thread.metadata.session_id or thread_id,
                 max_iterations=_chat_max_iters,
-                context={**routing_context, "task_id": task_id},
+                context=routing_context,
                 progress_emitter=progress_emitter,
                 conversation_history=lc_history if lc_history else None,
             )

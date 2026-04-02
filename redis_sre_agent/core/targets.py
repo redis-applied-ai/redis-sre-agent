@@ -140,6 +140,11 @@ def _normalize(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def _normalize_environment(value: Any) -> str:
+    normalized = _normalize(value)
+    return _ENV_ALIASES.get(normalized, normalized)
+
+
 def _tokenize(value: Any) -> List[str]:
     text = _normalize(value)
     return _TOKEN_RE.findall(text.replace("-", " ").replace("_", " "))
@@ -266,7 +271,7 @@ def build_target_doc_from_instance(instance: RedisInstance) -> TargetCatalogDoc:
         resource_id=instance.id,
         display_name=instance.name,
         name=instance.name,
-        environment=_normalize(instance.environment),
+        environment=_normalize_environment(instance.environment),
         status=_normalize(instance.status),
         target_type=_normalize(instance_type),
         usage=_normalize(instance.usage),
@@ -312,7 +317,7 @@ def build_target_doc_from_cluster(cluster: RedisCluster) -> TargetCatalogDoc:
         resource_id=cluster.id,
         display_name=cluster.name,
         name=cluster.name,
-        environment=_normalize(cluster.environment),
+        environment=_normalize_environment(cluster.environment),
         status=_normalize(cluster.status),
         target_type=_normalize(cluster_type),
         description=cluster.description,

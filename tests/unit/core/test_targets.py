@@ -43,6 +43,22 @@ def test_build_target_doc_from_instance_excludes_secrets_and_includes_aliases():
     assert doc.repo_slug == "acme/checkout-service"
 
 
+def test_build_target_doc_from_instance_normalizes_environment_aliases():
+    instance = RedisInstance(
+        id="redis-prod-checkout-cache",
+        name="checkout-cache-prod",
+        connection_url="redis://cache.internal:6379/0",
+        environment="prod",
+        usage="cache",
+        description="Primary checkout cache",
+        instance_type="oss_single",
+    )
+
+    doc = build_target_doc_from_instance(instance)
+
+    assert doc.environment == "production"
+
+
 @pytest.mark.asyncio
 async def test_resolve_target_query_ranks_matching_environment_and_detects_ambiguity():
     prod = TargetCatalogDoc(
