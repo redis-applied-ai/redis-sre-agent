@@ -13,20 +13,10 @@ from typing import Any, Dict, List, Optional
 from docket import Docket
 
 from redis_sre_agent.agent.runbook_generator import GeneratedRunbook, RunbookGenerator
+from redis_sre_agent.core.helper_utils import emit_progress as _emit_progress
 from redis_sre_agent.core.knowledge_helpers import ingest_sre_document_helper
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import create_task
-
-
-async def _emit_progress(
-    progress_emitter: Any,
-    message: str,
-    update_type: str,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> None:
-    """Emit a task update when a progress emitter is available."""
-    if progress_emitter is not None:
-        await progress_emitter.emit(message, update_type, metadata or {})
 
 
 def _slugify_topic(topic: str) -> str:

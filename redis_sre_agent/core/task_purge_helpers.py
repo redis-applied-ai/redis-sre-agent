@@ -2,34 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from redis_sre_agent.core.helper_utils import (
+    decode_text as _decode,
+)
+from redis_sre_agent.core.helper_utils import (
+    parse_duration as _parse_duration,
+)
 from redis_sre_agent.core.redis import SRE_TASKS_INDEX, get_redis_client
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
-
-
-def _parse_duration(value: str) -> timedelta:
-    """Parse a duration like 7d, 24h, 15m, or 30s."""
-    normalized = (value or "").strip().lower()
-    try:
-        if normalized.endswith("d"):
-            return timedelta(days=float(normalized[:-1]))
-        if normalized.endswith("h"):
-            return timedelta(hours=float(normalized[:-1]))
-        if normalized.endswith("m"):
-            return timedelta(minutes=float(normalized[:-1]))
-        if normalized.endswith("s"):
-            return timedelta(seconds=float(normalized[:-1]))
-        return timedelta(seconds=float(normalized))
-    except Exception as exc:
-        raise ValueError(f"Invalid duration '{value}': {exc}") from exc
-
-
-def _decode(value: Any) -> str:
-    if isinstance(value, bytes):
-        return value.decode()
-    return str(value or "")
 
 
 async def purge_tasks_helper(

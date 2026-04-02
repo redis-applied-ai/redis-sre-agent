@@ -389,6 +389,27 @@ class KnowledgeOnlyAgent:
 
             if remaining_budget <= 0:
                 logger.warning("Knowledge agent tool budget exhausted before tool execution")
+                from langchain_core.messages import ToolMessage
+
+                error_payload = {
+                    "status": "error",
+                    "error_type": "tool_budget_exhausted",
+                    "error_message": "Knowledge agent tool budget exhausted before tool execution",
+                    "suggestion": "Summarize the evidence already gathered or ask the user to narrow the request.",
+                }
+                try:
+                    import json as _json
+
+                    error_content = _json.dumps(error_payload)
+                except Exception:
+                    error_content = str(error_payload)
+
+                tool_messages = [
+                    ToolMessage(content=error_content, tool_call_id=tool_call["id"])
+                    for tool_call in pending_tool_calls
+                ]
+                state["messages"] = messages + tool_messages
+                state["current_tool_calls"] = []
                 return state
 
             tool_calls_to_execute = pending_tool_calls[:remaining_budget]

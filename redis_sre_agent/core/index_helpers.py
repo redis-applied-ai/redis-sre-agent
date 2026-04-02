@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from redis_sre_agent.core.helper_utils import decode_text as _decode
 from redis_sre_agent.core.redis import (
     _iter_index_configs,
     get_index_schema_status,
@@ -21,12 +22,6 @@ VALID_INDEX_NAMES = {
     "instances",
     "clusters",
 }
-
-
-def _decode(value: Any) -> str:
-    if isinstance(value, bytes):
-        return value.decode()
-    return str(value or "")
 
 
 def _normalize_index_name(index_name: Optional[str]) -> Optional[str]:
