@@ -785,6 +785,48 @@ class TestScheduleRunHelpers:
         assert result["runs"][0]["status"] == "queued"
 
     @pytest.mark.asyncio
+    async def test_list_schedule_runs_helper_ignores_threads_with_missing_context(self):
+        from redis_sre_agent.core.schedule_helpers import list_schedule_runs_helper
+
+        redis_client = AsyncMock()
+
+        thread_manager = AsyncMock()
+        thread_manager.list_threads.return_value = [
+            {
+                "thread_id": "thread-1",
+                "created_at": "2026-03-25T00:00:00+00:00",
+                "updated_at": "2026-03-25T00:10:00+00:00",
+                "subject": "Nightly Check",
+            }
+        ]
+        thread_manager.get_thread.return_value = SimpleNamespace(context=None)
+
+        with (
+            patch(
+                "redis_sre_agent.core.schedule_helpers.core_schedules.get_schedule",
+                new_callable=AsyncMock,
+                return_value=_schedule(),
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.get_redis_client",
+                return_value=redis_client,
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.TaskManager",
+                return_value=AsyncMock(),
+            ),
+        ):
+            result = await list_schedule_runs_helper("schedule-1", limit=5)
+
+        assert result["schedule_id"] == "schedule-1"
+        assert result["runs"] == []
+        assert result["total"] == 0
+
+    @pytest.mark.asyncio
     async def test_list_schedule_runs_helper_returns_error_when_missing_schedule(self):
         from redis_sre_agent.core.schedule_helpers import list_schedule_runs_helper
 

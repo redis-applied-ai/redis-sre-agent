@@ -257,7 +257,8 @@ async def list_schedule_runs_helper(schedule_id: str, limit: int = 50) -> Dict[s
     for summary in summaries:
         thread_id = summary["thread_id"]
         state = await thread_manager.get_thread(thread_id)
-        if not state or state.context.get("schedule_id") != schedule_id:
+        context = (state.context or {}) if state else {}
+        if not state or context.get("schedule_id") != schedule_id:
             continue
 
         task_id = None
@@ -293,7 +294,7 @@ async def list_schedule_runs_helper(schedule_id: str, limit: int = 50) -> Dict[s
                 "task_id": task_id,
                 "schedule_id": schedule_id,
                 "status": task_status,
-                "scheduled_at": state.context.get("scheduled_at") or summary.get("created_at"),
+                "scheduled_at": context.get("scheduled_at") or summary.get("created_at"),
                 "started_at": started_at,
                 "completed_at": completed_at,
                 "created_at": summary.get("created_at"),
