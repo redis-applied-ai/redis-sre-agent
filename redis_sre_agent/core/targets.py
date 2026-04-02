@@ -584,15 +584,15 @@ def _score_target_doc(
         score += overlap_score
         reasons.append(f"matched tokens={','.join(token_overlap[:4])}")
 
-    for env in hints["environments"]:
-        if env == _normalize(doc.environment):
-            score += 3.0
-            reasons.append(f"matched environment={env}")
+    normalized_environment = _normalize_environment(doc.environment)
+    if normalized_environment and normalized_environment in hints["environments"]:
+        score += 3.0
+        reasons.append(f"matched environment={normalized_environment}")
 
-    for usage in hints["usages"]:
-        if usage == _normalize(doc.usage):
-            score += 2.5
-            reasons.append(f"matched usage={usage}")
+    normalized_usage = _normalize(doc.usage)
+    if normalized_usage and normalized_usage in hints["usages"]:
+        score += 2.5
+        reasons.append(f"matched usage={normalized_usage}")
 
     if hints["preferred_kinds"]:
         if doc.target_kind in hints["preferred_kinds"]:

@@ -746,7 +746,7 @@ User Query: {query}"""
                 "max_iterations": max_iterations,
                 "startup_system_prompt": system_prompt,
                 "startup_prompt_initialized": True,
-                "toolset_generation": 0,
+                "toolset_generation": 1,
                 "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
             }
 
