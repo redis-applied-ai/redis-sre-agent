@@ -180,7 +180,7 @@ async def update_cluster_helper(
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     current = clusters[cluster_index]
     updated = current.model_copy(update=update_data)
-    validated = core_clusters.RedisCluster(**updated.model_dump(mode="json"))
+    validated = core_clusters.RedisCluster.model_validate(updated.model_dump())
     clusters[cluster_index] = validated
 
     if not await core_clusters.save_clusters(clusters):

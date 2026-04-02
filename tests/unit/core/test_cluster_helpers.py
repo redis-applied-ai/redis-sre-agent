@@ -201,6 +201,7 @@ class TestClusterMutationHelpers:
         updated = mock_save.await_args.args[0][0]
         assert updated.name == "prod-cluster-2"
         assert updated.environment == "staging"
+        assert updated.admin_password.get_secret_value() == "secret"
 
     @pytest.mark.asyncio
     async def test_update_cluster_helper_updates_all_optional_fields(self):
@@ -243,6 +244,27 @@ class TestClusterMutationHelpers:
         assert updated.last_checked == "2026-03-25T00:00:00+00:00"
         assert updated.created_by == "agent"
         assert updated.user_id == "user-2"
+
+    @pytest.mark.asyncio
+    async def test_update_cluster_helper_preserves_existing_secret_fields(self):
+        existing = _cluster(admin_password="persist-me")
+
+        with (
+            patch(
+                "redis_sre_agent.core.cluster_helpers.core_clusters.get_clusters",
+                new_callable=AsyncMock,
+                return_value=[existing],
+            ),
+            patch(
+                "redis_sre_agent.core.cluster_helpers.core_clusters.save_clusters",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_save,
+        ):
+            await update_cluster_helper("cluster-1", name="prod-cluster-2")
+
+        updated = mock_save.await_args.args[0][0]
+        assert updated.admin_password.get_secret_value() == "persist-me"
 
     @pytest.mark.asyncio
     async def test_update_cluster_helper_rejects_missing_cluster(self):
