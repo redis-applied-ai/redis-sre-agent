@@ -386,6 +386,9 @@ class KnowledgeOnlyAgent:
             prev_exec = int(state.get("tool_calls_executed", 0) or 0)
             remaining_budget = max(0, budget - prev_exec)
             pending_tool_calls = list(last_message.tool_calls or [])
+            dropped_tool_calls = (
+                pending_tool_calls[remaining_budget:] if remaining_budget > 0 else []
+            )
 
             if remaining_budget <= 0:
                 logger.warning("Knowledge agent tool budget exhausted before tool execution")
@@ -419,11 +422,6 @@ class KnowledgeOnlyAgent:
                     len(tool_calls_to_execute),
                     len(pending_tool_calls),
                 )
-                last_message = AIMessage(
-                    content=str(last_message.content or ""),
-                    tool_calls=tool_calls_to_execute,
-                )
-                messages = list(messages[:-1]) + [last_message]
 
             try:
                 # Emit provider-supplied status updates before executing tools
@@ -514,6 +512,39 @@ class KnowledgeOnlyAgent:
                     except Exception:
                         # Don't let telemetry failures break tool handling
                         pass
+
+                if dropped_tool_calls:
+                    try:
+                        import json as _json
+
+                        dropped_content = _json.dumps(
+                            {
+                                "status": "error",
+                                "error_type": "tool_budget_trimmed",
+                                "error_message": (
+                                    "Knowledge agent skipped this tool call because the per-stage "
+                                    "tool budget was exhausted."
+                                ),
+                                "suggestion": (
+                                    "Summarize the evidence already gathered or ask the user to narrow "
+                                    "the request before requesting more tools."
+                                ),
+                            }
+                        )
+                    except Exception:
+                        dropped_content = (
+                            '{"status":"error","error_type":"tool_budget_trimmed",'
+                            '"error_message":"Knowledge agent skipped this tool call because the per-stage '
+                            'tool budget was exhausted."}'
+                        )
+
+                    for tool_call in dropped_tool_calls:
+                        tool_messages.append(
+                            ToolMessage(
+                                content=dropped_content,
+                                tool_call_id=tool_call["id"],
+                            )
+                        )
 
                 state["messages"] = messages + tool_messages
                 state["knowledge_search_results"] = accumulated_results

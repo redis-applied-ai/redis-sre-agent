@@ -1036,3 +1036,65 @@ class TestSafeToolNodeErrorHandling:
         # Verify each tool call ID is represented
         tool_call_ids = {m.tool_call_id for m in tool_messages}
         assert tool_call_ids == {"tc-1", "tc-2", "tc-3"}
+
+    @pytest.mark.asyncio
+    async def test_trimmed_tool_calls_return_budget_error_messages(self):
+        """Test that dropped tool calls still get explicit ToolMessages."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        agent = KnowledgeOnlyAgent()
+
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_status_update.return_value = None
+        mock_tool_mgr.execute_tool_calls = AsyncMock(
+            return_value=[
+                {"status": "ok", "result": 1},
+                {"status": "ok", "result": 2},
+                {"status": "ok", "result": 3},
+            ]
+        )
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        emitter = NullEmitter()
+        workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
+
+        ai_message_with_tool_calls = AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "tc-1", "name": "knowledge_search", "args": {"query": "one"}},
+                {"id": "tc-2", "name": "knowledge_search", "args": {"query": "two"}},
+                {"id": "tc-3", "name": "knowledge_search", "args": {"query": "three"}},
+                {"id": "tc-4", "name": "knowledge_search", "args": {"query": "four"}},
+            ],
+        )
+
+        state = {
+            "messages": [ai_message_with_tool_calls],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        compiled = workflow.compile()
+        result = await compiled.nodes["tools"].ainvoke(state)
+
+        executed_tool_calls = mock_tool_mgr.execute_tool_calls.await_args.args[0]
+        assert [tool_call["id"] for tool_call in executed_tool_calls] == ["tc-1", "tc-2", "tc-3"]
+
+        tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+        assert len(tool_messages) == 4
+
+        import json
+
+        dropped_message = next(m for m in tool_messages if m.tool_call_id == "tc-4")
+        dropped_payload = json.loads(dropped_message.content)
+        assert dropped_payload["error_type"] == "tool_budget_trimmed"
+        assert result["tool_calls_executed"] == 3

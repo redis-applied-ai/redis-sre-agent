@@ -85,8 +85,16 @@ class TestPurgeTasksHelper:
         )
         redis_client.hmget = AsyncMock(
             side_effect=[
-                [b"done", str(cutoff.timestamp()).encode(), b"1"],
-                [b"queued", str(datetime.now(timezone.utc).timestamp()).encode(), b"1"],
+                [
+                    b"done",
+                    str(datetime.now(timezone.utc).timestamp()).encode(),
+                    str(cutoff.timestamp()).encode(),
+                ],
+                [
+                    b"queued",
+                    str(datetime.now(timezone.utc).timestamp()).encode(),
+                    str(datetime.now(timezone.utc).timestamp()).encode(),
+                ],
             ]
         )
 
@@ -121,8 +129,16 @@ class TestPurgeTasksHelper:
         )
         redis_client.hmget = AsyncMock(
             side_effect=[
-                [b"done", cutoff.isoformat().encode(), b"1"],
-                [b"queued", cutoff.isoformat().encode(), b"1"],
+                [
+                    b"done",
+                    datetime.now(timezone.utc).isoformat().encode(),
+                    cutoff.isoformat().encode(),
+                ],
+                [
+                    b"queued",
+                    cutoff.isoformat().encode(),
+                    datetime.now(timezone.utc).isoformat().encode(),
+                ],
             ]
         )
 
@@ -141,6 +157,39 @@ class TestPurgeTasksHelper:
         assert result == {
             "status": "purged",
             "scanned": 2,
+            "deleted": 1,
+            "matched": ["task-1"],
+            "dry_run": False,
+        }
+        mock_delete.assert_awaited_once_with(task_id="task-1", redis_client=redis_client)
+
+    @pytest.mark.asyncio
+    async def test_purge_tasks_helper_falls_back_to_updated_at_when_created_at_missing(self):
+        cutoff = datetime.now(timezone.utc) - timedelta(days=2)
+        redis_client = AsyncMock()
+        redis_client.scan = AsyncMock(side_effect=[(0, [b"sre_tasks:task-1"])])
+        redis_client.hmget = AsyncMock(
+            return_value=[
+                b"done",
+                cutoff.isoformat().encode(),
+                b"",
+            ]
+        )
+
+        with patch(
+            "redis_sre_agent.core.task_purge_helpers.delete_task_core",
+            new_callable=AsyncMock,
+        ) as mock_delete:
+            result = await purge_tasks_helper(
+                status="done",
+                older_than="1d",
+                confirm=True,
+                redis_client=redis_client,
+            )
+
+        assert result == {
+            "status": "purged",
+            "scanned": 1,
             "deleted": 1,
             "matched": ["task-1"],
             "dry_run": False,

@@ -61,20 +61,22 @@ async def purge_tasks_helper(
             task_id = redis_key[len(f"{SRE_TASKS_INDEX}:") :]
 
             try:
-                st_raw, upd_raw, _ = await client.hmget(
+                st_raw, upd_raw, created_raw = await client.hmget(
                     redis_key, "status", "updated_at", "created_at"
                 )
                 task_status = _decode(st_raw).lower()
-                updated_at = _parse_timestamp(upd_raw)
+                created_at = _parse_timestamp(created_raw)
+                if created_at <= 0:
+                    created_at = _parse_timestamp(upd_raw)
             except Exception:
                 task_status = ""
-                updated_at = 0.0
+                created_at = 0.0
 
             eligible = True
             if status:
                 eligible = eligible and (task_status == status.lower())
             if cutoff_ts is not None:
-                eligible = eligible and (updated_at > 0 and updated_at < cutoff_ts)
+                eligible = eligible and (created_at > 0 and created_at < cutoff_ts)
 
             if not eligible:
                 scanned += 1
