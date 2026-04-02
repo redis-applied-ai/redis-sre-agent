@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 
@@ -39,3 +39,22 @@ def parse_duration(value: str) -> timedelta:
         return timedelta(seconds=float(normalized))
     except Exception as exc:
         raise ValueError(f"Invalid duration '{value}': {exc}") from exc
+
+
+def parse_timestamp(value: Any) -> float:
+    """Parse numeric or ISO-8601 timestamps into Unix seconds."""
+    decoded = decode_text(value).strip()
+    if not decoded:
+        return 0.0
+
+    try:
+        return float(decoded)
+    except Exception:
+        try:
+            normalized = decoded.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except Exception as exc:
+            raise ValueError(f"Invalid timestamp '{decoded}': {exc}") from exc

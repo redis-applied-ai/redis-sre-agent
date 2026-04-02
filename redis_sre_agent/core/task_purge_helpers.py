@@ -11,6 +11,9 @@ from redis_sre_agent.core.helper_utils import (
 from redis_sre_agent.core.helper_utils import (
     parse_duration as _parse_duration,
 )
+from redis_sre_agent.core.helper_utils import (
+    parse_timestamp as _parse_timestamp,
+)
 from redis_sre_agent.core.redis import SRE_TASKS_INDEX, get_redis_client
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
 
@@ -62,7 +65,7 @@ async def purge_tasks_helper(
                     redis_key, "status", "updated_at", "created_at"
                 )
                 task_status = _decode(st_raw).lower()
-                updated_at = float(_decode(upd_raw) or 0)
+                updated_at = _parse_timestamp(upd_raw)
             except Exception:
                 task_status = ""
                 updated_at = 0.0
@@ -73,7 +76,7 @@ async def purge_tasks_helper(
             if cutoff_ts is not None:
                 eligible = eligible and (updated_at > 0 and updated_at < cutoff_ts)
 
-            if not purge_all and not eligible:
+            if not eligible:
                 scanned += 1
                 continue
 

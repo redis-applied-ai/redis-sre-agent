@@ -1,5 +1,6 @@
 """Tests for thread maintenance MCP helpers."""
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -558,7 +559,7 @@ class TestThreadPurgeHelper:
 
         client = AsyncMock()
         client.scan.side_effect = [(0, [b"sre_threads:thread-1"])]
-        client.hget.return_value = b"1"
+        client.hget.return_value = b"2010-01-01T00:00:00+00:00"
 
         with patch(
             "redis_sre_agent.core.thread_maintenance_helpers.get_redis_client",
@@ -573,6 +574,47 @@ class TestThreadPurgeHelper:
             "deleted_tasks": 0,
             "matched": ["thread-1"],
             "dry_run": True,
+            "include_tasks": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_purge_threads_helper_applies_older_than_even_with_purge_all(self):
+        from redis_sre_agent.core.thread_maintenance_helpers import purge_threads_helper
+
+        client = AsyncMock()
+        client.scan.side_effect = [(0, [b"sre_threads:thread-1", b"sre_threads:thread-2"])]
+        client.hget.side_effect = [
+            b"2010-01-01T00:00:00+00:00",
+            datetime.now(timezone.utc).isoformat().encode(),
+        ]
+        client.zrevrange.return_value = []
+
+        thread_manager = AsyncMock()
+        thread_manager.delete_thread.return_value = True
+
+        with (
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.get_redis_client",
+                return_value=client,
+            ),
+            patch(
+                "redis_sre_agent.core.thread_maintenance_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+        ):
+            result = await purge_threads_helper(
+                purge_all=True,
+                older_than="3650d",
+                confirm=True,
+            )
+
+        assert result == {
+            "status": "purged",
+            "scanned": 2,
+            "deleted": 1,
+            "deleted_tasks": 0,
+            "matched": ["thread-1"],
+            "dry_run": False,
             "include_tasks": True,
         }
 

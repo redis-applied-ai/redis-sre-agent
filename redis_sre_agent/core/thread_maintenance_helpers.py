@@ -11,6 +11,9 @@ from redis_sre_agent.core.helper_utils import (
 from redis_sre_agent.core.helper_utils import (
     parse_duration as _parse_duration,
 )
+from redis_sre_agent.core.helper_utils import (
+    parse_timestamp as _parse_timestamp,
+)
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import (
     SRE_THREADS_INDEX,
@@ -301,12 +304,12 @@ async def purge_threads_helper(
             if cutoff_ts is not None:
                 try:
                     created_at = await client.hget(redis_key, "created_at")
-                    created_ts = float(_decode(created_at) or 0)
+                    created_ts = _parse_timestamp(created_at)
                     eligible = created_ts > 0 and created_ts <= cutoff_ts
                 except Exception:
                     eligible = False
 
-            if not purge_all and not eligible:
+            if not eligible:
                 scanned += 1
                 continue
 

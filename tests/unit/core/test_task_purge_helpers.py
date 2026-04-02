@@ -111,6 +111,43 @@ class TestPurgeTasksHelper:
         mock_delete.assert_awaited_once_with(task_id="task-1", redis_client=redis_client)
 
     @pytest.mark.asyncio
+    async def test_purge_tasks_helper_supports_iso_timestamps_and_purge_all_filters(self):
+        cutoff = datetime.now(timezone.utc) - timedelta(days=2)
+        redis_client = AsyncMock()
+        redis_client.scan = AsyncMock(
+            side_effect=[
+                (0, [b"sre_tasks:task-1", b"sre_tasks:task-2"]),
+            ]
+        )
+        redis_client.hmget = AsyncMock(
+            side_effect=[
+                [b"done", cutoff.isoformat().encode(), b"1"],
+                [b"queued", cutoff.isoformat().encode(), b"1"],
+            ]
+        )
+
+        with patch(
+            "redis_sre_agent.core.task_purge_helpers.delete_task_core",
+            new_callable=AsyncMock,
+        ) as mock_delete:
+            result = await purge_tasks_helper(
+                purge_all=True,
+                status="done",
+                older_than="1d",
+                confirm=True,
+                redis_client=redis_client,
+            )
+
+        assert result == {
+            "status": "purged",
+            "scanned": 2,
+            "deleted": 1,
+            "matched": ["task-1"],
+            "dry_run": False,
+        }
+        mock_delete.assert_awaited_once_with(task_id="task-1", redis_client=redis_client)
+
+    @pytest.mark.asyncio
     async def test_purge_tasks_helper_ignores_hmget_and_delete_errors(self):
         redis_client = AsyncMock()
         redis_client.scan = AsyncMock(side_effect=[(0, [b"sre_tasks:task-1"])])
