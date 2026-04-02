@@ -1098,3 +1098,60 @@ class TestSafeToolNodeErrorHandling:
         dropped_payload = json.loads(dropped_message.content)
         assert dropped_payload["error_type"] == "tool_budget_trimmed"
         assert result["tool_calls_executed"] == 3
+
+    @pytest.mark.asyncio
+    async def test_trimmed_tool_calls_still_get_budget_errors_when_execution_fails(self):
+        """Test that dropped tool calls still get ToolMessages on execution failure."""
+        from redis_sre_agent.core.progress import NullEmitter
+        from redis_sre_agent.tools.manager import ToolManager
+
+        agent = KnowledgeOnlyAgent()
+
+        mock_tool_mgr = MagicMock(spec=ToolManager)
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_status_update.return_value = None
+        mock_tool_mgr.execute_tool_calls = AsyncMock(side_effect=RuntimeError("tool failure"))
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        emitter = NullEmitter()
+        workflow = agent._build_workflow(mock_tool_mgr, mock_llm, emitter)
+
+        ai_message_with_tool_calls = AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "tc-1", "name": "knowledge_search", "args": {"query": "one"}},
+                {"id": "tc-2", "name": "knowledge_search", "args": {"query": "two"}},
+                {"id": "tc-3", "name": "knowledge_search", "args": {"query": "three"}},
+                {"id": "tc-4", "name": "knowledge_search", "args": {"query": "four"}},
+            ],
+        )
+
+        state = {
+            "messages": [ai_message_with_tool_calls],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "tool_calls_executed": 0,
+            "knowledge_search_results": [],
+            "signals_envelopes": [],
+        }
+
+        compiled = workflow.compile()
+        result = await compiled.nodes["tools"].ainvoke(state)
+
+        tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+        assert len(tool_messages) == 4
+
+        import json
+
+        executed_payload = json.loads(
+            next(m for m in tool_messages if m.tool_call_id == "tc-1").content
+        )
+        dropped_payload = json.loads(
+            next(m for m in tool_messages if m.tool_call_id == "tc-4").content
+        )
+        assert executed_payload["error_type"] == "RuntimeError"
+        assert dropped_payload["error_type"] == "tool_budget_trimmed"

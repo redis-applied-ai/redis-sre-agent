@@ -581,6 +581,39 @@ class KnowledgeOnlyAgent:
                         )
                     )
 
+                if dropped_tool_calls:
+                    try:
+                        import json as _json
+
+                        dropped_content = _json.dumps(
+                            {
+                                "status": "error",
+                                "error_type": "tool_budget_trimmed",
+                                "error_message": (
+                                    "Knowledge agent skipped this tool call because the per-stage "
+                                    "tool budget was exhausted."
+                                ),
+                                "suggestion": (
+                                    "Summarize the evidence already gathered or ask the user to narrow "
+                                    "the request before requesting more tools."
+                                ),
+                            }
+                        )
+                    except Exception:
+                        dropped_content = (
+                            '{"status":"error","error_type":"tool_budget_trimmed",'
+                            '"error_message":"Knowledge agent skipped this tool call because the per-stage '
+                            'tool budget was exhausted."}'
+                        )
+
+                    for tool_call in dropped_tool_calls:
+                        tool_messages.append(
+                            ToolMessage(
+                                content=dropped_content,
+                                tool_call_id=tool_call["id"],
+                            )
+                        )
+
                 state["messages"] = messages + tool_messages
                 # Clear current_tool_calls to keep state consistent with other error/success paths
                 state["current_tool_calls"] = []
