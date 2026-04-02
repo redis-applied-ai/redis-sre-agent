@@ -344,6 +344,8 @@ async def list_schedule_runs_helper(schedule_id: str, limit: int = 50) -> Dict[s
                 }
             )
 
+        if len(runs) >= limit:
+            break
         if len(summaries) < _SCHEDULE_RUNS_PAGE_SIZE:
             break
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Iterable
 
 import click
@@ -117,7 +118,17 @@ def list_in_scope_cli_command_paths() -> set[str]:
 
 def list_mcp_tool_names() -> set[str]:
     """Return registered MCP tool names."""
-    return {tool.name for tool in asyncio.run(mcp.list_tools())}
+
+    def _load_tool_names() -> set[str]:
+        return {tool.name for tool in asyncio.run(mcp.list_tools())}
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _load_tool_names()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(_load_tool_names).result()
 
 
 def audit_cli_mcp_parity(

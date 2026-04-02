@@ -113,6 +113,14 @@ class TestCliMcpParityHelpers:
         assert "redis_sre_version" in tool_names
         assert "redis_sre_get_pipeline_status" in tool_names
 
+    @pytest.mark.asyncio
+    async def test_list_mcp_tool_names_works_inside_running_event_loop(self):
+        from redis_sre_agent.core.cli_mcp_parity import list_mcp_tool_names
+
+        tool_names = list_mcp_tool_names()
+
+        assert "redis_sre_query" in tool_names
+
     def test_list_cli_command_paths_skips_missing_top_level_commands(
         self, monkeypatch: pytest.MonkeyPatch
     ):
