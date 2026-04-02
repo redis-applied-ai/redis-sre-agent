@@ -446,6 +446,7 @@ class KnowledgeOnlyAgent:
                     ToolMessage(content=error_content, tool_call_id=tool_call["id"])
                     for tool_call in pending_tool_calls
                 ]
+                state["tool_calls_executed"] = prev_exec + len(pending_tool_calls)
                 state["messages"] = messages + tool_messages
                 state["current_tool_calls"] = []
                 return state
@@ -484,8 +485,9 @@ class KnowledgeOnlyAgent:
                 ):
                     tool_results = await tool_mgr.execute_tool_calls(tool_calls_to_execute)
 
-                # Track budget usage for tool calls
-                state["tool_calls_executed"] = prev_exec + len(tool_results or [])
+                # Count trimmed calls against the budget too, since the LLM still receives
+                # explicit ToolMessages telling it those calls were skipped.
+                state["tool_calls_executed"] = prev_exec + len(pending_tool_calls)
 
                 tool_messages = []
                 # Get existing search results and envelopes to accumulate
@@ -582,6 +584,7 @@ class KnowledgeOnlyAgent:
 
                 _append_dropped_tool_messages(tool_messages)
 
+                state["tool_calls_executed"] = prev_exec + len(pending_tool_calls)
                 state["messages"] = messages + tool_messages
                 # Clear current_tool_calls to keep state consistent with other error/success paths
                 state["current_tool_calls"] = []

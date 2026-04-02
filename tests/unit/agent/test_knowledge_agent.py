@@ -1097,7 +1097,7 @@ class TestSafeToolNodeErrorHandling:
         dropped_message = next(m for m in tool_messages if m.tool_call_id == "tc-4")
         dropped_payload = json.loads(dropped_message.content)
         assert dropped_payload["error_type"] == "tool_budget_trimmed"
-        assert result["tool_calls_executed"] == 3
+        assert result["tool_calls_executed"] == 4
 
     @pytest.mark.asyncio
     async def test_trimmed_tool_calls_still_get_budget_errors_when_execution_fails(self):
@@ -1155,3 +1155,4 @@ class TestSafeToolNodeErrorHandling:
         )
         assert executed_payload["error_type"] == "RuntimeError"
         assert dropped_payload["error_type"] == "tool_budget_trimmed"
+        assert result["tool_calls_executed"] == 4
