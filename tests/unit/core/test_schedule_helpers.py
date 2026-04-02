@@ -483,6 +483,47 @@ class TestScheduleRunHelpers:
         assert result["docket_task_id"] == "already_running"
 
     @pytest.mark.asyncio
+    async def test_run_schedule_now_helper_awaits_async_docket_add_result(self):
+        from redis_sre_agent.core.schedule_helpers import run_schedule_now_helper
+
+        thread_manager = AsyncMock()
+        thread_manager.create_thread.return_value = "thread-1"
+        thread_manager.set_thread_subject.return_value = True
+
+        docket_instance = AsyncMock()
+        docket_instance.__aenter__.return_value = docket_instance
+        docket_instance.__aexit__.return_value = False
+        queued = AsyncMock(return_value="docket-1")
+        docket_instance.add = AsyncMock(return_value=queued)
+
+        with (
+            patch(
+                "redis_sre_agent.core.schedule_helpers.core_schedules.get_schedule",
+                new_callable=AsyncMock,
+                return_value=_schedule(),
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.get_redis_client",
+                return_value=AsyncMock(),
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.get_redis_url",
+                new_callable=AsyncMock,
+                return_value="redis://test",
+            ),
+            patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
+        ):
+            result = await run_schedule_now_helper("schedule-1")
+
+        assert result["docket_task_id"] == "docket-1"
+        docket_instance.add.assert_awaited_once()
+        queued.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_run_schedule_now_helper_ignores_subject_update_failure(self):
         from redis_sre_agent.core.schedule_helpers import run_schedule_now_helper
 

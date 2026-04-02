@@ -23,6 +23,13 @@ def _normalize_cluster_id(cluster_id: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
+def _normalize_instance_type_name(instance_type: Optional[Any]) -> str:
+    if hasattr(instance_type, "value"):
+        instance_type = instance_type.value
+    normalized = str(instance_type or "unknown").strip().lower()
+    return normalized or "unknown"
+
+
 async def _validate_instance_cluster_link(
     *,
     cluster_id: Optional[str],
@@ -36,7 +43,7 @@ async def _validate_instance_cluster_link(
     if not cluster:
         raise RuntimeError(f"Cluster with ID '{normalized_cluster_id}' not found")
 
-    normalized_instance_type = (instance_type or "unknown").strip().lower()
+    normalized_instance_type = _normalize_instance_type_name(instance_type)
     cluster_type = (
         cluster.cluster_type.value
         if hasattr(cluster.cluster_type, "value")

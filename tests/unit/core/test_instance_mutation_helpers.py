@@ -221,6 +221,24 @@ class TestUpdateInstanceHelper:
                     instance_type="redis_cloud",
                 )
 
+    @pytest.mark.asyncio
+    async def test_validate_instance_cluster_link_accepts_enum_instance_type(self):
+        """Enum instance types should normalize without attribute errors."""
+        cluster = MagicMock()
+        cluster.cluster_type = RedisInstanceType.redis_cloud
+
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.get_cluster_by_id",
+            new_callable=AsyncMock,
+            return_value=cluster,
+        ):
+            result = await _validate_instance_cluster_link(
+                cluster_id="cluster-123",
+                instance_type=RedisInstanceType.redis_cloud,
+            )
+
+        assert result == "cluster-123"
+
 
 class TestDeleteInstanceHelper:
     """Test shared helpers for deleting instances."""

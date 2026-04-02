@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -212,6 +213,8 @@ async def run_schedule_now_helper(schedule_id: str) -> Dict[str, Any]:
         task_key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
         try:
             task_func = docket.add(process_agent_turn, key=task_key)
+            if inspect.isawaitable(task_func):
+                task_func = await task_func
             docket_task_id = await task_func(
                 thread_id=thread_id,
                 message=schedule.get("instructions") or "",
