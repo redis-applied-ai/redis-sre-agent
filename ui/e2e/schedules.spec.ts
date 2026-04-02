@@ -4,13 +4,13 @@ import { test, expect } from '@playwright/test';
 // Validates that the form correctly sends interval_type and interval_value to the backend.
 //
 // NOTE: These tests require:
-// 1. Backend API running on port 8000
+// 1. Backend API running on port 8080
 // 2. Frontend dev server (npm run dev) running on port 3000 (or 3002 via docker)
 //
 // The tests validate the critical fix that the schedule form sends interval_type
 // and interval_value instead of cron_expression.
 
-const API_BASE = 'http://localhost:8000/api/v1';
+const API_BASE = 'http://localhost:8080/api/v1';
 const uniqueSuffix = () => `${Date.now()}`;
 
 test.describe('Schedules API payload validation', () => {
@@ -107,7 +107,7 @@ test.describe('Schedules UI form', () => {
     // The API tests above validate the same functionality at the API level.
     //
     // To run this test locally:
-    // 1. Start the backend: uv run uvicorn redis_sre_agent.api.app:app --port 8000
+    // 1. Start the backend: docker compose up -d sre-agent
     // 2. Start the frontend: cd ui && npm run dev
     // 3. Run: cd ui && npm run e2e -- --grep "create schedule form"
 

@@ -55,7 +55,7 @@ local-services: ## Start local services with docker-compose up -d
 	docker compose up -d
 	@echo ""
 	@echo "Local services started:"
-	@echo "  - SRE Agent API:       http://localhost:8000"
+	@echo "  - SRE Agent API:       http://localhost:8080"
 	@echo "  - SRE Agent UI:        http://localhost:3002"
 	@echo "  - Grafana:             http://localhost:3001  (login: admin / admin)"
 	@echo "  - Prometheus:          http://localhost:9090"
@@ -75,7 +75,7 @@ local-services-enterprise: ## Start local services with Redis Enterprise cluster
 	docker compose -f docker-compose.yml -f docker-compose.enterprise.yml up -d
 	@echo ""
 	@echo "Local services started (with Redis Enterprise):"
-	@echo "  - SRE Agent API:       http://localhost:8000"
+	@echo "  - SRE Agent API:       http://localhost:8080"
 	@echo "  - SRE Agent UI:        http://localhost:3002"
 	@echo "  - Grafana:             http://localhost:3001  (login: admin / admin)"
 	@echo "  - Prometheus:          http://localhost:9090"
