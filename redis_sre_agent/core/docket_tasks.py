@@ -396,7 +396,14 @@ async def process_knowledge_query(
         conversation_history = None
         thread = await thread_manager.get_thread(thread_id)
         if thread and thread.messages:
-            conversation_history = _thread_messages_to_conversation_history(thread.messages)
+            history_messages = list(thread.messages)
+            if (
+                history_messages
+                and history_messages[-1].role == "user"
+                and history_messages[-1].content == query
+            ):
+                history_messages = history_messages[:-1]
+            conversation_history = _thread_messages_to_conversation_history(history_messages)
 
         # Run chat agent without explicit target scope. This preserves the
         # legacy entrypoint while keeping runtime behavior on the two-agent model.

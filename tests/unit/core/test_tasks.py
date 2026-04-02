@@ -771,6 +771,54 @@ class TestProcessKnowledgeQuery:
         assert history[1].content == "It copies writes to replicas."
 
     @pytest.mark.asyncio
+    async def test_process_knowledge_query_excludes_duplicate_latest_user_message(self):
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(
+            return_value=Thread(
+                thread_id="thread-456",
+                messages=[
+                    Message(role="user", content="How does replication work?"),
+                    Message(role="assistant", content="It copies writes to replicas."),
+                    Message(role="user", content="What about failover?"),
+                ],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+        )
+        mock_thread_manager.append_messages = AsyncMock()
+
+        agent_response = AgentResponse(response="Follow-up answer", search_results=[])
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            await process_knowledge_query(
+                query="What about failover?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        _, kwargs = mock_agent.process_query.call_args
+        history = kwargs["conversation_history"]
+        assert history is not None
+        assert len(history) == 2
+        assert history[0].content == "How does replication work?"
+        assert history[1].content == "It copies writes to replicas."
+
+    @pytest.mark.asyncio
     async def test_process_knowledge_query_respects_configured_max_iterations(self):
         mock_redis = AsyncMock()
         mock_task_manager = AsyncMock()
