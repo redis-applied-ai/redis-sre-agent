@@ -100,7 +100,7 @@ async def queue_query_task_helper(
     result = await create_task(
         message=query,
         thread_id=thread_id,
-        context=thread_context or None,
+        context=turn_context or None,
         redis_client=redis_client,
     )
 

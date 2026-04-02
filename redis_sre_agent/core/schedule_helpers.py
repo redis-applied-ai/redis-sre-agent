@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from docket import Docket
 
 from redis_sre_agent.core import schedules as core_schedules
-from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
+from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
@@ -50,6 +50,13 @@ def _build_manual_run_context(
     if schedule.get("redis_instance_id"):
         context["instance_id"] = schedule["redis_instance_id"]
     return context
+
+
+def _get_schedule_task_callable() -> Any:
+    """Resolve the schedule task callable without a module import cycle."""
+    from redis_sre_agent.core.docket_tasks import process_agent_turn
+
+    return process_agent_turn
 
 
 async def list_schedules_helper(limit: int = 50) -> Dict[str, Any]:
@@ -212,7 +219,7 @@ async def run_schedule_now_helper(schedule_id: str) -> Dict[str, Any]:
     async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
         task_key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
         try:
-            task_func = docket.add(process_agent_turn, key=task_key)
+            task_func = docket.add(_get_schedule_task_callable(), key=task_key)
             if inspect.isawaitable(task_func):
                 task_func = await task_func
             docket_task_id = await task_func(

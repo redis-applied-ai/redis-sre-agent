@@ -388,6 +388,12 @@ class TestScheduleMutationHelpers:
 
 
 class TestScheduleRunHelpers:
+    def test_get_schedule_task_callable_returns_process_agent_turn(self):
+        from redis_sre_agent.core.docket_tasks import process_agent_turn
+        from redis_sre_agent.core.schedule_helpers import _get_schedule_task_callable
+
+        assert _get_schedule_task_callable() is process_agent_turn
+
     @pytest.mark.asyncio
     async def test_run_schedule_now_helper_enqueues_run(self):
         from redis_sre_agent.core.schedule_helpers import run_schedule_now_helper
@@ -420,6 +426,10 @@ class TestScheduleRunHelpers:
                 "redis_sre_agent.core.schedule_helpers.get_redis_url",
                 new_callable=AsyncMock,
                 return_value="redis://test",
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
+                return_value="process-agent-turn",
             ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
@@ -476,6 +486,10 @@ class TestScheduleRunHelpers:
                 new_callable=AsyncMock,
                 return_value="redis://test",
             ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
+                return_value="process-agent-turn",
+            ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
             result = await run_schedule_now_helper("schedule-1")
@@ -514,6 +528,10 @@ class TestScheduleRunHelpers:
                 "redis_sre_agent.core.schedule_helpers.get_redis_url",
                 new_callable=AsyncMock,
                 return_value="redis://test",
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
+                return_value="process-agent-turn",
             ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
@@ -556,6 +574,10 @@ class TestScheduleRunHelpers:
                 new_callable=AsyncMock,
                 return_value="redis://test",
             ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
+                return_value="process-agent-turn",
+            ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
             result = await run_schedule_now_helper("schedule-1")
@@ -594,6 +616,10 @@ class TestScheduleRunHelpers:
                 "redis_sre_agent.core.schedule_helpers.get_redis_url",
                 new_callable=AsyncMock,
                 return_value="redis://test",
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
+                return_value="process-agent-turn",
             ),
             patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):

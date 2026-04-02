@@ -182,7 +182,7 @@ class TestQueueQueryTaskHelper:
         mock_create_task.assert_awaited_once_with(
             message="Follow up",
             thread_id="thread-123",
-            context=None,
+            context={"requested_agent_type": "knowledge"},
             redis_client=redis_client,
         )
         task_callable.assert_awaited_once_with(
