@@ -949,6 +949,83 @@ class TestScheduleRunHelpers:
         assert thread_manager.list_threads.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_list_schedule_runs_helper_total_matches_returned_runs(self):
+        from redis_sre_agent.core.schedule_helpers import list_schedule_runs_helper
+
+        redis_client = AsyncMock()
+        redis_client.zrevrange.side_effect = [[b"task-1"], [b"task-2"]]
+
+        thread_manager = AsyncMock()
+        thread_manager.list_threads.return_value = [
+            {
+                "thread_id": "thread-1",
+                "created_at": "2026-03-25T00:00:00+00:00",
+                "updated_at": "2026-03-25T00:10:00+00:00",
+                "subject": "Latest Check",
+            },
+            {
+                "thread_id": "thread-2",
+                "created_at": "2026-03-24T00:00:00+00:00",
+                "updated_at": "2026-03-24T00:10:00+00:00",
+                "subject": "Older Check",
+            },
+        ]
+        thread_manager.get_thread.side_effect = [
+            SimpleNamespace(
+                context={"schedule_id": "schedule-1", "scheduled_at": "2026-03-25T00:00:00+00:00"}
+            ),
+            SimpleNamespace(
+                context={"schedule_id": "schedule-1", "scheduled_at": "2026-03-24T00:00:00+00:00"}
+            ),
+        ]
+
+        task_manager = AsyncMock()
+        task_manager.get_task_state.side_effect = [
+            TaskState(
+                task_id="task-1",
+                thread_id="thread-1",
+                status=TaskStatus.DONE,
+                metadata=TaskMetadata(
+                    created_at="2026-03-25T00:00:01+00:00",
+                    updated_at="2026-03-25T00:05:00+00:00",
+                ),
+            ),
+            TaskState(
+                task_id="task-2",
+                thread_id="thread-2",
+                status=TaskStatus.DONE,
+                metadata=TaskMetadata(
+                    created_at="2026-03-24T00:00:01+00:00",
+                    updated_at="2026-03-24T00:05:00+00:00",
+                ),
+            ),
+        ]
+
+        with (
+            patch(
+                "redis_sre_agent.core.schedule_helpers.core_schedules.get_schedule",
+                new_callable=AsyncMock,
+                return_value=_schedule(),
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.get_redis_client",
+                return_value=redis_client,
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.ThreadManager",
+                return_value=thread_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.TaskManager",
+                return_value=task_manager,
+            ),
+        ):
+            result = await list_schedule_runs_helper("schedule-1", limit=1)
+
+        assert len(result["runs"]) == 1
+        assert result["total"] == 1
+
+    @pytest.mark.asyncio
     async def test_list_schedule_runs_helper_ignores_threads_with_missing_context(self):
         from redis_sre_agent.core.schedule_helpers import list_schedule_runs_helper
 

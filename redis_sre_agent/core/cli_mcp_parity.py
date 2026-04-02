@@ -137,9 +137,13 @@ def audit_cli_mcp_parity(
     mcp_tool_names: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Audit in-scope CLI leaf commands against MCP tool coverage."""
-    cli_paths = set(list_cli_command_paths() if cli_command_paths is None else cli_command_paths)
+    if cli_command_paths is None:
+        cli_paths = list_cli_command_paths()
+        in_scope_paths = sorted(list_in_scope_cli_command_paths())
+    else:
+        cli_paths = set(cli_command_paths)
+        in_scope_paths = sorted(cli_paths - EXCLUDED_CLI_COMMAND_PATHS)
     tool_names = set(list_mcp_tool_names() if mcp_tool_names is None else mcp_tool_names)
-    in_scope_paths = sorted(cli_paths - EXCLUDED_CLI_COMMAND_PATHS)
     excluded_paths = sorted(cli_paths & EXCLUDED_CLI_COMMAND_PATHS)
     stale_exclusions = sorted(EXCLUDED_CLI_COMMAND_PATHS - cli_paths)
     missing_cli_mappings = sorted(

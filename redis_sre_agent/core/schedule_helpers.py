@@ -350,4 +350,10 @@ async def list_schedule_runs_helper(schedule_id: str, limit: int = 50) -> Dict[s
             break
 
     runs.sort(key=lambda run: run.get("scheduled_at") or "", reverse=True)
-    return {"schedule_id": schedule_id, "runs": runs[:limit], "total": len(runs), "limit": limit}
+    limited_runs = runs[:limit]
+    return {
+        "schedule_id": schedule_id,
+        "runs": limited_runs,
+        "total": len(limited_runs),
+        "limit": limit,
+    }
