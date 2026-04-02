@@ -25,6 +25,8 @@ class TestParseDuration:
     def test_decode_handles_strings_and_none(self):
         assert _decode("task-1") == "task-1"
         assert _decode(None) == ""
+        assert _decode(0) == "0"
+        assert _decode(False) == "False"
 
 
 class TestPurgeTasksHelper:

@@ -2554,8 +2554,8 @@ async def redis_sre_test_redis_url(connection_url: str) -> Dict[str, Any]:
     """Test a Redis connection URL without creating an instance."""
     from redis_sre_agent.core.instance_inspection_helpers import (
         check_redis_url_helper,
-        mask_redis_url,
     )
+    from redis_sre_agent.core.instances import mask_redis_url
 
     logger.info("MCP test_redis_url request")
 

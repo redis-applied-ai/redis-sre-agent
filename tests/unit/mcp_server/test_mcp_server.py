@@ -1590,10 +1590,16 @@ class TestInstanceInspectionTools:
     @pytest.mark.asyncio
     async def test_test_redis_url_error_payload(self):
         """Direct Redis URL failures should return a structured payload."""
-        with patch(
-            "redis_sre_agent.core.instance_inspection_helpers.check_redis_url_helper",
-            new_callable=AsyncMock,
-        ) as mock_helper:
+        with (
+            patch(
+                "redis_sre_agent.core.instance_inspection_helpers.check_redis_url_helper",
+                new_callable=AsyncMock,
+            ) as mock_helper,
+            patch(
+                "redis_sre_agent.core.instances.mask_redis_url",
+                return_value="redis://***:***@host:6379/0",
+            ) as mock_mask,
+        ):
             mock_helper.side_effect = Exception("probe failed")
 
             result = await redis_sre_test_redis_url(connection_url="redis://user:pass@host:6379/0")
@@ -1601,6 +1607,7 @@ class TestInstanceInspectionTools:
         assert result["success"] is False
         assert result["url"] == "redis://***:***@host:6379/0"
         assert "error" in result
+        mock_mask.assert_called_once_with("redis://user:pass@host:6379/0")
 
 
 class TestInstanceMutationTools:

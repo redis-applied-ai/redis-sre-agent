@@ -28,7 +28,9 @@ def decode_text(value: Any) -> str:
     """Decode Redis byte values into strings."""
     if isinstance(value, bytes):
         return value.decode()
-    return str(value or "")
+    if value is None:
+        return ""
+    return str(value)
 
 
 def parse_duration(value: str) -> timedelta:
