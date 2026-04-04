@@ -522,6 +522,57 @@ class TestQueuePipelineOperationTask:
             "Cleanup pipeline batches older than 7 days"
         )
 
+    @pytest.mark.asyncio
+    async def test_queue_pipeline_operation_task_preserves_falsy_kwargs(self):
+        """Queue helper should keep explicit falsy values and only drop None."""
+        mock_client = AsyncMock()
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "queued",
+        }
+
+        with (
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.get_redis_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.create_task",
+                new_callable=AsyncMock,
+            ) as mock_create_task,
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.get_redis_url",
+                new_callable=AsyncMock,
+                return_value="redis://test",
+            ),
+            patch("redis_sre_agent.core.pipeline_execution_helpers.Docket") as mock_docket,
+        ):
+            mock_create_task.return_value = mock_result
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            queued = AsyncMock()
+            docket_instance.add.return_value = queued
+            mock_docket.return_value = docket_instance
+
+            await queue_pipeline_operation_task(
+                operation="scrape",
+                latest_only=False,
+                keep_days=0,
+                docs_path="",
+                batch_date=None,
+            )
+
+        queued.assert_awaited_once_with(
+            operation="scrape",
+            task_id="task-456",
+            thread_id="thread-123",
+            latest_only=False,
+            keep_days=0,
+            docs_path="",
+        )
+
 
 class TestPipelineExecutionHelperUtilities:
     """Test small helper utilities for full branch coverage."""

@@ -323,6 +323,59 @@ class TestQueueRunbookOperationTask:
         )
         queued.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_queue_runbook_operation_task_preserves_falsy_kwargs(self):
+        """Queue helper should keep explicit falsy values and only drop None."""
+        mock_client = AsyncMock()
+        mock_status = MagicMock()
+        mock_status.value = "queued"
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": mock_status,
+        }
+
+        with (
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers.get_redis_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers.create_task",
+                new_callable=AsyncMock,
+            ) as mock_create_task,
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers.get_redis_url",
+                new_callable=AsyncMock,
+                return_value="redis://test",
+            ),
+            patch("redis_sre_agent.core.runbook_execution_helpers.Docket") as mock_docket,
+        ):
+            mock_create_task.return_value = mock_result
+            docket_instance = AsyncMock()
+            docket_instance.__aenter__.return_value = docket_instance
+            docket_instance.__aexit__.return_value = False
+            queued = AsyncMock()
+            docket_instance.add.return_value = queued
+            mock_docket.return_value = docket_instance
+
+            await queue_runbook_operation_task(
+                operation="evaluate",
+                ingest=False,
+                max_iterations=0,
+                output_file="",
+                requirements=None,
+            )
+
+        queued.assert_awaited_once_with(
+            operation="evaluate",
+            task_id="task-456",
+            thread_id="thread-123",
+            ingest=False,
+            max_iterations=0,
+            output_file="",
+        )
+
 
 class TestRunbookExecutionHelperUtilities:
     """Test small helper utilities for full branch coverage."""
