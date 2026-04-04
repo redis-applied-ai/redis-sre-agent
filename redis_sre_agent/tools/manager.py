@@ -76,6 +76,7 @@ class ToolManager:
     _always_on_providers = [
         "redis_sre_agent.tools.knowledge.knowledge_base.KnowledgeBaseToolProvider",
         "redis_sre_agent.tools.utilities.provider.UtilitiesToolProvider",
+        "redis_sre_agent.tools.target_discovery.provider.TargetDiscoveryToolProvider",
     ]
 
     def __init__(
@@ -86,6 +87,9 @@ class ToolManager:
         support_package_path: Optional["Path"] = None,
         cache_client: Optional[Any] = None,
         cache_ttl_overrides: Optional[Dict[str, int]] = None,
+        thread_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ):
         """Initialize tool manager.
 
@@ -108,8 +112,12 @@ class ToolManager:
         self.redis_cluster = redis_cluster
         self.exclude_mcp_categories = exclude_mcp_categories
         self.support_package_path = support_package_path
-        # Track loaded provider class paths to avoid duplicates
-        self._loaded_provider_paths: set[str] = set()
+        self.thread_id = thread_id
+        self.task_id = task_id
+        self.user_id = user_id
+        # Track loaded provider keys to avoid duplicate loads while allowing
+        # the same provider class to be attached for multiple opaque targets.
+        self._loaded_provider_keys: set[str] = set()
 
         # Mapping from tool name -> provider instance
         self._routing_table: Dict[str, ToolProvider] = {}
@@ -122,6 +130,8 @@ class ToolManager:
         self._stack: Optional[AsyncExitStack] = None
         # Per-run cache of tool results: (tool_name, stable_args_json) -> result
         self._call_cache: Dict[str, Any] = {}
+        self._attached_target_bindings: Dict[str, Any] = {}
+        self._toolset_generation = 0
 
         # Shared Redis-backed cache (optional)
         self._shared_cache: Optional["ToolCache"] = None
@@ -214,104 +224,6 @@ class ToolManager:
         for provider_path in self._always_on_providers:
             await self._load_provider(provider_path, always_on=True)
 
-        # Load instance-specific providers only if redis_instance is provided
-        if self.redis_instance:
-            logger.info(f"Loading instance-specific providers for: {self.redis_instance.name}")
-
-            # Load additional providers based on instance type
-            itype = (
-                self.redis_instance.instance_type.value
-                if self.redis_instance.instance_type
-                else None
-            )
-            instance_type = itype or "unknown"
-            logger.info(f"Instance type: {instance_type}")
-
-            if instance_type == "redis_enterprise":
-                (
-                    self.redis_instance,
-                    enterprise_admin_source,
-                ) = await self.resolve_redis_enterprise_admin_instance(self.redis_instance)
-                if enterprise_admin_source == "cluster":
-                    logger.info(
-                        "Using RedisCluster admin credentials for instance '%s' (cluster_id=%s)",
-                        self.redis_instance.name,
-                        self.redis_instance.cluster_id,
-                    )
-                elif enterprise_admin_source == "instance":
-                    logger.warning(
-                        "Using deprecated instance admin_* fields for Redis Enterprise instance '%s'. "
-                        "Prefer cluster_id + RedisCluster admin credentials.",
-                        self.redis_instance.name,
-                    )
-
-            # Load configured providers (these require redis_instance)
-            from redis_sre_agent.core.config import settings
-
-            for provider_path in settings.tool_providers:
-                await self._load_provider(provider_path)
-
-            if instance_type == "redis_enterprise":
-                # Load Redis Enterprise admin API provider
-                # Check for non-empty admin_url (handle None, empty string, whitespace)
-                has_admin_url = (
-                    self.redis_instance.admin_url and self.redis_instance.admin_url.strip()
-                )
-
-                if has_admin_url:
-                    logger.info("Loading Redis Enterprise admin API provider")
-                    await self._load_provider(
-                        "redis_sre_agent.tools.admin.redis_enterprise.provider.RedisEnterpriseAdminToolProvider"
-                    )
-                else:
-                    logger.warning(
-                        f"Redis Enterprise instance '{self.redis_instance.name}' detected but no admin_url configured. "
-                        "Enterprise admin tools will not be available. Using standard Redis CLI tools only."
-                    )
-
-            elif instance_type == "oss_cluster":
-                # Future: Load Redis Cluster-specific tools
-                logger.info(
-                    "OSS Cluster instance detected (cluster-specific tools not yet implemented)"
-                )
-
-            elif instance_type == "oss_single":
-                logger.info("OSS Single instance detected (using standard Redis CLI tools)")
-
-            elif instance_type == "redis_cloud":
-                # Load Redis Cloud Management API provider if credentials are available
-                import os
-
-                has_cloud_credentials = os.getenv("TOOLS_REDIS_CLOUD_API_KEY") and os.getenv(
-                    "TOOLS_REDIS_CLOUD_API_SECRET_KEY"
-                )
-
-                if has_cloud_credentials:
-                    logger.info("Loading Redis Cloud Management API provider")
-                    await self._load_provider(
-                        "redis_sre_agent.tools.cloud.redis_cloud.provider.RedisCloudToolProvider"
-                    )
-                else:
-                    logger.warning(
-                        f"Redis Cloud instance '{self.redis_instance.name}' detected but no API credentials configured. "
-                        "Set TOOLS_REDIS_CLOUD_API_KEY and TOOLS_REDIS_CLOUD_API_SECRET_KEY environment variables "
-                        "to enable Redis Cloud Management API tools. Using standard Redis CLI tools only."
-                    )
-
-            else:
-                logger.info(
-                    f"Unknown or unspecified instance type '{instance_type}' for instance '{self.redis_instance.name}'. "
-                    "Using standard Redis tools."
-                )
-        elif self.redis_cluster:
-            logger.info(
-                "Loading cluster-specific providers for cluster: %s",
-                self.redis_cluster.name,
-            )
-            await self._load_cluster_scoped_providers()
-        else:
-            logger.info("No redis_instance provided - loading only instance-independent providers")
-
         # Load MCP servers (these are always-on and don't require redis_instance)
         # Pass excluded categories to filter which MCP tools are loaded
         await self._load_mcp_providers()
@@ -320,6 +232,21 @@ class ToolManager:
         if self.support_package_path:
             await self._load_support_package_provider()
 
+        # Load explicit scope or previously attached thread scope after base tools.
+        if self.redis_instance:
+            logger.info("Loading instance-specific providers for: %s", self.redis_instance.name)
+            await self._load_instance_scoped_providers(self.redis_instance)
+        elif self.redis_cluster:
+            logger.info(
+                "Loading cluster-specific providers for cluster: %s",
+                self.redis_cluster.name,
+            )
+            await self._load_cluster_scoped_providers(self.redis_cluster)
+        else:
+            await self._load_thread_attached_targets()
+
+        self._toolset_generation = max(1, self._toolset_generation)
+
         logger.info(
             f"ToolManager initialized with {len(self._tools)} tools "
             f"from {len(set(self._routing_table.values()))} providers"
@@ -327,12 +254,126 @@ class ToolManager:
 
         return self
 
-    async def _load_cluster_scoped_providers(self) -> None:
+    async def _load_thread_attached_targets(self) -> None:
+        """Load target-scoped providers for any handles already attached to this thread."""
+        if not self.thread_id:
+            logger.info("No redis_instance provided - loading only instance-independent providers")
+            return
+
+        try:
+            from redis_sre_agent.core.targets import get_thread_target_state
+
+            target_state = await get_thread_target_state(self.thread_id)
+        except Exception:
+            logger.exception("Failed to load target bindings for thread %s", self.thread_id)
+            return
+
+        if not target_state.target_bindings:
+            logger.info("No previously attached targets for thread %s", self.thread_id)
+            return
+
+        await self.attach_bound_targets(
+            target_state.target_bindings,
+            generation=target_state.target_toolset_generation,
+        )
+
+    async def _load_instance_scoped_providers(
+        self,
+        redis_instance: RedisInstance,
+        *,
+        load_key_prefix: Optional[str] = None,
+    ) -> RedisInstance:
+        """Load providers that operate with instance-scoped credentials."""
+        logger.info("Instance type: %s", redis_instance.instance_type)
+        effective_instance = redis_instance
+        instance_type = (
+            redis_instance.instance_type.value if redis_instance.instance_type else "unknown"
+        )
+
+        if instance_type == "redis_enterprise":
+            (
+                effective_instance,
+                enterprise_admin_source,
+            ) = await self.resolve_redis_enterprise_admin_instance(redis_instance)
+            if enterprise_admin_source == "cluster":
+                logger.info(
+                    "Using RedisCluster admin credentials for instance '%s' (cluster_id=%s)",
+                    effective_instance.name,
+                    effective_instance.cluster_id,
+                )
+            elif enterprise_admin_source == "instance":
+                logger.warning(
+                    "Using deprecated instance admin_* fields for Redis Enterprise instance '%s'. "
+                    "Prefer cluster_id + RedisCluster admin credentials.",
+                    effective_instance.name,
+                )
+        if load_key_prefix is None:
+            self.redis_instance = effective_instance
+
+        from redis_sre_agent.core.config import settings
+
+        for provider_path in settings.tool_providers:
+            await self._load_provider(
+                provider_path,
+                redis_instance_override=effective_instance,
+                load_key=f"{load_key_prefix or effective_instance.id}:{provider_path}",
+            )
+
+        if instance_type == "redis_enterprise":
+            has_admin_url = bool(
+                effective_instance.admin_url and effective_instance.admin_url.strip()
+            )
+            if has_admin_url:
+                await self._load_provider(
+                    "redis_sre_agent.tools.admin.redis_enterprise.provider.RedisEnterpriseAdminToolProvider",
+                    redis_instance_override=effective_instance,
+                    load_key=f"{load_key_prefix or effective_instance.id}:enterprise_admin",
+                )
+            else:
+                logger.warning(
+                    "Redis Enterprise instance '%s' detected but no admin_url configured. "
+                    "Enterprise admin tools will not be available.",
+                    effective_instance.name,
+                )
+        elif instance_type == "redis_cloud":
+            import os
+
+            has_cloud_credentials = os.getenv("TOOLS_REDIS_CLOUD_API_KEY") and os.getenv(
+                "TOOLS_REDIS_CLOUD_API_SECRET_KEY"
+            )
+            if has_cloud_credentials:
+                await self._load_provider(
+                    "redis_sre_agent.tools.cloud.redis_cloud.provider.RedisCloudToolProvider",
+                    redis_instance_override=effective_instance,
+                    load_key=f"{load_key_prefix or effective_instance.id}:redis_cloud",
+                )
+            else:
+                logger.warning(
+                    "Redis Cloud instance '%s' detected but no API credentials configured. "
+                    "Cloud tools will not be available.",
+                    effective_instance.name,
+                )
+        elif instance_type == "oss_cluster":
+            logger.info(
+                "OSS Cluster instance detected (cluster-specific tools not yet implemented)"
+            )
+        elif instance_type == "oss_single":
+            logger.info("OSS Single instance detected (using standard Redis CLI tools)")
+        else:
+            logger.info(
+                "Unknown or unspecified instance type '%s' for instance '%s'. Using standard Redis tools.",
+                instance_type,
+                effective_instance.name,
+            )
+
+        return effective_instance
+
+    async def _load_cluster_scoped_providers(self, redis_cluster: "RedisCluster") -> None:
         """Load providers that can operate with cluster-only context."""
         cluster_type = (
-            self.redis_cluster.cluster_type.value
-            if hasattr(self.redis_cluster.cluster_type, "value")
-            else str(self.redis_cluster.cluster_type or "").strip().lower()
+            redis_cluster.cluster_type.value
+            if hasattr(redis_cluster.cluster_type, "value")
+            else str(redis_cluster.cluster_type or "").strip().lower()
         )
 
         if cluster_type != "redis_enterprise":
@@ -342,27 +383,30 @@ class ToolManager:
             )
             return
 
-        admin_instance = self.build_redis_enterprise_admin_instance_from_cluster(self.redis_cluster)
+        admin_instance = self.build_redis_enterprise_admin_instance_from_cluster(redis_cluster)
         if admin_instance is None:
             logger.warning(
                 "Redis Enterprise cluster '%s' is missing admin credentials. "
                 "Cluster-only admin tools will not be available.",
-                self.redis_cluster.name,
+                redis_cluster.name,
             )
             return
 
         logger.info(
             "Loading Redis Enterprise admin API provider for cluster '%s'",
-            self.redis_cluster.name,
+            redis_cluster.name,
         )
         await self._load_provider(
             "redis_sre_agent.tools.admin.redis_enterprise.provider.RedisEnterpriseAdminToolProvider",
             redis_instance_override=admin_instance,
+            load_key=f"cluster:{redis_cluster.id}:enterprise_admin",
         )
 
     @staticmethod
     def build_redis_enterprise_admin_instance_from_cluster(
         redis_cluster: "RedisCluster",
+        *,
+        target_id_override: Optional[str] = None,
     ) -> Optional[RedisInstance]:
         """Build a synthetic RedisInstance for cluster-scoped admin providers."""
         if redis_cluster is None:
@@ -384,7 +428,7 @@ class ToolManager:
 
         connection_host = (redis_cluster.admin_url or "").strip()
         return RedisInstance(
-            id=f"cluster-admin::{redis_cluster.id}",
+            id=target_id_override or f"cluster-admin::{redis_cluster.id}",
             name=f"{redis_cluster.name} (cluster admin)",
             connection_url="redis://cluster-only.invalid:6379",
             environment=redis_cluster.environment,
@@ -407,6 +451,7 @@ class ToolManager:
         provider_path: str,
         always_on: bool = False,
         redis_instance_override: Optional[RedisInstance] = None,
+        load_key: Optional[str] = None,
     ) -> None:
         """Load and register a provider.
 
@@ -414,11 +459,12 @@ class ToolManager:
             provider_path: Fully qualified class path
             always_on: If True, initialize without redis_instance (for always-on providers)
             redis_instance_override: Optional instance to use for a single provider load
+            load_key: Optional unique key used to de-duplicate loads
         """
         try:
-            # Skip duplicate loads of the same provider class
-            if provider_path in self._loaded_provider_paths:
-                logger.debug(f"Provider already loaded, skipping duplicate: {provider_path}")
+            provider_key = load_key or provider_path
+            if provider_key in self._loaded_provider_keys:
+                logger.debug("Provider already loaded, skipping duplicate: %s", provider_key)
                 return
 
             provider_cls = self._get_provider_class(provider_path)
@@ -445,7 +491,7 @@ class ToolManager:
             self._providers.append(provider)
 
             # Mark this provider as loaded to avoid duplicates later
-            self._loaded_provider_paths.add(provider_path)
+            self._loaded_provider_keys.add(provider_key)
 
             logger.info(f"Loaded provider {provider.provider_name} with {len(tools)} tools")
 
@@ -489,7 +535,7 @@ class ToolManager:
 
                 # Skip if already loaded (use a synthetic path for tracking)
                 mcp_provider_path = f"mcp:{server_name}"
-                if mcp_provider_path in self._loaded_provider_paths:
+                if mcp_provider_path in self._loaded_provider_keys:
                     logger.debug(f"MCP provider already loaded, skipping: {server_name}")
                     continue
 
@@ -533,7 +579,7 @@ class ToolManager:
 
                 # Track provider
                 self._providers.append(provider)
-                self._loaded_provider_paths.add(mcp_provider_path)
+                self._loaded_provider_keys.add(mcp_provider_path)
 
                 if excluded_count > 0:
                     logger.info(
@@ -567,7 +613,7 @@ class ToolManager:
 
             # Use a synthetic path for tracking
             provider_path = f"support_package:{self.support_package_path}"
-            if provider_path in self._loaded_provider_paths:
+            if provider_path in self._loaded_provider_keys:
                 logger.debug(
                     f"Support package provider already loaded: {self.support_package_path}"
                 )
@@ -595,7 +641,7 @@ class ToolManager:
 
             # Track provider
             self._providers.append(provider)
-            self._loaded_provider_paths.add(provider_path)
+            self._loaded_provider_keys.add(provider_path)
 
             logger.info(
                 f"Loaded support package provider for '{self.support_package_path}' "
@@ -607,6 +653,104 @@ class ToolManager:
                 f"Failed to load support package provider for '{self.support_package_path}'"
             )
             # Don't fail entire manager if support package provider fails
+
+    @staticmethod
+    def _build_target_scoped_instance(
+        redis_instance: RedisInstance,
+        target_handle: str,
+    ) -> RedisInstance:
+        """Clone an instance with an opaque ID so tool names stay secret-safe."""
+        return redis_instance.model_copy(update={"id": target_handle})
+
+    def get_toolset_generation(self) -> int:
+        """Return the current toolset generation for dynamic rebinding."""
+        return self._toolset_generation
+
+    def get_attached_target_bindings(self) -> List[Any]:
+        """Return the currently attached target bindings in load order."""
+        return list(self._attached_target_bindings.values())
+
+    async def attach_bound_targets(
+        self,
+        bindings: List[Any],
+        *,
+        generation: Optional[int] = None,
+    ) -> List[Any]:
+        """Attach already-resolved opaque target bindings to this manager."""
+        from redis_sre_agent.core.instances import get_instance_by_id
+
+        new_attachment = False
+        attached: List[Any] = []
+
+        for binding in bindings or []:
+            target_handle = getattr(binding, "target_handle", None)
+            target_kind = getattr(binding, "target_kind", None)
+            resource_id = getattr(binding, "resource_id", None)
+            if not target_handle or not target_kind or not resource_id:
+                continue
+
+            existing = self._attached_target_bindings.get(target_handle)
+            if existing is not None:
+                attached.append(existing)
+                continue
+
+            if target_kind == "instance":
+                instance = await get_instance_by_id(resource_id)
+                if instance is None:
+                    logger.warning(
+                        "Unable to attach target handle %s: instance %s not found",
+                        target_handle,
+                        resource_id,
+                    )
+                    continue
+                scoped_instance = self._build_target_scoped_instance(instance, target_handle)
+                await self._load_instance_scoped_providers(
+                    scoped_instance,
+                    load_key_prefix=f"target:{target_handle}",
+                )
+            elif target_kind == "cluster":
+                cluster = await core_clusters.get_cluster_by_id(resource_id)
+                if cluster is None:
+                    logger.warning(
+                        "Unable to attach target handle %s: cluster %s not found",
+                        target_handle,
+                        resource_id,
+                    )
+                    continue
+                admin_instance = self.build_redis_enterprise_admin_instance_from_cluster(
+                    cluster,
+                    target_id_override=target_handle,
+                )
+                if admin_instance is None:
+                    logger.warning(
+                        "Unable to attach target handle %s: cluster %s has no supported cluster-only tooling",
+                        target_handle,
+                        resource_id,
+                    )
+                    continue
+                await self._load_provider(
+                    "redis_sre_agent.tools.admin.redis_enterprise.provider.RedisEnterpriseAdminToolProvider",
+                    redis_instance_override=admin_instance,
+                    load_key=f"target:{target_handle}:enterprise_admin",
+                )
+            else:
+                logger.warning(
+                    "Skipping unsupported target binding kind '%s' for %s",
+                    target_kind,
+                    target_handle,
+                )
+                continue
+
+            self._attached_target_bindings[target_handle] = binding
+            attached.append(binding)
+            new_attachment = True
+
+        if generation is not None:
+            self._toolset_generation = max(self._toolset_generation, generation)
+        elif new_attachment:
+            self._toolset_generation += 1
+
+        return attached
 
     @classmethod
     def _get_provider_class(cls, provider_path: str) -> type:
@@ -655,8 +799,9 @@ class ToolManager:
             self._tools.clear()
             self._tool_by_name.clear()
             self._providers.clear()
-            self._loaded_provider_paths.clear()
+            self._loaded_provider_keys.clear()
             self._call_cache.clear()
+            self._attached_target_bindings.clear()
 
     # ----- Tool lookup APIs used by LLM bindings -----
 

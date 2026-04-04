@@ -399,6 +399,15 @@ async def save_clusters(clusters: List[RedisCluster]) -> bool:
                 await client.delete(f"{SRE_CLUSTERS_INDEX}:{stale_id}")
             except Exception:
                 pass
+
+        # Best-effort rebuild of the unified discovery catalog, keeping cluster
+        # CRUD and direct lookup semantics unchanged.
+        try:
+            from redis_sre_agent.core.targets import sync_target_catalog
+
+            await sync_target_catalog(clusters=clusters)
+        except Exception:
+            logger.debug("Best-effort target catalog sync failed after saving clusters")
         return True
     except Exception as e:
         logger.exception("Failed to save clusters to Redis: %s", e)

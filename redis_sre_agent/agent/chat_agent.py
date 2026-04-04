@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypedD
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode as LGToolNode
@@ -113,6 +112,7 @@ class ChatAgentState(TypedDict):
     max_iterations: int
     startup_system_prompt: Optional[str]
     startup_prompt_initialized: NotRequired[bool]
+    toolset_generation: NotRequired[int]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -402,36 +402,66 @@ class ChatAgent:
     def _build_workflow(
         self,
         tool_mgr: ToolManager,
-        llm_with_tools: ChatOpenAI,
-        adapters: List[Any],
         emitter: Optional[ProgressEmitter] = None,
     ) -> StateGraph:
         """Build the LangGraph workflow for chat interactions.
 
         Args:
             tool_mgr: ToolManager instance for resolving tool calls
-            llm_with_tools: LLM instance with tools bound
-            adapters: List of tool adapters for the ToolNode
             emitter: Optional progress emitter for status updates
         """
-        tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
-
         # Mutable container for envelopes - expand_evidence references this
         # so it can access envelopes as they're added by tool calls
         envelopes_container: Dict[str, List[Dict[str, Any]]] = {"envelopes": []}
+        runtime_tools_by_generation: Dict[int, Dict[str, Any]] = {}
 
-        # Build expand_evidence tool upfront so LLM knows it exists
-        expand_spec = self._build_expand_evidence_tool(envelopes_container)
-        expand_tool = StructuredTool.from_function(
-            func=expand_spec["func"],
-            name=expand_spec["name"],
-            description=expand_spec["description"],
-        )
-        all_adapters = list(adapters) + [expand_tool]
-        llm_with_expand = self.llm.bind_tools(all_adapters)
+        async def ensure_runtime_tools(
+            requested_generation: Optional[int] = None,
+        ) -> Dict[str, Any]:
+            current_generation = tool_mgr.get_toolset_generation()
+            generation = (
+                requested_generation if requested_generation is not None else current_generation
+            )
+            cached = runtime_tools_by_generation.get(generation)
+            if cached is not None:
+                return cached
+
+            if requested_generation is not None and requested_generation != current_generation:
+                logger.warning(
+                    "Requested chat tool generation %s is unavailable; using current generation %s",
+                    requested_generation,
+                    current_generation,
+                )
+                generation = current_generation
+                cached = runtime_tools_by_generation.get(generation)
+                if cached is not None:
+                    return cached
+
+            from .helpers import build_adapters_for_tooldefs as _build_adapters
+
+            tooldefs = tool_mgr.get_tools()
+            adapters = await _build_adapters(tool_mgr, tooldefs)
+            expand_spec = self._build_expand_evidence_tool(envelopes_container)
+            expand_tool = StructuredTool.from_function(
+                func=expand_spec["func"],
+                name=expand_spec["name"],
+                description=expand_spec["description"],
+            )
+            all_adapters = list(adapters) + [expand_tool]
+            runtime = {
+                "generation": generation,
+                "tooldefs_by_name": {t.name: t for t in tooldefs},
+                "all_adapters": all_adapters,
+                "llm_with_expand": self.llm.bind_tools(all_adapters),
+                "tool_node": LGToolNode(all_adapters),
+            }
+            runtime_tools_by_generation[generation] = runtime
+            return runtime
 
         async def agent_node(state: ChatAgentState) -> Dict[str, Any]:
             """Main agent node - invokes LLM with tools."""
+            runtime = await ensure_runtime_tools()
+            tooldefs_by_name = runtime["tooldefs_by_name"]
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
@@ -475,7 +505,7 @@ class ChatAgent:
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             with tracer.start_as_current_span("chat_agent_node"):
-                response = await llm_with_expand.ainvoke(messages)
+                response = await runtime["llm_with_expand"].ainvoke(messages)
 
             # Persist only the original workflow state messages plus response.
             # If we injected a SystemMessage just for this invocation, keep it ephemeral.
@@ -485,6 +515,7 @@ class ChatAgent:
                 "iteration_count": iteration_count + 1,
                 "startup_system_prompt": startup_system_prompt,
                 "startup_prompt_initialized": startup_prompt_initialized,
+                "toolset_generation": runtime["generation"],
                 "signals_envelopes": signals_envelopes,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
@@ -493,6 +524,8 @@ class ChatAgent:
 
         async def tool_node(state: ChatAgentState) -> Dict[str, Any]:
             """Execute tool calls from the agent."""
+            runtime = await ensure_runtime_tools(state.get("toolset_generation"))
+            tooldefs_by_name = runtime["tooldefs_by_name"]
             messages = state["messages"]
             envelopes = list(state.get("signals_envelopes") or [])
 
@@ -518,8 +551,7 @@ class ChatAgent:
                         await emitter.emit(status_msg, "tool_call")
 
             with tracer.start_as_current_span("chat_tool_node"):
-                lg_tool_node = LGToolNode(all_adapters)
-                out = await lg_tool_node.ainvoke({"messages": messages})
+                out = await runtime["tool_node"].ainvoke({"messages": messages})
                 out_messages = out.get("messages", [])
                 new_tool_messages = [m for m in out_messages if isinstance(m, ToolMessage)]
 
@@ -575,6 +607,7 @@ class ChatAgent:
             return {
                 "messages": list(messages) + messages_for_llm,
                 "current_tool_calls": [],
+                "toolset_generation": runtime["generation"],
                 "signals_envelopes": envelopes,
             }
 
@@ -648,16 +681,13 @@ class ChatAgent:
             support_package_path=self.support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
+            thread_id=session_id,
+            task_id=(context or {}).get("task_id"),
+            user_id=user_id,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
             logger.info(f"Chat agent loaded {len(tools)} tools")
-
-            from .helpers import build_adapters_for_tooldefs as _build_adapters
-
-            adapters = await _build_adapters(tool_mgr, tools)
-            llm_with_tools = self.llm.bind_tools(adapters)
-
-            workflow = self._build_workflow(tool_mgr, llm_with_tools, adapters, emitter)
+            workflow = self._build_workflow(tool_mgr, emitter)
 
             checkpointer = MemorySaver()
             app = workflow.compile(checkpointer=checkpointer)
@@ -713,6 +743,7 @@ User Query: {query}"""
 
             initial_messages.append(HumanMessage(content=enhanced_query))
 
+            initial_generation = tool_mgr.get_toolset_generation()
             initial_state: ChatAgentState = {
                 "messages": initial_messages,
                 "session_id": session_id,
@@ -722,6 +753,7 @@ User Query: {query}"""
                 "max_iterations": max_iterations,
                 "startup_system_prompt": system_prompt,
                 "startup_prompt_initialized": True,
+                "toolset_generation": initial_generation,
                 "signals_envelopes": merge_internal_tool_envelopes(
                     [],
                     getattr(startup_context, "internal_tool_envelopes", []),
