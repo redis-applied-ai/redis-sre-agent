@@ -7,6 +7,8 @@ import pytest
 
 from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
 from redis_sre_agent.core.config import MCPServerConfig
+from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.core.targets import TargetBinding
 from redis_sre_agent.tools.manager import ToolManager, _command_is_available
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
@@ -45,6 +47,7 @@ async def test_tool_manager_knowledge_tools():
 
         # Knowledge tools (always loaded)
         assert len(knowledge_tools) == 8
+        assert any("target_discovery_" in n and "resolve_redis_targets" in n for n in tool_names)
         assert any("search" in n for n in knowledge_tools)
         assert any("ingest" in n for n in knowledge_tools)
         assert any("get_all_fragments" in n for n in knowledge_tools)
@@ -62,6 +65,44 @@ async def test_tool_manager_knowledge_tools():
         # Instance-specific tools should NOT be loaded without an instance
         assert len(prometheus_tools) == 0
         assert len(redis_command_tools) == 0
+
+
+@pytest.mark.asyncio
+async def test_attach_bound_targets_scopes_instance_tools_to_opaque_handle():
+    """Attached targets should re-scope providers to the opaque target handle."""
+    binding = TargetBinding(
+        target_handle="tgt_opaque_1",
+        target_kind="instance",
+        resource_id="inst-1",
+        display_name="checkout-cache-prod",
+        capabilities=["redis", "diagnostics"],
+    )
+    instance = RedisInstance(
+        id="inst-1",
+        name="checkout-cache-prod",
+        connection_url="redis://localhost:6379",
+        environment="production",
+        usage="cache",
+        description="test",
+        instance_type="oss_single",
+    )
+
+    mgr = ToolManager()
+    mgr._toolset_generation = 1
+    with (
+        patch(
+            "redis_sre_agent.core.instances.get_instance_by_id",
+            new=AsyncMock(return_value=instance),
+        ),
+        patch.object(mgr, "_load_instance_scoped_providers", new=AsyncMock()) as mock_load,
+    ):
+        attached = await mgr.attach_bound_targets([binding])
+
+    assert attached == [binding]
+    scoped_instance = mock_load.await_args.args[0]
+    assert scoped_instance.id == "tgt_opaque_1"
+    assert scoped_instance.name == "checkout-cache-prod"
+    assert mgr.get_toolset_generation() == 2
 
 
 @pytest.mark.asyncio
@@ -298,7 +339,7 @@ class TestToolManagerMcpConfigValidation:
                 }
                 await mgr._load_mcp_providers()
 
-            assert "mcp:github" not in mgr._loaded_provider_paths
+            assert "mcp:github" not in mgr._loaded_provider_keys
             assert "Skipping MCP provider 'github'" in caplog.text
         finally:
             await mgr._stack.__aexit__(None, None, None)

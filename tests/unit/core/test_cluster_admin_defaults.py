@@ -72,6 +72,9 @@ def test_resolve_enterprise_admin_fields_accepts_tools_alias_env_vars():
     with patch.dict(
         os.environ,
         {
+            "REDIS_ENTERPRISE_ADMIN_URL": "",
+            "REDIS_ENTERPRISE_ADMIN_USERNAME": "",
+            "REDIS_ENTERPRISE_ADMIN_PASSWORD": "",
             "TOOLS_REDIS_ENTERPRISE_ADMIN_URL": "https://tools-env.example.com:9443",
             "TOOLS_REDIS_ENTERPRISE_ADMIN_USERNAME": "tools-admin@example.com",
             "TOOLS_REDIS_ENTERPRISE_ADMIN_PASSWORD": "tools-secret",

@@ -4,12 +4,16 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union
 
+import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import (
     BaseSettings,
+    InitSettingsSource,
+    JsonConfigSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
+    TomlConfigSettingsSource,
     YamlConfigSettingsSource,
 )
 
@@ -131,27 +135,63 @@ except (FileNotFoundError, OSError):
 DEFAULT_CONFIG_PATHS = [
     "config.yaml",
     "config.yml",
+    "config.toml",
+    "config.json",
     "sre_agent_config.yaml",
     "sre_agent_config.yml",
+    "sre_agent_config.toml",
+    "sre_agent_config.json",
 ]
 
 
-def _get_yaml_config_path() -> str | list[str] | None:
-    """Get the YAML config file path to use.
+def _get_config_file_path() -> str | None:
+    """Get the config file path to use.
 
     Returns:
         - The path from SRE_AGENT_CONFIG env var if set
-        - Or the list of default paths to check
-        - Or None if SRE_AGENT_CONFIG is set to a nonexistent file
+        - Or the first existing supported default path
+        - Or None if no supported config file exists
     """
     config_path = os.environ.get("SRE_AGENT_CONFIG")
 
     if config_path:
-        # If explicitly specified, use it (pydantic will handle missing files)
+        # If explicitly specified, use it even if it does not exist.
+        # The underlying source will treat missing files as empty config.
         return config_path
 
-    # Return list of default paths - pydantic-settings will check each in order
-    return DEFAULT_CONFIG_PATHS
+    for default_path in DEFAULT_CONFIG_PATHS:
+        if Path(default_path).is_file():
+            return default_path
+
+    return None
+
+
+def _build_config_file_source(settings_cls: Type[BaseSettings]) -> PydanticBaseSettingsSource:
+    """Build the appropriate config-file settings source for the selected path."""
+    config_path = _get_config_file_path()
+    if config_path is None:
+        return InitSettingsSource(settings_cls, {})
+
+    config_suffix = Path(config_path).suffix.lower()
+
+    # Preserve compatibility for custom YAML paths that may not use a .yaml suffix.
+    if config_suffix in {".yaml", ".yml", ""}:
+        source_type = YamlConfigSettingsSource
+        source_kwargs = {"yaml_file": config_path}
+    elif config_suffix == ".toml":
+        source_type = TomlConfigSettingsSource
+        source_kwargs = {"toml_file": config_path}
+    elif config_suffix == ".json":
+        source_type = JsonConfigSettingsSource
+        source_kwargs = {"json_file": config_path}
+    else:
+        source_type = YamlConfigSettingsSource
+        source_kwargs = {"yaml_file": config_path}
+
+    try:
+        return source_type(settings_cls, **source_kwargs)
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return InitSettingsSource(settings_cls, {})
 
 
 class Settings(BaseSettings):
@@ -160,16 +200,17 @@ class Settings(BaseSettings):
     Loads settings from environment variables. In local development, these can be
     provided via a .env file. In Docker/production, they should be set directly.
 
-    Configuration can also be loaded from YAML files. The following paths are checked
-    (first match wins):
+    Configuration can also be loaded from YAML, TOML, or JSON files. The following paths are
+    checked (first match wins):
     - Path specified in SRE_AGENT_CONFIG environment variable
-    - config.yaml, config.yml, sre_agent_config.yaml, sre_agent_config.yml
+    - config.yaml, config.yml, config.toml, config.json
+    - sre_agent_config.yaml, sre_agent_config.yml, sre_agent_config.toml, sre_agent_config.json
 
     Priority (highest to lowest):
     1. Values passed to Settings() constructor
     2. Environment variables
     3. .env file
-    4. YAML config file
+    4. Config file
     5. Default values
     """
 
@@ -180,7 +221,7 @@ class Settings(BaseSettings):
         extra="ignore",
         # Don't error if .env file is missing (Docker/production use env vars directly)
         env_ignore_empty=True,
-        # Note: yaml_file is set dynamically in settings_customise_sources
+        # Note: config file selection is done dynamically in settings_customise_sources
         # to support SRE_AGENT_CONFIG env var being set after module import
     )
 
@@ -372,7 +413,7 @@ class Settings(BaseSettings):
 
     # MCP Server Configuration
     # No external MCP servers are enabled by default.
-    # Configure MCP_SERVERS or config.yaml explicitly for any MCP integrations.
+    # Configure MCP_SERVERS or a config file explicitly for any MCP integrations.
     mcp_servers: Dict[str, Union[MCPServerConfig, Dict[str, Any]]] = Field(
         default_factory=dict,
         description="MCP (Model Context Protocol) servers to connect to. "
@@ -390,24 +431,20 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
-        """Customize settings sources to include YAML config file.
+        """Customize settings sources to include file-based config.
 
         Priority (highest to lowest):
         1. init_settings (passed to Settings())
         2. env_settings (environment variables)
         3. dotenv_settings (.env file)
-        4. yaml_settings (config.yaml file)
+        4. config_file_settings (yaml, toml, or json)
         5. file_secret_settings (Docker secrets)
         """
-        # Use the built-in YamlConfigSettingsSource from pydantic-settings
-        # Get the yaml_file path dynamically to respect SRE_AGENT_CONFIG env var
-        # set after module import
-        yaml_file = _get_yaml_config_path()
         return (
             init_settings,
             env_settings,
             dotenv_settings,
-            YamlConfigSettingsSource(settings_cls, yaml_file=yaml_file),
+            _build_config_file_source(settings_cls),
             file_secret_settings,
         )
 

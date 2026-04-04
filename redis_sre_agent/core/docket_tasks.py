@@ -10,13 +10,12 @@ from ulid import ULID
 
 from redis_sre_agent.agent import get_sre_agent
 from redis_sre_agent.agent.chat_agent import get_chat_agent
-from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 from redis_sre_agent.agent.langgraph_agent import (
     _extract_instance_details_from_message,
 )
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.core.citation_message import (
-    format_citation_message,
+    build_citation_message_payloads,
     should_include_citations,
 )
 from redis_sre_agent.core.clusters import get_cluster_by_id
@@ -44,6 +43,17 @@ def sre_task(func):
     """Decorator to register SRE tasks."""
     SRE_TASK_COLLECTION.append(func)
     return func
+
+
+def _thread_messages_to_conversation_history(thread_messages: List[Message]) -> List[Any]:
+    """Convert persisted thread messages into LangChain conversation history."""
+    history: List[Any] = []
+    for msg in thread_messages:
+        if msg.role == "user":
+            history.append(HumanMessage(content=msg.content))
+        elif msg.role == "assistant":
+            history.append(AIMessage(content=msg.content))
+    return history
 
 
 # NOTE: analyze_system_metrics was removed as it was never actually provided
@@ -283,6 +293,7 @@ async def process_chat_turn(
             query=query,
             session_id=thread_id,
             user_id=user_id or "mcp-user",
+            context={"task_id": task_id},
             progress_emitter=emitter,
         )
 
@@ -353,9 +364,9 @@ async def process_knowledge_query(
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
     """
-    Process a knowledge query using the KnowledgeOnlyAgent (background task).
+    Process a knowledge query using the chat agent compatibility path.
 
-    This runs the KnowledgeOnlyAgent for general SRE knowledge questions.
+    This routes onto the default chat agent with no explicit Redis scope.
     Notifications are emitted to the task, and the result is stored on both
     the task and the thread.
 
@@ -369,8 +380,6 @@ async def process_knowledge_query(
     Returns:
         Dictionary with the knowledge agent response
     """
-    from redis_sre_agent.agent.knowledge_agent import KnowledgeOnlyAgent
-
     logger.info(f"Processing knowledge query for task {task_id}")
 
     redis_client = get_redis_client()
@@ -384,13 +393,30 @@ async def process_knowledge_query(
         # Create task emitter for notifications
         emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
 
-        # Run knowledge agent
-        agent = KnowledgeOnlyAgent(progress_emitter=emitter)
+        conversation_history = None
+        thread = await thread_manager.get_thread(thread_id)
+        if thread and thread.messages:
+            history_messages = list(thread.messages)
+            if (
+                history_messages
+                and history_messages[-1].role == "user"
+                and history_messages[-1].content == query
+            ):
+                history_messages = history_messages[:-1]
+            conversation_history = _thread_messages_to_conversation_history(history_messages)
+
+        # Run chat agent without explicit target scope. This preserves the
+        # legacy entrypoint while keeping runtime behavior on the two-agent model.
+        agent = get_chat_agent()
+        chat_max_iterations = min(int(settings.max_iterations or 15), 10)
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
             user_id=user_id or "mcp-user",
+            max_iterations=chat_max_iterations,
+            context={"task_id": task_id},
             progress_emitter=emitter,
+            conversation_history=conversation_history,
         )
 
         # Store result on task (convert AgentResponse to dict for JSON serialization)
@@ -439,7 +465,7 @@ async def process_knowledge_query(
                     "metadata": {
                         "task_id": task_id,
                         "message_id": message_id,
-                        "agent": "knowledge",
+                        "agent": "chat",
                     },
                 }
             ],
@@ -818,7 +844,7 @@ async def process_agent_turn(
         # 2. Else if client provides cluster_id, use it and clear instance_id on thread
         # 3. Else fall back to existing thread instance_id/cluster_id
         # 4. If no target exists, attempt to create an instance from user message
-        # 5. If still no target, route to knowledge/general tools
+        # 5. If still no target, route to the default zero-scope chat flow
         # ============================================================================
 
         instance_id_from_client = context.get("instance_id") if context else None
@@ -938,6 +964,7 @@ async def process_agent_turn(
         routing_context = thread.context.copy()
         if context:
             routing_context.update(context)
+        routing_context["task_id"] = task_id
 
         # Ensure active_instance_id is in routing context
         if active_instance_id:
@@ -961,15 +988,60 @@ async def process_agent_turn(
                 user_preferences=None,  # Could be extended to include user preferences
             )
 
+        if agent_type == AgentType.REDIS_TRIAGE and not (active_instance_id or active_cluster_id):
+            try:
+                from redis_sre_agent.core.targets import attach_target_matches, resolve_target_query
+
+                resolution = await resolve_target_query(
+                    query=message,
+                    user_id=thread.metadata.user_id,
+                    allow_multiple=True,
+                    max_results=5,
+                    preferred_capabilities=["diagnostics", "admin", "cloud"],
+                )
+                if resolution.selected_matches:
+                    attached_bindings, generation = await attach_target_matches(
+                        thread_id=thread_id,
+                        matches=resolution.selected_matches,
+                        task_id=task_id,
+                        replace_existing=False,
+                    )
+                    if attached_bindings:
+                        active_binding = attached_bindings[0]
+                        if active_binding.target_kind == "instance":
+                            active_instance_id = active_binding.resource_id
+                            routing_context["instance_id"] = active_instance_id
+                            routing_context.pop("cluster_id", None)
+                        elif active_binding.target_kind == "cluster":
+                            active_cluster_id = active_binding.resource_id
+                            routing_context["cluster_id"] = active_cluster_id
+                            routing_context.pop("instance_id", None)
+                        routing_context["attached_target_handles"] = [
+                            binding.target_handle for binding in attached_bindings
+                        ]
+                        routing_context["target_toolset_generation"] = generation
+                        await task_manager.add_task_update(
+                            task_id,
+                            "Resolved target scope from natural language before deep triage",
+                            "target_resolution",
+                            metadata={
+                                "attached_target_handles": routing_context[
+                                    "attached_target_handles"
+                                ],
+                                "match_count": len(attached_bindings),
+                            },
+                        )
+            except Exception:
+                logger.exception("Failed to pre-resolve target scope for deep triage")
+
         logger.info(f"Routing query to {agent_type.value} agent")
 
         # Import and initialize the appropriate agent based on routing decision
         # REDIS_TRIAGE = full triage agent (heavy, comprehensive)
-        # REDIS_CHAT = lightweight chat agent (fast, targeted)
-        # KNOWLEDGE_ONLY = knowledge agent (no instance needed)
+        # REDIS_CHAT / KNOWLEDGE_ONLY = lightweight/default chat agent
         if agent_type == AgentType.REDIS_TRIAGE:
             agent = get_sre_agent()
-        elif agent_type == AgentType.REDIS_CHAT:
+        else:
             # Get the target instance for the chat agent
             target_instance = (
                 await get_instance_by_id(active_instance_id) if active_instance_id else None
@@ -981,8 +1053,6 @@ async def process_agent_turn(
                 redis_instance=target_instance,
                 redis_cluster=target_cluster,
             )
-        else:
-            agent = get_knowledge_agent()
 
         # Prepare the conversation state with thread messages
         # Convert Message objects to dicts for agent processing
@@ -1038,43 +1108,7 @@ async def process_agent_turn(
         )
 
         # Run the appropriate agent
-        if agent_type == AgentType.KNOWLEDGE_ONLY:
-            # Use knowledge-only agent with simpler interface
-            await task_manager.add_task_update(
-                task_id, "Processing query with knowledge-only agent", "agent_processing"
-            )
-
-            # Convert conversation history to LangChain messages for knowledge agent
-            lc_history = []
-            for msg in conversation_state["messages"][:-1]:  # Exclude the latest message
-                if msg["role"] == "user":
-                    lc_history.append(HumanMessage(content=msg["content"]))
-                elif msg["role"] == "assistant":
-                    lc_history.append(AIMessage(content=msg["content"]))
-
-            # Use a smaller iteration cap for the knowledge agent to avoid long loops
-            _k_max_iters = settings.knowledge_max_iterations
-            if not isinstance(_k_max_iters, int) or _k_max_iters <= 0:
-                _k_max_iters = min(int(settings.max_iterations or 10), 8)
-
-            knowledge_agent_response = await agent.process_query(
-                query=message,
-                user_id=thread.metadata.user_id or "unknown",
-                session_id=thread.metadata.session_id or thread_id,
-                max_iterations=_k_max_iters,
-                context=None,
-                progress_emitter=progress_emitter,
-                conversation_history=lc_history if lc_history else None,
-            )
-
-            # knowledge_agent_response is an AgentResponse with .response, .search_results, .tool_envelopes
-            agent_response = {
-                "response": knowledge_agent_response.response,
-                "search_results": knowledge_agent_response.search_results,
-                "tool_envelopes": knowledge_agent_response.tool_envelopes,
-                "metadata": {"agent_type": "knowledge_only"},
-            }
-        elif agent_type == AgentType.REDIS_CHAT:
+        if agent_type != AgentType.REDIS_TRIAGE:
             # Use lightweight chat agent with process_query interface
             await task_manager.add_task_update(
                 task_id, "Processing query with chat agent", "agent_processing"
@@ -1154,14 +1188,16 @@ async def process_agent_turn(
         # Add citation system message if there are search results
         # This allows the LLM to see which sources were used and retrieve more info
         if should_include_citations(search_results):
-            citation_msg = format_citation_message(search_results)
-            conversation_state["messages"].append(
-                {
-                    "role": "system",
-                    "content": citation_msg,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-            )
+            citation_timestamp = datetime.now(timezone.utc).isoformat()
+            for citation_msg in build_citation_message_payloads(search_results):
+                conversation_state["messages"].append(
+                    {
+                        "role": "system",
+                        "content": citation_msg["content"],
+                        "timestamp": citation_timestamp,
+                        "metadata": citation_msg["metadata"],
+                    }
+                )
 
         # Update thread context with new conversation state
         # Only save user/assistant/system messages - tool messages are internal to LangGraph

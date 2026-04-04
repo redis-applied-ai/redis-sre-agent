@@ -147,3 +147,42 @@ async def test_startup_context_extracts_capability_from_tool_definition():
         )
 
     assert "Available tool categories: tickets." in context
+
+
+@pytest.mark.asyncio
+async def test_startup_context_carries_internal_pinned_context_envelope():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(
+                return_value={
+                    "pinned_documents": [
+                        {
+                            "document_hash": "hash-123",
+                            "name": "Pinned Runbook",
+                            "summary": "Pinned memory triage guidance.",
+                            "priority": "high",
+                            "source": "file:///tmp/pinned.md",
+                            "doc_type": "runbook",
+                            "truncated": False,
+                            "full_content": "Pinned guidance content",
+                        }
+                    ]
+                }
+            ),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(return_value={"skills": []}),
+        ),
+    ):
+        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+
+    envelopes = getattr(context, "internal_tool_envelopes", [])
+    assert len(envelopes) == 1
+    envelope = envelopes[0]
+    assert envelope["tool_key"] == "knowledge.pinned_context"
+    assert envelope["name"] == "pinned_context"
+    assert envelope["data"]["retrieval_kind"] == "pinned_context"
+    assert envelope["data"]["results"][0]["title"] == "Pinned Runbook"
+    assert envelope["data"]["results"][0]["retrieval_kind"] == "pinned_context"

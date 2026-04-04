@@ -92,6 +92,16 @@ The agent requires Redis with the RediSearch module for vector search. Options:
 
 Redis 8.x is recommended. Redis 7.x works but may have different module versions.
 
+Minimum supported search engine version:
+- **Redis Search / Redis Query Engine 2.4+** is the effective minimum requirement for this agent's knowledge retrieval path
+- Exact identifier lookup uses `DIALECT 2` TAG queries, and vector retrieval also depends on Redis Search 2.4+ features
+
+Hybrid search compatibility:
+- On newer Redis/Search releases, the agent uses native server-side hybrid retrieval when available
+- On older or partially compatible releases, native hybrid retrieval may be unavailable even though text and vector search still work
+- In those cases, the agent falls back to client-side **reciprocal rank fusion (RRF)**, which runs separate text and vector queries and merges the ranked results in the application
+- The RRF fallback is a compatibility path, not a legacy path: it still requires Redis Search 2.4+ because it depends on Redis Search text and vector queries
+
 ---
 
 ## Configuration

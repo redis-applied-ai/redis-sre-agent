@@ -357,9 +357,11 @@ class TestProcessAgentTurn:
 
             # Find the system message and verify it contains citation info
             system_msg = next(msg for msg in test_thread.messages if msg.role == "system")
-            assert "Sources for previous response" in system_msg.content
+            assert "Discovered context" in system_msg.content
             assert "Redis Memory Guide" in system_msg.content
             assert "abc123def456" in system_msg.content
+            assert system_msg.metadata is not None
+            assert system_msg.metadata["metadata"]["citation_group"] == "discovered_context"
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_no_citation_message_when_no_search_results(self):
@@ -492,37 +494,33 @@ class TestGenerateThreadSubject:
 
     @pytest.mark.asyncio
     async def test_generate_thread_subject_success(self, thread_manager):
-        """Test successful subject generation via OpenAI."""
+        """Test successful subject generation via the configured LLM factory."""
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Redis memory at 95%"
+        mock_response.content = "Redis memory at 95%"
 
-        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
-            mock_client = AsyncMock()
-            mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.return_value = mock_response
+        with patch("redis_sre_agent.core.threads.create_nano_llm") as mock_create_nano_llm:
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_nano_llm.return_value = mock_llm
 
             subject = await thread_manager._generate_thread_subject(
                 "My Redis server is running out of memory"
             )
 
             assert subject == "Redis memory at 95%"
-            mock_client.chat.completions.create.assert_called_once()
-            call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-            assert call_kwargs.get("max_completion_tokens") == 20
-            assert "max_tokens" not in call_kwargs
+            mock_create_nano_llm.assert_called_once_with(max_tokens=20)
+            mock_llm.ainvoke.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_generate_thread_subject_strips_quotes(self, thread_manager):
         """Test that quotes are stripped from generated subject."""
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = '"Redis memory issue"'
+        mock_response.content = '"Redis memory issue"'
 
-        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
-            mock_client = AsyncMock()
-            mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.return_value = mock_response
+        with patch("redis_sre_agent.core.threads.create_nano_llm") as mock_create_nano_llm:
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_nano_llm.return_value = mock_llm
 
             subject = await thread_manager._generate_thread_subject("test query")
             assert subject == "Redis memory issue"
@@ -531,13 +529,12 @@ class TestGenerateThreadSubject:
     async def test_generate_thread_subject_truncates_long_subject(self, thread_manager):
         """Test that subject is truncated to 50 characters."""
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "A" * 100
+        mock_response.content = "A" * 100
 
-        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
-            mock_client = AsyncMock()
-            mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.return_value = mock_response
+        with patch("redis_sre_agent.core.threads.create_nano_llm") as mock_create_nano_llm:
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_nano_llm.return_value = mock_llm
 
             subject = await thread_manager._generate_thread_subject("test query")
             assert len(subject) == 50
@@ -545,22 +542,40 @@ class TestGenerateThreadSubject:
     @pytest.mark.asyncio
     async def test_generate_thread_subject_fallback_on_error(self, thread_manager):
         """Test fallback to truncated original message on error."""
-        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
-            mock_client = AsyncMock()
-            mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.side_effect = Exception("API error")
+        with patch("redis_sre_agent.core.threads.create_nano_llm") as mock_create_nano_llm:
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM error"))
+            mock_create_nano_llm.return_value = mock_llm
 
             original = "This is a test query for Redis troubleshooting"
             subject = await thread_manager._generate_thread_subject(original)
             assert subject == original[:50].strip()
 
     @pytest.mark.asyncio
+    async def test_generate_thread_subject_blank_response_uses_original_fallback(
+        self, thread_manager
+    ):
+        """Test an empty LLM response falls back to the original message."""
+        mock_response = MagicMock()
+        mock_response.content = "   "
+
+        with patch("redis_sre_agent.core.threads.create_nano_llm") as mock_create_nano_llm:
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_nano_llm.return_value = mock_llm
+
+            original = "This is a test query for Redis troubleshooting"
+            subject = await thread_manager._generate_thread_subject(original)
+
+            assert subject == original[:50].strip()
+
+    @pytest.mark.asyncio
     async def test_generate_thread_subject_long_original_fallback(self, thread_manager):
         """Test fallback adds ellipsis for long messages."""
-        with patch("redis_sre_agent.core.threads.create_nano_async_openai_client") as mock_openai:
-            mock_client = AsyncMock()
-            mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.side_effect = Exception("API error")
+        with patch("redis_sre_agent.core.threads.create_nano_llm") as mock_create_nano_llm:
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM error"))
+            mock_create_nano_llm.return_value = mock_llm
 
             original = "A" * 100
             subject = await thread_manager._generate_thread_subject(original)

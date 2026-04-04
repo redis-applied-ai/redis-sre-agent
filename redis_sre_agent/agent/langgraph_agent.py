@@ -28,7 +28,7 @@ from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-from ..agent.router import AgentType, format_conversation_context, route_to_appropriate_agent
+from ..agent.router import format_conversation_context, query_needs_live_redis_scope
 from ..core.config import settings
 from ..core.instances import (
     create_instance,
@@ -43,7 +43,7 @@ from ..tools.manager import ToolManager
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
-from .knowledge_context import build_startup_knowledge_context
+from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 from .prompts import SRE_SYSTEM_PROMPT
 from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
@@ -1092,6 +1092,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
             startup_prompt_initialized = state.get("startup_prompt_initialized", False)
+            signals_envelopes = list(state.get("signals_envelopes") or [])
             # max_iterations = state.get("max_iterations", 10)  # Not used in this function
 
             if (
@@ -1119,6 +1120,10 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                         query=context_query,
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
+                    )
+                    signals_envelopes = merge_internal_tool_envelopes(
+                        signals_envelopes,
+                        getattr(startup_context, "internal_tool_envelopes", []),
                     )
                     system_prompt = (
                         f"{startup_context}\n\n{SRE_SYSTEM_PROMPT}"
@@ -1247,6 +1252,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
 
             state["startup_system_prompt"] = startup_system_prompt
             state["startup_prompt_initialized"] = startup_prompt_initialized
+            state["signals_envelopes"] = signals_envelopes
             return state
 
         async def tool_node(state: AgentState) -> AgentState:
@@ -2023,11 +2029,9 @@ To get targeted analysis, please rephrase your query to specify which instance, 
                         # No instances configured - try to gather info or route to knowledge agent
                         logger.warning("No Redis instances configured")
 
-                        # Check if this query seems to be about a specific Redis instance
-                        # or if it's more general knowledge-seeking
-                        suggested_agent = await route_to_appropriate_agent(query, context)
-
-                        if suggested_agent == AgentType.KNOWLEDGE_ONLY:
+                        # Check if this query appears to need live Redis access,
+                        # even when no instance is currently configured.
+                        if not await query_needs_live_redis_scope(query):
                             # Route to knowledge agent for general queries
                             logger.info(
                                 "No instances configured and query is general - suggesting knowledge agent"
@@ -2230,6 +2234,9 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
+            thread_id=session_id,
+            task_id=(context or {}).get("task_id") if isinstance(context, dict) else None,
+            user_id=user_id,
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()
@@ -2272,7 +2279,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 "startup_system_prompt": None,
                 "startup_prompt_initialized": False,
                 "instance_context": initial_instance_context,
-                "signals_envelopes": [],
+                "signals_envelopes": merge_internal_tool_envelopes(
+                    [],
+                    getattr(startup_context, "internal_tool_envelopes", []),
+                ),
             }
 
             adapters = await _build_adapters(tool_mgr, tools)

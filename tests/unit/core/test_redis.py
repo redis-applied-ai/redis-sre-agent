@@ -193,14 +193,15 @@ class TestRedisInfrastructure:
             patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_instances_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_clusters_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_targets_index", return_value=mock_search_index),
         ):
             result = await create_indices()
 
         assert result is True
-        # Should be called eight times - knowledge, skills, support_tickets,
-        # schedules, threads, tasks, instances, clusters
-        assert mock_search_index.exists.call_count == 8
-        assert mock_search_index.create.call_count == 8
+        # Should be called nine times - knowledge, skills, support_tickets,
+        # schedules, threads, tasks, instances, clusters, targets
+        assert mock_search_index.exists.call_count == 9
+        assert mock_search_index.create.call_count == 9
 
     @pytest.mark.asyncio
     async def test_create_indices_existing_index(self, mock_search_index):
@@ -219,13 +220,14 @@ class TestRedisInfrastructure:
             patch("redis_sre_agent.core.redis.get_tasks_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_instances_index", return_value=mock_search_index),
             patch("redis_sre_agent.core.redis.get_clusters_index", return_value=mock_search_index),
+            patch("redis_sre_agent.core.redis.get_targets_index", return_value=mock_search_index),
         ):
             result = await create_indices()
 
         assert result is True
-        # Should be called eight times - knowledge, skills, support_tickets,
-        # schedules, threads, tasks, instances, clusters
-        assert mock_search_index.exists.call_count == 8
+        # Should be called nine times - knowledge, skills, support_tickets,
+        # schedules, threads, tasks, instances, clusters, targets
+        assert mock_search_index.exists.call_count == 9
         mock_search_index.create.assert_not_called()
 
     @pytest.mark.asyncio
