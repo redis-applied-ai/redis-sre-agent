@@ -103,10 +103,11 @@ class TestClusterMutationHelpers:
                 new_callable=AsyncMock,
                 return_value=True,
             ) as mock_save,
-            patch("redis_sre_agent.core.cluster_helpers.datetime") as mock_datetime,
+            patch(
+                "redis_sre_agent.core.cluster_helpers.ULID",
+                return_value="01HXTESTCLUSTERID1234567890",
+            ),
         ):
-            mock_datetime.now.return_value.timestamp.return_value = 1700000000
-
             payload = await create_cluster_helper(
                 name="prod-cluster",
                 cluster_type="redis_enterprise",
@@ -117,9 +118,45 @@ class TestClusterMutationHelpers:
                 admin_password="secret",
             )
 
-        assert payload == {"id": "cluster-production-1700000000", "status": "created"}
+        assert payload == {
+            "id": "cluster-production-01HXTESTCLUSTERID1234567890",
+            "status": "created",
+        }
         saved_cluster = mock_save.await_args.args[0][0]
         assert saved_cluster.name == "prod-cluster"
+
+    @pytest.mark.asyncio
+    async def test_create_cluster_helper_generates_unique_ulid_based_ids(self):
+        with (
+            patch(
+                "redis_sre_agent.core.cluster_helpers.core_clusters.get_clusters",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "redis_sre_agent.core.cluster_helpers.core_clusters.save_clusters",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "redis_sre_agent.core.cluster_helpers.ULID",
+                side_effect=["01HXFIRSTCLUSTERID123456789", "01HXSECONDCLUSTERID12345678"],
+            ),
+        ):
+            first = await create_cluster_helper(
+                name="prod-cluster-a",
+                environment="production",
+                description="Primary cluster A",
+            )
+            second = await create_cluster_helper(
+                name="prod-cluster-b",
+                environment="production",
+                description="Primary cluster B",
+            )
+
+        assert first["id"] != second["id"]
+        assert first["id"].startswith("cluster-production-")
+        assert second["id"].startswith("cluster-production-")
 
     @pytest.mark.asyncio
     async def test_create_cluster_helper_rejects_duplicate_names(self):
@@ -163,10 +200,11 @@ class TestClusterMutationHelpers:
                 new_callable=AsyncMock,
                 return_value=False,
             ),
-            patch("redis_sre_agent.core.cluster_helpers.datetime") as mock_datetime,
+            patch(
+                "redis_sre_agent.core.cluster_helpers.ULID",
+                return_value="01HXTESTCLUSTERID1234567890",
+            ),
         ):
-            mock_datetime.now.return_value.timestamp.return_value = 1700000000
-
             with pytest.raises(RuntimeError, match="Failed to save cluster"):
                 await create_cluster_helper(
                     name="prod-cluster",

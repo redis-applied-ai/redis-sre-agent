@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from pydantic import SecretStr
+from ulid import ULID
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.cluster_admin_defaults import (
@@ -99,7 +100,7 @@ async def create_cluster_helper(
         if missing_fields:
             raise RuntimeError(build_enterprise_admin_missing_fields_error(missing_fields))
 
-    cluster_id = f"cluster-{environment.lower()}-{int(datetime.now(timezone.utc).timestamp())}"
+    cluster_id = f"cluster-{environment.lower()}-{ULID()}"
     new_cluster = core_clusters.RedisCluster(
         id=cluster_id,
         name=name,
