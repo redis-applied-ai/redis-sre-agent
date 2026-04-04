@@ -11,7 +11,7 @@
 #   cp .env.airgap.example .env
 #
 #   # Start services
-#   docker-compose -f docker-compose.airgap.yml up -d
+#   docker compose -f docker-compose.airgap.yml up -d
 #
 # For Podman:
 #   podman-compose -f docker-compose.airgap.yml up -d
@@ -30,9 +30,9 @@ services:
       # LLM configuration (customer provides internal endpoint)
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
-      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-4}
-      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-4}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5}
+      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-5-mini}
+      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-5-nano}
 
       # Embedding configuration (local by default for air-gap)
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
@@ -73,9 +73,9 @@ services:
       - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
-      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-4}
-      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-4}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5}
+      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-5-mini}
+      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-5-nano}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - VECTOR_DIM=${VECTOR_DIM:-384}

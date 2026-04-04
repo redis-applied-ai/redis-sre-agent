@@ -2,7 +2,7 @@
 
 This guide covers how to observe the Redis SRE Agent itself: health checks, metrics, distributed tracing, and logs.
 
-The docker-compose stack includes Prometheus, Grafana, Loki, and Tempo for local development and testing. These are optional in production - use your existing observability infrastructure.
+The Docker Compose stack includes Prometheus, Grafana, Loki, and Tempo for local development and testing. These are optional in production - use your existing observability infrastructure.
 
 ---
 
@@ -138,7 +138,7 @@ A pre-built Grafana dashboard is available at `monitoring/grafana/provisioning/d
 Access it in Grafana under Dashboards → SRE Agent Traces.
 
 ### Example: Tempo (local dev)
-The docker-compose stack includes Tempo as an OTLP collector:
+The Docker Compose stack includes Tempo as an OTLP collector:
 ```yaml
 environment:
   - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
@@ -182,21 +182,21 @@ export LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
 ```
 
 ### Local development
-View logs from docker-compose services:
+View logs from Docker Compose services:
 ```bash
 docker compose logs -f sre-agent sre-worker
 ```
 
 ### Centralized logging (optional)
-The docker-compose stack includes Loki for testing centralized logging. In production, use your existing log aggregation system (Loki, Elasticsearch, Datadog, etc.).
+The Docker Compose stack includes Loki for testing centralized logging. In production, use your existing log aggregation system (Loki, Elasticsearch, Datadog, etc.).
 
-Promtail is configured in docker-compose to scrape container logs and ship them to Loki.
+Promtail is configured in Docker Compose to scrape container logs and ship them to Loki.
 
 ---
 
 ## Local Development Stack
 
-The docker-compose setup includes a full observability stack for testing:
+The Docker Compose setup includes a full observability stack for testing:
 - **Prometheus** (http://localhost:9090) - scrapes agent metrics
 - **Grafana** (http://localhost:3001, admin/admin) - visualizes metrics and traces
 - **Loki** (http://localhost:3100) - log aggregation

@@ -1,6 +1,6 @@
-## UI (Experimental)
+## UI
 
-The web UI lives in `ui/` and is experimental. Build and run it to use it.
+The web UI lives in `ui/` and is best used today for local evaluation, demos, and operator workflows that benefit from a browser view.
 
 ### Run via Docker Compose
 ```bash
@@ -33,4 +33,4 @@ The tests are located in `ui/e2e/`.
 ### Notes
 - Compose sets `VITE_API_URL=http://sre-agent:8000` for in‑container proxying
 - API endpoints are under `/api/v1` (e.g., `/api/v1/health`, `/api/v1/metrics`, `/api/v1/tasks`)
-- Do not expose the UI publicly without proper authentication while experimental
+- The UI is still maturing. Keep it behind authentication and avoid exposing it publicly without an auth layer
