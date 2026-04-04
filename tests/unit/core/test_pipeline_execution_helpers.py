@@ -184,6 +184,52 @@ class TestRunPipelineOperationHelper:
         mock_generator.test_url_extraction.assert_awaited_once_with("https://example.com")
 
     @pytest.mark.asyncio
+    async def test_run_runbooks_list_urls_does_not_emit_completion_on_failure(self):
+        """List mode should not report completion if URL enumeration raises."""
+        emitter = AsyncMock()
+        mock_generator = MagicMock()
+        mock_generator.get_configured_urls.side_effect = RuntimeError("boom")
+        mock_orchestrator = MagicMock(scrapers={"runbook_generator": mock_generator})
+
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await run_pipeline_operation_helper(
+                    operation="runbooks",
+                    artifacts_path="/tmp/artifacts",
+                    list_urls=True,
+                    progress_emitter=emitter,
+                )
+
+        progress_events = [call.args[1] for call in emitter.emit.await_args_list]
+        assert "pipeline_complete" not in progress_events
+
+    @pytest.mark.asyncio
+    async def test_run_runbooks_test_url_does_not_emit_completion_on_failure(self):
+        """Test mode should not report completion if extraction fails."""
+        emitter = AsyncMock()
+        mock_generator = MagicMock()
+        mock_generator.test_url_extraction = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_orchestrator = MagicMock(scrapers={"runbook_generator": mock_generator})
+
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await run_pipeline_operation_helper(
+                    operation="runbooks",
+                    artifacts_path="/tmp/artifacts",
+                    test_url="https://example.com",
+                    progress_emitter=emitter,
+                )
+
+        progress_events = [call.args[1] for call in emitter.emit.await_args_list]
+        assert "pipeline_complete" not in progress_events
+
+    @pytest.mark.asyncio
     async def test_run_runbooks_single_url(self):
         """Runbooks single-url mode should add the URL and run a dedicated job."""
         primary_generator = MagicMock()

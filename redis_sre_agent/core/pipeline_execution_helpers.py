@@ -165,6 +165,7 @@ async def run_pipeline_operation_helper(
         generator = orchestrator.scrapers["runbook_generator"]
 
         if list_urls:
+            configured_urls = generator.get_configured_urls()
             await _emit_progress(
                 progress_emitter,
                 f"Completed pipeline {operation}",
@@ -174,10 +175,11 @@ async def run_pipeline_operation_helper(
             return {
                 "operation": operation,
                 "mode": "list_urls",
-                "configured_urls": generator.get_configured_urls(),
+                "configured_urls": configured_urls,
             }
 
         if test_url:
+            extraction_result = await generator.test_url_extraction(test_url)
             await _emit_progress(
                 progress_emitter,
                 f"Completed pipeline {operation}",
@@ -188,7 +190,7 @@ async def run_pipeline_operation_helper(
                 "operation": operation,
                 "mode": "test_url",
                 "url": test_url,
-                "result": await generator.test_url_extraction(test_url),
+                "result": extraction_result,
             }
 
         if url:
