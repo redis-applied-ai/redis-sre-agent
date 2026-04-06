@@ -1,7 +1,9 @@
 # Docker Deployment Guide
 
-This guide covers deploying Redis SRE Agent using Docker in environments with
-internet access. For air-gapped environments, see [Air-Gapped Deployment](airgap-deployment.md).
+This guide covers deploying Redis SRE Agent with Docker Compose in environments with
+internet access. Use it as the fastest evaluation path and as a reference deployment for
+containerized environments. For air-gapped environments, see
+[Air-Gapped Deployment](airgap-deployment.md).
 
 ## Overview
 
@@ -44,10 +46,10 @@ REDIS_SRE_MASTER_KEY=your-secret-key
 
 ```bash
 # Start core services
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f sre-agent sre-worker
+docker compose logs -f sre-agent sre-worker
 ```
 
 ### 4. Access Services
@@ -134,9 +136,9 @@ By default, the standard deployment calls OpenAI directly:
 
 ```bash
 OPENAI_API_KEY=sk-your-openai-key
-OPENAI_MODEL=gpt-4
-OPENAI_MODEL_MINI=gpt-4o-mini
-OPENAI_MODEL_NANO=gpt-4o-mini
+OPENAI_MODEL=gpt-5
+OPENAI_MODEL_MINI=gpt-5-mini
+OPENAI_MODEL_NANO=gpt-5-nano
 ```
 
 To route requests through an OpenAI-compatible gateway instead, set:
@@ -152,7 +154,7 @@ Enable MCP integrations with the `mcp` profile:
 
 ```bash
 # Start with GitHub MCP server
-docker-compose --profile mcp up -d
+docker compose --profile mcp up -d
 ```
 
 For HTTPS MCP (required for Claude Desktop):
@@ -162,7 +164,7 @@ For HTTPS MCP (required for Claude Desktop):
 ./scripts/generate-mcp-certs.sh
 
 # Start with SSL
-docker-compose --profile ssl up -d
+docker compose --profile ssl up -d
 ```
 
 ## Development Mode
@@ -202,7 +204,7 @@ Pre-built images are available on Docker Hub:
 Example production overrides:
 
 ```yaml
-# docker-compose.prod.yml
+# compose.prod.yml
 services:
   sre-agent:
     image: redislabs/redis-sre-agent:latest
@@ -231,17 +233,17 @@ services:
 
 ```bash
 # Check logs
-docker-compose logs sre-agent
+docker compose logs sre-agent
 
 # Verify Redis is healthy
-docker-compose exec redis redis-cli ping
+docker compose exec redis redis-cli ping
 ```
 
 ### LLM Errors
 
 ```bash
 # Verify the configured model credentials work
-docker-compose exec sre-agent python - <<'PY'
+docker compose exec sre-agent python - <<'PY'
 from openai import OpenAI
 import os
 
@@ -254,7 +256,7 @@ PY
 
 ```bash
 # Check worker logs
-docker-compose logs sre-worker
+docker compose logs sre-worker
 
 # Verify worker is connected
 curl http://localhost:8080/api/v1/health

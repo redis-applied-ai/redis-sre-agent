@@ -136,6 +136,16 @@ ignore = ["E501"]
 line-length = 100
 target-version = ["py312"]
 
+[tool.coverage.run]
+omit = [
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client/*",
+]
+
+[tool.coverage.report]
+omit = [
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client/*",
+]
+
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = false

@@ -105,5 +105,5 @@ uv run mkdocs serve -a 127.0.0.1:8001
 ### Troubleshooting
 - OPENAI_API_KEY missing: set it in .env or your shell
 - Redis not reachable: verify `REDIS_URL` and that compose `redis` is running (port 7843)
-- Worker not processing: ensure `uv run redis-sre-agent worker` is running and `/api/v1/health` shows worker available
+- Worker not processing: ensure `uv run redis-sre-agent worker start` is running and `/api/v1/health` shows worker available
 - Prometheus/Grafana: check `docker compose logs -f prometheus grafana`

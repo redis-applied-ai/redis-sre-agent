@@ -11,8 +11,9 @@ Notes:
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.cli.main import main as cli_main
@@ -85,12 +86,73 @@ def _write_cli_md(dest: Path, items: List[Tuple[str, str]]):
 
 
 def _write_api_md(dest: Path, routes: List[Tuple[str, str, str]]):
+    sections: Dict[str, List[Tuple[str, str, str]]] = OrderedDict(
+        [
+            ("Health & readiness", []),
+            ("Clusters", []),
+            ("Instances", []),
+            ("Knowledge", []),
+            ("Schedules", []),
+            ("Support packages", []),
+            ("Tasks, threads, and streaming", []),
+            ("OpenAPI & docs", []),
+            ("Other", []),
+        ]
+    )
+
+    def section_for_path(path: str) -> str:
+        if path in {"/", "/api/v1/", "/api/v1/health", "/api/v1/metrics", "/api/v1/metrics/health"}:
+            return "Health & readiness"
+        if path.startswith("/api/v1/clusters"):
+            return "Clusters"
+        if path.startswith("/api/v1/instances"):
+            return "Instances"
+        if path.startswith("/api/v1/knowledge"):
+            return "Knowledge"
+        if path.startswith("/api/v1/schedules"):
+            return "Schedules"
+        if path.startswith("/api/v1/support-packages"):
+            return "Support packages"
+        if (
+            path.startswith("/api/v1/tasks")
+            or path.startswith("/api/v1/threads")
+            or path.startswith("/api/v1/ws")
+        ):
+            return "Tasks, threads, and streaming"
+        if path in {"/docs", "/docs/oauth2-redirect", "/openapi.json", "/redoc"}:
+            return "OpenAPI & docs"
+        return "Other"
+
+    for route in routes:
+        sections[section_for_path(route[1])].append(route)
+
     lines: List[str] = []
     lines.append("## REST API Reference (generated)\n")
-    lines.append("For interactive docs, see http://localhost:8000/docs\n\n")
-    lines.append("### Endpoints\n\n")
-    for method, path, summary in routes:
-        lines.append(f"- {method} {path} — {summary}")
+    lines.append(
+        "This page is generated from the FastAPI route tree.\n\n"
+        "For live schemas and request models, start the API and open "
+        "`http://localhost:8000/docs` (local) or `http://localhost:8080/docs` "
+        "(Docker Compose).\n\n"
+    )
+    lines.append("### Start here\n\n")
+    lines.append("- Health and readiness: `/`, `/api/v1/health`, `/api/v1/metrics`")
+    lines.append("- Manage Redis targets: `/api/v1/instances`, `/api/v1/clusters`")
+    lines.append(
+        "- Run agent work: `/api/v1/tasks`, `/api/v1/threads`, `/api/v1/ws/tasks/{thread_id}`"
+    )
+    lines.append("- Search and ingest knowledge: `/api/v1/knowledge/*`")
+    lines.append("- Schedule recurring checks: `/api/v1/schedules/*`")
+    lines.append("- Analyze support packages: `/api/v1/support-packages/*`\n")
+    lines.append("For copy/paste workflows, see [Using the API](../how-to/api.md).\n")
+
+    for section, items in sections.items():
+        if not items:
+            continue
+        lines.append(f"\n### {section}\n")
+        lines.append("| Method | Path | Summary |")
+        lines.append("|---|---|---|")
+        for method, path, summary in items:
+            lines.append(f"| `{method}` | `{path}` | {summary} |")
     dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
