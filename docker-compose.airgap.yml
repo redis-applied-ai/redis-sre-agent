@@ -30,9 +30,10 @@ services:
       # LLM configuration (customer provides internal endpoint)
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5}
-      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-5-mini}
-      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-5-nano}
+      # Keep air-gap defaults on one model so limited internal proxies remain compatible.
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-4}
+      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-4}
 
       # Embedding configuration (local by default for air-gap)
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
@@ -73,9 +74,9 @@ services:
       - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for LLM access}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5}
-      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-5-mini}
-      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-5-nano}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - OPENAI_MODEL_MINI=${OPENAI_MODEL_MINI:-gpt-4}
+      - OPENAI_MODEL_NANO=${OPENAI_MODEL_NANO:-gpt-4}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - VECTOR_DIM=${VECTOR_DIM:-384}

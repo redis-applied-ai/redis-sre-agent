@@ -252,9 +252,9 @@ data:
   EMBEDDING_PROVIDER: "local"
   EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
   VECTOR_DIM: "384"
-  OPENAI_MODEL: "gpt-5"
-  OPENAI_MODEL_MINI: "gpt-5-mini"
-  OPENAI_MODEL_NANO: "gpt-5-nano"
+  OPENAI_MODEL: "gpt-4"
+  OPENAI_MODEL_MINI: "gpt-4"
+  OPENAI_MODEL_NANO: "gpt-4"
 ```
 
 **Secret for sensitive values:**

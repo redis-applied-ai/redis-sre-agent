@@ -109,7 +109,7 @@ Use Redis Insight or `redis-cli` to confirm that both Redis instances are runnin
 Populate the index locally (this may take a moment to generate embeddings):
 
 ```bash
-./scripts/setup_redis_docs_local.sh
+uv run ./scripts/setup_redis_docs_local.sh
 
 uv run redis-sre-agent pipeline ingest
 ```
