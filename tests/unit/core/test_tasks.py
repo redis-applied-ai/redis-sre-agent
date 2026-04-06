@@ -4,16 +4,21 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from redisvl.query import VectorRangeQuery
 
 from redis_sre_agent.agent.models import AgentResponse
+from redis_sre_agent.agent.router import AgentType
 from redis_sre_agent.core.docket_tasks import (
     SRE_TASK_COLLECTION,
+    _thread_messages_to_conversation_history,
     get_redis_url,
     ingest_sre_document,
     process_agent_turn,
     process_chat_turn,
     process_knowledge_query,
+    process_pipeline_operation,
+    process_runbook_operation,
     register_sre_tasks,
     run_agent_with_progress,
     scheduler_task,
@@ -21,7 +26,13 @@ from redis_sre_agent.core.docket_tasks import (
     sre_task,
     test_task_system,
 )
+from redis_sre_agent.core.targets import (
+    ResolvedTargetMatch,
+    TargetBinding,
+    TargetResolutionResult,
+)
 from redis_sre_agent.core.tasks import TaskStatus
+from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
 
 
 class TestSRETaskCollection:
@@ -29,7 +40,7 @@ class TestSRETaskCollection:
 
     def test_sre_task_collection_populated(self):
         """Test that SRE task collection contains expected tasks."""
-        assert len(SRE_TASK_COLLECTION) == 7
+        assert len(SRE_TASK_COLLECTION) == 9
 
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
@@ -39,6 +50,8 @@ class TestSRETaskCollection:
             "process_agent_turn",
             "process_chat_turn",  # New: MCP chat task
             "process_knowledge_query",  # New: MCP knowledge query task
+            "process_pipeline_operation",
+            "process_runbook_operation",
             "embed_qa_record",  # Q&A embedding task
         ]
 
@@ -590,6 +603,14 @@ class TestProcessKnowledgeQuery:
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.set_task_result = AsyncMock()
         mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(
+            return_value=Thread(
+                thread_id="thread-456",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+        )
         mock_thread_manager.append_messages = AsyncMock()
 
         mock_agent = AsyncMock()
@@ -601,9 +622,7 @@ class TestProcessKnowledgeQuery:
             patch(
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
-            patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
-            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             result = await process_knowledge_query(
@@ -616,6 +635,8 @@ class TestProcessKnowledgeQuery:
         assert result["response"] == "Knowledge response"
         mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.IN_PROGRESS)
         mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.DONE)
+        _, kwargs = mock_agent.process_query.call_args
+        assert kwargs["conversation_history"] is None
 
     @pytest.mark.asyncio
     async def test_process_knowledge_query_error(self):
@@ -625,6 +646,7 @@ class TestProcessKnowledgeQuery:
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
         mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
 
         mock_agent = AsyncMock()
         mock_agent.process_query = AsyncMock(side_effect=Exception("Knowledge error"))
@@ -635,9 +657,7 @@ class TestProcessKnowledgeQuery:
             patch(
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
-            patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
-            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             with pytest.raises(Exception, match="Knowledge error"):
@@ -662,6 +682,7 @@ class TestProcessKnowledgeQuery:
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.set_task_result = AsyncMock()
         mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
         mock_thread_manager.append_messages = AsyncMock()
 
         # Return an actual AgentResponse object (not a string)
@@ -678,9 +699,7 @@ class TestProcessKnowledgeQuery:
             patch(
                 "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
             ),
-            patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent", return_value=mock_agent
-            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
             result = await process_knowledge_query(
@@ -704,6 +723,285 @@ class TestProcessKnowledgeQuery:
         assert len(messages) == 1
         assert messages[0]["content"] == "Knowledge response text"
         assert isinstance(messages[0]["content"], str)
+
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_passes_conversation_history(self):
+        """Compatibility path should preserve thread conversation history."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(
+            return_value=Thread(
+                thread_id="thread-456",
+                messages=[
+                    Message(role="user", content="How does replication work?"),
+                    Message(role="assistant", content="It copies writes to replicas."),
+                ],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+        )
+        mock_thread_manager.append_messages = AsyncMock()
+
+        agent_response = AgentResponse(response="Follow-up answer", search_results=[])
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            await process_knowledge_query(
+                query="What about failover?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        _, kwargs = mock_agent.process_query.call_args
+        history = kwargs["conversation_history"]
+        assert history is not None
+        assert len(history) == 2
+        assert isinstance(history[0], HumanMessage)
+        assert history[0].content == "How does replication work?"
+        assert isinstance(history[1], AIMessage)
+        assert history[1].content == "It copies writes to replicas."
+
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_excludes_duplicate_latest_user_message(self):
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(
+            return_value=Thread(
+                thread_id="thread-456",
+                messages=[
+                    Message(role="user", content="How does replication work?"),
+                    Message(role="assistant", content="It copies writes to replicas."),
+                    Message(role="user", content="What about failover?"),
+                ],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+        )
+        mock_thread_manager.append_messages = AsyncMock()
+
+        agent_response = AgentResponse(response="Follow-up answer", search_results=[])
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            await process_knowledge_query(
+                query="What about failover?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        _, kwargs = mock_agent.process_query.call_args
+        history = kwargs["conversation_history"]
+        assert history is not None
+        assert len(history) == 2
+        assert history[0].content == "How does replication work?"
+        assert history[1].content == "It copies writes to replicas."
+
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_respects_configured_max_iterations(self):
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
+        mock_thread_manager.append_messages = AsyncMock()
+
+        agent_response = AgentResponse(response="Answer", search_results=[])
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch("redis_sre_agent.core.docket_tasks.settings.max_iterations", 5),
+        ):
+            await process_knowledge_query(
+                query="What are Redis best practices?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        _, kwargs = mock_agent.process_query.call_args
+        assert kwargs["max_iterations"] == 5
+
+
+def test_thread_messages_to_conversation_history_filters_non_dialog_roles():
+    history = _thread_messages_to_conversation_history(
+        [
+            Message(role="user", content="Question"),
+            Message(role="assistant", content="Answer"),
+            Message(role="system", content="Ignored"),
+        ]
+    )
+
+    assert len(history) == 2
+    assert isinstance(history[0], HumanMessage)
+    assert isinstance(history[1], AIMessage)
+
+
+class TestProcessPipelineOperation:
+    """Test process_pipeline_operation task."""
+
+    @pytest.mark.asyncio
+    async def test_process_pipeline_operation_success(self):
+        """Pipeline task should persist results and mark completion."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.run_pipeline_operation_helper",
+                new_callable=AsyncMock,
+                return_value={"operation": "scrape", "success": True},
+            ) as mock_helper,
+        ):
+            result = await process_pipeline_operation(
+                operation="scrape",
+                task_id="task-123",
+                thread_id="thread-456",
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs"],
+            )
+
+        assert result == {"operation": "scrape", "success": True}
+        mock_helper.assert_awaited_once()
+        mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.IN_PROGRESS)
+        mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.DONE)
+        mock_task_manager.set_task_result.assert_awaited_once_with(
+            "task-123",
+            {"operation": "scrape", "success": True},
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_pipeline_operation_error(self):
+        """Pipeline task should persist task errors and re-raise failures."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.run_pipeline_operation_helper",
+                new_callable=AsyncMock,
+                side_effect=Exception("pipeline failed"),
+            ),
+        ):
+            with pytest.raises(Exception, match="pipeline failed"):
+                await process_pipeline_operation(
+                    operation="ingest",
+                    task_id="task-123",
+                    thread_id="thread-456",
+                    batch_date="2026-03-25",
+                )
+
+        mock_task_manager.set_task_error.assert_awaited_once_with("task-123", "pipeline failed")
+
+
+class TestProcessRunbookOperation:
+    """Test process_runbook_operation task."""
+
+    @pytest.mark.asyncio
+    async def test_process_runbook_operation_success(self):
+        """Runbook task should persist results and mark completion."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers.run_runbook_operation_helper",
+                new_callable=AsyncMock,
+                return_value={"operation": "generate", "success": True},
+            ) as mock_helper,
+        ):
+            result = await process_runbook_operation(
+                operation="generate",
+                task_id="task-123",
+                thread_id="thread-456",
+                topic="Memory Pressure",
+                scenario_description="Redis memory saturation on primaries",
+            )
+
+        assert result == {"operation": "generate", "success": True}
+        mock_helper.assert_awaited_once()
+        mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.IN_PROGRESS)
+        mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.DONE)
+        mock_task_manager.set_task_result.assert_awaited_once_with(
+            "task-123",
+            {"operation": "generate", "success": True},
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_runbook_operation_error(self):
+        """Runbook task should persist task errors and re-raise failures."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers.run_runbook_operation_helper",
+                new_callable=AsyncMock,
+                side_effect=Exception("runbook failed"),
+            ),
+        ):
+            with pytest.raises(Exception, match="runbook failed"):
+                await process_runbook_operation(
+                    operation="evaluate",
+                    task_id="task-123",
+                    thread_id="thread-456",
+                )
+
+        mock_task_manager.set_task_error.assert_awaited_once_with("task-123", "runbook failed")
 
 
 class TestSchedulerTask:
@@ -930,13 +1228,13 @@ class TestProcessAgentTurn:
         mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
 
-        mock_knowledge_agent = AsyncMock()
+        mock_chat_agent = AsyncMock()
         mock_response = AgentResponse(
-            response="Knowledge response",
+            response="Chat response",
             search_results=[],
             tool_envelopes=[{"name": "redis_info", "status": "success"}],
         )
-        mock_knowledge_agent.process_query = AsyncMock(return_value=mock_response)
+        mock_chat_agent.process_query = AsyncMock(return_value=mock_response)
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
@@ -949,8 +1247,8 @@ class TestProcessAgentTurn:
                 return_value=None,
             ),
             patch(
-                "redis_sre_agent.agent.knowledge_agent.KnowledgeOnlyAgent",
-                return_value=mock_knowledge_agent,
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
             ),
             patch(
                 "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
@@ -995,6 +1293,187 @@ class TestProcessAgentTurn:
             tool_envelopes=[{"name": "redis_info", "status": "success"}],
             otel_trace_id=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_honors_requested_agent_type(self):
+        """Requested agent type should bypass router auto-selection."""
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.metadata.session_id = "session-1"
+        mock_thread.messages = []
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="new-task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+
+        mock_chat_agent = AsyncMock()
+        mock_response = AgentResponse(
+            response="Chat response",
+            search_results=[],
+            tool_envelopes=[],
+        )
+        mock_chat_agent.process_query = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new_callable=AsyncMock,
+            ) as mock_router,
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            result = await process_agent_turn(
+                thread_id="thread-123",
+                message="Use chat",
+                task_id="provided-task-123",
+                context={"requested_agent_type": "chat"},
+            )
+
+        mock_router.assert_not_called()
+        mock_chat_agent.process_query.assert_awaited_once()
+        assert result["message_id"] == "01HXTESTMESSAGEID1234567890"
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_passes_resolved_target_context_to_triage(self):
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.messages = []
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager.set_message_trace = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="new-task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        resolution = TargetResolutionResult(
+            status="resolved",
+            query="investigate checkout cache",
+            clarification_required=False,
+            selected_matches=[
+                ResolvedTargetMatch(
+                    target_kind="instance",
+                    resource_id="redis-prod-checkout-cache",
+                    display_name="checkout-cache-prod",
+                    environment="production",
+                    target_type="oss_single",
+                    capabilities=["redis", "diagnostics"],
+                    confidence=0.97,
+                    match_reasons=["matched environment=production"],
+                )
+            ],
+        )
+        bindings = [
+            TargetBinding(
+                target_handle="tgt_01",
+                target_kind="instance",
+                resource_id="redis-prod-checkout-cache",
+                display_name="checkout-cache-prod",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            )
+        ]
+        mock_run_agent = AsyncMock(
+            return_value={
+                "response": "Triage response",
+                "search_results": [],
+                "tool_envelopes": [],
+                "metadata": {"agent_type": "redis_triage"},
+            }
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.resolve_target_query",
+                new=AsyncMock(return_value=resolution),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.attach_target_matches",
+                new=AsyncMock(return_value=(bindings, 3)),
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_sre_agent", return_value=MagicMock()),
+            patch(
+                "redis_sre_agent.core.docket_tasks.run_agent_with_progress",
+                new=mock_run_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            await process_agent_turn(
+                thread_id="thread-123",
+                message="Investigate checkout cache",
+                task_id="provided-task-123",
+            )
+
+        _, kwargs = mock_run_agent.await_args
+        assert kwargs["agent_context"]["instance_id"] == "redis-prod-checkout-cache"
+        assert kwargs["agent_context"]["attached_target_handles"] == ["tgt_01"]
+        assert kwargs["agent_context"]["target_toolset_generation"] == 3
 
 
 class TestRunAgentWithProgress:

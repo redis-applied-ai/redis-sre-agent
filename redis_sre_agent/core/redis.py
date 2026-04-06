@@ -30,6 +30,8 @@ SRE_TASKS_INDEX = "sre_tasks"
 SRE_INSTANCES_INDEX = "sre_instances"
 # Clusters index
 SRE_CLUSTERS_INDEX = "sre_clusters"
+# Unified targets index
+SRE_TARGETS_INDEX = "sre_targets"
 # Q&A index
 SRE_QA_INDEX = "sre_qa"
 
@@ -265,6 +267,38 @@ SRE_CLUSTERS_SCHEMA = {
         {"name": "status", "type": "tag"},
         {"name": "created_at", "type": "numeric"},
         {"name": "updated_at", "type": "numeric"},
+    ],
+}
+
+SRE_TARGETS_SCHEMA = {
+    "index": {
+        "name": SRE_TARGETS_INDEX,
+        "prefix": f"{SRE_TARGETS_INDEX}:",
+        "storage_type": "hash",
+    },
+    "fields": [
+        {"name": "target_id", "type": "tag"},
+        {"name": "target_kind", "type": "tag"},
+        {"name": "resource_id", "type": "tag"},
+        {"name": "display_name", "type": "text"},
+        {"name": "name", "type": "tag"},
+        {"name": "environment", "type": "tag"},
+        {"name": "status", "type": "tag"},
+        {"name": "target_type", "type": "tag"},
+        {"name": "usage", "type": "tag"},
+        {"name": "cluster_id", "type": "tag"},
+        {"name": "repo_slug", "type": "tag"},
+        {"name": "monitoring_identifier", "type": "tag"},
+        {"name": "logging_identifier", "type": "tag"},
+        {"name": "redis_cloud_subscription_id", "type": "tag"},
+        {"name": "redis_cloud_database_id", "type": "tag"},
+        {"name": "redis_cloud_database_name", "type": "tag"},
+        {"name": "search_aliases", "type": "tag"},
+        {"name": "capabilities", "type": "tag"},
+        {"name": "updated_at", "type": "numeric"},
+        {"name": "created_at", "type": "numeric"},
+        {"name": "search_text", "type": "text"},
+        {"name": "user_id", "type": "tag"},
     ],
 }
 
@@ -610,6 +644,19 @@ async def get_clusters_index(config: Optional[Settings] = None) -> AsyncSearchIn
     return index
 
 
+async def get_targets_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
+    """Get SRE unified targets index (async)."""
+    from redisvl.schema import IndexSchema
+
+    cfg = config or settings
+    redis_url = cfg.redis_url.get_secret_value()
+
+    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    schema = IndexSchema.from_dict(SRE_TARGETS_SCHEMA)
+    index = AsyncSearchIndex(schema=schema, redis_client=redis_client)
+    return index
+
+
 async def get_threads_index(config: Optional[Settings] = None) -> AsyncSearchIndex:
     """Get SRE threads/tasks index (async).
 
@@ -736,6 +783,7 @@ def _iter_index_configs():
     yield ("tasks", SRE_TASKS_INDEX, get_tasks_index, SRE_TASKS_SCHEMA)
     yield ("instances", SRE_INSTANCES_INDEX, get_instances_index, SRE_INSTANCES_SCHEMA)
     yield ("clusters", SRE_CLUSTERS_INDEX, get_clusters_index, SRE_CLUSTERS_SCHEMA)
+    yield ("targets", SRE_TARGETS_INDEX, get_targets_index, SRE_TARGETS_SCHEMA)
 
 
 async def get_index_schema_status(

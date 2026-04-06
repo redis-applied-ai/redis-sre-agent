@@ -32,21 +32,16 @@ class TestAgentTypeEnum:
 class TestRouteToAppropriateAgent:
     """Test the route_to_appropriate_agent function."""
 
-    async def test_no_instance_routes_to_knowledge(self):
-        """Test that queries without instance context route to knowledge agent."""
+    async def test_no_instance_routes_to_chat(self):
+        """Zero-scope queries should use chat as the default general-purpose agent."""
         with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
-            mock_llm = MagicMock()
-            mock_response = MagicMock()
-            mock_response.content = "KNOWLEDGE_ONLY"
-            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_create.return_value = mock_llm
-
             result = await route_to_appropriate_agent(
                 query="What are Redis best practices?",
                 context=None,
             )
 
-            assert result == AgentType.KNOWLEDGE_ONLY
+            assert result == AgentType.REDIS_CHAT
+            mock_create.assert_not_called()
 
     async def test_instance_with_deep_triage_request_routes_to_triage(self):
         """Test that deep triage requests with instance route to triage agent."""
@@ -94,19 +89,14 @@ class TestRouteToAppropriateAgent:
 
             assert result == AgentType.REDIS_CHAT
 
-    async def test_llm_error_without_instance_defaults_to_knowledge(self):
-        """Test that LLM errors without instance default to knowledge agent."""
-        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
-            mock_llm = MagicMock()
-            mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM error"))
-            mock_create.return_value = mock_llm
+    async def test_zero_scope_deep_language_still_defaults_to_chat(self):
+        """Until target discovery lands, zero-scope requests stay on chat even if phrased broadly."""
+        result = await route_to_appropriate_agent(
+            query="Do a deep triage on Redis best practices",
+            context=None,
+        )
 
-            result = await route_to_appropriate_agent(
-                query="What is Redis?",
-                context=None,
-            )
-
-            assert result == AgentType.KNOWLEDGE_ONLY
+        assert result == AgentType.REDIS_CHAT
 
     async def test_user_preference_respected(self):
         """Test that user preferences are respected when instance exists."""

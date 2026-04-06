@@ -28,7 +28,7 @@ from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-from ..agent.router import AgentType, format_conversation_context, route_to_appropriate_agent
+from ..agent.router import format_conversation_context, query_needs_live_redis_scope
 from ..core.agent_memory import AgentMemoryService
 from ..core.config import settings
 from ..core.instances import (
@@ -2030,11 +2030,9 @@ To get targeted analysis, please rephrase your query to specify which instance, 
                         # No instances configured - try to gather info or route to knowledge agent
                         logger.warning("No Redis instances configured")
 
-                        # Check if this query seems to be about a specific Redis instance
-                        # or if it's more general knowledge-seeking
-                        suggested_agent = await route_to_appropriate_agent(query, context)
-
-                        if suggested_agent == AgentType.KNOWLEDGE_ONLY:
+                        # Check if this query appears to need live Redis access,
+                        # even when no instance is currently configured.
+                        if not await query_needs_live_redis_scope(query):
                             # Route to knowledge agent for general queries
                             logger.info(
                                 "No instances configured and query is general - suggesting knowledge agent"
@@ -2237,6 +2235,9 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
+            thread_id=session_id,
+            task_id=(context or {}).get("task_id") if isinstance(context, dict) else None,
+            user_id=user_id,
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()

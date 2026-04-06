@@ -13,7 +13,6 @@ from rich.markdown import Markdown
 from ulid import ULID
 
 from redis_sre_agent.agent.chat_agent import get_chat_agent
-from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.core.citation_message import (
@@ -27,6 +26,9 @@ from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
+
+# Backward-compatible module attribute for legacy tests and patches.
+get_knowledge_agent = get_chat_agent
 
 
 @click.command()
@@ -59,8 +61,8 @@ def query(
 
     \b
     The agent is automatically selected based on the query, or use --agent:
-      - knowledge: General Redis questions (no instance needed)
-      - chat: Quick questions with a Redis instance
+      - knowledge: Backward-compatible alias for chat mode
+      - chat: Default general-purpose agent, with or without explicit scope
       - triage: Full health checks and diagnostics
       - auto: Let the router decide (default)
     """
@@ -188,13 +190,13 @@ def query(
         agent_choice_map = {
             "triage": AgentType.REDIS_TRIAGE,
             "chat": AgentType.REDIS_CHAT,
-            "knowledge": AgentType.KNOWLEDGE_ONLY,
+            "knowledge": AgentType.REDIS_CHAT,
         }
 
         # Determine which agent to use
         if agent != "auto":
             agent_type = agent_choice_map[agent.lower()]
-            agent_label = agent.capitalize()
+            agent_label = "Chat" if agent.lower() == "knowledge" else agent.capitalize()
             console.print(f"[dim]🔧 Agent: {agent_label} (selected)[/dim]")
         else:
             agent_type = await route_to_appropriate_agent(
@@ -205,20 +207,18 @@ def query(
             agent_label = {
                 AgentType.REDIS_TRIAGE: "Triage",
                 AgentType.REDIS_CHAT: "Chat",
-                AgentType.KNOWLEDGE_ONLY: "Knowledge",
+                AgentType.KNOWLEDGE_ONLY: "Chat",
             }.get(agent_type, agent_type.value)
             console.print(f"[dim]🔧 Agent: {agent_label}[/dim]")
 
         # Get the appropriate agent instance
         if agent_type == AgentType.REDIS_TRIAGE:
             selected_agent = get_sre_agent()
-        elif agent_type == AgentType.REDIS_CHAT:
+        else:
             selected_agent = get_chat_agent(
                 redis_instance=instance,
                 redis_cluster=cluster,
             )
-        else:
-            selected_agent = get_knowledge_agent()
 
         try:
             # Build context with instance and/or support package
