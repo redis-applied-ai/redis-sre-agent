@@ -487,7 +487,9 @@ def test_query_with_agent_auto_uses_router(mock_thread_manager, mock_redis_clien
     mock_get_sre.assert_not_called()
 
 
-def test_query_with_explicit_user_id_scopes_thread_and_agent(mock_thread_manager, mock_redis_client):
+def test_query_with_explicit_user_id_scopes_thread_and_agent(
+    mock_thread_manager, mock_redis_client
+):
     runner = CliRunner()
     from redis_sre_agent.agent.router import AgentType
 

@@ -40,7 +40,9 @@ def memory_settings(monkeypatch):
 class TestPrepareTurnContext:
     @pytest.mark.asyncio
     async def test_returns_disabled_when_feature_off(self, monkeypatch):
-        monkeypatch.setattr("redis_sre_agent.core.agent_memory.settings.agent_memory_enabled", False)
+        monkeypatch.setattr(
+            "redis_sre_agent.core.agent_memory.settings.agent_memory_enabled", False
+        )
         service = AgentMemoryService()
 
         result = await service.prepare_turn_context(
@@ -120,7 +122,7 @@ class TestPrepareTurnContext:
                     SimpleNamespace(
                         text="Instance hit OOM last week",
                         memory_type="episodic",
-                    )
+                    ),
                 ]
             )
         )

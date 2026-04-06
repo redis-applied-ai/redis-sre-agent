@@ -21,6 +21,7 @@ try:
 
     AMS_SDK_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised only when dependency is absent
+
     class _Shim:
         def __init__(self, **kwargs: Any) -> None:
             self.__dict__.update(kwargs)
@@ -294,10 +295,13 @@ class AgentMemoryService:
                     created_any = created_any or created
 
                 if asset_scope:
-                    asset_session_id = self._asset_session_id(
-                        instance_id=instance_id,
-                        cluster_id=cluster_id,
-                    ) or session_id
+                    asset_session_id = (
+                        self._asset_session_id(
+                            instance_id=instance_id,
+                            cluster_id=cluster_id,
+                        )
+                        or session_id
+                    )
                     created, asset_working_memory = await client.get_or_create_working_memory(
                         session_id=asset_session_id,
                         namespace=settings.agent_memory_asset_namespace,
@@ -455,7 +459,9 @@ class AgentMemoryService:
                         messages=trimmed_messages,
                         memories=list(getattr(working_memory, "memories", []) or []),
                         data=existing_data,
-                        context="\n".join(combined_context_parts) if combined_context_parts else None,
+                        context="\n".join(combined_context_parts)
+                        if combined_context_parts
+                        else None,
                         long_term_memory_strategy=strategy,
                         ttl_seconds=settings.agent_memory_working_ttl_seconds,
                     )

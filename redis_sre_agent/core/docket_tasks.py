@@ -1148,9 +1148,7 @@ async def process_agent_turn(
                 "response": chat_agent_response.response,
                 "search_results": chat_agent_response.search_results,
                 "tool_envelopes": chat_agent_response.tool_envelopes,
-                "metadata": {
-                    "agent_type": "knowledge_only" if is_knowledge_only else "redis_chat"
-                },
+                "metadata": {"agent_type": "knowledge_only" if is_knowledge_only else "redis_chat"},
             }
         else:
             # Use full Redis triage agent with full conversation state
