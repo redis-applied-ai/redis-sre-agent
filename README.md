@@ -49,6 +49,9 @@ cp .env.example .env
 # Start Redis with Redis Search
 docker run -d -p 7843:6379 redis/redis-stack-server:latest
 
+# Optional: start Agent Memory Server for working + long-term memory
+docker compose up -d agent-memory-server
+
 # Start worker
 uv run redis-sre-agent worker
 
@@ -72,6 +75,15 @@ curl -X POST http://localhost:8000/api/v1/tasks \\
 curl http://localhost:8000/api/v1/tasks/{task_id}
 # Includes `tool_calls` when task status is `done`
 ```
+
+**Memory Integration**:
+- Phase 1 keeps thread transcripts in Redis via `ThreadManager`.
+- When `AGENT_MEMORY_ENABLED=true` and `AGENT_MEMORY_BASE_URL` is configured, the agent also:
+  - retrieves user-scoped long-term memories when `user_id` is present
+  - retrieves shared asset-scoped long-term memories when `instance_id` or `cluster_id` is present
+  - syncs working memory after a turn
+  - runs fail-open if AMS is unavailable
+- Operator preferences stay in user-scoped memory only; shared asset memory is limited to operational history.
 
 ## SRE Tools
 

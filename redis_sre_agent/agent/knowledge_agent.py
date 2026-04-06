@@ -17,6 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
+from redis_sre_agent.core.agent_memory import AgentMemoryService
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.progress import (
@@ -518,6 +519,17 @@ class KnowledgeOnlyAgent:
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
+        memory_service = AgentMemoryService()
+        instance_id = context.get("instance_id") if context else None
+        cluster_id = context.get("cluster_id") if context else None
+        memory_context = await memory_service.prepare_turn_context(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            emitter=emitter,
+        )
 
         # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:
@@ -547,6 +559,8 @@ class KnowledgeOnlyAgent:
 
             # Create initial state with conversation history
             initial_messages = [SystemMessage(content=system_prompt)]
+            if memory_context.system_prompt:
+                initial_messages.append(SystemMessage(content=memory_context.system_prompt))
             if conversation_history:
                 initial_messages.extend(conversation_history)
                 logger.info(
@@ -613,9 +627,22 @@ class KnowledgeOnlyAgent:
                 )
 
                 logger.info(f"Knowledge query completed for user {user_id}")
-                return AgentResponse(
+                result = AgentResponse(
                     response=response, search_results=search_results, tool_envelopes=tool_envelopes
                 )
+                await memory_service.persist_turn(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_message=query,
+                    assistant_message=result.response,
+                    user_working_memory=memory_context.user_working_memory,
+                    asset_working_memory=memory_context.asset_working_memory,
+                    instance_id=instance_id,
+                    cluster_id=cluster_id,
+                    thread_id=session_id,
+                    emitter=emitter,
+                )
+                return result
 
             except Exception as e:
                 logger.error(f"Knowledge agent processing failed: {e}")

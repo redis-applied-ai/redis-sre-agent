@@ -83,6 +83,7 @@ docker compose down
 
 ### Next steps
 - Production Quickstart: docs/quickstarts/production.md
+- Agent Memory Server integration: docs/how-to/agent-memory-server-integration.md
 - Experimental UI details: docs/ui/experimental.md
 - Knowledge ingestion (optional): `uv run redis-sre-agent pipeline prepare_sources` then `uv run redis-sre-agent pipeline ingest`
 

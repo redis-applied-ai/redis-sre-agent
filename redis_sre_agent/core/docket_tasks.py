@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from docket import ConcurrencyLimit, Docket, Perpetual, Retry
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from ulid import ULID
 
 from redis_sre_agent.agent import get_sre_agent
@@ -335,7 +335,6 @@ async def process_chat_turn(
                 }
             ],
         )
-
         return result
 
     except Exception as e:
@@ -925,6 +924,8 @@ async def process_agent_turn(
                     lc_history.append(HumanMessage(content=msg["content"]))
                 elif msg["role"] == "assistant":
                     lc_history.append(AIMessage(content=msg["content"]))
+                elif msg["role"] == "system":
+                    lc_history.append(SystemMessage(content=msg["content"]))
 
             # Use a smaller iteration cap for the knowledge agent to avoid long loops
             _k_max_iters = settings.knowledge_max_iterations
@@ -936,7 +937,7 @@ async def process_agent_turn(
                 user_id=thread.metadata.user_id or "unknown",
                 session_id=thread.metadata.session_id or thread_id,
                 max_iterations=_k_max_iters,
-                context=None,
+                context=routing_context,
                 progress_emitter=progress_emitter,
                 conversation_history=lc_history if lc_history else None,
             )
@@ -961,6 +962,8 @@ async def process_agent_turn(
                     lc_history.append(HumanMessage(content=msg["content"]))
                 elif msg["role"] == "assistant":
                     lc_history.append(AIMessage(content=msg["content"]))
+                elif msg["role"] == "system":
+                    lc_history.append(SystemMessage(content=msg["content"]))
 
             # Chat agent uses a reasonable iteration cap for quick responses
             _chat_max_iters = min(int(settings.max_iterations or 15), 10)
@@ -1253,7 +1256,7 @@ async def run_agent_with_progress(
 
         # Convert conversation messages to LangChain format
         # We only store user/assistant messages, tool messages are internal to LangGraph
-        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
         lc_messages = []
         for msg in messages:
@@ -1261,6 +1264,8 @@ async def run_agent_with_progress(
                 lc_messages.append(HumanMessage(content=msg["content"]))
             elif msg["role"] == "assistant":
                 lc_messages.append(AIMessage(content=msg["content"]))
+            elif msg["role"] == "system":
+                lc_messages.append(SystemMessage(content=msg["content"]))
 
         # Prepare the state
         thread_id = conversation_state.get("thread_id", "default")

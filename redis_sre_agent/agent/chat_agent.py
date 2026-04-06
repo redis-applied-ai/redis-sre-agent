@@ -20,6 +20,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 
+from redis_sre_agent.core.agent_memory import AgentMemoryService
 from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
@@ -633,6 +634,18 @@ class ChatAgent:
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
+        memory_service = AgentMemoryService()
+        instance_id = context.get("instance_id") if context else None
+        cluster_id = context.get("cluster_id") if context else None
+
+        memory_context = await memory_service.prepare_turn_context(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            emitter=emitter,
+        )
 
         # Get cache client if tool caching is enabled
         cache_client = None
@@ -674,6 +687,8 @@ class ChatAgent:
                 else CHAT_SYSTEM_PROMPT
             )
             initial_messages: List[BaseMessage] = [SystemMessage(content=system_prompt)]
+            if memory_context.system_prompt:
+                initial_messages.append(SystemMessage(content=memory_context.system_prompt))
 
             # Add instance context to the query if available
             enhanced_query = query
@@ -742,18 +757,45 @@ User Query: {query}"""
                 if messages:
                     last_message = messages[-1]
                     if isinstance(last_message, AIMessage):
-                        return AgentResponse(
+                        response = AgentResponse(
                             response=last_message.content,
                             tool_envelopes=tool_envelopes,
                         )
-                    return AgentResponse(
-                        response=str(last_message.content),
-                        tool_envelopes=tool_envelopes,
+                    else:
+                        response = AgentResponse(
+                            response=str(last_message.content),
+                            tool_envelopes=tool_envelopes,
+                        )
+                    await memory_service.persist_turn(
+                        session_id=session_id,
+                        user_id=user_id,
+                        user_message=query,
+                        assistant_message=response.response,
+                        user_working_memory=memory_context.user_working_memory,
+                        asset_working_memory=memory_context.asset_working_memory,
+                        instance_id=instance_id,
+                        cluster_id=cluster_id,
+                        thread_id=session_id,
+                        emitter=emitter,
                     )
+                    return response
 
-                return AgentResponse(
+                fallback = AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                 )
+                await memory_service.persist_turn(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_message=query,
+                    assistant_message=fallback.response,
+                    user_working_memory=memory_context.user_working_memory,
+                    asset_working_memory=memory_context.asset_working_memory,
+                    instance_id=instance_id,
+                    cluster_id=cluster_id,
+                    thread_id=session_id,
+                    emitter=emitter,
+                )
+                return fallback
 
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")

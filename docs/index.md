@@ -12,6 +12,7 @@ This is an early release with built-in support for Prometheus, Loki, Redis CLI d
 ## Do things
 - Ad‑hoc Triage (CLI): [how-to/cli.md](how-to/cli.md)
 - Ad‑hoc Triage (API): [how-to/api.md](how-to/api.md)
+- Agent Memory Server Integration: [how-to/agent-memory-server-integration.md](how-to/agent-memory-server-integration.md)
 - Scheduled Health Checks: [how-to/cli.md#6-schedule-recurring-checks](how-to/cli.md#6-schedule-recurring-checks)
 - Integrations (Providers): [how-to/tool-providers.md](how-to/tool-providers.md)
 
