@@ -108,7 +108,7 @@ main() {
     echo "  API:       http://localhost:8080"
     echo "  UI:        http://localhost:3002"
     echo "  Grafana:   http://localhost:3001"
-    echo "  Prometheus:http://localhost:9090"
+    echo "  Prometheus: http://localhost:9090"
     echo
     echo "Try a knowledge question:"
     echo "  docker compose exec -T sre-agent uv run redis-sre-agent \\"
