@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 from redisvl.query import CountQuery, FilterQuery
 from ulid import ULID
 
-from redis_sre_agent.core.clusters import RedisCluster, get_clusters
-from redis_sre_agent.core.instances import RedisInstance, get_instances
+from redis_sre_agent.core.clusters import RedisCluster, get_cluster_by_id, get_clusters
+from redis_sre_agent.core.instances import RedisInstance, get_instance_by_id, get_instances
 from redis_sre_agent.core.redis import SRE_TARGETS_INDEX, get_redis_client, get_targets_index
 from redis_sre_agent.core.threads import ThreadManager
 
@@ -120,6 +120,142 @@ class ThreadTargetState(BaseModel):
     active_target_handle: Optional[str] = None
     target_toolset_generation: int = 0
     target_bindings: List[TargetBinding] = Field(default_factory=list)
+
+
+def get_attached_target_handles_from_context(context: Optional[Dict[str, Any]]) -> List[str]:
+    """Return normalized attached target handles from a routing context."""
+    if not isinstance(context, dict):
+        return []
+
+    raw_handles = context.get("attached_target_handles") or []
+    if not isinstance(raw_handles, list):
+        return []
+
+    handles: List[str] = []
+    for raw_handle in raw_handles:
+        handle = str(raw_handle or "").strip()
+        if handle:
+            handles.append(handle)
+    return handles
+
+
+def get_target_bindings_from_context(context: Optional[Dict[str, Any]]) -> List[TargetBinding]:
+    """Parse serialized target bindings from a routing context."""
+    if not isinstance(context, dict):
+        return []
+
+    raw_bindings = context.get("target_bindings") or []
+    if not isinstance(raw_bindings, list):
+        return []
+
+    bindings: List[TargetBinding] = []
+    for raw_binding in raw_bindings:
+        try:
+            bindings.append(TargetBinding.model_validate(raw_binding))
+        except Exception:
+            continue
+    return bindings
+
+
+async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Build prompt context for attached targets, including comparison guidance."""
+    handles = get_attached_target_handles_from_context(context)
+    bindings = get_target_bindings_from_context(context)
+    if not handles and not bindings:
+        return None
+
+    active_handle = ""
+    if isinstance(context, dict):
+        active_handle = str(context.get("active_target_handle") or "").strip()
+
+    binding_by_handle = {binding.target_handle: binding for binding in bindings}
+    ordered_handles = list(handles)
+    for binding in bindings:
+        if binding.target_handle not in ordered_handles:
+            ordered_handles.append(binding.target_handle)
+
+    target_lines: List[str] = []
+    for handle in ordered_handles:
+        binding = binding_by_handle.get(handle)
+        if binding is None:
+            target_lines.append(f"- handle={handle} [metadata unavailable]")
+            continue
+
+        capability_text = ", ".join(binding.capabilities or []) or "unspecified"
+        if binding.target_kind == "instance":
+            instance = await get_instance_by_id(binding.resource_id)
+            if instance is not None:
+                target_lines.append(
+                    "- "
+                    f"{binding.display_name} [handle={handle}, kind=instance, instance_id={instance.id}, "
+                    f"environment={instance.environment}, usage={instance.usage}, "
+                    f"type={instance.instance_type}, capabilities={capability_text}]"
+                )
+            else:
+                target_lines.append(
+                    "- "
+                    f"{binding.display_name} [handle={handle}, kind=instance, instance_id={binding.resource_id}, "
+                    f"capabilities={capability_text}, state=missing]"
+                )
+        elif binding.target_kind == "cluster":
+            cluster = await get_cluster_by_id(binding.resource_id)
+            if cluster is not None:
+                target_lines.append(
+                    "- "
+                    f"{binding.display_name} [handle={handle}, kind=cluster, cluster_id={cluster.id}, "
+                    f"environment={cluster.environment}, type={cluster.cluster_type}, "
+                    f"capabilities={capability_text}]"
+                )
+            else:
+                target_lines.append(
+                    "- "
+                    f"{binding.display_name} [handle={handle}, kind=cluster, cluster_id={binding.resource_id}, "
+                    f"capabilities={capability_text}, state=missing]"
+                )
+        else:
+            target_lines.append(
+                "- "
+                f"{binding.display_name} [handle={handle}, kind={binding.target_kind}, "
+                f"resource_id={binding.resource_id}, capabilities={capability_text}]"
+            )
+
+    prompt_lines = [
+        (
+            "ATTACHED TARGET SCOPE: This conversation has "
+            f"{len(ordered_handles)} attached Redis target(s)."
+        ),
+    ]
+    if active_handle and active_handle in ordered_handles:
+        prompt_lines.append(f"Active target handle: {active_handle}")
+    prompt_lines.append("Attached targets:")
+    prompt_lines.extend(target_lines)
+
+    if len(ordered_handles) > 1:
+        prompt_lines.extend(
+            [
+                "MULTI-TARGET REQUIREMENT: Treat these attached targets as a target set.",
+                (
+                    "Do not silently collapse scope to a single instance or cluster unless the "
+                    "user explicitly narrows it."
+                ),
+                (
+                    "When the user asks for investigation or comparison, gather evidence per "
+                    "target, keep the findings separated by handle/display name, and then "
+                    "return a structured comparison with metrics, config differences, findings, "
+                    "and recommendations."
+                ),
+                (
+                    "Use the target-scoped tool variants for each attached handle as needed. "
+                    "If some targets lack equivalent tooling, state that explicitly."
+                ),
+            ]
+        )
+    else:
+        prompt_lines.append(
+            "Use the target-scoped tools for the attached handle above when investigating it."
+        )
+
+    return "\n".join(prompt_lines)
 
 
 def _to_epoch(ts: Optional[str]) -> float:
@@ -769,9 +905,7 @@ async def attach_target_matches(
 ) -> tuple[List[TargetBinding], int]:
     """Persist safe target handles on a thread and return attached bindings."""
     thread_manager = ThreadManager(redis_client=get_redis_client())
-    current_thread = await thread_manager.get_thread(thread_id)
     current_state = await get_thread_target_state(thread_id)
-    current_context = current_thread.context if current_thread else {}
 
     existing_by_resource = {
         (binding.target_kind, binding.resource_id): binding
@@ -820,12 +954,8 @@ async def attach_target_matches(
         "active_target_handle": active_handle or "",
         "target_toolset_generation": generation,
         "target_bindings": [binding.model_dump(mode="json") for binding in bindings_to_store],
-        "instance_id": (
-            str(current_context.get("instance_id") or "") if not replace_existing else ""
-        ),
-        "cluster_id": (
-            str(current_context.get("cluster_id") or "") if not replace_existing else ""
-        ),
+        "instance_id": "",
+        "cluster_id": "",
     }
 
     if active_binding and len(attached_handles) == 1:

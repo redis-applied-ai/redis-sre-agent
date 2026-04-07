@@ -1267,6 +1267,308 @@ class TestProcessAgentTurn:
         assert kwargs["agent_context"]["attached_target_handles"] == ["tgt_01"]
         assert kwargs["agent_context"]["target_toolset_generation"] == 3
 
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_passes_single_resolved_cluster_scope_to_triage(self):
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.context = {}
+        mock_thread.messages = []
+        mock_thread.metadata.user_id = "test-user"
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_message = AsyncMock()
+        mock_thread_manager.update_thread = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        resolution = TargetResolutionResult(
+            status="resolved",
+            query="investigate checkout cluster",
+            clarification_required=False,
+            selected_matches=[
+                ResolvedTargetMatch(
+                    target_kind="cluster",
+                    resource_id="cluster-prod-checkout",
+                    display_name="checkout-cluster-prod",
+                    environment="production",
+                    target_type="redis_enterprise",
+                    capabilities=["admin"],
+                    confidence=0.97,
+                    match_reasons=["matched environment=production"],
+                )
+            ],
+        )
+        bindings = [
+            TargetBinding(
+                target_handle="tgt_cluster",
+                target_kind="cluster",
+                resource_id="cluster-prod-checkout",
+                display_name="checkout-cluster-prod",
+                capabilities=["admin"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            )
+        ]
+        mock_run_agent = AsyncMock(
+            return_value={
+                "response": "Cluster triage response",
+                "search_results": [],
+                "tool_envelopes": [],
+                "metadata": {"agent_type": "redis_triage"},
+            }
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.resolve_target_query",
+                new=AsyncMock(return_value=resolution),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.attach_target_matches",
+                new=AsyncMock(return_value=(bindings, 5)),
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_sre_agent", return_value=MagicMock()),
+            patch(
+                "redis_sre_agent.core.docket_tasks.run_agent_with_progress",
+                new=mock_run_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            await process_agent_turn(
+                thread_id="thread-123",
+                message="Investigate checkout cluster",
+                task_id="provided-task-123",
+            )
+
+        _, kwargs = mock_run_agent.await_args
+        assert kwargs["agent_context"]["cluster_id"] == "cluster-prod-checkout"
+        assert kwargs["agent_context"]["attached_target_handles"] == ["tgt_cluster"]
+        assert kwargs["agent_context"]["target_toolset_generation"] == 5
+
+    @pytest.mark.asyncio
+    async def test_pre_resolved_multi_target_scope_reaches_agent_without_singular_target_ids(self):
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.context = {}
+        mock_thread.messages = []
+        mock_thread.metadata.user_id = "test-user"
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_message = AsyncMock()
+        mock_thread_manager.update_thread = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        resolution = TargetResolutionResult(
+            status="resolved",
+            query="compare checkout and session cache",
+            clarification_required=False,
+            selected_matches=[
+                ResolvedTargetMatch(
+                    target_kind="instance",
+                    resource_id="redis-prod-checkout-cache",
+                    display_name="checkout-cache-prod",
+                    environment="production",
+                    target_type="oss_single",
+                    capabilities=["redis", "diagnostics"],
+                    confidence=0.97,
+                    match_reasons=["matched environment=production"],
+                ),
+                ResolvedTargetMatch(
+                    target_kind="instance",
+                    resource_id="redis-stage-session-cache",
+                    display_name="session-cache-stage",
+                    environment="staging",
+                    target_type="oss_single",
+                    capabilities=["redis", "diagnostics"],
+                    confidence=0.94,
+                    match_reasons=["matched environment=staging"],
+                ),
+            ],
+        )
+        bindings = [
+            TargetBinding(
+                target_handle="tgt_01",
+                target_kind="instance",
+                resource_id="redis-prod-checkout-cache",
+                display_name="checkout-cache-prod",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            ),
+            TargetBinding(
+                target_handle="tgt_02",
+                target_kind="instance",
+                resource_id="redis-stage-session-cache",
+                display_name="session-cache-stage",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            ),
+        ]
+        mock_run_agent = AsyncMock(
+            return_value={
+                "response": "Comparison response",
+                "search_results": [],
+                "tool_envelopes": [],
+                "metadata": {"agent_type": "redis_triage"},
+            }
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.resolve_target_query",
+                new=AsyncMock(return_value=resolution),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.attach_target_matches",
+                new=AsyncMock(return_value=(bindings, 4)),
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_sre_agent", return_value=MagicMock()),
+            patch(
+                "redis_sre_agent.core.docket_tasks.run_agent_with_progress",
+                new=mock_run_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            await process_agent_turn(
+                thread_id="thread-123",
+                message="Compare checkout and session cache",
+                task_id="provided-task-123",
+            )
+
+        _, kwargs = mock_run_agent.await_args
+        assert kwargs["agent_context"]["attached_target_handles"] == ["tgt_01", "tgt_02"]
+        assert kwargs["agent_context"]["active_target_handle"] == "tgt_01"
+        assert kwargs["agent_context"]["target_toolset_generation"] == 4
+        assert "instance_id" not in kwargs["agent_context"]
+        assert "cluster_id" not in kwargs["agent_context"]
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_chat_path_does_not_bind_single_target_for_multi_scope(self):
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.context = {
+            "instance_id": "redis-stale-instance",
+            "attached_target_handles": ["tgt_01", "tgt_02"],
+        }
+        mock_thread.messages = []
+        mock_thread.metadata.user_id = "test-user"
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_message = AsyncMock()
+        mock_thread_manager.update_thread = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        mock_chat_agent = MagicMock()
+        mock_chat_agent.process_query = AsyncMock(
+            return_value=AgentResponse(
+                response="Chat response",
+                search_results=[],
+                tool_envelopes=[],
+            )
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_CHAT),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ) as mock_get_chat_agent,
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            await process_agent_turn(
+                thread_id="thread-123",
+                message="Compare the attached targets",
+                task_id="provided-task-123",
+            )
+
+        assert mock_get_chat_agent.call_args.kwargs["redis_instance"] is None
+        assert mock_get_chat_agent.call_args.kwargs["redis_cluster"] is None
+
 
 class TestRunAgentWithProgress:
     """Test run_agent_with_progress function."""

@@ -39,6 +39,10 @@ from ..core.instances import (
 from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
+from ..core.targets import (
+    build_attached_target_scope_prompt,
+    get_attached_target_handles_from_context,
+)
 from ..tools.manager import ToolManager
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
@@ -1726,8 +1730,15 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         target_instance = None
         target_cluster = None
         enhanced_query = query
+        attached_target_prompt = await build_attached_target_scope_prompt(context)
+        attached_target_handles = get_attached_target_handles_from_context(context)
 
-        if context and context.get("instance_id"):
+        if len(attached_target_handles) > 1 and attached_target_prompt:
+            enhanced_query = f"""User Query: {query}
+
+{attached_target_prompt}"""
+
+        elif context and context.get("instance_id"):
             instance_id = context["instance_id"]
             logger.info(f"Processing query with Redis instance context: {instance_id}")
 
@@ -1895,6 +1906,11 @@ Focus on cluster-level analysis and use instance-level diagnostics only if the u
                 enhanced_query = f"""User Query: {query}
 
 CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but there was an error retrieving cluster details. Please proceed with general Redis troubleshooting."""
+
+        elif attached_target_prompt:
+            enhanced_query = f"""User Query: {query}
+
+{attached_target_prompt}"""
 
         elif context and context.get("support_package_path"):
             # Support package provided without specific instance - focus on the package

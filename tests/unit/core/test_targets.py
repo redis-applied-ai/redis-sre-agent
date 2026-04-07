@@ -11,9 +11,12 @@ from redis_sre_agent.core.targets import (
     ResolvedTargetMatch,
     TargetCatalogDoc,
     attach_target_matches,
+    build_attached_target_scope_prompt,
     build_ephemeral_target_bindings,
     build_target_doc_from_cluster,
     build_target_doc_from_instance,
+    get_attached_target_handles_from_context,
+    get_target_bindings_from_context,
     resolve_target_query,
     sync_target_catalog,
 )
@@ -311,7 +314,7 @@ async def test_attach_target_matches_persists_safe_thread_context():
 
 
 @pytest.mark.asyncio
-async def test_attach_target_matches_append_mode_preserves_existing_scope_ids():
+async def test_attach_target_matches_append_mode_clears_singular_scope_ids_for_multi_target():
     matches = [
         ResolvedTargetMatch(
             target_kind="cluster",
@@ -360,9 +363,145 @@ async def test_attach_target_matches_append_mode_preserves_existing_scope_ids():
     assert generation == 2
 
     update_payload = mock_thread_manager.update_thread_context.await_args.args[1]
-    assert update_payload["instance_id"] == "redis-prod-checkout-cache"
+    assert update_payload["instance_id"] == ""
     assert update_payload["cluster_id"] == ""
     assert len(update_payload["attached_target_handles"]) == 2
+
+
+def test_get_attached_target_handles_from_context_rejects_non_list_values():
+    assert get_attached_target_handles_from_context(None) == []
+    assert get_attached_target_handles_from_context({"attached_target_handles": "tgt_01"}) == []
+
+
+def test_get_target_bindings_from_context_skips_invalid_bindings():
+    bindings = get_target_bindings_from_context(
+        {
+            "target_bindings": [
+                {
+                    "target_handle": "tgt_valid",
+                    "target_kind": "instance",
+                    "resource_id": "redis-prod-checkout-cache",
+                    "display_name": "checkout-cache-prod",
+                },
+                {"display_name": "invalid"},
+            ]
+        }
+    )
+
+    assert len(bindings) == 1
+    assert bindings[0].target_handle == "tgt_valid"
+    assert get_target_bindings_from_context({"target_bindings": "invalid"}) == []
+
+
+@pytest.mark.asyncio
+async def test_build_attached_target_scope_prompt_handles_binding_edge_cases():
+    cluster = RedisCluster(
+        id="cluster-prod-1",
+        name="cluster-prod-1",
+        cluster_type="oss_cluster",
+        environment="production",
+        description="Production cluster",
+    )
+    context = {
+        "attached_target_handles": [
+            "tgt_meta_only",
+            "tgt_instance_missing",
+            "tgt_cluster_found",
+            "tgt_cluster_missing",
+            "tgt_unknown",
+        ],
+        "target_bindings": [
+            {
+                "target_handle": "tgt_instance_missing",
+                "target_kind": "instance",
+                "resource_id": "redis-missing",
+                "display_name": "missing-instance",
+                "capabilities": ["redis"],
+            },
+            {
+                "target_handle": "tgt_cluster_found",
+                "target_kind": "cluster",
+                "resource_id": "cluster-prod-1",
+                "display_name": "prod-cluster",
+                "capabilities": ["admin"],
+            },
+            {
+                "target_handle": "tgt_cluster_missing",
+                "target_kind": "cluster",
+                "resource_id": "cluster-missing",
+                "display_name": "missing-cluster",
+                "capabilities": ["admin"],
+            },
+            {
+                "target_handle": "tgt_unknown",
+                "target_kind": "custom",
+                "resource_id": "custom-1",
+                "display_name": "custom-target",
+                "capabilities": ["custom"],
+            },
+            {
+                "target_handle": "tgt_extra",
+                "target_kind": "instance",
+                "resource_id": "redis-extra",
+                "display_name": "extra-instance",
+                "capabilities": ["redis"],
+            },
+        ],
+    }
+
+    async def _get_instance(instance_id: str):
+        return None
+
+    async def _get_cluster(cluster_id: str):
+        return cluster if cluster_id == "cluster-prod-1" else None
+
+    with (
+        patch("redis_sre_agent.core.targets.get_instance_by_id", new=_get_instance),
+        patch("redis_sre_agent.core.targets.get_cluster_by_id", new=_get_cluster),
+    ):
+        prompt = await build_attached_target_scope_prompt(context)
+
+    assert prompt is not None
+    assert "handle=tgt_meta_only [metadata unavailable]" in prompt
+    assert "missing-instance" in prompt and "state=missing" in prompt
+    assert "prod-cluster" in prompt and "cluster_id=cluster-prod-1" in prompt
+    assert "missing-cluster" in prompt and "cluster_id=cluster-missing" in prompt
+    assert "custom-target" in prompt and "kind=custom" in prompt
+    assert "extra-instance" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_attached_target_scope_prompt_single_target_uses_single_target_instruction():
+    instance = RedisInstance(
+        id="redis-prod-checkout-cache",
+        name="checkout-cache-prod",
+        connection_url="redis://localhost:6379",
+        environment="production",
+        usage="cache",
+        description="Checkout cache",
+        instance_type="oss_single",
+    )
+    context = {
+        "attached_target_handles": ["tgt_01"],
+        "target_bindings": [
+            {
+                "target_handle": "tgt_01",
+                "target_kind": "instance",
+                "resource_id": "redis-prod-checkout-cache",
+                "display_name": "checkout-cache-prod",
+                "capabilities": ["redis", "diagnostics"],
+            }
+        ],
+    }
+
+    with patch(
+        "redis_sre_agent.core.targets.get_instance_by_id",
+        new=AsyncMock(return_value=instance),
+    ):
+        prompt = await build_attached_target_scope_prompt(context)
+
+    assert prompt is not None
+    assert "Use the target-scoped tools for the attached handle above" in prompt
 
 
 def test_build_ephemeral_target_bindings_generates_opaque_handles():

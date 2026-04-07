@@ -30,6 +30,7 @@ from redis_sre_agent.core.qa import QAManager
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
+from redis_sre_agent.core.targets import get_attached_target_handles_from_context
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.threads import Message, ThreadManager
 
@@ -847,6 +848,7 @@ async def process_agent_turn(
         if context:
             routing_context.update(context)
         routing_context["task_id"] = task_id
+        attached_target_handles = get_attached_target_handles_from_context(routing_context)
 
         # Ensure active_instance_id is in routing context
         if active_instance_id:
@@ -862,7 +864,9 @@ async def process_agent_turn(
             user_preferences=None,  # Could be extended to include user preferences
         )
 
-        if agent_type == AgentType.REDIS_TRIAGE and not (active_instance_id or active_cluster_id):
+        if agent_type == AgentType.REDIS_TRIAGE and not (
+            active_instance_id or active_cluster_id or attached_target_handles
+        ):
             try:
                 from redis_sre_agent.core.targets import attach_target_matches, resolve_target_query
 
@@ -881,19 +885,27 @@ async def process_agent_turn(
                         replace_existing=False,
                     )
                     if attached_bindings:
-                        active_binding = attached_bindings[0]
-                        if active_binding.target_kind == "instance":
-                            active_instance_id = active_binding.resource_id
-                            routing_context["instance_id"] = active_instance_id
-                            routing_context.pop("cluster_id", None)
-                        elif active_binding.target_kind == "cluster":
-                            active_cluster_id = active_binding.resource_id
-                            routing_context["cluster_id"] = active_cluster_id
-                            routing_context.pop("instance_id", None)
                         routing_context["attached_target_handles"] = [
                             binding.target_handle for binding in attached_bindings
                         ]
+                        routing_context["active_target_handle"] = attached_bindings[0].target_handle
                         routing_context["target_toolset_generation"] = generation
+                        routing_context["target_bindings"] = [
+                            binding.model_dump(mode="json") for binding in attached_bindings
+                        ]
+                        if len(attached_bindings) == 1:
+                            active_binding = attached_bindings[0]
+                            if active_binding.target_kind == "instance":
+                                active_instance_id = active_binding.resource_id
+                                routing_context["instance_id"] = active_instance_id
+                                routing_context.pop("cluster_id", None)
+                            elif active_binding.target_kind == "cluster":
+                                active_cluster_id = active_binding.resource_id
+                                routing_context["cluster_id"] = active_cluster_id
+                                routing_context.pop("instance_id", None)
+                        else:
+                            routing_context.pop("instance_id", None)
+                            routing_context.pop("cluster_id", None)
                         await task_manager.add_task_update(
                             task_id,
                             "Resolved target scope from natural language before deep triage",
@@ -916,13 +928,17 @@ async def process_agent_turn(
         if agent_type == AgentType.REDIS_TRIAGE:
             agent = get_sre_agent()
         else:
-            # Get the target instance for the chat agent
-            target_instance = (
-                await get_instance_by_id(active_instance_id) if active_instance_id else None
-            )
-            target_cluster = (
-                await get_cluster_by_id(active_cluster_id) if active_cluster_id else None
-            )
+            if len(get_attached_target_handles_from_context(routing_context)) > 1:
+                target_instance = None
+                target_cluster = None
+            else:
+                # Get the target instance for the chat agent
+                target_instance = (
+                    await get_instance_by_id(active_instance_id) if active_instance_id else None
+                )
+                target_cluster = (
+                    await get_cluster_by_id(active_cluster_id) if active_cluster_id else None
+                )
             agent = get_chat_agent(
                 redis_instance=target_instance,
                 redis_cluster=target_cluster,

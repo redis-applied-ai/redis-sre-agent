@@ -272,6 +272,22 @@ class TestRouteToAppropriateAgent:
 
             assert result == AgentType.REDIS_TRIAGE
 
+    async def test_attached_target_scope_with_deep_request_routes_to_triage(self):
+        """Attached target sets should count as diagnostic scope for deep triage routing."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "DEEP_TRIAGE"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
+            result = await route_to_appropriate_agent(
+                query="Do a deep triage and compare these attached caches",
+                context={"attached_target_handles": ["tgt_01", "tgt_02"]},
+            )
+
+            assert result == AgentType.REDIS_TRIAGE
+
     async def test_cluster_context_llm_error_uses_context_for_auto_upgrade(self):
         """LLM-failure fallback should still auto-upgrade based on conversation context."""
         with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:

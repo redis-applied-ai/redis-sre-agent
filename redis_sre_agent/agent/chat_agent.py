@@ -28,6 +28,10 @@ from redis_sre_agent.core.progress import (
     ProgressEmitter,
 )
 from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.targets import (
+    build_attached_target_scope_prompt,
+    get_attached_target_handles_from_context,
+)
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
 
@@ -663,6 +667,8 @@ class ChatAgent:
             AgentResponse with response text and any knowledge search results used
         """
         logger.info(f"Chat agent processing query for user {user_id}")
+        attached_target_prompt = await build_attached_target_scope_prompt(context)
+        attached_target_handles = get_attached_target_handles_from_context(context)
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
@@ -707,7 +713,11 @@ class ChatAgent:
 
             # Add instance context to the query if available
             enhanced_query = query
-            if self.redis_instance:
+            if len(attached_target_handles) > 1 and attached_target_prompt:
+                enhanced_query = f"""{attached_target_prompt}
+
+User Query: {query}"""
+            elif self.redis_instance:
                 repo_context = ""
                 if self.redis_instance.repo_url:
                     repo_context = f"""- Repository URL: {self.redis_instance.repo_url}
@@ -737,6 +747,10 @@ Cluster-level admin tools are PRE-CONFIGURED for this cluster when available.
 
 User Query: {query}"""
                 enhanced_query = cluster_context
+            elif attached_target_prompt:
+                enhanced_query = f"""{attached_target_prompt}
+
+User Query: {query}"""
 
             if conversation_history:
                 initial_messages.extend(conversation_history)
