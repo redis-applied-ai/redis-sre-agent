@@ -220,7 +220,6 @@ class AgentMemoryService:
 
     @staticmethod
     def _format_memory_prompt(
-        query: str,
         sections: List[tuple[str, Any, List[Any], bool]],
     ) -> Optional[str]:
         rendered_sections: List[str] = []
@@ -253,10 +252,8 @@ class AgentMemoryService:
         if not rendered_sections:
             return None
 
-        return (
-            "MEMORY CONTEXT (prior context only; verify current state with live tools)\n"
-            + "\n\n".join(rendered_sections)
-            + f"\n\nCurrent user query:\n{query}"
+        return "MEMORY CONTEXT (prior context only; verify current state with live tools)\n" + (
+            "\n\n".join(rendered_sections)
         )
 
     @staticmethod
@@ -318,7 +315,6 @@ class AgentMemoryService:
                         text=query,
                         user_id=UserId(eq=user_id),
                         namespace=Namespace(eq=settings.agent_memory_namespace),
-                        entities=Entities(any=entities) if entities else None,
                         limit=settings.agent_memory_retrieval_limit,
                     )
                     user_memories = list(getattr(user_memories_result, "memories", []) or [])
@@ -374,7 +370,7 @@ class AgentMemoryService:
                     },
                 )
                 return TurnMemoryContext(
-                    system_prompt=self._format_memory_prompt(query, prompt_sections),
+                    system_prompt=self._format_memory_prompt(prompt_sections),
                     user_working_memory=user_working_memory,
                     asset_working_memory=asset_working_memory,
                     long_term_count=total_memories,

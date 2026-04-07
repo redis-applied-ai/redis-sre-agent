@@ -120,8 +120,13 @@ class TestPrepareTurnContext:
         assert result.long_term_count == 2
         assert "User prefers remediation-first answers" in (result.system_prompt or "")
         assert "Cluster had a failover during backups" in (result.system_prompt or "")
+        assert "Current user query:" not in (result.system_prompt or "")
         assert mock_client.search_long_term_memory.await_count == 2
         assert mock_client.get_or_create_working_memory.await_count == 2
+        user_search_kwargs = mock_client.search_long_term_memory.await_args_list[0].kwargs
+        asset_search_kwargs = mock_client.search_long_term_memory.await_args_list[1].kwargs
+        assert "entities" not in user_search_kwargs or user_search_kwargs["entities"] is None
+        assert asset_search_kwargs["entities"] is not None
         mock_emitter.assert_awaited()
 
     @pytest.mark.asyncio
