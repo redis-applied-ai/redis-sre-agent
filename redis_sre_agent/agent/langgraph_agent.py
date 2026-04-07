@@ -2440,37 +2440,37 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         """
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
-        emitter = progress_emitter if progress_emitter is not None else self._progress_emitter
-        memory_service = AgentMemoryService()
-        instance_id = context.get("instance_id") if context else None
-        cluster_id = context.get("cluster_id") if context else None
-        memory_context = await memory_service.prepare_turn_context(
-            query=query,
-            session_id=session_id,
-            user_id=user_id,
-            instance_id=instance_id,
-            cluster_id=cluster_id,
-            emitter=emitter,
-        )
-        effective_history = list(conversation_history or [])
-        if memory_context.system_prompt:
-            effective_history.insert(0, SystemMessage(content=memory_context.system_prompt))
-
-        async def _persist_final_response(final_response: str) -> None:
-            await memory_service.persist_turn(
+        try:
+            emitter = progress_emitter if progress_emitter is not None else self._progress_emitter
+            memory_service = AgentMemoryService()
+            instance_id = context.get("instance_id") if context else None
+            cluster_id = context.get("cluster_id") if context else None
+            memory_context = await memory_service.prepare_turn_context(
+                query=query,
                 session_id=session_id,
                 user_id=user_id,
-                user_message=query,
-                assistant_message=final_response,
-                user_working_memory=memory_context.user_working_memory,
-                asset_working_memory=memory_context.asset_working_memory,
                 instance_id=instance_id,
                 cluster_id=cluster_id,
-                thread_id=session_id,
                 emitter=emitter,
             )
+            effective_history = list(conversation_history or [])
+            if memory_context.system_prompt:
+                effective_history.insert(0, SystemMessage(content=memory_context.system_prompt))
 
-        try:
+            async def _persist_final_response(final_response: str) -> None:
+                await memory_service.persist_turn(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_message=query,
+                    assistant_message=final_response,
+                    user_working_memory=memory_context.user_working_memory,
+                    asset_working_memory=memory_context.asset_working_memory,
+                    instance_id=instance_id,
+                    cluster_id=cluster_id,
+                    thread_id=session_id,
+                    emitter=emitter,
+                )
+
             # Produce the primary response (returns AgentResponse)
             agent_response = await self._process_query(
                 query,

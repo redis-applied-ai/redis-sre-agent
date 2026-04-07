@@ -1,5 +1,6 @@
 """Unit tests for SRE LangGraph Agent."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -187,6 +188,30 @@ class TestSRELangGraphAgent:
         assert call_kwargs["version"] == "latest"
         assert call_kwargs["available_tools"] == []
         assert "memory question" in call_kwargs["query"]
+
+    @pytest.mark.asyncio
+    async def test_process_query_ends_run_cache_when_memory_setup_is_cancelled(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+        memory_service = MagicMock()
+        memory_service.prepare_turn_context = AsyncMock(side_effect=asyncio.CancelledError())
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.AgentMemoryService",
+                return_value=memory_service,
+            ),
+            patch.object(agent, "_end_run_cache") as mock_end_run_cache,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await agent.process_query(
+                    query="memory question",
+                    session_id="s1",
+                    user_id="u1",
+                )
+
+        mock_end_run_cache.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
