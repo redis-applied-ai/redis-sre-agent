@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT, KnowledgeOnlyAgent
+from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
@@ -127,6 +128,71 @@ class TestKnowledgeAgent:
             version="latest",
             available_tools=[],
         )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_skips_memory_persist_for_generic_fallback(
+        self, mock_create_llm, mock_tool_manager_cls, mock_build_startup_context
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="s1",
+            user_id="u1",
+            query="who runs AOP?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                return {
+                    "messages": [],
+                    "knowledge_search_results": [],
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = KnowledgeOnlyAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            response = await agent.process_query(query="who runs AOP?", session_id="s1", user_id="u1")
+
+        assert response.response.startswith("I apologize, but I wasn't able to process your query.")
+        prepared_memory.persist_response_fail_open.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_ingest_sre_document_wrapper(self):

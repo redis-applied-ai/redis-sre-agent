@@ -627,7 +627,8 @@ class KnowledgeOnlyAgent:
                 result = AgentResponse(
                     response=response, search_results=search_results, tool_envelopes=tool_envelopes
                 )
-                await prepared_memory.persist_response_fail_open(result.response)
+                if messages:
+                    await prepared_memory.persist_response_fail_open(result.response)
                 return result
 
             except Exception as e:
