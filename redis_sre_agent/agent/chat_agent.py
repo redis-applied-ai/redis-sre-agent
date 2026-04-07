@@ -800,7 +800,6 @@ User Query: {query}"""
                 fallback = AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                 )
-                await prepared_memory.persist_response_fail_open(fallback.response)
                 return fallback
 
             except Exception as e:
