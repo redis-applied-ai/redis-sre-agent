@@ -1698,7 +1698,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
@@ -1709,7 +1709,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         Args:
             query: User's SRE question or request
             session_id: Session identifier for conversation context
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
             progress_emitter: ProgressEmitter for status updates during this query.
@@ -1720,6 +1720,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         logger.info(
             "Processing SRE query for user %s, session %s", user_id or "<anonymous>", session_id
         )
+        effective_user_id = user_id or "unknown"
 
         # Set progress emitter for this query
         if progress_emitter is not None:
@@ -1943,7 +1944,7 @@ Please use the support package tools to analyze this package and answer the user
                             "description", "Created by agent from user-provided details"
                         ),
                         created_by="agent",
-                        user_id=user_id,
+                        user_id=effective_user_id,
                     )
                     logger.info(
                         f"Successfully created instance: {new_instance.name} ({new_instance.id})"
@@ -2239,7 +2240,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
             thread_id=session_id,
             task_id=(context or {}).get("task_id") if isinstance(context, dict) else None,
-            user_id=user_id,
+            user_id=effective_user_id,
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()
