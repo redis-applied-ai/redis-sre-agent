@@ -29,6 +29,7 @@ from opentelemetry import trace
 from pydantic import BaseModel, Field
 
 from ..agent.router import format_conversation_context, query_needs_live_redis_scope
+from ..core.agent_memory import prepare_agent_turn_memory
 from ..core.config import settings
 from ..core.instances import (
     create_instance,
@@ -538,7 +539,7 @@ class AgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -1697,7 +1698,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
@@ -1708,7 +1709,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         Args:
             query: User's SRE question or request
             session_id: Session identifier for conversation context
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
             progress_emitter: ProgressEmitter for status updates during this query.
@@ -1716,7 +1717,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         Returns:
             AgentResponse with response text and search results for citation tracking
         """
-        logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
+        logger.info(
+            "Processing SRE query for user %s, session %s", user_id or "<anonymous>", session_id
+        )
 
         # Set progress emitter for this query
         if progress_emitter is not None:
@@ -2415,7 +2418,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
@@ -2426,7 +2429,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         Args:
             query: User's SRE question or request
             session_id: Session identifier for conversation context
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
             conversation_history: Optional list of previous messages for context
@@ -2438,6 +2441,19 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
         try:
+            emitter = progress_emitter if progress_emitter is not None else self._progress_emitter
+            prepared_memory = await prepare_agent_turn_memory(
+                query=query,
+                session_id=session_id,
+                user_id=user_id,
+                context=context,
+                emitter=emitter,
+            )
+            memory_context = prepared_memory.memory_context
+            effective_history = list(conversation_history or [])
+            if memory_context.system_prompt:
+                effective_history.insert(0, SystemMessage(content=memory_context.system_prompt))
+
             # Produce the primary response (returns AgentResponse)
             agent_response = await self._process_query(
                 query,
@@ -2445,23 +2461,29 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 user_id,
                 max_iterations,
                 context,
-                conversation_history,
+                effective_history or None,
                 progress_emitter,
             )
             response_text = agent_response.response
 
             # Skip correction if this message isn't about Redis
+            skip_safety_fact_correction = False
             try:
-                if not (self._is_redis_scoped(query) or self._is_redis_scoped(response_text)):
-                    logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
-                    return agent_response
+                skip_safety_fact_correction = not (
+                    self._is_redis_scoped(query) or self._is_redis_scoped(response_text)
+                )
             except Exception:
                 pass
+            if skip_safety_fact_correction:
+                logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
+                await prepared_memory.persist_response_fail_open(agent_response.response)
+                return agent_response
 
             # Heuristic gate: only run when risky patterns/URLs present
             if not (
                 self._should_run_safety_fact(response_text) or self._should_run_safety_fact(query)
             ):
+                await prepared_memory.persist_response_fail_open(agent_response.response)
                 return agent_response
 
             # Build a small, bounded corrector with knowledge + utilities tools only
@@ -2565,12 +2587,15 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     except Exception:
                         edited_sanitized = edited
                     # Return corrected response with original search results and tool envelopes
-                    return AgentResponse(
+                    corrected_response = AgentResponse(
                         response=edited_sanitized,
                         search_results=agent_response.search_results,
                         tool_envelopes=agent_response.tool_envelopes,
                     )
+                    await prepared_memory.persist_response_fail_open(corrected_response.response)
+                    return corrected_response
                 # If no change, just return original
+                await prepared_memory.persist_response_fail_open(agent_response.response)
                 return agent_response
         finally:
             # Clear LLM memo cache for this run

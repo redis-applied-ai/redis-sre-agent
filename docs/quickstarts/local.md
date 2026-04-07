@@ -85,9 +85,9 @@ docker compose down
 ```
 
 ### Next steps
-
 - Full Docker walkthrough: [quickstarts/end-to-end-setup.md](end-to-end-setup.md)
 - VM deployment: [quickstarts/vm-deployment.md](vm-deployment.md)
+- Agent Memory Server integration: [how-to/agent-memory-server-integration.md](../how-to/agent-memory-server-integration.md)
 - UI details: [ui/experimental.md](../ui/experimental.md)
 - Knowledge ingestion: `uv run redis-sre-agent pipeline prepare-sources` then `uv run redis-sre-agent pipeline ingest`
 

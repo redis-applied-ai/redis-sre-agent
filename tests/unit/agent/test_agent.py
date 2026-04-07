@@ -1,11 +1,14 @@
 """Unit tests for SRE LangGraph Agent."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
+from redis_sre_agent.agent.models import AgentResponse
+from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 
 
 @pytest.fixture
@@ -187,6 +190,114 @@ class TestSRELangGraphAgent:
         assert call_kwargs["version"] == "latest"
         assert call_kwargs["available_tools"] == []
         assert "memory question" in call_kwargs["query"]
+
+    @pytest.mark.asyncio
+    async def test_process_query_ends_run_cache_when_memory_setup_is_cancelled(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.prepare_agent_turn_memory",
+                AsyncMock(side_effect=asyncio.CancelledError()),
+            ),
+            patch.object(agent, "_end_run_cache") as mock_end_run_cache,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await agent.process_query(
+                    query="memory question",
+                    session_id="s1",
+                    user_id="u1",
+                )
+
+        mock_end_run_cache.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_preserves_optional_user_id_for_tool_manager(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+        agent = SRELangGraphAgent()
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                return {"messages": [AIMessage(content="done")]}
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ) as mock_tool_manager_class,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent._process_query(
+                query="basic question",
+                session_id="s1",
+                user_id=None,
+            )
+
+        mock_tool_manager_class.assert_called_once()
+        assert mock_tool_manager_class.call_args.kwargs["user_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_process_query_non_redis_skip_fail_open_on_persist_error(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="s1",
+            user_id=None,
+            query="How are you?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch.object(
+                agent,
+                "_process_query",
+                AsyncMock(return_value=AgentResponse(response="Hello there", search_results=[])),
+            ),
+            patch.object(agent, "_is_redis_scoped", side_effect=[False, False]),
+            patch.object(agent, "_should_run_safety_fact") as mock_should_run_safety_fact,
+        ):
+            response = await agent.process_query(
+                query="How are you?",
+                session_id="s1",
+                user_id=None,
+            )
+
+        assert response.response == "Hello there"
+        mock_should_run_safety_fact.assert_not_called()
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with("Hello there")
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")

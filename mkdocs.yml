@@ -42,6 +42,7 @@ nav:
       - Local Demo: quickstarts/local.md
       - VM Deployment (Redis Enterprise): quickstarts/vm-deployment.md
   - How-to:
+      - Agent Memory Server Integration: how-to/agent-memory-server-integration.md
       - How to connect to Redis: how-to/connect-to-redis.md
       - Configuration: how-to/configuration.md
       - Tool Providers: how-to/tool-providers.md

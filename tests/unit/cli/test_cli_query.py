@@ -41,6 +41,7 @@ def test_query_cli_help_shows_options():
     assert "knowledge" in result.output
     assert "--redis-cluster-id" in result.output
     assert "-c" in result.output
+    assert "--user-id" in result.output
 
 
 def test_query_without_instance_uses_chat_agent(mock_thread_manager, mock_redis_client):
@@ -68,6 +69,11 @@ def test_query_without_instance_uses_chat_agent(mock_thread_manager, mock_redis_
     mock_get_sre.assert_not_called()
     mock_get_instance.assert_not_awaited()
     mock_agent.process_query.assert_awaited_once()
+    _, process_kwargs = mock_agent.process_query.call_args
+    assert process_kwargs["user_id"] is None
+    _, kwargs = mock_thread_manager.create_thread.call_args
+    assert kwargs["user_id"] is None
+    assert kwargs["session_id"].startswith("cli:")
 
 
 def test_query_with_instance_uses_sre_agent_and_passes_instance_context(
@@ -481,6 +487,52 @@ def test_query_with_agent_auto_uses_router(mock_thread_manager, mock_redis_clien
     mock_get_chat.assert_called_once_with(redis_instance=None, redis_cluster=None)
     mock_get_knowledge.assert_not_called()
     mock_get_sre.assert_not_called()
+
+
+def test_query_with_explicit_user_id_scopes_thread_and_agent(
+    mock_thread_manager, mock_redis_client
+):
+    runner = CliRunner()
+    from redis_sre_agent.agent.router import AgentType
+
+    mock_agent = MagicMock()
+    mock_pool = MagicMock()
+    mock_pool.start = AsyncMock()
+    mock_pool.shutdown = AsyncMock()
+    mock_agent.process_query = AsyncMock(
+        return_value=AgentResponse(response="ok", search_results=[])
+    )
+
+    with (
+        patch("redis_sre_agent.cli.query.get_knowledge_agent") as mock_get_knowledge,
+        patch("redis_sre_agent.cli.query.get_sre_agent"),
+        patch("redis_sre_agent.cli.query.get_chat_agent", return_value=mock_agent),
+        patch(
+            "redis_sre_agent.cli.query.route_to_appropriate_agent",
+            new=AsyncMock(return_value=AgentType.KNOWLEDGE_ONLY),
+        ),
+        patch(
+            "redis_sre_agent.tools.mcp.pool.MCPConnectionPool.get_instance",
+            return_value=mock_pool,
+        ),
+        patch("redis_sre_agent.cli.query.get_redis_client", return_value=mock_redis_client),
+        patch("redis_sre_agent.cli.query.ThreadManager", return_value=mock_thread_manager),
+    ):
+        result = runner.invoke(query, ["--user-id", "operator-1", "What is Redis?"])
+
+    assert result.exit_code == 0, result.output
+    mock_thread_manager.create_thread.assert_awaited_once()
+    _, kwargs = mock_thread_manager.create_thread.call_args
+    assert kwargs["user_id"] == "operator-1"
+    assert kwargs["session_id"].startswith("cli:")
+
+    mock_agent.process_query.assert_awaited_once()
+    _, kwargs = mock_agent.process_query.call_args
+    assert kwargs["user_id"] == "operator-1"
+    assert kwargs["session_id"].startswith("cli:")
+    mock_get_knowledge.assert_not_called()
+    mock_pool.start.assert_awaited_once()
+    mock_pool.shutdown.assert_awaited_once_with(force=True)
 
 
 def test_query_agent_option_is_case_insensitive(mock_thread_manager, mock_redis_client):

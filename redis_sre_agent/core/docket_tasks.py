@@ -289,11 +289,16 @@ async def process_chat_turn(
             progress_emitter=emitter,
             exclude_mcp_categories=mcp_categories,
         )
+        agent_context = {"task_id": task_id}
+        if instance_id:
+            agent_context["instance_id"] = instance_id
+        if cluster_id:
+            agent_context["cluster_id"] = cluster_id
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
-            user_id=user_id or "mcp-user",
-            context={"task_id": task_id},
+            user_id=user_id,
+            context=agent_context,
             progress_emitter=emitter,
         )
 
@@ -346,7 +351,6 @@ async def process_chat_turn(
                 }
             ],
         )
-
         return result
 
     except Exception as e:
@@ -412,7 +416,7 @@ async def process_knowledge_query(
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
-            user_id=user_id or "mcp-user",
+            user_id=user_id,
             max_iterations=chat_max_iterations,
             context={"task_id": task_id},
             progress_emitter=emitter,
@@ -935,7 +939,7 @@ async def process_agent_turn(
                             "description", "Created by agent from user-provided details"
                         ),
                         created_by="agent",
-                        user_id=thread.metadata.user_id or "unknown",
+                        user_id=thread.metadata.user_id,
                     )
 
                     active_instance_id = new_instance.id
@@ -1110,8 +1114,13 @@ async def process_agent_turn(
         # Run the appropriate agent
         if agent_type != AgentType.REDIS_TRIAGE:
             # Use lightweight chat agent with process_query interface
+            is_knowledge_only = agent_type == AgentType.KNOWLEDGE_ONLY
             await task_manager.add_task_update(
-                task_id, "Processing query with chat agent", "agent_processing"
+                task_id,
+                "Processing query with knowledge-only agent"
+                if is_knowledge_only
+                else "Processing query with chat agent",
+                "agent_processing",
             )
 
             # Convert conversation history to LangChain messages
@@ -1122,14 +1131,18 @@ async def process_agent_turn(
                 elif msg["role"] == "assistant":
                     lc_history.append(AIMessage(content=msg["content"]))
 
-            # Chat agent uses a reasonable iteration cap for quick responses
-            _chat_max_iters = min(int(settings.max_iterations or 15), 10)
+            if is_knowledge_only:
+                max_iterations = settings.knowledge_max_iterations
+                if not isinstance(max_iterations, int) or max_iterations <= 0:
+                    max_iterations = min(int(settings.max_iterations or 10), 8)
+            else:
+                max_iterations = min(int(settings.max_iterations or 15), 10)
 
             chat_agent_response = await agent.process_query(
                 query=message,
-                user_id=thread.metadata.user_id or "unknown",
+                user_id=thread.metadata.user_id,
                 session_id=thread.metadata.session_id or thread_id,
-                max_iterations=_chat_max_iters,
+                max_iterations=max_iterations,
                 context=routing_context,
                 progress_emitter=progress_emitter,
                 conversation_history=lc_history if lc_history else None,
@@ -1140,7 +1153,7 @@ async def process_agent_turn(
                 "response": chat_agent_response.response,
                 "search_results": chat_agent_response.search_results,
                 "tool_envelopes": chat_agent_response.tool_envelopes,
-                "metadata": {"agent_type": "redis_chat"},
+                "metadata": {"agent_type": "knowledge_only" if is_knowledge_only else "redis_chat"},
             }
         else:
             # Use full Redis triage agent with full conversation state
@@ -1413,7 +1426,7 @@ async def run_agent_with_progress(
 
         # Convert conversation messages to LangChain format
         # We only store user/assistant messages, tool messages are internal to LangGraph
-        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
         lc_messages = []
         for msg in messages:
@@ -1421,6 +1434,8 @@ async def run_agent_with_progress(
                 lc_messages.append(HumanMessage(content=msg["content"]))
             elif msg["role"] == "assistant":
                 lc_messages.append(AIMessage(content=msg["content"]))
+            elif msg["role"] == "system":
+                lc_messages.append(SystemMessage(content=msg["content"]))
 
         # Prepare the state
         thread_id = conversation_state.get("thread_id", "default")

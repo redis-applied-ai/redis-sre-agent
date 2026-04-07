@@ -81,6 +81,11 @@ For compatibility details and fallback behavior, see [Operational Notes](docs/op
 
 The current release ships a production-oriented core: FastAPI API, background worker, CLI, knowledge ingestion pipeline, support package workflows, Docker-based evaluation stack, and a UI for local evaluation.
 
+Optional integrations:
+
+- Agent Memory Server: [docs/how-to/agent-memory-server-integration.md](docs/how-to/agent-memory-server-integration.md)
+  Adds fail-open long-term memory retrieval and working-memory sync for user-scoped and asset-scoped operational context.
+
 For provider architecture and extensibility details, see [Tool Providers](docs/how-to/tool-providers.md).
 
 ## License

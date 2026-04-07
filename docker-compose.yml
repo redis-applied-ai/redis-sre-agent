@@ -146,6 +146,24 @@ services:
     networks:
       - sre-network
 
+  # Redis Agent Memory Server - Working memory + long-term recall
+  agent-memory-server:
+    image: redislabs/agent-memory-server:latest
+    ports:
+      - "8012:8000"
+    environment:
+      # Redis Search indexes for AMS must be created on DB 0 in this Redis setup.
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL
+      - INDEX_ALL_MESSAGES_IN_LONG_TERM_MEMORY=false
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: agent-memory api --host 0.0.0.0 --port 8000 --task-backend=asyncio
+    networks:
+      - sre-network
+
   # SRE Agent API
   sre-agent:
     build:
@@ -161,12 +179,16 @@ services:
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
       - OPENAI_BASE_URL
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AGENT_MEMORY_ENABLED=true
+      - AGENT_MEMORY_BASE_URL=http://agent-memory-server:8000
       # OTEL: export spans to Tempo via OTLP HTTP
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
+      agent-memory-server:
+        condition: service_started
       prometheus:
         condition: service_started
       tempo:
@@ -197,12 +219,16 @@ services:
       - TOOLS_LOKI_URL=http://loki:3100
       - OPENAI_BASE_URL
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AGENT_MEMORY_ENABLED=true
+      - AGENT_MEMORY_BASE_URL=http://agent-memory-server:8000
       # OpenTelemetry export to Tempo
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
+      agent-memory-server:
+        condition: service_started
       tempo:
         condition: service_started
     volumes:
