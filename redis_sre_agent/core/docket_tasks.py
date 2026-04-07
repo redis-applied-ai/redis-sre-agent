@@ -290,11 +290,16 @@ async def process_chat_turn(
             progress_emitter=emitter,
             exclude_mcp_categories=mcp_categories,
         )
+        agent_context = {"task_id": task_id}
+        if instance_id:
+            agent_context["instance_id"] = instance_id
+        if cluster_id:
+            agent_context["cluster_id"] = cluster_id
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
-            user_id=user_id or "mcp-user",
-            context={"task_id": task_id},
+            user_id=user_id,
+            context=agent_context,
             progress_emitter=emitter,
         )
 
@@ -347,7 +352,6 @@ async def process_chat_turn(
                 }
             ],
         )
-
         return result
 
     except Exception as e:
@@ -413,7 +417,7 @@ async def process_knowledge_query(
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
-            user_id=user_id or "mcp-user",
+            user_id=user_id,
             max_iterations=chat_max_iterations,
             context={"task_id": task_id},
             progress_emitter=emitter,
@@ -476,6 +480,124 @@ async def process_knowledge_query(
 
     except Exception as e:
         logger.error(f"Knowledge query failed: {e}")
+        await task_manager.set_task_error(task_id, str(e))
+        raise
+
+
+@sre_task
+async def process_pipeline_operation(
+    operation: str,
+    task_id: str,
+    thread_id: str,
+    batch_date: Optional[str] = None,
+    artifacts_path: str = "./artifacts",
+    scrapers: Optional[List[str]] = None,
+    latest_only: bool = False,
+    docs_path: str = "./redis-docs",
+    source_dir: str = "source_documents",
+    prepare_only: bool = False,
+    keep_days: int = 30,
+    url: Optional[str] = None,
+    test_url: Optional[str] = None,
+    list_urls: bool = False,
+    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """Run a task-backed pipeline operation and persist its result."""
+    from redis_sre_agent.core.pipeline_execution_helpers import run_pipeline_operation_helper
+
+    logger.info("Processing pipeline operation %s for task %s", operation, task_id)
+
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+
+    await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
+
+    try:
+        emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
+        result = await run_pipeline_operation_helper(
+            operation=operation,
+            batch_date=batch_date,
+            artifacts_path=artifacts_path,
+            scrapers=scrapers,
+            latest_only=latest_only,
+            docs_path=docs_path,
+            source_dir=source_dir,
+            prepare_only=prepare_only,
+            keep_days=keep_days,
+            url=url,
+            test_url=test_url,
+            list_urls=list_urls,
+            progress_emitter=emitter,
+        )
+        await task_manager.set_task_result(task_id, result)
+        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+        return result
+    except Exception as e:
+        logger.error(
+            "Pipeline operation %s failed for task %s (attempt %s): %s",
+            operation,
+            task_id,
+            retry.attempt,
+            e,
+        )
+        await task_manager.set_task_error(task_id, str(e))
+        raise
+
+
+@sre_task
+async def process_runbook_operation(
+    operation: str,
+    task_id: str,
+    thread_id: str,
+    topic: Optional[str] = None,
+    scenario_description: Optional[str] = None,
+    severity: str = "warning",
+    category: str = "operational_runbook",
+    output_file: Optional[str] = None,
+    requirements: Optional[List[str]] = None,
+    max_iterations: int = 2,
+    auto_save: bool = True,
+    ingest: bool = False,
+    input_dir: str = "source_documents/runbooks",
+    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """Run a task-backed runbook operation and persist its result."""
+    from redis_sre_agent.core.runbook_execution_helpers import run_runbook_operation_helper
+
+    logger.info("Processing runbook operation %s for task %s", operation, task_id)
+
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+
+    await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
+
+    try:
+        emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
+        result = await run_runbook_operation_helper(
+            operation=operation,
+            topic=topic,
+            scenario_description=scenario_description,
+            severity=severity,
+            category=category,
+            output_file=output_file,
+            requirements=requirements,
+            max_iterations=max_iterations,
+            auto_save=auto_save,
+            ingest=ingest,
+            input_dir=input_dir,
+            progress_emitter=emitter,
+        )
+        await task_manager.set_task_result(task_id, result)
+        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+        return result
+    except Exception as e:
+        logger.error(
+            "Runbook operation %s failed for task %s (attempt %s): %s",
+            operation,
+            task_id,
+            retry.attempt,
+            e,
+        )
         await task_manager.set_task_error(task_id, str(e))
         raise
 
@@ -818,7 +940,7 @@ async def process_agent_turn(
                             "description", "Created by agent from user-provided details"
                         ),
                         created_by="agent",
-                        user_id=thread.metadata.user_id or "unknown",
+                        user_id=thread.metadata.user_id,
                     )
 
                     active_instance_id = new_instance.id
@@ -858,11 +980,19 @@ async def process_agent_turn(
             routing_context["cluster_id"] = active_cluster_id
             routing_context.pop("instance_id", None)
 
-        agent_type = await route_to_appropriate_agent(
-            query=message,
-            context=routing_context,
-            user_preferences=None,  # Could be extended to include user preferences
-        )
+        requested_agent_type = (context or {}).get("requested_agent_type")
+        if requested_agent_type == "triage":
+            agent_type = AgentType.REDIS_TRIAGE
+        elif requested_agent_type == "chat":
+            agent_type = AgentType.REDIS_CHAT
+        elif requested_agent_type == "knowledge":
+            agent_type = AgentType.KNOWLEDGE_ONLY
+        else:
+            agent_type = await route_to_appropriate_agent(
+                query=message,
+                context=routing_context,
+                user_preferences=None,  # Could be extended to include user preferences
+            )
 
         if agent_type == AgentType.REDIS_TRIAGE and not (
             active_instance_id or active_cluster_id or attached_target_handles
@@ -1000,8 +1130,13 @@ async def process_agent_turn(
         # Run the appropriate agent
         if agent_type != AgentType.REDIS_TRIAGE:
             # Use lightweight chat agent with process_query interface
+            is_knowledge_only = agent_type == AgentType.KNOWLEDGE_ONLY
             await task_manager.add_task_update(
-                task_id, "Processing query with chat agent", "agent_processing"
+                task_id,
+                "Processing query with knowledge-only agent"
+                if is_knowledge_only
+                else "Processing query with chat agent",
+                "agent_processing",
             )
 
             # Convert conversation history to LangChain messages
@@ -1012,14 +1147,18 @@ async def process_agent_turn(
                 elif msg["role"] == "assistant":
                     lc_history.append(AIMessage(content=msg["content"]))
 
-            # Chat agent uses a reasonable iteration cap for quick responses
-            _chat_max_iters = min(int(settings.max_iterations or 15), 10)
+            if is_knowledge_only:
+                max_iterations = settings.knowledge_max_iterations
+                if not isinstance(max_iterations, int) or max_iterations <= 0:
+                    max_iterations = min(int(settings.max_iterations or 10), 8)
+            else:
+                max_iterations = min(int(settings.max_iterations or 15), 10)
 
             chat_agent_response = await agent.process_query(
                 query=message,
-                user_id=thread.metadata.user_id or "unknown",
+                user_id=thread.metadata.user_id,
                 session_id=thread.metadata.session_id or thread_id,
-                max_iterations=_chat_max_iters,
+                max_iterations=max_iterations,
                 context=routing_context,
                 progress_emitter=progress_emitter,
                 conversation_history=lc_history if lc_history else None,
@@ -1030,7 +1169,7 @@ async def process_agent_turn(
                 "response": chat_agent_response.response,
                 "search_results": chat_agent_response.search_results,
                 "tool_envelopes": chat_agent_response.tool_envelopes,
-                "metadata": {"agent_type": "redis_chat"},
+                "metadata": {"agent_type": "knowledge_only" if is_knowledge_only else "redis_chat"},
             }
         else:
             # Use full Redis triage agent with full conversation state
@@ -1303,7 +1442,7 @@ async def run_agent_with_progress(
 
         # Convert conversation messages to LangChain format
         # We only store user/assistant messages, tool messages are internal to LangGraph
-        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
         lc_messages = []
         for msg in messages:
@@ -1311,6 +1450,8 @@ async def run_agent_with_progress(
                 lc_messages.append(HumanMessage(content=msg["content"]))
             elif msg["role"] == "assistant":
                 lc_messages.append(AIMessage(content=msg["content"]))
+            elif msg["role"] == "system":
+                lc_messages.append(SystemMessage(content=msg["content"]))
 
         # Prepare the state
         thread_id = conversation_state.get("thread_id", "default")

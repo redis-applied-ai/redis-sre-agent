@@ -10,6 +10,7 @@ import click
 from langchain_core.messages import AIMessage, HumanMessage
 from rich.console import Console
 from rich.markdown import Markdown
+from ulid import ULID
 
 from redis_sre_agent.agent.chat_agent import get_chat_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
@@ -36,6 +37,7 @@ get_knowledge_agent = get_chat_agent
 @click.option("--redis-cluster-id", "-c", help="Redis cluster ID to investigate")
 @click.option("--support-package-id", "-p", help="Support package ID to analyze")
 @click.option("--thread-id", "-t", help="Thread ID to continue an existing conversation")
+@click.option("--user-id", help="User ID to scope thread ownership and memory retrieval")
 @click.option(
     "--agent",
     "-a",
@@ -49,6 +51,7 @@ def query(
     redis_cluster_id: Optional[str],
     support_package_id: Optional[str],
     thread_id: Optional[str],
+    user_id: Optional[str],
     agent: str,
 ):
     """Execute an agent query.
@@ -113,7 +116,9 @@ def query(
 
         # Get or create thread
         active_thread_id = thread_id
+        active_session_id = thread_id
         conversation_history = []
+        resolved_user_id = user_id
 
         if thread_id:
             # Continue existing thread
@@ -121,6 +126,9 @@ def query(
             if not thread:
                 console.print(f"[red]❌ Thread not found: {thread_id}[/red]")
                 exit(1)
+
+            resolved_user_id = user_id or thread.metadata.user_id
+            active_session_id = thread.metadata.session_id or thread_id
 
             console.print(f"[dim]📎 Continuing thread: {thread_id}[/dim]")
 
@@ -143,6 +151,7 @@ def query(
 
         else:
             # Create new thread
+            active_session_id = f"cli:{ULID()}"
             initial_context = {}
             if instance:
                 initial_context["instance_id"] = instance.id
@@ -153,8 +162,8 @@ def query(
                 initial_context["support_package_path"] = str(support_package_path)
 
             active_thread_id = await thread_manager.create_thread(
-                user_id="cli_user",
-                session_id="cli",
+                user_id=resolved_user_id,
+                session_id=active_session_id,
                 initial_context=initial_context,
                 tags=["cli"],
             )
@@ -224,8 +233,8 @@ def query(
             # Run the agent
             agent_response = await selected_agent.process_query(
                 query,
-                session_id="cli",
-                user_id="cli_user",
+                session_id=active_session_id or active_thread_id or "cli",
+                user_id=resolved_user_id,
                 max_iterations=settings.max_iterations,
                 context=context if context else None,
                 conversation_history=conversation_history if conversation_history else None,
@@ -234,9 +243,6 @@ def query(
             # Extract response text and search results from AgentResponse
             response_text = agent_response.response
             search_results = agent_response.search_results
-
-            # Generate message_id for the assistant response (for decision trace)
-            from ulid import ULID
 
             assistant_message_id = str(ULID())
 

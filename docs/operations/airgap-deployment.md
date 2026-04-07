@@ -176,7 +176,7 @@ TOOLS_LOKI_URL=http://your-loki:3100
 ### 4. Start Services
 
 ```bash
-docker-compose -f docker-compose.airgap.yml up -d
+docker compose -f docker-compose.airgap.yml up -d
 ```
 
 For Podman:
@@ -190,7 +190,7 @@ The airgap image includes pre-scraped artifacts in `/app/artifacts`. You only ne
 **ingest** them into Redis:
 
 ```bash
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
+docker compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent pipeline ingest
 ```
 
@@ -200,11 +200,11 @@ This generates embeddings using the local model and indexes the content into Red
     To add your own documents, place markdown files in a mounted volume and run:
     ```bash
     # Prepare your custom docs
-    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+    docker compose -f docker-compose.airgap.yml exec sre-agent \
       redis-sre-agent pipeline prepare-sources --source-dir /your/docs
 
     # Re-ingest to include them
-    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+    docker compose -f docker-compose.airgap.yml exec sre-agent \
       redis-sre-agent pipeline ingest
     ```
 
@@ -214,11 +214,11 @@ Test that the knowledge base and vector search are working:
 
 ```bash
 # Check version
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
+docker compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent version
 
 # Test vector search (does not require LLM)
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
+docker compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent knowledge search "redis memory management"
 ```
 
@@ -498,7 +498,7 @@ docker load -i redis-sre-agent-airgap.tar.gz
 If you see "model not found" errors:
 ```bash
 # Verify HF_HUB_OFFLINE is set
-docker-compose exec sre-agent env | grep HF
+docker compose exec sre-agent env | grep HF
 
 # Should show:
 # HF_HUB_OFFLINE=1
@@ -509,14 +509,14 @@ docker-compose exec sre-agent env | grep HF
 
 ```bash
 # Test Redis connectivity
-docker-compose exec sre-agent redis-cli -u $REDIS_URL ping
+docker compose exec sre-agent redis-cli -u $REDIS_URL ping
 ```
 
 ### LLM Proxy Issues
 
 ```bash
 # Test LLM connectivity
-docker-compose exec sre-agent curl -s $OPENAI_BASE_URL/models
+docker compose exec sre-agent curl -s $OPENAI_BASE_URL/models
 ```
 
 ## Security Considerations

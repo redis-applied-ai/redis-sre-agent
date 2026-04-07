@@ -17,6 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
+from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.progress import (
@@ -78,7 +79,7 @@ class KnowledgeAgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -493,7 +494,7 @@ class KnowledgeOnlyAgent:
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = 5,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
@@ -505,7 +506,7 @@ class KnowledgeOnlyAgent:
         Args:
             query: User's question or request
             session_id: Session identifier
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of agent iterations
             context: Additional context (currently ignored for knowledge-only agent)
             progress_emitter: Emitter for progress/notification updates
@@ -514,10 +515,18 @@ class KnowledgeOnlyAgent:
         Returns:
             Agent's response as a string
         """
-        logger.info(f"Processing knowledge query for user {user_id}")
+        logger.info("Processing knowledge query for user %s", user_id or "<anonymous>")
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
+        prepared_memory = await prepare_agent_turn_memory(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            context=context,
+            emitter=emitter,
+        )
+        memory_context = prepared_memory.memory_context
 
         # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:
@@ -547,6 +556,8 @@ class KnowledgeOnlyAgent:
 
             # Create initial state with conversation history
             initial_messages = [SystemMessage(content=system_prompt)]
+            if memory_context.system_prompt:
+                initial_messages.append(SystemMessage(content=memory_context.system_prompt))
             if conversation_history:
                 initial_messages.extend(conversation_history)
                 logger.info(
@@ -613,9 +624,12 @@ class KnowledgeOnlyAgent:
                 )
 
                 logger.info(f"Knowledge query completed for user {user_id}")
-                return AgentResponse(
+                result = AgentResponse(
                     response=response, search_results=search_results, tool_envelopes=tool_envelopes
                 )
+                if messages:
+                    await prepared_memory.persist_response_fail_open(result.response)
+                return result
 
             except Exception as e:
                 logger.error(f"Knowledge agent processing failed: {e}")

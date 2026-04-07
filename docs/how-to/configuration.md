@@ -260,16 +260,16 @@ The agent uses three tiers of models for different tasks:
 
 | Tier | Default Model | Used For |
 |------|---------------|----------|
-| `main` | `gpt-4o` | Primary agent reasoning, complex analysis |
-| `mini` | `gpt-4o-mini` | Knowledge search, utility tasks |
-| `nano` | `gpt-4o-mini` | Simple classification, triage |
+| `main` | `gpt-5` | Primary agent reasoning and deeper analysis |
+| `mini` | `gpt-5-mini` | Knowledge search and utility tasks |
+| `nano` | `gpt-5-nano` | Simple classification and lightweight triage |
 
 Configure default models via environment variables:
 
 ```bash
-OPENAI_MODEL=gpt-4o
-OPENAI_MODEL_MINI=gpt-4o-mini
-OPENAI_MODEL_NANO=gpt-4o-mini
+OPENAI_MODEL=gpt-5
+OPENAI_MODEL_MINI=gpt-5-mini
+OPENAI_MODEL_NANO=gpt-5-nano
 ```
 
 #### Programmatic registration (advanced)

@@ -19,6 +19,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 
+from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
@@ -31,6 +32,7 @@ from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.targets import (
     build_attached_target_scope_prompt,
     get_attached_target_handles_from_context,
+    get_target_bindings_from_context,
 )
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
@@ -110,7 +112,7 @@ class ChatAgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -646,7 +648,7 @@ class ChatAgent:
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = 10,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
@@ -657,7 +659,7 @@ class ChatAgent:
         Args:
             query: User's question
             session_id: Session identifier
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum agent iterations (default 10)
             context: Additional context (e.g., instance_id)
             progress_emitter: Emitter for progress/notification updates
@@ -666,12 +668,28 @@ class ChatAgent:
         Returns:
             AgentResponse with response text and any knowledge search results used
         """
-        logger.info(f"Chat agent processing query for user {user_id}")
-        attached_target_prompt = await build_attached_target_scope_prompt(context)
+        logger.info("Chat agent processing query for user %s", user_id or "<anonymous>")
         attached_target_handles = get_attached_target_handles_from_context(context)
+        attached_target_bindings = get_target_bindings_from_context(context)
+        attached_target_count = max(len(attached_target_handles), len(attached_target_bindings))
+        attached_target_prompt: Optional[str] = None
+
+        async def _get_attached_target_prompt() -> Optional[str]:
+            nonlocal attached_target_prompt
+            if attached_target_prompt is None and attached_target_count:
+                attached_target_prompt = await build_attached_target_scope_prompt(context)
+            return attached_target_prompt
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
+        prepared_memory = await prepare_agent_turn_memory(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            context=context,
+            emitter=emitter,
+        )
+        memory_context = prepared_memory.memory_context
 
         # Get cache client if tool caching is enabled
         cache_client = None
@@ -710,11 +728,15 @@ class ChatAgent:
                 else CHAT_SYSTEM_PROMPT
             )
             initial_messages: List[BaseMessage] = [SystemMessage(content=system_prompt)]
+            if memory_context.system_prompt:
+                initial_messages.append(SystemMessage(content=memory_context.system_prompt))
 
             # Add instance context to the query if available
             enhanced_query = query
-            if len(attached_target_handles) > 1 and attached_target_prompt:
-                enhanced_query = f"""{attached_target_prompt}
+            if attached_target_count > 1:
+                prompt = await _get_attached_target_prompt()
+                if prompt:
+                    enhanced_query = f"""{prompt}
 
 User Query: {query}"""
             elif self.redis_instance:
@@ -747,8 +769,10 @@ Cluster-level admin tools are PRE-CONFIGURED for this cluster when available.
 
 User Query: {query}"""
                 enhanced_query = cluster_context
-            elif attached_target_prompt:
-                enhanced_query = f"""{attached_target_prompt}
+            else:
+                prompt = await _get_attached_target_prompt()
+                if prompt:
+                    enhanced_query = f"""{prompt}
 
 User Query: {query}"""
 
@@ -788,18 +812,22 @@ User Query: {query}"""
                 if messages:
                     last_message = messages[-1]
                     if isinstance(last_message, AIMessage):
-                        return AgentResponse(
+                        response = AgentResponse(
                             response=last_message.content,
                             tool_envelopes=tool_envelopes,
                         )
-                    return AgentResponse(
-                        response=str(last_message.content),
-                        tool_envelopes=tool_envelopes,
-                    )
+                    else:
+                        response = AgentResponse(
+                            response=str(last_message.content),
+                            tool_envelopes=tool_envelopes,
+                        )
+                    await prepared_memory.persist_response_fail_open(response.response)
+                    return response
 
-                return AgentResponse(
+                fallback = AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                 )
+                return fallback
 
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")

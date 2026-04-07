@@ -6,20 +6,76 @@ import pytest
 
 from redis_sre_agent.mcp_server.server import (
     mcp,
+    redis_sre_audit_cli_mcp_parity,
+    redis_sre_backfill_empty_thread_subjects,
+    redis_sre_backfill_instance_links,
+    redis_sre_backfill_scheduled_thread_subjects,
+    redis_sre_backfill_threads,
+    redis_sre_cache_clear,
+    redis_sre_cache_stats,
+    redis_sre_cleanup_pipeline_batches,
+    redis_sre_create_cluster,
     redis_sre_create_instance,
+    redis_sre_create_schedule,
     redis_sre_database_chat,
     redis_sre_deep_triage,
+    redis_sre_delete_cluster,
+    redis_sre_delete_instance,
+    redis_sre_delete_schedule,
+    redis_sre_delete_support_package,
     redis_sre_delete_task,
+    redis_sre_disable_schedule,
+    redis_sre_enable_schedule,
+    redis_sre_evaluate_runbooks,
+    redis_sre_extract_support_package,
     redis_sre_general_chat,
+    redis_sre_generate_pipeline_runbooks,
+    redis_sre_generate_runbook,
+    redis_sre_get_cluster,
+    redis_sre_get_index_schema_status,
+    redis_sre_get_instance,
+    redis_sre_get_knowledge_fragments,
+    redis_sre_get_pipeline_batch,
+    redis_sre_get_pipeline_status,
+    redis_sre_get_related_knowledge_fragments,
+    redis_sre_get_schedule,
+    redis_sre_get_support_package_info,
     redis_sre_get_support_ticket,
+    redis_sre_get_task,
     redis_sre_get_task_citations,
     redis_sre_get_task_status,
     redis_sre_get_thread,
+    redis_sre_get_thread_sources,
+    redis_sre_get_thread_trace,
     redis_sre_knowledge_query,
     redis_sre_knowledge_search,
+    redis_sre_list_clusters,
+    redis_sre_list_indices,
     redis_sre_list_instances,
+    redis_sre_list_schedule_runs,
+    redis_sre_list_schedules,
+    redis_sre_list_support_packages,
+    redis_sre_list_tasks,
     redis_sre_list_threads,
+    redis_sre_prepare_source_documents,
+    redis_sre_purge_tasks,
+    redis_sre_purge_threads,
+    redis_sre_query,
+    redis_sre_recreate_indices,
+    redis_sre_reindex_threads,
+    redis_sre_run_pipeline_full,
+    redis_sre_run_pipeline_ingest,
+    redis_sre_run_pipeline_scrape,
+    redis_sre_run_schedule_now,
     redis_sre_search_support_tickets,
+    redis_sre_sync_index_schemas,
+    redis_sre_test_instance,
+    redis_sre_test_redis_url,
+    redis_sre_update_cluster,
+    redis_sre_update_instance,
+    redis_sre_update_schedule,
+    redis_sre_upload_support_package,
+    redis_sre_version,
 )
 
 
@@ -42,16 +98,97 @@ class TestMCPServerSetup:
         assert "redis_sre_general_chat" in tool_names
         assert "redis_sre_database_chat" in tool_names
         assert "redis_sre_knowledge_search" in tool_names
+        assert "redis_sre_get_knowledge_fragments" in tool_names
+        assert "redis_sre_get_related_knowledge_fragments" in tool_names
+        assert "redis_sre_get_pipeline_status" in tool_names
+        assert "redis_sre_get_pipeline_batch" in tool_names
+        assert "redis_sre_run_pipeline_scrape" in tool_names
+        assert "redis_sre_run_pipeline_ingest" in tool_names
+        assert "redis_sre_run_pipeline_full" in tool_names
+        assert "redis_sre_prepare_source_documents" in tool_names
+        assert "redis_sre_generate_pipeline_runbooks" in tool_names
+        assert "redis_sre_cleanup_pipeline_batches" in tool_names
+        assert "redis_sre_generate_runbook" in tool_names
+        assert "redis_sre_evaluate_runbooks" in tool_names
+        assert "redis_sre_upload_support_package" in tool_names
+        assert "redis_sre_list_support_packages" in tool_names
+        assert "redis_sre_extract_support_package" in tool_names
+        assert "redis_sre_delete_support_package" in tool_names
+        assert "redis_sre_get_support_package_info" in tool_names
         assert "redis_sre_search_support_tickets" in tool_names
         assert "redis_sre_get_support_ticket" in tool_names
         assert "redis_sre_knowledge_query" in tool_names
+        assert "redis_sre_get_instance" in tool_names
         assert "redis_sre_get_thread" in tool_names
+        assert "redis_sre_get_thread_sources" in tool_names
+        assert "redis_sre_get_thread_trace" in tool_names
         assert "redis_sre_list_threads" in tool_names
         assert "redis_sre_get_task_status" in tool_names
         assert "redis_sre_get_task_citations" in tool_names
+        assert "redis_sre_get_task" in tool_names
+        assert "redis_sre_list_tasks" in tool_names
+        assert "redis_sre_purge_tasks" in tool_names
         assert "redis_sre_delete_task" in tool_names
         assert "redis_sre_list_instances" in tool_names
         assert "redis_sre_create_instance" in tool_names
+        assert "redis_sre_update_instance" in tool_names
+        assert "redis_sre_delete_instance" in tool_names
+        assert "redis_sre_test_instance" in tool_names
+        assert "redis_sre_test_redis_url" in tool_names
+        assert "redis_sre_cache_stats" in tool_names
+        assert "redis_sre_cache_clear" in tool_names
+        assert "redis_sre_audit_cli_mcp_parity" in tool_names
+        assert "redis_sre_version" in tool_names
+        assert "redis_sre_query" in tool_names
+        assert "redis_sre_list_clusters" in tool_names
+        assert "redis_sre_get_cluster" in tool_names
+        assert "redis_sre_create_cluster" in tool_names
+        assert "redis_sre_update_cluster" in tool_names
+        assert "redis_sre_delete_cluster" in tool_names
+        assert "redis_sre_backfill_instance_links" in tool_names
+        assert "redis_sre_list_indices" in tool_names
+        assert "redis_sre_get_index_schema_status" in tool_names
+        assert "redis_sre_recreate_indices" in tool_names
+        assert "redis_sre_sync_index_schemas" in tool_names
+        assert "redis_sre_list_schedules" in tool_names
+        assert "redis_sre_get_schedule" in tool_names
+        assert "redis_sre_create_schedule" in tool_names
+        assert "redis_sre_update_schedule" in tool_names
+        assert "redis_sre_enable_schedule" in tool_names
+        assert "redis_sre_disable_schedule" in tool_names
+        assert "redis_sre_delete_schedule" in tool_names
+        assert "redis_sre_run_schedule_now" in tool_names
+        assert "redis_sre_list_schedule_runs" in tool_names
+        assert "redis_sre_reindex_threads" in tool_names
+        assert "redis_sre_backfill_threads" in tool_names
+        assert "redis_sre_backfill_scheduled_thread_subjects" in tool_names
+        assert "redis_sre_backfill_empty_thread_subjects" in tool_names
+        assert "redis_sre_purge_threads" in tool_names
+
+
+class TestCliMcpParityAuditTool:
+    """Test the redis_sre_audit_cli_mcp_parity MCP tool."""
+
+    def test_audit_cli_mcp_parity_success(self):
+        expected = {"status": "ok", "missing_cli_mappings": [], "missing_mcp_tools": {}}
+
+        with patch(
+            "redis_sre_agent.core.cli_mcp_parity.audit_cli_mcp_parity",
+            return_value=expected,
+        ) as mock_audit:
+            result = redis_sre_audit_cli_mcp_parity()
+
+        assert result == expected
+        mock_audit.assert_called_once_with()
+
+    def test_audit_cli_mcp_parity_failure(self):
+        with patch(
+            "redis_sre_agent.core.cli_mcp_parity.audit_cli_mcp_parity",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = redis_sre_audit_cli_mcp_parity()
+
+        assert result == {"error": "boom", "status": "failed"}
 
 
 class TestDeepTriageTool:
@@ -387,6 +524,573 @@ class TestKnowledgeSearchTool:
             assert "error" in result
             assert result["results"] == []
             assert result["total_results"] == 0
+
+
+class TestKnowledgeFragmentTools:
+    """Test document fragment MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_knowledge_fragments_success(self):
+        """Full fragment retrieval returns helper payload."""
+        mock_result = {
+            "document_hash": "doc-123",
+            "fragments_count": 2,
+            "fragments": [{"chunk_index": 0}, {"chunk_index": 1}],
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_knowledge_fragments(document_hash="doc-123")
+
+            assert result["document_hash"] == "doc-123"
+            assert result["fragments_count"] == 2
+            mock_helper.assert_awaited_once_with(
+                "doc-123",
+                include_metadata=True,
+                index_type="knowledge",
+                version=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_knowledge_fragments_error_payload_passthrough(self):
+        """Fragment retrieval preserves helper error payload."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {
+                "document_hash": "doc-123",
+                "error": "No fragments found for this document",
+                "fragments": [],
+            }
+
+            result = await redis_sre_get_knowledge_fragments(document_hash="doc-123")
+
+            assert result["document_hash"] == "doc-123"
+            assert result["error"] == "No fragments found for this document"
+
+    @pytest.mark.asyncio
+    async def test_get_related_knowledge_fragments_success(self):
+        """Related fragment retrieval returns helper payload."""
+        mock_result = {
+            "document_hash": "doc-123",
+            "target_chunk_index": 4,
+            "related_fragments_count": 3,
+            "related_fragments": [{"chunk_index": 3}, {"chunk_index": 4}, {"chunk_index": 5}],
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_related_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_related_knowledge_fragments(
+                document_hash="doc-123",
+                chunk_index=4,
+                window=1,
+            )
+
+            assert result["target_chunk_index"] == 4
+            assert result["related_fragments_count"] == 3
+            mock_helper.assert_awaited_once_with(
+                "doc-123",
+                current_chunk_index=4,
+                context_window=1,
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_related_knowledge_fragments_error_payload_passthrough(self):
+        """Related fragment retrieval preserves helper error payload."""
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_related_document_fragments",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {
+                "document_hash": "doc-123",
+                "error": "lookup failed",
+                "related_fragments": [],
+            }
+
+            result = await redis_sre_get_related_knowledge_fragments(
+                document_hash="doc-123",
+                chunk_index=4,
+            )
+
+            assert result["document_hash"] == "doc-123"
+            assert result["error"] == "lookup failed"
+
+
+class TestPipelineInspectionTools:
+    """Test pipeline inspection MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_status_success(self):
+        """Pipeline status returns helper payload."""
+        mock_result = {
+            "artifacts_path": "/tmp/artifacts",
+            "current_batch_date": "2026-03-25",
+            "available_batches": ["2026-03-24", "2026-03-25"],
+            "scrapers": {"redis_docs": {"source": "redis.io"}},
+            "ingestion": {"batches_ingested": 1},
+        }
+
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_pipeline_status()
+
+            assert result["current_batch_date"] == "2026-03-25"
+            assert result["available_batches"] == ["2026-03-24", "2026-03-25"]
+            mock_helper.assert_called_once_with(artifacts_path="./artifacts")
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_status_error_handling(self):
+        """Pipeline status returns structured error payload on failure."""
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("status failed")
+
+            result = await redis_sre_get_pipeline_status(artifacts_path="/tmp/artifacts")
+
+            assert result["artifacts_path"] == "/tmp/artifacts"
+            assert result["available_batches"] == []
+            assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_batch_success(self):
+        """Pipeline batch returns helper payload."""
+        mock_result = {
+            "batch_date": "2026-03-25",
+            "artifacts_path": "/tmp/artifacts",
+            "total_documents": 12,
+            "categories": {"oss": 10},
+            "document_types": {"documentation": 8},
+            "ingestion": {"available": True, "status": "success", "chunks_indexed": 42},
+        }
+
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_batch_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_pipeline_batch(batch_date="2026-03-25")
+
+            assert result["batch_date"] == "2026-03-25"
+            assert result["ingestion"]["status"] == "success"
+            mock_helper.assert_called_once_with(
+                batch_date="2026-03-25", artifacts_path="./artifacts"
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_batch_error_handling(self):
+        """Pipeline batch returns structured error payload on failure."""
+        with patch(
+            "redis_sre_agent.core.pipeline_helpers.get_pipeline_batch_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("batch failed")
+
+            result = await redis_sre_get_pipeline_batch(
+                batch_date="2026-03-25",
+                artifacts_path="/tmp/artifacts",
+            )
+
+            assert result["batch_date"] == "2026-03-25"
+            assert result["artifacts_path"] == "/tmp/artifacts"
+            assert "error" in result
+
+
+class TestPipelineExecutionTools:
+    """Test task-backed pipeline execution MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_scrape_queues_task(self):
+        """Scrape tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {
+                "thread_id": "thread-123",
+                "task_id": "task-456",
+                "status": "queued",
+                "operation": "scrape",
+            }
+
+            result = await redis_sre_run_pipeline_scrape(
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+                user_id="user-123",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="scrape",
+                user_id="user-123",
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_ingest_queues_task(self):
+        """Ingest tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_run_pipeline_ingest(
+                batch_date="2026-03-25",
+                artifacts_path="/tmp/artifacts",
+                latest_only=True,
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="ingest",
+                user_id=None,
+                batch_date="2026-03-25",
+                artifacts_path="/tmp/artifacts",
+                latest_only=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_full_queues_task(self):
+        """Full tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_run_pipeline_full(
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs_local"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="full",
+                user_id=None,
+                artifacts_path="/tmp/artifacts",
+                scrapers=["redis_docs_local"],
+                latest_only=True,
+                docs_path="/tmp/docs",
+            )
+
+    @pytest.mark.asyncio
+    async def test_prepare_source_documents_queues_task(self):
+        """Prepare-sources tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_prepare_source_documents(
+                source_dir="/tmp/source_documents",
+                batch_date="2026-03-25",
+                prepare_only=True,
+                artifacts_path="/tmp/artifacts",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="prepare_sources",
+                user_id=None,
+                source_dir="/tmp/source_documents",
+                batch_date="2026-03-25",
+                prepare_only=True,
+                artifacts_path="/tmp/artifacts",
+            )
+
+    @pytest.mark.asyncio
+    async def test_generate_pipeline_runbooks_queues_task(self):
+        """Runbooks tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_generate_pipeline_runbooks(
+                url="https://example.com/runbook",
+                artifacts_path="/tmp/artifacts",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="runbooks",
+                user_id=None,
+                url="https://example.com/runbook",
+                test_url=None,
+                list_urls=False,
+                artifacts_path="/tmp/artifacts",
+            )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_pipeline_batches_requires_confirm(self):
+        """Cleanup tool should reject destructive execution without confirmation."""
+        result = await redis_sre_cleanup_pipeline_batches(
+            keep_days=7,
+            artifacts_path="/tmp/artifacts",
+        )
+
+        assert result["status"] == "failed"
+        assert "confirm=True" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_pipeline_batches_queues_task(self):
+        """Cleanup tool should queue once confirmation is provided."""
+        with patch(
+            "redis_sre_agent.core.pipeline_execution_helpers.queue_pipeline_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_cleanup_pipeline_batches(
+                keep_days=7,
+                artifacts_path="/tmp/artifacts",
+                confirm=True,
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="cleanup",
+                user_id=None,
+                keep_days=7,
+                artifacts_path="/tmp/artifacts",
+            )
+
+
+class TestRunbookExecutionTools:
+    """Test task-backed runbook execution MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_generate_runbook_queues_task(self):
+        """Generate tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.runbook_execution_helpers.queue_runbook_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_generate_runbook(
+                topic="Memory Pressure",
+                scenario_description="Redis memory saturation on primaries",
+                severity="critical",
+                category="operational_runbook",
+                output_file="/tmp/runbook.md",
+                requirements=["Include memory diagnostics"],
+                max_iterations=3,
+                auto_save=False,
+                ingest=True,
+                user_id="user-123",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="generate",
+                user_id="user-123",
+                topic="Memory Pressure",
+                scenario_description="Redis memory saturation on primaries",
+                severity="critical",
+                category="operational_runbook",
+                output_file="/tmp/runbook.md",
+                requirements=["Include memory diagnostics"],
+                max_iterations=3,
+                auto_save=False,
+                ingest=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_evaluate_runbooks_queues_task(self):
+        """Evaluate tool should delegate queueing to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.runbook_execution_helpers.queue_runbook_operation_task",
+            new_callable=AsyncMock,
+        ) as mock_queue:
+            mock_queue.return_value = {"task_id": "task-456", "status": "queued"}
+
+            result = await redis_sre_evaluate_runbooks(
+                input_dir="/tmp/runbooks",
+                output_file="/tmp/evaluation.json",
+                user_id="user-123",
+            )
+
+            assert result["task_id"] == "task-456"
+            mock_queue.assert_awaited_once_with(
+                operation="evaluate",
+                user_id="user-123",
+                input_dir="/tmp/runbooks",
+                output_file="/tmp/evaluation.json",
+            )
+
+
+class TestSupportPackageManagementTools:
+    """Test support-package management MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_upload_support_package_success(self, tmp_path):
+        """Upload returns package id and status."""
+        archive = tmp_path / "support-package.tar.gz"
+        archive.write_bytes(b"dummy")
+
+        mock_manager = AsyncMock()
+        mock_manager.upload.return_value = "pkg-123"
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_upload_support_package(file_path=str(archive))
+
+            assert result == {
+                "package_id": "pkg-123",
+                "filename": "support-package.tar.gz",
+                "status": "uploaded",
+            }
+            mock_manager.upload.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_upload_support_package_missing_file(self):
+        """Upload validates file existence."""
+        result = await redis_sre_upload_support_package(file_path="/tmp/does-not-exist.tar.gz")
+
+        assert result["status"] == "failed"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_list_support_packages_success(self):
+        """List support packages returns serialized metadata."""
+        from datetime import datetime, timezone
+
+        from redis_sre_agent.tools.support_package.storage.protocols import PackageMetadata
+
+        mock_manager = AsyncMock()
+        mock_manager.list_packages.return_value = [
+            PackageMetadata(
+                package_id="pkg-123",
+                filename="support-package.tar.gz",
+                size_bytes=1024,
+                uploaded_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
+                storage_path="/tmp/pkg-123",
+                checksum="abc123",
+            )
+        ]
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_list_support_packages()
+
+            assert result["total"] == 1
+            assert result["packages"][0]["package_id"] == "pkg-123"
+            assert result["packages"][0]["size_bytes"] == 1024
+
+    @pytest.mark.asyncio
+    async def test_extract_support_package_success(self):
+        """Extract returns output path."""
+        from pathlib import Path
+
+        mock_manager = AsyncMock()
+        mock_manager.extract.return_value = Path("/tmp/extracted/pkg-123")
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_extract_support_package(package_id="pkg-123")
+
+            assert result == {
+                "package_id": "pkg-123",
+                "path": "/tmp/extracted/pkg-123",
+                "status": "extracted",
+            }
+
+    @pytest.mark.asyncio
+    async def test_delete_support_package_requires_confirm(self):
+        """Delete is gated by explicit confirmation."""
+        result = await redis_sre_delete_support_package(package_id="pkg-123")
+
+        assert result["status"] == "failed"
+        assert "confirm" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_support_package_success(self):
+        """Delete returns deleted status."""
+        mock_manager = AsyncMock()
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_delete_support_package(package_id="pkg-123", confirm=True)
+
+            assert result == {"package_id": "pkg-123", "status": "deleted"}
+            mock_manager.delete.assert_awaited_once_with("pkg-123")
+
+    @pytest.mark.asyncio
+    async def test_get_support_package_info_success(self):
+        """Info returns metadata plus extraction state."""
+        from datetime import datetime, timezone
+
+        from redis_sre_agent.tools.support_package.storage.protocols import PackageMetadata
+
+        mock_manager = AsyncMock()
+        mock_manager.get_metadata.return_value = PackageMetadata(
+            package_id="pkg-123",
+            filename="support-package.tar.gz",
+            size_bytes=2048,
+            uploaded_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
+            storage_path="/tmp/pkg-123",
+            checksum="abc123",
+        )
+        mock_manager.is_extracted.return_value = True
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_get_support_package_info(package_id="pkg-123")
+
+            assert result["package_id"] == "pkg-123"
+            assert result["is_extracted"] is True
+            assert result["checksum"] == "abc123"
+
+    @pytest.mark.asyncio
+    async def test_get_support_package_info_not_found(self):
+        """Info returns not_found payload when metadata is missing."""
+        mock_manager = AsyncMock()
+        mock_manager.get_metadata.return_value = None
+
+        with patch(
+            "redis_sre_agent.core.support_package_helpers.get_support_package_manager",
+            return_value=mock_manager,
+        ):
+            result = await redis_sre_get_support_package_info(package_id="pkg-123")
+
+            assert result["status"] == "not_found"
+            assert result["package_id"] == "pkg-123"
 
 
 class TestKnowledgeQueryTool:
@@ -801,6 +1505,795 @@ class TestCreateInstanceTool:
 
             assert result["status"] == "failed"
             assert "already exists" in result["error"]
+
+
+class TestInstanceInspectionTools:
+    """Test MCP tools for instance inspection and connectivity checks."""
+
+    @pytest.mark.asyncio
+    async def test_get_instance_delegates_to_helper(self):
+        """Get-instance should delegate to the shared helper."""
+        mock_result = {"id": "redis-prod-1", "name": "Production Redis"}
+
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.get_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_instance(instance_id="redis-prod-1")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis-prod-1")
+
+    @pytest.mark.asyncio
+    async def test_get_instance_error_payload(self):
+        """Get-instance failures should return a structured error payload."""
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.get_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("lookup failed")
+
+            result = await redis_sre_get_instance(instance_id="redis-prod-1")
+
+        assert result["id"] == "redis-prod-1"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_test_instance_delegates_to_helper(self):
+        """Configured instance connectivity tests should delegate to the helper."""
+        mock_result = {"success": True, "instance_id": "redis-prod-1"}
+
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.check_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_test_instance(instance_id="redis-prod-1")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis-prod-1")
+
+    @pytest.mark.asyncio
+    async def test_test_instance_error_payload(self):
+        """Configured instance connectivity failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.check_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("probe failed")
+
+            result = await redis_sre_test_instance(instance_id="redis-prod-1")
+
+        assert result["success"] is False
+        assert result["id"] == "redis-prod-1"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_test_redis_url_delegates_to_helper(self):
+        """Direct Redis URL checks should delegate to the helper."""
+        mock_result = {"success": True, "url": "redis://***:***@host:6379/0"}
+
+        with patch(
+            "redis_sre_agent.core.instance_inspection_helpers.check_redis_url_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_test_redis_url(connection_url="redis://user:pass@host:6379/0")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis://user:pass@host:6379/0")
+
+    @pytest.mark.asyncio
+    async def test_test_redis_url_error_payload(self):
+        """Direct Redis URL failures should return a structured payload."""
+        with (
+            patch(
+                "redis_sre_agent.core.instance_inspection_helpers.check_redis_url_helper",
+                new_callable=AsyncMock,
+            ) as mock_helper,
+            patch(
+                "redis_sre_agent.core.instances.mask_redis_url",
+                return_value="redis://***:***@host:6379/0",
+            ) as mock_mask,
+        ):
+            mock_helper.side_effect = Exception("probe failed")
+
+            result = await redis_sre_test_redis_url(connection_url="redis://user:pass@host:6379/0")
+
+        assert result["success"] is False
+        assert result["url"] == "redis://***:***@host:6379/0"
+        assert "error" in result
+        mock_mask.assert_called_once_with("redis://user:pass@host:6379/0")
+
+
+class TestInstanceMutationTools:
+    """Test MCP tools for instance update and delete operations."""
+
+    @pytest.mark.asyncio
+    async def test_update_instance_delegates_to_helper(self):
+        """Update-instance should delegate to the shared helper."""
+        mock_result = {"id": "redis-prod-1", "status": "updated"}
+
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.update_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_update_instance(
+                instance_id="redis-prod-1",
+                description="Updated description",
+                set_extensions={"region": "us-west-2"},
+                unset_extensions=["old-key"],
+            )
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(
+            "redis-prod-1",
+            name=None,
+            connection_url=None,
+            environment=None,
+            usage=None,
+            description="Updated description",
+            repo_url=None,
+            notes=None,
+            monitoring_identifier=None,
+            logging_identifier=None,
+            instance_type=None,
+            admin_url=None,
+            admin_username=None,
+            admin_password=None,
+            cluster_id=None,
+            redis_cloud_subscription_id=None,
+            redis_cloud_database_id=None,
+            redis_cloud_subscription_type=None,
+            redis_cloud_database_name=None,
+            status=None,
+            version=None,
+            memory=None,
+            connections=None,
+            user_id=None,
+            set_extensions={"region": "us-west-2"},
+            unset_extensions=["old-key"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_instance_error_payload(self):
+        """Update-instance failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.update_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_update_instance(instance_id="redis-prod-1")
+
+        assert result == {"error": "boom", "id": "redis-prod-1", "status": "failed"}
+
+
+class TestCacheAndVersionTools:
+    """Test MCP tools for cache management and version reporting."""
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_delegates_to_helper(self):
+        """Cache stats should delegate to the shared helper."""
+        mock_result = {"total_keys": 7, "instances": ["redis-prod-1"]}
+
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_stats_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_cache_stats(instance_id="redis-prod-1")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(instance_id="redis-prod-1")
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_error_payload(self):
+        """Cache stats failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_stats_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_cache_stats(instance_id="redis-prod-1")
+
+        assert result == {"error": "boom", "status": "failed", "instance_id": "redis-prod-1"}
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_delegates_to_helper(self):
+        """Cache clear should delegate to the shared helper."""
+        mock_result = {"status": "cleared", "scope": "all", "deleted": 11}
+
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_clear_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_cache_clear(clear_all=True, confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(instance_id=None, clear_all=True, confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_error_payload(self):
+        """Cache clear failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.cache_helpers.cache_clear_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_cache_clear(instance_id="redis-prod-1", confirm=True)
+
+        assert result == {"error": "boom", "status": "failed", "instance_id": "redis-prod-1"}
+
+    def test_version_delegates_to_helper(self):
+        """Version tool should delegate to the shared helper."""
+        mock_result = {"name": "redis-sre-agent", "version": "0.0-test"}
+
+        with patch("redis_sre_agent.core.cache_helpers.version_helper") as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = redis_sre_version()
+
+        assert result == mock_result
+        mock_helper.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_delete_instance_delegates_to_helper(self):
+        """Delete-instance should delegate to the shared helper."""
+        mock_result = {"id": "redis-prod-1", "status": "deleted"}
+
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.delete_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_delete_instance(instance_id="redis-prod-1", confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with("redis-prod-1", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_delete_instance_error_payload(self):
+        """Delete-instance failures should be structured."""
+        with patch(
+            "redis_sre_agent.core.instance_mutation_helpers.delete_instance_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_delete_instance(instance_id="redis-prod-1", confirm=True)
+
+        assert result == {"error": "boom", "id": "redis-prod-1", "status": "failed"}
+
+
+class TestIndexTools:
+    """Test MCP tools for index inspection and maintenance."""
+
+    @pytest.mark.asyncio
+    async def test_list_indices_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": []}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.list_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_list_indices(index_name="knowledge")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge")
+
+    @pytest.mark.asyncio
+    async def test_list_indices_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.list_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_list_indices(index_name="knowledge")
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_index_schema_status_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": {}}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.get_index_schema_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_index_schema_status(index_name="knowledge")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge")
+
+    @pytest.mark.asyncio
+    async def test_get_index_schema_status_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.get_index_schema_status_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_get_index_schema_status(index_name="knowledge")
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
+
+    @pytest.mark.asyncio
+    async def test_recreate_indices_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": {"knowledge": "recreated"}}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.recreate_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_recreate_indices(index_name="knowledge", confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_recreate_indices_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.recreate_indices_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_recreate_indices(index_name="knowledge", confirm=True)
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
+
+    @pytest.mark.asyncio
+    async def test_sync_index_schemas_delegates_to_helper(self):
+        mock_result = {"success": True, "indices": {"knowledge": {"action": "created"}}}
+
+        with patch(
+            "redis_sre_agent.core.index_helpers.sync_index_schemas_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_sync_index_schemas(index_name="knowledge", confirm=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(index_name="knowledge", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_sync_index_schemas_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.index_helpers.sync_index_schemas_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_sync_index_schemas(index_name="knowledge", confirm=True)
+
+        assert result == {
+            "success": False,
+            "status": "failed",
+            "error": "boom",
+            "index_name": "knowledge",
+        }
+
+
+class TestQueryTool:
+    """Test the unified query MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_query_delegates_to_helper(self):
+        mock_result = {"thread_id": "thread-123", "task_id": "task-123", "status": "queued"}
+
+        with patch(
+            "redis_sre_agent.core.query_helpers.queue_query_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_query(
+                query="Investigate memory usage",
+                instance_id="redis-prod-1",
+                support_package_id="pkg-1",
+                thread_id="thread-123",
+                agent="knowledge",
+                user_id="user-1",
+            )
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(
+            query="Investigate memory usage",
+            instance_id="redis-prod-1",
+            cluster_id=None,
+            support_package_id="pkg-1",
+            thread_id="thread-123",
+            agent="knowledge",
+            user_id="user-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_query_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.query_helpers.queue_query_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_query(query="Investigate memory usage")
+
+        assert result == {
+            "error": "boom",
+            "status": "failed",
+            "message": "Failed to start query: boom",
+        }
+
+
+class TestClusterTools:
+    """Test MCP tools for cluster inspection and mutation."""
+
+    @pytest.mark.asyncio
+    async def test_list_clusters_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.list_clusters_helper",
+            new_callable=AsyncMock,
+            return_value={"clusters": []},
+        ) as mock_helper:
+            result = await redis_sre_list_clusters(environment="production")
+
+        assert result == {"clusters": []}
+        mock_helper.assert_awaited_once_with(
+            environment="production",
+            status=None,
+            cluster_type=None,
+            user_id=None,
+            search=None,
+            limit=100,
+            offset=0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.get_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1"},
+        ) as mock_helper:
+            result = await redis_sre_get_cluster("cluster-1")
+
+        assert result == {"id": "cluster-1"}
+        mock_helper.assert_awaited_once_with("cluster-1")
+
+    @pytest.mark.asyncio
+    async def test_create_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.create_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1", "status": "created"},
+        ) as mock_helper:
+            result = await redis_sre_create_cluster(
+                name="prod-cluster",
+                environment="production",
+                description="Primary cluster",
+            )
+
+        assert result["status"] == "created"
+        mock_helper.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.update_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1", "status": "updated"},
+        ) as mock_helper:
+            result = await redis_sre_update_cluster("cluster-1", status="healthy")
+
+        assert result["status"] == "updated"
+        mock_helper.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_cluster_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.delete_cluster_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "cluster-1", "status": "deleted"},
+        ) as mock_helper:
+            result = await redis_sre_delete_cluster("cluster-1", confirm=True)
+
+        assert result["status"] == "deleted"
+        mock_helper.assert_awaited_once_with("cluster-1", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_backfill_cluster_links_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.cluster_helpers.backfill_instance_links_helper",
+            new_callable=AsyncMock,
+            return_value={"clusters_created": 1},
+        ) as mock_helper:
+            result = await redis_sre_backfill_instance_links(dry_run=True, force=False)
+
+        assert result == {"clusters_created": 1}
+        mock_helper.assert_awaited_once_with(dry_run=True, force=False)
+
+
+class TestScheduleTools:
+    """Test MCP tools for schedule inspection and mutation."""
+
+    @pytest.mark.asyncio
+    async def test_list_schedules_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.list_schedules_helper",
+            new_callable=AsyncMock,
+            return_value={"schedules": []},
+        ) as mock_helper:
+            result = await redis_sre_list_schedules(limit=25)
+
+        assert result == {"schedules": []}
+        mock_helper.assert_awaited_once_with(limit=25)
+
+    @pytest.mark.asyncio
+    async def test_get_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.get_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1"},
+        ) as mock_helper:
+            result = await redis_sre_get_schedule("schedule-1")
+
+        assert result == {"id": "schedule-1"}
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_create_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.create_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "created"},
+        ) as mock_helper:
+            result = await redis_sre_create_schedule(
+                name="Nightly Check",
+                interval_type="hours",
+                interval_value=12,
+                instructions="Check memory usage",
+            )
+
+        assert result["status"] == "created"
+        mock_helper.assert_awaited_once_with(
+            name="Nightly Check",
+            interval_type="hours",
+            interval_value=12,
+            instructions="Check memory usage",
+            redis_instance_id=None,
+            description=None,
+            enabled=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.update_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "updated"},
+        ) as mock_helper:
+            result = await redis_sre_update_schedule("schedule-1", enabled=False)
+
+        assert result["status"] == "updated"
+        mock_helper.assert_awaited_once_with(
+            "schedule-1",
+            name=None,
+            description=None,
+            instructions=None,
+            redis_instance_id=None,
+            interval_type=None,
+            interval_value=None,
+            enabled=False,
+            recalc_next_run=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_enable_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.enable_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "enabled"},
+        ) as mock_helper:
+            result = await redis_sre_enable_schedule("schedule-1")
+
+        assert result["status"] == "enabled"
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_disable_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.disable_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "disabled"},
+        ) as mock_helper:
+            result = await redis_sre_disable_schedule("schedule-1")
+
+        assert result["status"] == "disabled"
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_delete_schedule_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.delete_schedule_helper",
+            new_callable=AsyncMock,
+            return_value={"id": "schedule-1", "status": "deleted"},
+        ) as mock_helper:
+            result = await redis_sre_delete_schedule("schedule-1", confirm=True)
+
+        assert result["status"] == "deleted"
+        mock_helper.assert_awaited_once_with("schedule-1", confirm=True)
+
+    @pytest.mark.asyncio
+    async def test_run_schedule_now_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.run_schedule_now_helper",
+            new_callable=AsyncMock,
+            return_value={"schedule_id": "schedule-1", "status": "pending"},
+        ) as mock_helper:
+            result = await redis_sre_run_schedule_now("schedule-1")
+
+        assert result["status"] == "pending"
+        mock_helper.assert_awaited_once_with("schedule-1")
+
+    @pytest.mark.asyncio
+    async def test_list_schedule_runs_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.list_schedule_runs_helper",
+            new_callable=AsyncMock,
+            return_value={"schedule_id": "schedule-1", "runs": []},
+        ) as mock_helper:
+            result = await redis_sre_list_schedule_runs("schedule-1", limit=10)
+
+        assert result == {"schedule_id": "schedule-1", "runs": []}
+        mock_helper.assert_awaited_once_with("schedule-1", limit=10)
+
+    @pytest.mark.asyncio
+    async def test_schedule_tool_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.create_schedule_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_create_schedule(
+                name="Nightly Check",
+                interval_type="hours",
+                interval_value=12,
+                instructions="Check memory usage",
+            )
+
+        assert result == {"error": "boom", "status": "failed"}
+
+
+class TestThreadMaintenanceTools:
+    """Test MCP tools for thread maintenance workflows."""
+
+    @pytest.mark.asyncio
+    async def test_reindex_threads_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.reindex_threads_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "completed", "processed": 2},
+        ) as mock_helper:
+            result = await redis_sre_reindex_threads(drop=True, limit=5, start=10)
+
+        assert result["processed"] == 2
+        mock_helper.assert_awaited_once_with(drop=True, limit=5, start=10)
+
+    @pytest.mark.asyncio
+    async def test_backfill_threads_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.backfill_threads_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "completed", "processed": 2},
+        ) as mock_helper:
+            result = await redis_sre_backfill_threads(limit=5, start=10)
+
+        assert result["processed"] == 2
+        mock_helper.assert_awaited_once_with(limit=5, start=10)
+
+    @pytest.mark.asyncio
+    async def test_backfill_scheduled_thread_subjects_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.backfill_scheduled_thread_subjects_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "dry_run", "subjects_updated": 2},
+        ) as mock_helper:
+            result = await redis_sre_backfill_scheduled_thread_subjects(
+                limit=5,
+                start=10,
+                dry_run=True,
+            )
+
+        assert result["subjects_updated"] == 2
+        mock_helper.assert_awaited_once_with(limit=5, start=10, dry_run=True)
+
+    @pytest.mark.asyncio
+    async def test_backfill_empty_thread_subjects_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.backfill_empty_thread_subjects_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "dry_run", "subjects_updated": 2},
+        ) as mock_helper:
+            result = await redis_sre_backfill_empty_thread_subjects(
+                limit=5,
+                start=10,
+                dry_run=True,
+            )
+
+        assert result["subjects_updated"] == 2
+        mock_helper.assert_awaited_once_with(limit=5, start=10, dry_run=True)
+
+    @pytest.mark.asyncio
+    async def test_purge_threads_delegates_to_helper(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.purge_threads_helper",
+            new_callable=AsyncMock,
+            return_value={"status": "purged", "deleted": 2},
+        ) as mock_helper:
+            result = await redis_sre_purge_threads(
+                older_than="7d",
+                purge_all=False,
+                include_tasks=True,
+                dry_run=False,
+                confirm=True,
+            )
+
+        assert result["deleted"] == 2
+        mock_helper.assert_awaited_once_with(
+            older_than="7d",
+            purge_all=False,
+            include_tasks=True,
+            dry_run=False,
+            confirm=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_thread_maintenance_tool_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.thread_maintenance_helpers.reindex_threads_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_reindex_threads()
+
+        assert result == {"error": "boom", "status": "failed"}
 
 
 class TestGetThreadTool:
@@ -1237,6 +2730,88 @@ class TestListThreadsTool:
             assert latest.endswith("...")
 
 
+class TestThreadInspectionTools:
+    """Test MCP tools for thread sources and trace inspection."""
+
+    @pytest.mark.asyncio
+    async def test_get_thread_sources_delegates_to_helper(self):
+        """Thread sources should delegate to the shared helper."""
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": None,
+            "fragments": [{"id": "frag-1"}],
+            "count": 1,
+        }
+
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_sources_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_thread_sources(thread_id="thread-123")
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(thread_id="thread-123", task_id=None)
+
+    @pytest.mark.asyncio
+    async def test_get_thread_sources_error_payload(self):
+        """Unexpected failures should return a structured error payload."""
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_sources_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("lookup failed")
+
+            result = await redis_sre_get_thread_sources(thread_id="thread-123", task_id="task-1")
+
+        assert result["thread_id"] == "thread-123"
+        assert result["task_id"] == "task-1"
+        assert result["fragments"] == []
+        assert result["count"] == 0
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_get_thread_trace_delegates_to_helper(self):
+        """Thread trace should delegate to the shared helper."""
+        mock_result = {
+            "message_id": "msg-123",
+            "tool_calls": [{"name": "redis_info"}],
+            "tool_call_count": 1,
+            "citations": [],
+            "citation_count": 0,
+        }
+
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_trace_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_get_thread_trace(message_id="msg-123", include_tool_data=True)
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(message_id="msg-123", include_tool_data=True)
+
+    @pytest.mark.asyncio
+    async def test_get_thread_trace_error_payload(self):
+        """Unexpected trace failures should return a structured error payload."""
+        with patch(
+            "redis_sre_agent.core.thread_inspection_helpers.get_thread_trace_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = Exception("trace failed")
+
+            result = await redis_sre_get_thread_trace(message_id="msg-123")
+
+        assert result["message_id"] == "msg-123"
+        assert result["tool_calls"] == []
+        assert result["tool_call_count"] == 0
+        assert result["citations"] == []
+        assert result["citation_count"] == 0
+        assert "error" in result
+
+
 class TestGetTaskStatusTool:
     """Test the redis_sre_get_task_status MCP tool."""
 
@@ -1294,6 +2869,76 @@ class TestGetTaskStatusTool:
 
             assert result["status"] == "not_found"
             assert "error" in result
+
+
+class TestTaskInspectionTools:
+    """Test direct task inspection MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_task_delegates_to_helper(self):
+        """Task detail tool should delegate to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.get_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {"task_id": "task-123", "status": "done"}
+
+            result = await redis_sre_get_task(task_id="task-123")
+
+        assert result == {"task_id": "task-123", "status": "done"}
+        mock_helper.assert_awaited_once_with("task-123")
+
+    @pytest.mark.asyncio
+    async def test_get_task_not_found(self):
+        """Task detail tool should return a structured not-found payload."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.get_task_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = ValueError("Task task-999 not found")
+
+            result = await redis_sre_get_task(task_id="task-999")
+
+        assert result["status"] == "not_found"
+        assert result["task_id"] == "task-999"
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_delegates_to_helper(self):
+        """Task listing tool should delegate to the shared helper."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.list_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = {"tasks": [], "count": 0}
+
+            result = await redis_sre_list_tasks(
+                user_id="user-123",
+                status="done",
+                show_all=False,
+                limit=25,
+            )
+
+        assert result == {"tasks": [], "count": 0}
+        mock_helper.assert_awaited_once_with(
+            user_id="user-123",
+            status="done",
+            show_all=False,
+            limit=25,
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_invalid_filter(self):
+        """Task listing tool should return structured validation failures."""
+        with patch(
+            "redis_sre_agent.core.task_inspection_helpers.list_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = ValueError("Invalid task status filter: bogus")
+
+            result = await redis_sre_list_tasks(status="bogus")
+
+        assert result["status"] == "failed"
+        assert "Invalid task status filter" in result["message"]
 
 
 class TestGetTaskCitationsTool:
@@ -1401,3 +3046,46 @@ class TestDeleteTaskTool:
             assert result["status"] == "error"
             assert result["task_id"] == "task-err"
             assert "boom" in result["error"]
+
+
+class TestPurgeTasksTool:
+    """Test the redis_sre_purge_tasks MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_purge_tasks_delegates_to_helper(self):
+        mock_result = {"status": "purged", "deleted": 2}
+
+        with patch(
+            "redis_sre_agent.core.task_purge_helpers.purge_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.return_value = mock_result
+
+            result = await redis_sre_purge_tasks(
+                status="done",
+                older_than="7d",
+                purge_all=False,
+                dry_run=False,
+                confirm=True,
+            )
+
+        assert result == mock_result
+        mock_helper.assert_awaited_once_with(
+            status="done",
+            older_than="7d",
+            purge_all=False,
+            dry_run=False,
+            confirm=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_purge_tasks_error_payload(self):
+        with patch(
+            "redis_sre_agent.core.task_purge_helpers.purge_tasks_helper",
+            new_callable=AsyncMock,
+        ) as mock_helper:
+            mock_helper.side_effect = RuntimeError("boom")
+
+            result = await redis_sre_purge_tasks(confirm=True, purge_all=True)
+
+        assert result == {"error": "boom", "status": "failed"}

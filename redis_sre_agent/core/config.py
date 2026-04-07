@@ -240,6 +240,47 @@ class Settings(BaseSettings):
         description="Redis connection URL. Include credentials in URL: redis://user:pass@host:port/db",
     )
 
+    # Agent Memory Server (optional)
+    agent_memory_enabled: bool = Field(
+        default=False,
+        description="Enable Redis Agent Memory Server integration for working/long-term memory.",
+    )
+    agent_memory_base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for the Redis Agent Memory Server API.",
+    )
+    agent_memory_namespace: str = Field(
+        default="redis-sre-agent-user",
+        description="Default namespace for user-scoped AMS working and long-term memory operations.",
+    )
+    agent_memory_asset_namespace: str = Field(
+        default="redis-sre-agent-asset",
+        description="Namespace for asset-scoped AMS working and long-term memory operations.",
+    )
+    agent_memory_timeout: float = Field(
+        default=10.0,
+        description="HTTP timeout in seconds for AMS requests.",
+    )
+    agent_memory_model_name: Optional[str] = Field(
+        default="gpt-5-mini",
+        description="Model name reported to AMS for working-memory sizing and summarization.",
+    )
+    agent_memory_retrieval_limit: int = Field(
+        default=5,
+        description="Maximum number of long-term memories retrieved per turn.",
+    )
+    agent_memory_recent_message_limit: int = Field(
+        default=12,
+        description="Maximum recent working-memory messages to retain per session update.",
+    )
+    agent_memory_working_ttl_seconds: Optional[int] = Field(
+        default=None,
+        description="Optional TTL for AMS working memory sessions. None keeps sessions persistent.",
+    )
+    agent_memory_custom_prompt: Optional[str] = Field(
+        default=None,
+        description="Optional override for the AMS custom long-term extraction prompt.",
+    )
     # OpenAI (optional at import time to allow CLI/docs to load without secrets)
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: Optional[str] = Field(

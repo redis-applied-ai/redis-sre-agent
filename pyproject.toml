@@ -19,6 +19,7 @@ dependencies = [
     "langchain>=0.3.25",
     "langchain-openai>=0.2.0",
     "openai>=1.0.0",
+    "agent-memory-client>=0.14.0",
     # Redis and vector search
     "redis>=4.5.0",
     "redisvl>=0.9.0,<1.0",
@@ -135,6 +136,16 @@ ignore = ["E501"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+
+[tool.coverage.run]
+omit = [
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client/*",
+]
+
+[tool.coverage.report]
+omit = [
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client/*",
+]
 
 [tool.mypy]
 python_version = "3.12"

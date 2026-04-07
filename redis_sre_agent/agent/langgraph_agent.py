@@ -29,6 +29,7 @@ from opentelemetry import trace
 from pydantic import BaseModel, Field
 
 from ..agent.router import format_conversation_context, query_needs_live_redis_scope
+from ..core.agent_memory import prepare_agent_turn_memory
 from ..core.config import settings
 from ..core.instances import (
     create_instance,
@@ -42,6 +43,7 @@ from ..core.redis import get_redis_client
 from ..core.targets import (
     build_attached_target_scope_prompt,
     get_attached_target_handles_from_context,
+    get_target_bindings_from_context,
 )
 from ..tools.manager import ToolManager
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
@@ -542,7 +544,7 @@ class AgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -1701,7 +1703,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
@@ -1712,7 +1714,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         Args:
             query: User's SRE question or request
             session_id: Session identifier for conversation context
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
             progress_emitter: ProgressEmitter for status updates during this query.
@@ -1720,7 +1722,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         Returns:
             AgentResponse with response text and search results for citation tracking
         """
-        logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
+        logger.info(
+            "Processing SRE query for user %s, session %s", user_id or "<anonymous>", session_id
+        )
 
         # Set progress emitter for this query
         if progress_emitter is not None:
@@ -1730,13 +1734,23 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         target_instance = None
         target_cluster = None
         enhanced_query = query
-        attached_target_prompt = await build_attached_target_scope_prompt(context)
         attached_target_handles = get_attached_target_handles_from_context(context)
+        attached_target_bindings = get_target_bindings_from_context(context)
+        attached_target_count = max(len(attached_target_handles), len(attached_target_bindings))
+        attached_target_prompt: Optional[str] = None
 
-        if len(attached_target_handles) > 1 and attached_target_prompt:
-            enhanced_query = f"""User Query: {query}
+        async def _get_attached_target_prompt() -> Optional[str]:
+            nonlocal attached_target_prompt
+            if attached_target_prompt is None and attached_target_count:
+                attached_target_prompt = await build_attached_target_scope_prompt(context)
+            return attached_target_prompt
 
-{attached_target_prompt}"""
+        if attached_target_count > 1:
+            prompt = await _get_attached_target_prompt()
+            if prompt:
+                enhanced_query = f"""User Query: {query}
+
+{prompt}"""
 
         elif context and context.get("instance_id"):
             instance_id = context["instance_id"]
@@ -1907,20 +1921,13 @@ Focus on cluster-level analysis and use instance-level diagnostics only if the u
 
 CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but there was an error retrieving cluster details. Please proceed with general Redis troubleshooting."""
 
-        elif attached_target_prompt:
-            enhanced_query = f"""User Query: {query}
-
-{attached_target_prompt}"""
-
         elif context and context.get("support_package_path"):
             # Support package provided without specific instance - focus on the package
             support_pkg_path = context["support_package_path"]
             logger.info(
                 f"Support package provided without instance - focusing on package: {support_pkg_path}"
             )
-            enhanced_query = f"""User Query: {query}
-
-IMPORTANT CONTEXT: This query is specifically about a Redis Enterprise support package.
+            support_package_context = f"""IMPORTANT CONTEXT: This query is specifically about a Redis Enterprise support package.
 - Support Package Path: {support_pkg_path}
 
 You have access to support package diagnostic tools that can:
@@ -1936,39 +1943,57 @@ FOCUS ON THE SUPPORT PACKAGE: Do NOT try to connect to live Redis instances. Ins
 
 Please use the support package tools to analyze this package and answer the user's question."""
 
+            prompt = await _get_attached_target_prompt()
+            if prompt:
+                enhanced_query = f"""User Query: {query}
+
+{prompt}
+
+{support_package_context}"""
+            else:
+                enhanced_query = f"""User Query: {query}
+
+{support_package_context}"""
+
         else:
-            # No specific instance provided - check if we should auto-detect
-            logger.info("No specific Redis instance provided, checking for available instances")
+            prompt = await _get_attached_target_prompt()
+            if prompt:
+                enhanced_query = f"""User Query: {query}
 
-            # First, check if the user is providing connection details in this message
-            instance_details = _extract_instance_details_from_message(query)
-            if instance_details:
-                logger.info(
-                    "Detected connection details in user message, attempting to create instance"
-                )
-                try:
-                    new_instance = await create_instance(
-                        name=instance_details["name"],
-                        connection_url=instance_details["connection_url"],
-                        environment=instance_details["environment"],
-                        usage=instance_details["usage"],
-                        description=instance_details.get(
-                            "description", "Created by agent from user-provided details"
-                        ),
-                        created_by="agent",
-                        user_id=user_id,
-                    )
+{prompt}"""
+            else:
+                # No specific instance provided - check if we should auto-detect
+                logger.info("No specific Redis instance provided, checking for available instances")
+
+                # First, check if the user is providing connection details in this message
+                instance_details = _extract_instance_details_from_message(query)
+                if instance_details:
                     logger.info(
-                        f"Successfully created instance: {new_instance.name} ({new_instance.id})"
+                        "Detected connection details in user message, attempting to create instance"
                     )
+                    try:
+                        new_instance = await create_instance(
+                            name=instance_details["name"],
+                            connection_url=instance_details["connection_url"],
+                            environment=instance_details["environment"],
+                            usage=instance_details["usage"],
+                            description=instance_details.get(
+                                "description", "Created by agent from user-provided details"
+                            ),
+                            created_by="agent",
+                            user_id=user_id,
+                        )
+                        logger.info(
+                            f"Successfully created instance: {new_instance.name} ({new_instance.id})"
+                        )
 
-                    # Use the newly created instance
-                    target_instance = new_instance
-                    redis_url_str = target_instance.connection_url.get_secret_value()
-                    host, port = _parse_redis_connection_url(redis_url_str)
-                    redis_url = redis_url_str
+                        # Use the newly created instance
+                        target_instance = new_instance
+                        redis_url_str = target_instance.connection_url.get_secret_value()
+                        host, port = _parse_redis_connection_url(redis_url_str)
+                        redis_url = redis_url_str
 
-                    enhanced_query = f"""User Query: {query}
+                        enhanced_query = f"""User Query: {query}
 
 INSTANCE CREATED: I've created a new Redis instance configuration based on the connection details you provided:
 - Instance Name: {target_instance.name}
@@ -1984,35 +2009,35 @@ Now I'll analyze this instance to help with your original query. Let me gather s
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations."""
 
-                except ValueError as e:
-                    logger.warning(f"Failed to create instance from user details: {e}")
-                    enhanced_query = f"""User Query: {query}
+                    except ValueError as e:
+                        logger.warning(f"Failed to create instance from user details: {e}")
+                        enhanced_query = f"""User Query: {query}
 
 I detected connection details in your message, but I couldn't create the instance configuration: {str(e)}
 
 Please verify the details and try again, or let me know if you'd like help with general Redis knowledge instead."""
 
-            if not target_instance:
-                # No instance created from user input, check existing instances
-                try:
-                    instances = await get_instances()
-                    if len(instances) == 1:
-                        # Only one instance available - use it automatically
-                        target_instance = instances[0]
-                        redis_url_str = target_instance.connection_url.get_secret_value()
-                        host, port = _parse_redis_connection_url(redis_url_str)
-                        redis_url = redis_url_str
-                        logger.info(
-                            f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})"
-                        )
+                if not target_instance:
+                    # No instance created from user input, check existing instances
+                    try:
+                        instances = await get_instances()
+                        if len(instances) == 1:
+                            # Only one instance available - use it automatically
+                            target_instance = instances[0]
+                            redis_url_str = target_instance.connection_url.get_secret_value()
+                            host, port = _parse_redis_connection_url(redis_url_str)
+                            redis_url = redis_url_str
+                            logger.info(
+                                f"Auto-detected single Redis instance: {target_instance.name} ({redis_url})"
+                            )
 
-                        repo_context = ""
-                        if target_instance.repo_url:
-                            repo_context = f"""- Repository URL: {target_instance.repo_url}
+                            repo_context = ""
+                            if target_instance.repo_url:
+                                repo_context = f"""- Repository URL: {target_instance.repo_url}
 
 If you have repository tools available (e.g., GitHub MCP), you can use them to access code, configuration files, or documentation related to this instance.
 """
-                        enhanced_query = f"""User Query: {query}
+                            enhanced_query = f"""User Query: {query}
 
 AUTO-DETECTED CONTEXT: Since no specific Redis instance was mentioned, I am analyzing the available Redis instance:
 - Instance Name: {target_instance.name}
@@ -2025,15 +2050,15 @@ When using Redis diagnostic tools, use this Redis URL: {redis_url}
 
 SAFETY REQUIREMENT: You MUST verify you can connect to and gather data from this Redis instance before making any recommendations. If you cannot get basic metrics like maxmemory, connected_clients, or keyspace info, you lack sufficient information to make recommendations."""
 
-                    elif len(instances) > 1:
-                        # Multiple instances - ask user to specify
-                        instance_list = "\n".join(
-                            [
-                                f"- {inst.name} ({inst.environment}): {inst.connection_url}"
-                                for inst in instances
-                            ]
-                        )
-                        enhanced_query = f"""User Query: {query}
+                        elif len(instances) > 1:
+                            # Multiple instances - ask user to specify
+                            instance_list = "\n".join(
+                                [
+                                    f"- {inst.name} ({inst.environment}): {inst.connection_url}"
+                                    for inst in instances
+                                ]
+                            )
+                            enhanced_query = f"""User Query: {query}
 
 MULTIPLE REDIS INSTANCES DETECTED: I found {len(instances)} Redis instances configured. Please specify which instance you want me to analyze:
 
@@ -2041,18 +2066,18 @@ MULTIPLE REDIS INSTANCES DETECTED: I found {len(instances)} Redis instances conf
 
 To get targeted analysis, please rephrase your query to specify which instance, or use the instance selector in the UI."""
 
-                    else:
-                        # No instances configured - try to gather info or route to knowledge agent
-                        logger.warning("No Redis instances configured")
+                        else:
+                            # No instances configured - try to gather info or route to knowledge agent
+                            logger.warning("No Redis instances configured")
 
-                        # Check if this query appears to need live Redis access,
-                        # even when no instance is currently configured.
-                        if not await query_needs_live_redis_scope(query):
-                            # Route to knowledge agent for general queries
-                            logger.info(
-                                "No instances configured and query is general - suggesting knowledge agent"
-                            )
-                            enhanced_query = f"""User Query: {query}
+                            # Check if this query appears to need live Redis access,
+                            # even when no instance is currently configured.
+                            if not await query_needs_live_redis_scope(query):
+                                # Route to knowledge agent for general queries
+                                logger.info(
+                                    "No instances configured and query is general - suggesting knowledge agent"
+                                )
+                                enhanced_query = f"""User Query: {query}
 
 NO REDIS INSTANCES CONFIGURED: I cannot analyze specific Redis instances because none are configured in the system.
 
@@ -2068,12 +2093,12 @@ Would you like me to help with general Redis knowledge, or do you have a specifi
 3. Usage type (cache, analytics, session, queue, etc.)
 
 I can then create an instance configuration and help you troubleshoot it."""
-                        else:
-                            # Query seems Redis-specific - ask for connection details
-                            logger.info(
-                                "No instances configured but query seems Redis-specific - requesting connection details"
-                            )
-                            enhanced_query = f"""User Query: {query}
+                            else:
+                                # Query seems Redis-specific - ask for connection details
+                                logger.info(
+                                    "No instances configured but query seems Redis-specific - requesting connection details"
+                                )
+                                enhanced_query = f"""User Query: {query}
 
 NO REDIS INSTANCES CONFIGURED: I cannot analyze specific Redis instances because none are configured in the system.
 
@@ -2088,8 +2113,8 @@ Once you provide these details, I'll create an instance configuration and help y
 
 Alternatively, if you're looking for general Redis knowledge or best practices (not specific to an instance), let me know and I can help with that instead."""
 
-                except Exception as e:
-                    logger.error(f"Failed to check available instances: {e}")
+                    except Exception as e:
+                        logger.error(f"Failed to check available instances: {e}")
 
         # Defer initial state construction until tools are loaded so startup context
         # can include the actual tool instructions available for this query.
@@ -2431,7 +2456,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
@@ -2442,7 +2467,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         Args:
             query: User's SRE question or request
             session_id: Session identifier for conversation context
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
             conversation_history: Optional list of previous messages for context
@@ -2454,6 +2479,19 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
         try:
+            emitter = progress_emitter if progress_emitter is not None else self._progress_emitter
+            prepared_memory = await prepare_agent_turn_memory(
+                query=query,
+                session_id=session_id,
+                user_id=user_id,
+                context=context,
+                emitter=emitter,
+            )
+            memory_context = prepared_memory.memory_context
+            effective_history = list(conversation_history or [])
+            if memory_context.system_prompt:
+                effective_history.insert(0, SystemMessage(content=memory_context.system_prompt))
+
             # Produce the primary response (returns AgentResponse)
             agent_response = await self._process_query(
                 query,
@@ -2461,23 +2499,29 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 user_id,
                 max_iterations,
                 context,
-                conversation_history,
+                effective_history or None,
                 progress_emitter,
             )
             response_text = agent_response.response
 
             # Skip correction if this message isn't about Redis
+            skip_safety_fact_correction = False
             try:
-                if not (self._is_redis_scoped(query) or self._is_redis_scoped(response_text)):
-                    logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
-                    return agent_response
+                skip_safety_fact_correction = not (
+                    self._is_redis_scoped(query) or self._is_redis_scoped(response_text)
+                )
             except Exception:
                 pass
+            if skip_safety_fact_correction:
+                logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
+                await prepared_memory.persist_response_fail_open(agent_response.response)
+                return agent_response
 
             # Heuristic gate: only run when risky patterns/URLs present
             if not (
                 self._should_run_safety_fact(response_text) or self._should_run_safety_fact(query)
             ):
+                await prepared_memory.persist_response_fail_open(agent_response.response)
                 return agent_response
 
             # Build a small, bounded corrector with knowledge + utilities tools only
@@ -2581,12 +2625,15 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     except Exception:
                         edited_sanitized = edited
                     # Return corrected response with original search results and tool envelopes
-                    return AgentResponse(
+                    corrected_response = AgentResponse(
                         response=edited_sanitized,
                         search_results=agent_response.search_results,
                         tool_envelopes=agent_response.tool_envelopes,
                     )
+                    await prepared_memory.persist_response_fail_open(corrected_response.response)
+                    return corrected_response
                 # If no change, just return original
+                await prepared_memory.persist_response_fail_open(agent_response.response)
                 return agent_response
         finally:
             # Clear LLM memo cache for this run

@@ -1,9 +1,10 @@
 # Getting Started with the SRE Agent
 
+If you want the fastest seeded local demo, start with `make quick-demo` from the repository root. This guide walks through the full manual path so you can see each step of the stack and the knowledge pipeline.
+
 ## Prerequisites
 
-- Docker
-- Docker Compose
+- Docker with Compose v2
 - OpenAI API key
 - Python >= 3.12
 - uv package manager
@@ -31,6 +32,26 @@ python -c 'import os, base64; print("REDIS_SRE_MASTER_KEY=" + base64.b64encode(o
 Copy the output into your `.env` file.
 
 **Note:** The example environment file sets default models. If you are using a custom OpenAI-compatible endpoint, confirm the configured model names are available there.
+
+## Fastest path
+
+```bash
+cp .env.example .env
+# Set OPENAI_API_KEY
+# Generate REDIS_SRE_MASTER_KEY with:
+# python3 -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
+
+make quick-demo
+```
+
+After the stack is up, you can prove the value quickly with:
+
+```bash
+docker compose exec -T sre-agent uv run redis-sre-agent \
+  query "What are Redis eviction policies?"
+```
+
+For a full walkthrough, continue below.
 
 ## Docker Compose
 

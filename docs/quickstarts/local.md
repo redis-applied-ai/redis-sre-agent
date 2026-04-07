@@ -1,61 +1,75 @@
 ## Local Quickstart (Docker Compose)
 
-This gets the API, Worker, monitoring stack, and optional Experimental UI running locally.
+Use this path when you want the fastest local demo with a seeded Redis target, API, worker, dashboards, and UI.
 
 ### Prerequisites
-- Docker and Docker Compose (v2)
-- OpenAI API key
-- Optional: curl for simple checks
+
+- Docker with Compose v2
+- OpenAI API key or compatible endpoint
+- Optional: `curl` for quick health checks
 
 ### 1) Configure environment
+
 ```bash
 cp .env.example .env
-# Edit .env and set at least:
-# OPENAI_API_KEY=your_key
+# Set OPENAI_API_KEY
+# Generate REDIS_SRE_MASTER_KEY with:
+# python3 -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
 ```
 
-### 2) Start core services (no Redis Enterprise)
-Recommended minimal stack:
-```bash
-docker compose up -d \
-  redis redis-demo redis-exporter redis-exporter-agent pushgateway \
-  prometheus grafana loki promtail \
-  sre-agent sre-worker sre-ui
-```
-Notes:
-- API: http://localhost:8080
-- Grafana: http://localhost:3001 (admin/admin)
-- Experimental UI: http://localhost:3002 (proxied to API)
+### 2) Run the seeded demo
 
-### 3) Check status
 ```bash
-# API root health
-curl http://localhost:8080/
-# Detailed health (Redis, Docket/worker availability, etc.)
-curl http://localhost:8080/api/v1/health
-# Prometheus
-curl http://localhost:9090/-/ready
+make quick-demo
 ```
 
-### 4) Create a demo Redis instance (inside container)
-The demo Redis runs as `redis-demo` in Compose.
-```bash
-# Create instance
-docker compose exec -T sre-agent uv run redis-sre-agent instance create \
-  --name demo \
-  --connection-url redis://redis-demo:6379/0 \
-  --environment development \
-  --usage cache \
-  --description "Demo Redis"
+The helper does four things:
 
-# List instances to copy the ID
+- Starts the local evaluation stack with Docker Compose
+- Seeds `redis-demo` with sample keys
+- Registers a demo Redis target with the agent
+- Prints next-step commands for knowledge mode and live triage
+
+### 3) Ask your first question
+
+Start with a knowledge-only question that needs no target setup:
+
+```bash
+docker compose exec -T sre-agent uv run redis-sre-agent \
+  query "What are Redis eviction policies?"
+```
+
+Then inspect the seeded demo target and run live triage:
+
+```bash
 docker compose exec -T sre-agent uv run redis-sre-agent instance list
+
+docker compose exec -T sre-agent uv run redis-sre-agent \
+  query "Check memory pressure and slow ops" -r <instance_id>
 ```
 
-Optional: Run the CLI on your host instead of in the container (requires uv):
+### 4) Verify the stack
+
+```bash
+curl -fsS http://localhost:8080/
+curl -fsS http://localhost:8080/api/v1/health | jq
+curl -fsS http://localhost:9090/-/ready
+```
+
+### Access points
+
+- API: <http://localhost:8080>
+- UI: <http://localhost:3002>
+- Grafana: <http://localhost:3001> (`admin` / `admin`)
+- Prometheus: <http://localhost:9090>
+- Agent Redis: `redis://localhost:7843/0`
+- Demo Redis: `redis://localhost:7844/0`
+
+### Run the CLI on your host instead of in the container
+
 ```bash
 uv sync --dev
-# Use localhost port mapping for the demo Redis
+
 uv run redis-sre-agent instance create \
   --name demo \
   --connection-url redis://localhost:7844/0 \
@@ -64,29 +78,21 @@ uv run redis-sre-agent instance create \
   --description "Demo Redis"
 ```
 
-### 5) Run your first triage (CLI)
-```bash
-# Replace <instance_id> with the ID from the list command
-docker compose exec -T sre-agent uv run redis-sre-agent \
-  query "Check memory pressure and slow ops" -r <instance_id>
-```
-
-### 6) Explore dashboards (optional)
-- Grafana: http://localhost:3001 (admin/admin)
-- Prometheus: http://localhost:9090
-- Experimental UI: http://localhost:3002
-
 ### Cleanup
+
 ```bash
 docker compose down
 ```
 
 ### Next steps
-- Production Quickstart: docs/quickstarts/production.md
-- Experimental UI details: docs/ui/experimental.md
-- Knowledge ingestion (optional): `uv run redis-sre-agent pipeline prepare_sources` then `uv run redis-sre-agent pipeline ingest`
+- Full Docker walkthrough: [quickstarts/end-to-end-setup.md](end-to-end-setup.md)
+- VM deployment: [quickstarts/vm-deployment.md](vm-deployment.md)
+- Agent Memory Server integration: [how-to/agent-memory-server-integration.md](../how-to/agent-memory-server-integration.md)
+- UI details: [ui/experimental.md](../ui/experimental.md)
+- Knowledge ingestion: `uv run redis-sre-agent pipeline prepare-sources` then `uv run redis-sre-agent pipeline ingest`
 
 ### See also
-- Configuration: how-to/configuration.md
-- Tool Providers: how-to/tool-providers.md
-- Advanced Encryption: how-to/configuration/encryption.md
+
+- Configuration: [how-to/configuration.md](../how-to/configuration.md)
+- Tool Providers: [how-to/tool-providers.md](../how-to/tool-providers.md)
+- Encryption: [how-to/configuration/encryption.md](../how-to/configuration/encryption.md)

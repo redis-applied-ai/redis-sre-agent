@@ -78,6 +78,7 @@ class ScheduledRun(BaseModel):
 class TaskCreateRequest(BaseModel):
     message: str
     thread_id: Optional[str] = None
+    user_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
 
