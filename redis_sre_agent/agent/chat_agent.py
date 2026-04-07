@@ -664,6 +664,7 @@ class ChatAgent:
             AgentResponse with response text and any knowledge search results used
         """
         logger.info("Chat agent processing query for user %s", user_id or "<anonymous>")
+        effective_user_id = user_id or "unknown"
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
@@ -696,7 +697,7 @@ class ChatAgent:
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
             thread_id=session_id,
             task_id=(context or {}).get("task_id"),
-            user_id=user_id,
+            user_id=effective_user_id,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
             logger.info(f"Chat agent loaded {len(tools)} tools")
