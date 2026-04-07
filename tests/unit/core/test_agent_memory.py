@@ -204,3 +204,46 @@ class TestPersistTurn:
             )
 
         assert mock_client.put_working_memory.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_persist_turn_deduplicates_existing_context_lines(self, memory_settings):
+        existing_context = "\n".join(
+            [
+                "Target instance: instance-1",
+                "Thread ID: thread-1",
+                "User ID: user-1",
+                "Prior durable note",
+            ]
+        )
+        user_working_memory = SimpleNamespace(
+            messages=[],
+            memories=[],
+            data={},
+            context=existing_context,
+        )
+        mock_client = AsyncMock()
+        mock_client.put_working_memory = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            await service.persist_turn(
+                session_id="session-1",
+                user_id="user-1",
+                user_message="hello",
+                assistant_message="hi",
+                user_working_memory=user_working_memory,
+                instance_id="instance-1",
+                thread_id="thread-1",
+            )
+
+        _, updated_memory = mock_client.put_working_memory.await_args.args[:2]
+        assert updated_memory.context == "\n".join(
+            [
+                "Target instance: instance-1",
+                "Thread ID: thread-1",
+                "User ID: user-1",
+                "Prior durable note",
+            ]
+        )

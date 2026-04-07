@@ -448,7 +448,9 @@ class AgentMemoryService:
                     existing_context = getattr(working_memory, "context", None)
                     combined_context_parts = list(target_context)
                     if existing_context:
-                        combined_context_parts.append(existing_context)
+                        for context_line in existing_context.splitlines():
+                            if context_line and context_line not in combined_context_parts:
+                                combined_context_parts.append(context_line)
 
                     updated_memory = WorkingMemory(
                         session_id=scope_session_id,
