@@ -289,11 +289,16 @@ async def process_chat_turn(
             progress_emitter=emitter,
             exclude_mcp_categories=mcp_categories,
         )
+        agent_context = {"task_id": task_id}
+        if instance_id:
+            agent_context["instance_id"] = instance_id
+        if cluster_id:
+            agent_context["cluster_id"] = cluster_id
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
             user_id=user_id,
-            context={"task_id": task_id},
+            context=agent_context,
             progress_emitter=emitter,
         )
 

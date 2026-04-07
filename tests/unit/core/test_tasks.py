@@ -358,6 +358,8 @@ class TestProcessChatTurn:
         assert result["instance_id"] == "inst-1"
         mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.IN_PROGRESS)
         mock_task_manager.update_task_status.assert_any_call("task-123", TaskStatus.DONE)
+        _, process_kwargs = mock_agent.process_query.call_args
+        assert process_kwargs["context"] == {"task_id": "task-123", "instance_id": "inst-1"}
 
     @pytest.mark.asyncio
     async def test_process_chat_turn_instance_not_found(self):
@@ -468,6 +470,8 @@ class TestProcessChatTurn:
         assert result["response"] == "Cluster response"
         assert result["cluster_id"] == "cluster-1"
         assert mock_cls.call_args.kwargs["redis_cluster"] is mock_cluster
+        _, process_kwargs = mock_agent.process_query.call_args
+        assert process_kwargs["context"] == {"task_id": "task-123", "cluster_id": "cluster-1"}
 
     @pytest.mark.asyncio
     async def test_process_chat_turn_rejects_instance_and_cluster(self):
