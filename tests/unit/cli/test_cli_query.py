@@ -69,6 +69,8 @@ def test_query_without_instance_uses_chat_agent(mock_thread_manager, mock_redis_
     mock_get_sre.assert_not_called()
     mock_get_instance.assert_not_awaited()
     mock_agent.process_query.assert_awaited_once()
+    _, process_kwargs = mock_agent.process_query.call_args
+    assert process_kwargs["user_id"] is None
     _, kwargs = mock_thread_manager.create_thread.call_args
     assert kwargs["user_id"] is None
     assert kwargs["session_id"].startswith("cli:")

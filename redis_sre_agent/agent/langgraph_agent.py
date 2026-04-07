@@ -539,7 +539,7 @@ class AgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -1717,7 +1717,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         Returns:
             AgentResponse with response text and search results for citation tracking
         """
-        logger.info(f"Processing SRE query for user {user_id}, session {session_id}")
+        logger.info(
+            "Processing SRE query for user %s, session %s", user_id or "<anonymous>", session_id
+        )
 
         # Set progress emitter for this query
         if progress_emitter is not None:
@@ -2416,7 +2418,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = settings.max_iterations,
         context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[BaseMessage]] = None,
@@ -2427,7 +2429,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         Args:
             query: User's SRE question or request
             session_id: Session identifier for conversation context
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of workflow iterations
             context: Additional context including instance_id if specified
             conversation_history: Optional list of previous messages for context

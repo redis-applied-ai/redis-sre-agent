@@ -107,7 +107,7 @@ class ChatAgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -643,7 +643,7 @@ class ChatAgent:
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = 10,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
@@ -654,7 +654,7 @@ class ChatAgent:
         Args:
             query: User's question
             session_id: Session identifier
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum agent iterations (default 10)
             context: Additional context (e.g., instance_id)
             progress_emitter: Emitter for progress/notification updates
@@ -663,7 +663,7 @@ class ChatAgent:
         Returns:
             AgentResponse with response text and any knowledge search results used
         """
-        logger.info(f"Chat agent processing query for user {user_id}")
+        logger.info("Chat agent processing query for user %s", user_id or "<anonymous>")
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter

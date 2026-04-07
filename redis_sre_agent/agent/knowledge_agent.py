@@ -79,7 +79,7 @@ class KnowledgeAgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -494,7 +494,7 @@ class KnowledgeOnlyAgent:
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = 5,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
@@ -506,7 +506,7 @@ class KnowledgeOnlyAgent:
         Args:
             query: User's question or request
             session_id: Session identifier
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of agent iterations
             context: Additional context (currently ignored for knowledge-only agent)
             progress_emitter: Emitter for progress/notification updates
@@ -515,7 +515,7 @@ class KnowledgeOnlyAgent:
         Returns:
             Agent's response as a string
         """
-        logger.info(f"Processing knowledge query for user {user_id}")
+        logger.info("Processing knowledge query for user %s", user_id or "<anonymous>")
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
