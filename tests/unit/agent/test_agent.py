@@ -257,7 +257,7 @@ class TestSRELangGraphAgent:
         assert mock_tool_manager_class.call_args.kwargs["user_id"] is None
 
     @pytest.mark.asyncio
-    async def test_process_query_non_redis_skip_does_not_swallow_persist_errors(
+    async def test_process_query_non_redis_skip_fail_open_on_persist_error(
         self, mock_settings, mock_llm
     ):
         agent = SRELangGraphAgent()
@@ -284,13 +284,13 @@ class TestSRELangGraphAgent:
             patch.object(agent, "_is_redis_scoped", side_effect=[False, False]),
             patch.object(agent, "_should_run_safety_fact") as mock_should_run_safety_fact,
         ):
-            with pytest.raises(RuntimeError, match="persist boom"):
-                await agent.process_query(
-                    query="How are you?",
-                    session_id="s1",
-                    user_id=None,
-                )
+            response = await agent.process_query(
+                query="How are you?",
+                session_id="s1",
+                user_id=None,
+            )
 
+        assert response.response == "Hello there"
         mock_should_run_safety_fact.assert_not_called()
 
     @pytest.mark.asyncio

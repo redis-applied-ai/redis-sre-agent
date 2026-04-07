@@ -680,6 +680,26 @@ class ChatAgent:
             emitter=emitter,
         )
 
+        async def _persist_response_fail_open(response_text: str) -> None:
+            try:
+                await memory_service.persist_turn(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_message=query,
+                    assistant_message=response_text,
+                    user_working_memory=memory_context.user_working_memory,
+                    asset_working_memory=memory_context.asset_working_memory,
+                    instance_id=instance_id,
+                    cluster_id=cluster_id,
+                    thread_id=session_id,
+                    emitter=emitter,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist chat memory for session %s; returning response without memory update",
+                    session_id,
+                )
+
         # Get cache client if tool caching is enabled
         cache_client = None
         if settings.tool_cache_enabled and self.redis_instance:
@@ -798,35 +818,13 @@ User Query: {query}"""
                             response=str(last_message.content),
                             tool_envelopes=tool_envelopes,
                         )
-                    await memory_service.persist_turn(
-                        session_id=session_id,
-                        user_id=user_id,
-                        user_message=query,
-                        assistant_message=response.response,
-                        user_working_memory=memory_context.user_working_memory,
-                        asset_working_memory=memory_context.asset_working_memory,
-                        instance_id=instance_id,
-                        cluster_id=cluster_id,
-                        thread_id=session_id,
-                        emitter=emitter,
-                    )
+                    await _persist_response_fail_open(response.response)
                     return response
 
                 fallback = AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                 )
-                await memory_service.persist_turn(
-                    session_id=session_id,
-                    user_id=user_id,
-                    user_message=query,
-                    assistant_message=fallback.response,
-                    user_working_memory=memory_context.user_working_memory,
-                    asset_working_memory=memory_context.asset_working_memory,
-                    instance_id=instance_id,
-                    cluster_id=cluster_id,
-                    thread_id=session_id,
-                    emitter=emitter,
-                )
+                await _persist_response_fail_open(fallback.response)
                 return fallback
 
             except Exception as e:

@@ -531,6 +531,26 @@ class KnowledgeOnlyAgent:
             emitter=emitter,
         )
 
+        async def _persist_response_fail_open(response_text: str) -> None:
+            try:
+                await memory_service.persist_turn(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_message=query,
+                    assistant_message=response_text,
+                    user_working_memory=memory_context.user_working_memory,
+                    asset_working_memory=memory_context.asset_working_memory,
+                    instance_id=instance_id,
+                    cluster_id=cluster_id,
+                    thread_id=session_id,
+                    emitter=emitter,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist knowledge memory for session %s; returning response without memory update",
+                    session_id,
+                )
+
         # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:
             tools = tool_mgr.get_tools()
@@ -630,18 +650,7 @@ class KnowledgeOnlyAgent:
                 result = AgentResponse(
                     response=response, search_results=search_results, tool_envelopes=tool_envelopes
                 )
-                await memory_service.persist_turn(
-                    session_id=session_id,
-                    user_id=user_id,
-                    user_message=query,
-                    assistant_message=result.response,
-                    user_working_memory=memory_context.user_working_memory,
-                    asset_working_memory=memory_context.asset_working_memory,
-                    instance_id=instance_id,
-                    cluster_id=cluster_id,
-                    thread_id=session_id,
-                    emitter=emitter,
-                )
+                await _persist_response_fail_open(result.response)
                 return result
 
             except Exception as e:

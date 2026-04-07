@@ -2458,18 +2458,24 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 effective_history.insert(0, SystemMessage(content=memory_context.system_prompt))
 
             async def _persist_final_response(final_response: str) -> None:
-                await memory_service.persist_turn(
-                    session_id=session_id,
-                    user_id=user_id,
-                    user_message=query,
-                    assistant_message=final_response,
-                    user_working_memory=memory_context.user_working_memory,
-                    asset_working_memory=memory_context.asset_working_memory,
-                    instance_id=instance_id,
-                    cluster_id=cluster_id,
-                    thread_id=session_id,
-                    emitter=emitter,
-                )
+                try:
+                    await memory_service.persist_turn(
+                        session_id=session_id,
+                        user_id=user_id,
+                        user_message=query,
+                        assistant_message=final_response,
+                        user_working_memory=memory_context.user_working_memory,
+                        asset_working_memory=memory_context.asset_working_memory,
+                        instance_id=instance_id,
+                        cluster_id=cluster_id,
+                        thread_id=session_id,
+                        emitter=emitter,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist memory for session %s; returning response without memory update",
+                        session_id,
+                    )
 
             # Produce the primary response (returns AgentResponse)
             agent_response = await self._process_query(
