@@ -189,7 +189,9 @@ class TestKnowledgeAgent:
             ),
             patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
         ):
-            response = await agent.process_query(query="who runs AOP?", session_id="s1", user_id="u1")
+            response = await agent.process_query(
+                query="who runs AOP?", session_id="s1", user_id="u1"
+            )
 
         assert response.response.startswith("I apologize, but I wasn't able to process your query.")
         prepared_memory.persist_response_fail_open.assert_not_awaited()
