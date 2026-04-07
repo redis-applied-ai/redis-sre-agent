@@ -140,8 +140,6 @@ class AgentMemoryService:
             "preference",
             "likes ",
             "wants ",
-            "concise",
-            "detailed",
             "root-cause-first",
             "remediation-first",
             "explanation-first",

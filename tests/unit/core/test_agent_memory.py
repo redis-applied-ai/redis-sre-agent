@@ -38,6 +38,20 @@ def memory_settings(monkeypatch):
 
 
 class TestPrepareTurnContext:
+    def test_filter_asset_memories_keeps_operational_memories_with_common_adjectives(self):
+        memories = [
+            SimpleNamespace(text="Detailed OOM analysis revealed backup conflicts"),
+            SimpleNamespace(text="Instance logs showed concise replication error trace"),
+            SimpleNamespace(text="Operator prefers concise replies"),
+        ]
+
+        filtered = AgentMemoryService._filter_asset_memories(memories)
+
+        assert [memory.text for memory in filtered] == [
+            "Detailed OOM analysis revealed backup conflicts",
+            "Instance logs showed concise replication error trace",
+        ]
+
     @pytest.mark.asyncio
     async def test_returns_disabled_when_feature_off(self, monkeypatch):
         monkeypatch.setattr(
