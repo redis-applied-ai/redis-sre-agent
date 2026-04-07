@@ -667,7 +667,7 @@ class TestChatAgentStartupContext:
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
-    async def test_process_query_normalizes_missing_user_id_for_tool_manager(
+    async def test_process_query_preserves_missing_user_id_for_tool_manager(
         self, mock_create_mini_llm, mock_create_llm
     ):
         mock_llm = MagicMock()
@@ -723,7 +723,7 @@ class TestChatAgentStartupContext:
             )
 
         assert response.response == "final answer"
-        assert mock_tool_manager_class.call_args.kwargs["user_id"] == "unknown"
+        assert mock_tool_manager_class.call_args.kwargs["user_id"] is None
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")

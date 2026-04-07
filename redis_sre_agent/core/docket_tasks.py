@@ -292,7 +292,7 @@ async def process_chat_turn(
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
-            user_id=user_id or "mcp-user",
+            user_id=user_id,
             context={"task_id": task_id},
             progress_emitter=emitter,
         )
@@ -411,7 +411,7 @@ async def process_knowledge_query(
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
-            user_id=user_id or "mcp-user",
+            user_id=user_id,
             max_iterations=chat_max_iterations,
             context={"task_id": task_id},
             progress_emitter=emitter,
@@ -934,7 +934,7 @@ async def process_agent_turn(
                             "description", "Created by agent from user-provided details"
                         ),
                         created_by="agent",
-                        user_id=thread.metadata.user_id or "unknown",
+                        user_id=thread.metadata.user_id,
                     )
 
                     active_instance_id = new_instance.id
@@ -1135,7 +1135,7 @@ async def process_agent_turn(
 
             chat_agent_response = await agent.process_query(
                 query=message,
-                user_id=thread.metadata.user_id or "unknown",
+                user_id=thread.metadata.user_id,
                 session_id=thread.metadata.session_id or thread_id,
                 max_iterations=max_iterations,
                 context=routing_context,

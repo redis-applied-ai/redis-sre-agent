@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from redis_sre_agent.agent.models import AgentResponse
-from redis_sre_agent.cli.query import CLI_AGENT_USER_ID, query
+from redis_sre_agent.cli.query import query
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def test_query_without_instance_uses_chat_agent(mock_thread_manager, mock_redis_
     mock_get_instance.assert_not_awaited()
     mock_agent.process_query.assert_awaited_once()
     _, process_kwargs = mock_agent.process_query.call_args
-    assert process_kwargs["user_id"] == CLI_AGENT_USER_ID
+    assert process_kwargs["user_id"] is None
     _, kwargs = mock_thread_manager.create_thread.call_args
     assert kwargs["user_id"] is None
     assert kwargs["session_id"].startswith("cli:")

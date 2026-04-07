@@ -215,7 +215,7 @@ class TestSRELangGraphAgent:
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
-    async def test_process_query_normalizes_optional_user_id_for_tool_manager(
+    async def test_process_query_preserves_optional_user_id_for_tool_manager(
         self, mock_build_startup_context, mock_settings, mock_llm
     ):
         mock_build_startup_context.return_value = "STARTUP_CONTEXT"
@@ -253,7 +253,7 @@ class TestSRELangGraphAgent:
             )
 
         mock_tool_manager_class.assert_called_once()
-        assert mock_tool_manager_class.call_args.kwargs["user_id"] == "unknown"
+        assert mock_tool_manager_class.call_args.kwargs["user_id"] is None
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
