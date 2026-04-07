@@ -96,6 +96,42 @@ class TurnMemoryContext:
     error: Optional[str] = None
 
 
+@dataclass
+class PreparedAgentTurnMemory:
+    """Prepared AMS state for a single agent turn."""
+
+    memory_service: "AgentMemoryService"
+    memory_context: TurnMemoryContext
+    session_id: str
+    user_id: Optional[str]
+    query: str
+    instance_id: Optional[str]
+    cluster_id: Optional[str]
+    emitter: Optional[ProgressEmitter] = None
+
+    async def persist_response_fail_open(self, assistant_message: str) -> None:
+        """Persist turn memory without interrupting the user-visible response path."""
+
+        try:
+            await self.memory_service.persist_turn(
+                session_id=self.session_id,
+                user_id=self.user_id,
+                user_message=self.query,
+                assistant_message=assistant_message,
+                user_working_memory=self.memory_context.user_working_memory,
+                asset_working_memory=self.memory_context.asset_working_memory,
+                instance_id=self.instance_id,
+                cluster_id=self.cluster_id,
+                thread_id=self.session_id,
+                emitter=self.emitter,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist memory for session %s; returning response without memory update",
+                self.session_id,
+            )
+
+
 class AgentMemoryService:
     """Thin AMS adapter for turn-scoped retrieval and persistence."""
 
@@ -516,3 +552,36 @@ class AgentMemoryService:
                 "memory_error",
                 {"stage": "persist", "error": str(exc), "session_id": session_id},
             )
+
+
+async def prepare_agent_turn_memory(
+    *,
+    query: str,
+    session_id: str,
+    user_id: Optional[str],
+    context: Optional[Dict[str, Any]],
+    emitter: Optional[ProgressEmitter],
+) -> PreparedAgentTurnMemory:
+    """Prepare AMS memory state shared by agent implementations."""
+
+    memory_service = AgentMemoryService()
+    instance_id = context.get("instance_id") if context else None
+    cluster_id = context.get("cluster_id") if context else None
+    memory_context = await memory_service.prepare_turn_context(
+        query=query,
+        session_id=session_id,
+        user_id=user_id,
+        instance_id=instance_id,
+        cluster_id=cluster_id,
+        emitter=emitter,
+    )
+    return PreparedAgentTurnMemory(
+        memory_service=memory_service,
+        memory_context=memory_context,
+        session_id=session_id,
+        user_id=user_id,
+        query=query,
+        instance_id=instance_id,
+        cluster_id=cluster_id,
+        emitter=emitter,
+    )

@@ -1,11 +1,15 @@
 """Unit tests for Redis Agent Memory Server integration helpers."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from redis_sre_agent.core.agent_memory import AgentMemoryService, TurnMemoryContext
+from redis_sre_agent.core.agent_memory import (
+    AgentMemoryService,
+    TurnMemoryContext,
+    prepare_agent_turn_memory,
+)
 
 
 @pytest.fixture
@@ -247,3 +251,32 @@ class TestPersistTurn:
                 "Prior durable note",
             ]
         )
+
+
+class TestPrepareAgentTurnMemory:
+    @pytest.mark.asyncio
+    async def test_persist_response_fail_open(self):
+        memory_service = MagicMock()
+        memory_service.prepare_turn_context = AsyncMock(
+            return_value=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            )
+        )
+        memory_service.persist_turn = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch(
+            "redis_sre_agent.core.agent_memory.AgentMemoryService",
+            return_value=memory_service,
+        ):
+            prepared = await prepare_agent_turn_memory(
+                query="hello",
+                session_id="session-1",
+                user_id=None,
+                context={"instance_id": "instance-1"},
+                emitter=None,
+            )
+            await prepared.persist_response_fail_open("hi")
+
+        memory_service.persist_turn.assert_awaited_once()

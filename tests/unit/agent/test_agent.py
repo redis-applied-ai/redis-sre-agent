@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
 from redis_sre_agent.agent.models import AgentResponse
+from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 
 
 @pytest.fixture
@@ -195,13 +196,11 @@ class TestSRELangGraphAgent:
         self, mock_settings, mock_llm
     ):
         agent = SRELangGraphAgent()
-        memory_service = MagicMock()
-        memory_service.prepare_turn_context = AsyncMock(side_effect=asyncio.CancelledError())
 
         with (
             patch(
-                "redis_sre_agent.agent.langgraph_agent.AgentMemoryService",
-                return_value=memory_service,
+                "redis_sre_agent.agent.langgraph_agent.prepare_agent_turn_memory",
+                AsyncMock(side_effect=asyncio.CancelledError()),
             ),
             patch.object(agent, "_end_run_cache") as mock_end_run_cache,
         ):
@@ -261,20 +260,26 @@ class TestSRELangGraphAgent:
         self, mock_settings, mock_llm
     ):
         agent = SRELangGraphAgent()
-        memory_service = MagicMock()
-        memory_service.prepare_turn_context = AsyncMock(
-            return_value=MagicMock(
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
                 system_prompt=None,
                 user_working_memory=None,
                 asset_working_memory=None,
-            )
+            ),
+            session_id="s1",
+            user_id=None,
+            query="How are you?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
         )
-        memory_service.persist_turn = AsyncMock(side_effect=RuntimeError("persist boom"))
+        prepared_memory.persist_response_fail_open = AsyncMock()
 
         with (
             patch(
-                "redis_sre_agent.agent.langgraph_agent.AgentMemoryService",
-                return_value=memory_service,
+                "redis_sre_agent.agent.langgraph_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
             ),
             patch.object(
                 agent,
@@ -292,6 +297,7 @@ class TestSRELangGraphAgent:
 
         assert response.response == "Hello there"
         mock_should_run_safety_fact.assert_not_called()
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with("Hello there")
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")

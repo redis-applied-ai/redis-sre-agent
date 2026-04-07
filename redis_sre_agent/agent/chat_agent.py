@@ -19,7 +19,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 
-from redis_sre_agent.core.agent_memory import AgentMemoryService
+from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
@@ -667,38 +667,14 @@ class ChatAgent:
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
-        memory_service = AgentMemoryService()
-        instance_id = context.get("instance_id") if context else None
-        cluster_id = context.get("cluster_id") if context else None
-
-        memory_context = await memory_service.prepare_turn_context(
+        prepared_memory = await prepare_agent_turn_memory(
             query=query,
             session_id=session_id,
             user_id=user_id,
-            instance_id=instance_id,
-            cluster_id=cluster_id,
+            context=context,
             emitter=emitter,
         )
-
-        async def _persist_response_fail_open(response_text: str) -> None:
-            try:
-                await memory_service.persist_turn(
-                    session_id=session_id,
-                    user_id=user_id,
-                    user_message=query,
-                    assistant_message=response_text,
-                    user_working_memory=memory_context.user_working_memory,
-                    asset_working_memory=memory_context.asset_working_memory,
-                    instance_id=instance_id,
-                    cluster_id=cluster_id,
-                    thread_id=session_id,
-                    emitter=emitter,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to persist chat memory for session %s; returning response without memory update",
-                    session_id,
-                )
+        memory_context = prepared_memory.memory_context
 
         # Get cache client if tool caching is enabled
         cache_client = None
@@ -818,13 +794,13 @@ User Query: {query}"""
                             response=str(last_message.content),
                             tool_envelopes=tool_envelopes,
                         )
-                    await _persist_response_fail_open(response.response)
+                    await prepared_memory.persist_response_fail_open(response.response)
                     return response
 
                 fallback = AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                 )
-                await _persist_response_fail_open(fallback.response)
+                await prepared_memory.persist_response_fail_open(fallback.response)
                 return fallback
 
             except Exception as e:

@@ -11,6 +11,7 @@ from redis_sre_agent.agent.chat_agent import (
     ChatAgentState,
     get_chat_agent,
 )
+from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.progress import NullEmitter
@@ -677,15 +678,21 @@ class TestChatAgentStartupContext:
 
         agent = ChatAgent()
 
-        mock_memory_service = MagicMock()
-        mock_memory_service.prepare_turn_context = AsyncMock(
-            return_value=MagicMock(
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
                 system_prompt=None,
                 user_working_memory=None,
                 asset_working_memory=None,
-            )
+            ),
+            session_id="test-session",
+            user_id=None,
+            query="Who runs AOP?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
         )
-        mock_memory_service.persist_turn = AsyncMock()
+        prepared_memory.persist_response_fail_open = AsyncMock()
 
         mock_tool_manager = MagicMock()
         mock_tool_manager.__aenter__.return_value = mock_tool_manager
@@ -703,8 +710,8 @@ class TestChatAgentStartupContext:
 
         with (
             patch(
-                "redis_sre_agent.agent.chat_agent.AgentMemoryService",
-                return_value=mock_memory_service,
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
             ),
             patch(
                 "redis_sre_agent.agent.chat_agent.ToolManager",
@@ -724,6 +731,7 @@ class TestChatAgentStartupContext:
 
         assert response.response == "final answer"
         assert mock_tool_manager_class.call_args.kwargs["user_id"] is None
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with("final answer")
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
