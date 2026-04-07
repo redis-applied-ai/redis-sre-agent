@@ -7,6 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
+from redis_sre_agent.agent.models import AgentResponse
 
 
 @pytest.fixture
@@ -254,6 +255,43 @@ class TestSRELangGraphAgent:
 
         mock_tool_manager_class.assert_called_once()
         assert mock_tool_manager_class.call_args.kwargs["user_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_process_query_non_redis_skip_does_not_swallow_persist_errors(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+        memory_service = MagicMock()
+        memory_service.prepare_turn_context = AsyncMock(
+            return_value=MagicMock(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            )
+        )
+        memory_service.persist_turn = AsyncMock(side_effect=RuntimeError("persist boom"))
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.AgentMemoryService",
+                return_value=memory_service,
+            ),
+            patch.object(
+                agent,
+                "_process_query",
+                AsyncMock(return_value=AgentResponse(response="Hello there", search_results=[])),
+            ),
+            patch.object(agent, "_is_redis_scoped", side_effect=[False, False]),
+            patch.object(agent, "_should_run_safety_fact") as mock_should_run_safety_fact,
+        ):
+            with pytest.raises(RuntimeError, match="persist boom"):
+                await agent.process_query(
+                    query="How are you?",
+                    session_id="s1",
+                    user_id=None,
+                )
+
+        mock_should_run_safety_fact.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")

@@ -2484,13 +2484,17 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             response_text = agent_response.response
 
             # Skip correction if this message isn't about Redis
+            skip_safety_fact_correction = False
             try:
-                if not (self._is_redis_scoped(query) or self._is_redis_scoped(response_text)):
-                    logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
-                    await _persist_final_response(agent_response.response)
-                    return agent_response
+                skip_safety_fact_correction = not (
+                    self._is_redis_scoped(query) or self._is_redis_scoped(response_text)
+                )
             except Exception:
                 pass
+            if skip_safety_fact_correction:
+                logger.info("Skipping safety/fact-corrector (topic may not be Redis)")
+                await _persist_final_response(agent_response.response)
+                return agent_response
 
             # Heuristic gate: only run when risky patterns/URLs present
             if not (
