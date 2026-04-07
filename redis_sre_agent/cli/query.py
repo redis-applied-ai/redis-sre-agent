@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Backward-compatible module attribute for legacy tests and patches.
 get_knowledge_agent = get_chat_agent
+CLI_AGENT_USER_ID = "cli_user"
 
 
 @click.command()
@@ -221,6 +222,8 @@ def query(
             )
 
         try:
+            agent_user_id = resolved_user_id or CLI_AGENT_USER_ID
+
             # Build context with instance and/or support package
             context = {}
             if instance:
@@ -234,7 +237,7 @@ def query(
             agent_response = await selected_agent.process_query(
                 query,
                 session_id=active_session_id or active_thread_id or "cli",
-                user_id=resolved_user_id,
+                user_id=agent_user_id,
                 max_iterations=settings.max_iterations,
                 context=context if context else None,
                 conversation_history=conversation_history if conversation_history else None,
