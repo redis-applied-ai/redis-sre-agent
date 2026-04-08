@@ -169,7 +169,8 @@ def _build_mcp_query_context(
     if user_id:
         context["user_id"] = user_id
     if extra_context:
-        context.update(extra_context)
+        for key, value in extra_context.items():
+            context.setdefault(key, value)
     return context
 
 

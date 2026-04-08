@@ -109,9 +109,9 @@ def test_turn_scope_to_thread_context_omits_empty_binding_fields_for_zero_scope(
 
     context = scope.to_thread_context()
 
-    assert "attached_target_handles" not in context
-    assert "target_bindings" not in context
-    assert "target_toolset_generation" not in context
+    assert context["attached_target_handles"] == []
+    assert context["target_bindings"] == []
+    assert context["target_toolset_generation"] == 0
 
 
 def test_turn_scope_from_context_falls_back_when_toolset_generation_invalid():
@@ -131,6 +131,32 @@ def test_turn_scope_to_thread_context_keeps_generation_without_bindings():
     context = scope.to_thread_context()
 
     assert context["target_toolset_generation"] == 4
+
+
+def test_turn_scope_to_thread_context_clears_stale_attached_scope_fields():
+    scope = TurnScope(scope_kind="zero_scope")
+    context = {
+        "attached_target_handles": ["tgt_stale"],
+        "target_bindings": [{"target_handle": "tgt_stale"}],
+        "target_toolset_generation": 9,
+    }
+
+    context.update(scope.to_thread_context())
+
+    assert context["attached_target_handles"] == []
+    assert context["target_bindings"] == []
+    assert context["target_toolset_generation"] == 0
+
+
+def test_turn_scope_preserves_handle_only_attached_scope_fields():
+    scope = TurnScope.from_context({"attached_target_handles": ["tgt_01", "tgt_02"]})
+
+    context = scope.to_thread_context()
+
+    assert scope.scope_kind == "zero_scope"
+    assert scope.attached_target_handles == ["tgt_01", "tgt_02"]
+    assert context["attached_target_handles"] == ["tgt_01", "tgt_02"]
+    assert context["target_bindings"] == []
 
 
 def test_build_legacy_target_scope_adapter_wraps_instance_scope_in_turn_scope_context():

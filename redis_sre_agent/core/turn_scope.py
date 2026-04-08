@@ -7,7 +7,11 @@ from typing import Any, Dict, Literal, Optional
 from pydantic import BaseModel, Field
 from ulid import ULID
 
-from redis_sre_agent.core.targets import TargetBinding, get_target_bindings_from_context
+from redis_sre_agent.core.targets import (
+    TargetBinding,
+    get_attached_target_handles_from_context,
+    get_target_bindings_from_context,
+)
 
 TurnScopeKind = Literal["zero_scope", "target_bindings", "support_package"]
 TurnScopeResolutionPolicy = Literal[
@@ -33,6 +37,7 @@ class TurnScope(BaseModel):
     thread_id: Optional[str] = None
     session_id: Optional[str] = None
     scope_kind: TurnScopeKind = "zero_scope"
+    attached_target_handles: list[str] = Field(default_factory=list)
     bindings: list[TargetBinding] = Field(default_factory=list)
     toolset_generation: int = 0
     prompt_context: dict[str, Any] = Field(default_factory=dict)
@@ -77,6 +82,7 @@ class TurnScope(BaseModel):
     ) -> "TurnScope":
         """Build a TurnScope from a routing or thread context payload."""
         payload = context or {}
+        attached_target_handles = get_attached_target_handles_from_context(payload)
         bindings = get_target_bindings_from_context(payload)
         support_package_context = {
             key: payload[key]
@@ -109,6 +115,7 @@ class TurnScope(BaseModel):
             thread_id=_coerce_optional_str(thread_id or payload.get("thread_id")),
             session_id=_coerce_optional_str(session_id or payload.get("session_id")),
             scope_kind=scope_kind,
+            attached_target_handles=attached_target_handles,
             bindings=bindings,
             toolset_generation=toolset_generation,
             prompt_context=dict(prompt_context or {}),
@@ -125,6 +132,9 @@ class TurnScope(BaseModel):
             "session_id": self.session_id or "",
             "automated": self.automation_mode == "automated",
             "resolution_policy": self.resolution_policy,
+            "attached_target_handles": list(self.attached_target_handles),
+            "target_bindings": [],
+            "target_toolset_generation": self.toolset_generation,
         }
         if self.bindings:
             context["attached_target_handles"] = [
@@ -133,9 +143,6 @@ class TurnScope(BaseModel):
             context["target_bindings"] = [
                 binding.model_dump(mode="json") for binding in self.bindings
             ]
-            context["target_toolset_generation"] = self.toolset_generation
-        elif self.toolset_generation:
-            context["target_toolset_generation"] = self.toolset_generation
         context.update(self.support_package_context)
         return context
 
