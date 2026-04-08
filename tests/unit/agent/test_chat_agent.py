@@ -1384,6 +1384,63 @@ class TestChatAgentStartupContext:
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_uses_prompt_fallback_for_unbound_single_attached_handle(
+        self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_startup_context.return_value = ""
+
+        agent = ChatAgent()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [AIMessage(content="unbound attached answer")],
+            "signals_envelopes": [],
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_attached_target_scope_prompt",
+                new=AsyncMock(return_value="ATTACHED TARGET SCOPE"),
+            ) as mock_prompt_builder,
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Inspect the attached target",
+                session_id="test-session",
+                user_id="test-user",
+                context={"attached_target_handles": ["tgt_01"]},
+            )
+
+        assert response.response == "unbound attached answer"
+        mock_prompt_builder.assert_awaited_once()
+        human_message = fake_app.ainvoke.await_args.args[0]["messages"][-1]
+        assert "ATTACHED TARGET SCOPE" in str(human_message.content)
+        assert "User Query: Inspect the attached target" in str(human_message.content)
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
     async def test_agent_node_reinjects_startup_context_for_follow_ups(
         self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
     ):

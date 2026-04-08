@@ -753,18 +753,15 @@ class ChatAgent:
 
             # Add instance context to the query if available
             enhanced_query = query
-            if attached_target_count > 1:
+            attached_prompt_query: Optional[str] = None
+            if attached_target_count > 1 or has_attached_scope:
                 prompt = await _get_attached_target_prompt()
                 if prompt:
-                    enhanced_query = f"""{prompt}
+                    attached_prompt_query = f"""{prompt}
 
 User Query: {query}"""
-            elif has_attached_scope:
-                prompt = await _get_attached_target_prompt()
-                if prompt:
-                    enhanced_query = f"""{prompt}
-
-User Query: {query}"""
+            if attached_prompt_query:
+                enhanced_query = attached_prompt_query
             elif effective_redis_instance:
                 repo_context = ""
                 if effective_redis_instance.repo_url:

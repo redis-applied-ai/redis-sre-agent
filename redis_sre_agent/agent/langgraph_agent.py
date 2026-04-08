@@ -1752,7 +1752,9 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         explicit_cluster_scope_id = normalized_context.get("cluster_id")
         instance_scope_id = explicit_instance_scope_id
         cluster_scope_id = explicit_cluster_scope_id
-        has_attached_scope = turn_scope.target_count > 0
+        has_attached_scope = (
+            turn_scope.scope_kind == "target_bindings" and turn_scope.target_count > 0
+        )
         _get_attached_target_prompt = build_attached_target_prompt_loader(
             normalized_context,
             attached_target_count,
