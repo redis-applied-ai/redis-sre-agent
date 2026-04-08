@@ -1759,13 +1759,16 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         )
         attached_prompt_scope = attached_target_count > 1 or has_attached_scope
         _get_attached_target_prompt = build_attached_target_prompt_loader(
-            normalized_context,
+            lambda: normalized_context,
             attached_target_count,
             build_attached_target_scope_prompt,
         )
 
-        def _build_support_package_context() -> Optional[str]:
-            support_pkg_path = normalized_context.get("support_package_path")
+        def _build_support_package_context(
+            support_pkg_path: Optional[str] = None,
+        ) -> Optional[str]:
+            if support_pkg_path is None:
+                support_pkg_path = normalized_context.get("support_package_path")
             if not support_pkg_path:
                 return None
             return f"""IMPORTANT CONTEXT: This query is specifically about a Redis Enterprise support package.
@@ -1987,6 +1990,9 @@ CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but there was an e
             logger.info(
                 f"Support package provided without instance - focusing on package: {support_pkg_path}"
             )
+            support_package_prompt = support_package_context or _build_support_package_context(
+                support_pkg_path
+            )
 
             prompt = await _get_attached_target_prompt()
             if not prompt and attached_prompt_scope:
@@ -1996,10 +2002,10 @@ CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but there was an e
                     attached_handles=raw_attached_target_handles,
                 )
             if prompt:
-                if support_package_context:
+                if support_package_prompt:
                     enhanced_query = f"""{prompt}
 
-{support_package_context}
+{support_package_prompt}
 
 User Query: {query}"""
                 else:
@@ -2007,10 +2013,10 @@ User Query: {query}"""
 
 User Query: {query}"""
             else:
-                if support_package_context:
+                if support_package_prompt:
                     enhanced_query = f"""User Query: {query}
 
-{support_package_context}"""
+{support_package_prompt}"""
 
         else:
             prompt = await _get_attached_target_prompt()
@@ -2333,11 +2339,17 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
         # Create ToolManager for this query with the target instance
         tool_thread_id = turn_scope.thread_id
+        initial_target_bindings = (
+            turn_scope.bindings or None
+            if target_instance is None and target_cluster is None
+            else None
+        )
+        initial_toolset_generation = turn_scope.toolset_generation if initial_target_bindings else 0
         async with ToolManager(
             redis_instance=target_instance,
             redis_cluster=target_cluster,
-            initial_target_bindings=turn_scope.bindings or None,
-            initial_toolset_generation=turn_scope.toolset_generation,
+            initial_target_bindings=initial_target_bindings,
+            initial_toolset_generation=initial_toolset_generation,
             support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,

@@ -835,17 +835,19 @@ async def test_build_attached_target_scope_prompt_single_target_uses_single_targ
 
 
 @pytest.mark.asyncio
-async def test_build_attached_target_prompt_loader_memoizes_none_results():
-    prompt_builder = AsyncMock(return_value=None)
+async def test_build_attached_target_prompt_loader_retries_none_results():
+    prompt_builder = AsyncMock(side_effect=[None, "ATTACHED TARGET SCOPE"])
     loader = build_attached_target_prompt_loader({}, 1, prompt_builder)
 
     assert await loader() is None
-    assert await loader() is None
-    prompt_builder.assert_awaited_once_with({})
+    assert await loader() == "ATTACHED TARGET SCOPE"
+    assert await loader() == "ATTACHED TARGET SCOPE"
+    assert prompt_builder.await_count == 2
+    prompt_builder.assert_any_await({})
 
 
 @pytest.mark.asyncio
-async def test_build_attached_target_prompt_loader_snapshots_context():
+async def test_build_attached_target_prompt_loader_reads_latest_context_once():
     prompt_builder = AsyncMock(return_value="ATTACHED TARGET SCOPE")
     context = {"attached_target_handles": ["tgt_01"]}
     loader = build_attached_target_prompt_loader(context, 1, prompt_builder)
@@ -853,7 +855,24 @@ async def test_build_attached_target_prompt_loader_snapshots_context():
     context["attached_target_handles"].append("tgt_02")
 
     assert await loader() == "ATTACHED TARGET SCOPE"
-    prompt_builder.assert_awaited_once_with({"attached_target_handles": ["tgt_01"]})
+    prompt_builder.assert_awaited_once_with({"attached_target_handles": ["tgt_01", "tgt_02"]})
+
+
+@pytest.mark.asyncio
+async def test_build_attached_target_prompt_loader_uses_callable_context_per_attempt():
+    prompt_builder = AsyncMock(side_effect=[None, "ATTACHED TARGET SCOPE"])
+    context = {"attached_target_handles": ["tgt_01"]}
+    loader = build_attached_target_prompt_loader(lambda: context, 1, prompt_builder)
+
+    assert await loader() is None
+    context["target_bindings"] = [{"target_handle": "tgt_01", "display_name": "Prod Cache"}]
+
+    assert await loader() == "ATTACHED TARGET SCOPE"
+    assert prompt_builder.await_args_list[0].args[0] == {"attached_target_handles": ["tgt_01"]}
+    assert prompt_builder.await_args_list[1].args[0] == {
+        "attached_target_handles": ["tgt_01"],
+        "target_bindings": [{"target_handle": "tgt_01", "display_name": "Prod Cache"}],
+    }
 
 
 def test_build_ephemeral_target_bindings_generates_opaque_handles():

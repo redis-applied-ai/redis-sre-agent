@@ -677,7 +677,7 @@ class TestSRELangGraphAgent:
             patch(
                 "redis_sre_agent.agent.langgraph_agent.ToolManager",
                 return_value=mock_tool_mgr_ctx,
-            ),
+            ) as mock_tool_manager_cls,
             patch(
                 "redis_sre_agent.agent.langgraph_agent._build_adapters",
                 AsyncMock(return_value=[]),
@@ -695,6 +695,8 @@ class TestSRELangGraphAgent:
         human_message = captured["initial_state"]["messages"][-1].content
         assert "IMPORTANT CONTEXT: This query is specifically about Redis instance" in human_message
         assert "ATTACHED TARGET SCOPE" not in human_message
+        assert mock_tool_manager_cls.call_args.kwargs["initial_target_bindings"] is None
+        assert mock_tool_manager_cls.call_args.kwargs["initial_toolset_generation"] == 0
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
@@ -930,6 +932,58 @@ class TestSRELangGraphAgent:
         assert "Support Package Path: /tmp/packages/test-package" in human_message
         assert "User Query: Inspect this support package" in human_message
         assert "None" not in human_message
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_support_package_branch_keeps_package_context_without_attached_scope(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="Inspect this support package",
+                session_id="s1",
+                user_id="u1",
+                context={"support_package_path": "/tmp/packages/test-package"},
+            )
+
+        human_message = captured["initial_state"]["messages"][-1].content
+        assert "Support Package Path: /tmp/packages/test-package" in human_message
+        assert "FOCUS ON THE SUPPORT PACKAGE" in human_message
+        assert "User Query: Inspect this support package" in human_message
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")

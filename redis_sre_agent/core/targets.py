@@ -378,20 +378,28 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
 
 
 def build_attached_target_prompt_loader(
-    context: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]] | Callable[[], Optional[Dict[str, Any]]],
     attached_target_count: int,
     prompt_builder: Callable[[Optional[Dict[str, Any]]], Awaitable[Optional[str]]],
 ) -> Callable[[], Awaitable[Optional[str]]]:
     """Return a memoized attached-target prompt loader for a single turn."""
 
-    context_snapshot = copy.deepcopy(context) if isinstance(context, dict) else context
     prompt_unset = object()
     attached_target_prompt: Any = prompt_unset
+
+    def _get_context_snapshot() -> Optional[Dict[str, Any]]:
+        current_context = context() if callable(context) else context
+        return (
+            copy.deepcopy(current_context) if isinstance(current_context, dict) else current_context
+        )
 
     async def _get_attached_target_prompt() -> Optional[str]:
         nonlocal attached_target_prompt
         if attached_target_prompt is prompt_unset and attached_target_count:
-            attached_target_prompt = await prompt_builder(context_snapshot)
+            prompt = await prompt_builder(_get_context_snapshot())
+            if prompt is not None:
+                attached_target_prompt = prompt
+            return prompt
         if attached_target_prompt is prompt_unset:
             return None
         return attached_target_prompt
