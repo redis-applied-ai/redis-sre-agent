@@ -145,11 +145,12 @@ DEFAULT TO CHAT unless you see explicit deep/exhaustive keywords.
 
 Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
 
+        scope_hint = ""
         if has_cluster and not has_instance:
             scope_hint = " [Scope: cluster]"
         elif has_instance:
             scope_hint = " [Scope: instance]"
-        else:
+        elif has_attached_targets:
             scope_hint = f" [Scope: {len(attached_target_handles)} attached targets]"
         query_with_context = f"Categorize this query:{scope_hint} {query}{context_str}"
         messages = [

@@ -104,6 +104,9 @@ async def test_resolve_redis_targets_uses_shared_binding_contract():
     )
     assert payload["attached_target_handles"] == ["tgt_01"]
     assert payload["toolset_generation"] == 7
+    assert payload["target_bindings"] == bound_scope.context_updates["target_bindings"]
+    assert "instance_id" not in payload
+    assert "cluster_id" not in payload
 
 
 @pytest.mark.asyncio

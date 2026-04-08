@@ -708,11 +708,17 @@ class ChatAgent:
         if support_package_path is None and scope_support_package_path:
             support_package_path = Path(scope_support_package_path)
 
+        has_attached_scope = (
+            turn_scope.scope_kind == "target_bindings" and turn_scope.target_count > 0
+        )
+        effective_redis_instance = None if has_attached_scope else self.redis_instance
+        effective_redis_cluster = None if has_attached_scope else self.redis_cluster
+
         # Create ToolManager with Redis instance for full tool access
         tool_thread_id = turn_scope.thread_id or session_id
         async with ToolManager(
-            redis_instance=self.redis_instance,
-            redis_cluster=self.redis_cluster,
+            redis_instance=effective_redis_instance,
+            redis_cluster=effective_redis_cluster,
             initial_target_bindings=turn_scope.bindings or None,
             initial_toolset_generation=turn_scope.toolset_generation,
             exclude_mcp_categories=self.exclude_mcp_categories,
@@ -753,31 +759,37 @@ class ChatAgent:
                     enhanced_query = f"""{prompt}
 
 User Query: {query}"""
-            elif self.redis_instance:
+            elif has_attached_scope:
+                prompt = await _get_attached_target_prompt()
+                if prompt:
+                    enhanced_query = f"""{prompt}
+
+User Query: {query}"""
+            elif effective_redis_instance:
                 repo_context = ""
-                if self.redis_instance.repo_url:
-                    repo_context = f"""- Repository URL: {self.redis_instance.repo_url}
+                if effective_redis_instance.repo_url:
+                    repo_context = f"""- Repository URL: {effective_redis_instance.repo_url}
 
 If you have GitHub tools available, you can search the repository for code, configuration, or documentation related to this Redis instance.
 """
                 instance_context = f"""
 INSTANCE CONTEXT: This query is about Redis instance:
-- Instance Name: {self.redis_instance.name}
-- Environment: {self.redis_instance.environment}
-- Usage: {self.redis_instance.usage}
-- Instance Type: {self.redis_instance.instance_type}
+- Instance Name: {effective_redis_instance.name}
+- Environment: {effective_redis_instance.environment}
+- Usage: {effective_redis_instance.usage}
+- Instance Type: {effective_redis_instance.instance_type}
 {repo_context}
 Your diagnostic tools are PRE-CONFIGURED for this instance.
 
 User Query: {query}"""
                 enhanced_query = instance_context
-            elif self.redis_cluster:
+            elif effective_redis_cluster:
                 cluster_context = f"""
 CLUSTER CONTEXT: This query is about Redis cluster:
-- Cluster Name: {self.redis_cluster.name}
-- Cluster ID: {self.redis_cluster.id}
-- Environment: {self.redis_cluster.environment}
-- Cluster Type: {self.redis_cluster.cluster_type}
+- Cluster Name: {effective_redis_cluster.name}
+- Cluster ID: {effective_redis_cluster.id}
+- Environment: {effective_redis_cluster.environment}
+- Cluster Type: {effective_redis_cluster.cluster_type}
 
 Cluster-level admin tools are PRE-CONFIGURED for this cluster when available.
 

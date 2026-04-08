@@ -109,5 +109,11 @@ class TargetDiscoveryToolProvider(ToolProvider):
         payload["attached_target_handles"] = attached_handles
         payload["toolset_generation"] = toolset_generation
         if attach_tools and manager and result.selected_matches:
-            payload.update(scope.context_updates)
+            payload.update(
+                {
+                    key: value
+                    for key, value in scope.context_updates.items()
+                    if key not in {"instance_id", "cluster_id"}
+                }
+            )
         return payload

@@ -962,6 +962,89 @@ class TestChatAgentStartupContext:
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_includes_memory_prompt_and_repo_url_for_instance_scope(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        instance = RedisInstance(
+            id="redis-prod-checkout-cache",
+            name="checkout-cache-prod",
+            connection_url="redis://localhost:6379",
+            environment="production",
+            usage="cache",
+            description="Checkout cache",
+            instance_type="oss_single",
+            repo_url="https://github.com/acme/checkout-service",
+        )
+        agent = ChatAgent(redis_instance=instance)
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt="Memory reminder",
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="test-session",
+            user_id="test-user",
+            query="Inspect checkout cache",
+            instance_id=instance.id,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [AIMessage(content="instance answer")],
+            "signals_envelopes": [],
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Inspect checkout cache",
+                session_id="test-session",
+                user_id="test-user",
+            )
+
+        assert response.response == "instance answer"
+        initial_messages = fake_app.ainvoke.await_args.args[0]["messages"]
+        assert str(initial_messages[1].content) == "Memory reminder"
+        human_message = initial_messages[-1]
+        assert "INSTANCE CONTEXT" in str(human_message.content)
+        assert "Repository URL: https://github.com/acme/checkout-service" in str(
+            human_message.content
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
     async def test_process_query_skips_memory_persist_for_generic_fallback(
         self, mock_create_mini_llm, mock_create_llm
     ):
@@ -1186,7 +1269,10 @@ class TestChatAgentStartupContext:
         }
 
         with (
-            patch("redis_sre_agent.agent.chat_agent.ToolManager", return_value=mock_tool_manager),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
             patch(
                 "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
                 new=AsyncMock(return_value=[]),
@@ -1215,7 +1301,7 @@ class TestChatAgentStartupContext:
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
-    async def test_process_query_skips_attached_target_prompt_for_bound_instance(
+    async def test_process_query_prefers_attached_target_prompt_over_bound_instance(
         self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
     ):
         mock_llm = MagicMock()
@@ -1264,7 +1350,10 @@ class TestChatAgentStartupContext:
         }
 
         with (
-            patch("redis_sre_agent.agent.chat_agent.ToolManager", return_value=mock_tool_manager),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ) as mock_tool_manager_class,
             patch(
                 "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
                 new=AsyncMock(return_value=[]),
@@ -1284,13 +1373,12 @@ class TestChatAgentStartupContext:
             )
 
         assert response.response == "bound instance answer"
-        mock_prompt_builder.assert_not_awaited()
+        mock_prompt_builder.assert_awaited_once()
         human_message = fake_app.ainvoke.await_args.args[0]["messages"][-1]
-        assert "Repository URL: https://github.com/acme/checkout-service" in str(
-            human_message.content
-        )
-        assert "INSTANCE CONTEXT" in str(human_message.content)
-        assert "ATTACHED TARGET SCOPE" not in str(human_message.content)
+        assert "ATTACHED TARGET SCOPE" in str(human_message.content)
+        assert "INSTANCE CONTEXT" not in str(human_message.content)
+        assert mock_tool_manager_class.call_args.kwargs["redis_instance"] is None
+        assert mock_tool_manager_class.call_args.kwargs["redis_cluster"] is None
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
