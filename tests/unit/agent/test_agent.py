@@ -872,6 +872,67 @@ class TestSRELangGraphAgent:
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_support_package_fallback_does_not_render_none_literal(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.build_attached_target_scope_prompt",
+                new=AsyncMock(return_value=None),
+            ) as mock_prompt_builder,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="Inspect this support package",
+                session_id="s1",
+                user_id="u1",
+                context={
+                    "support_package_path": "/tmp/packages/test-package",
+                    "attached_target_handles": ["tgt_01", "tgt_02"],
+                },
+            )
+
+        mock_prompt_builder.assert_awaited_once()
+        human_message = captured["initial_state"]["messages"][-1].content
+        assert "ATTACHED TARGET SCOPE" in human_message
+        assert "Support Package Path: /tmp/packages/test-package" in human_message
+        assert "User Query: Inspect this support package" in human_message
+        assert "None" not in human_message
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
     async def test_process_query_unbound_attached_handles_use_prompt_fallback(
         self, mock_build_startup_context, mock_settings, mock_llm
     ):
@@ -999,6 +1060,148 @@ class TestSRELangGraphAgent:
         assert "resource_id=redis-prod-1" in human_message
         assert human_message.index("ATTACHED TARGET SCOPE") < human_message.index(
             "User Query: Inspect the attached target"
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_uses_multi_binding_scope_when_prompt_builder_returns_none(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        context = {
+            "attached_target_handles": ["tgt_01", "tgt_02"],
+            "target_bindings": [
+                {
+                    "target_handle": "tgt_01",
+                    "target_kind": "instance",
+                    "resource_id": "redis-prod-1",
+                    "display_name": "Prod Cache",
+                    "capabilities": ["redis"],
+                },
+                {
+                    "target_handle": "tgt_02",
+                    "target_kind": "instance",
+                    "resource_id": "redis-prod-2",
+                    "display_name": "Prod Queue",
+                    "capabilities": ["redis"],
+                },
+            ],
+        }
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.build_attached_target_scope_prompt",
+                new=AsyncMock(return_value=None),
+            ) as mock_prompt_builder,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="Compare the attached targets",
+                session_id="s1",
+                user_id="u1",
+                context=context,
+            )
+
+        mock_prompt_builder.assert_awaited_once()
+        human_message = captured["initial_state"]["messages"][-1].content
+        assert "ATTACHED TARGET SCOPE" in human_message
+        assert "Prod Cache" in human_message
+        assert "Prod Queue" in human_message
+        assert "MULTI-TARGET REQUIREMENT" in human_message
+        assert human_message.index("ATTACHED TARGET SCOPE") < human_message.index(
+            "User Query: Compare the attached targets"
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_uses_multi_handle_scope_when_prompt_builder_returns_none(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.build_attached_target_scope_prompt",
+                new=AsyncMock(return_value=None),
+            ) as mock_prompt_builder,
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="Compare the attached handles",
+                session_id="s1",
+                user_id="u1",
+                context={"attached_target_handles": ["tgt_01", "tgt_02"]},
+            )
+
+        mock_prompt_builder.assert_awaited_once()
+        human_message = captured["initial_state"]["messages"][-1].content
+        assert "ATTACHED TARGET SCOPE" in human_message
+        assert "handle=tgt_01 [metadata unavailable]" in human_message
+        assert "handle=tgt_02 [metadata unavailable]" in human_message
+        assert "MULTI-TARGET REQUIREMENT" in human_message
+        assert human_message.index("ATTACHED TARGET SCOPE") < human_message.index(
+            "User Query: Compare the attached handles"
         )
 
     @pytest.mark.asyncio

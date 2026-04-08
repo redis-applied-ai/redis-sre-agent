@@ -41,6 +41,7 @@ from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..core.targets import (
+    build_attached_target_prompt_fallback,
     build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
     build_single_attached_binding_prompt,
@@ -1756,6 +1757,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         has_attached_scope = (
             turn_scope.scope_kind == "target_bindings" and turn_scope.target_count > 0
         )
+        attached_prompt_scope = attached_target_count > 1 or has_attached_scope
         _get_attached_target_prompt = build_attached_target_prompt_loader(
             normalized_context,
             attached_target_count,
@@ -1782,12 +1784,23 @@ FOCUS ON THE SUPPORT PACKAGE: Do NOT try to connect to live Redis instances. Ins
 
 Please use the support package tools to analyze this package and answer the user's question."""
 
-        if has_attached_scope and not explicit_instance_scope_id and not explicit_cluster_scope_id:
+        support_package_context = _build_support_package_context()
+
+        if (
+            attached_prompt_scope
+            and not explicit_instance_scope_id
+            and not explicit_cluster_scope_id
+        ):
             prompt = await _get_attached_target_prompt()
-            if not prompt and turn_scope.single_binding is not None:
+            if not prompt:
+                prompt = build_attached_target_prompt_fallback(
+                    attached_target_count=attached_target_count,
+                    bindings=turn_scope.bindings,
+                    attached_handles=raw_attached_target_handles,
+                )
+            if not prompt and has_attached_scope and turn_scope.single_binding is not None:
                 prompt = build_single_attached_binding_prompt(turn_scope.single_binding)
             if prompt:
-                support_package_context = _build_support_package_context()
                 if support_package_context:
                     enhanced_query = f"""{prompt}
 
@@ -1974,22 +1987,39 @@ CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but there was an e
             logger.info(
                 f"Support package provided without instance - focusing on package: {support_pkg_path}"
             )
-            support_package_context = _build_support_package_context()
 
             prompt = await _get_attached_target_prompt()
+            if not prompt and attached_prompt_scope:
+                prompt = build_attached_target_prompt_fallback(
+                    attached_target_count=attached_target_count,
+                    bindings=turn_scope.bindings,
+                    attached_handles=raw_attached_target_handles,
+                )
             if prompt:
-                enhanced_query = f"""{prompt}
+                if support_package_context:
+                    enhanced_query = f"""{prompt}
 
 {support_package_context}
 
 User Query: {query}"""
+                else:
+                    enhanced_query = f"""{prompt}
+
+User Query: {query}"""
             else:
-                enhanced_query = f"""User Query: {query}
+                if support_package_context:
+                    enhanced_query = f"""User Query: {query}
 
 {support_package_context}"""
 
         else:
             prompt = await _get_attached_target_prompt()
+            if not prompt and attached_prompt_scope:
+                prompt = build_attached_target_prompt_fallback(
+                    attached_target_count=attached_target_count,
+                    bindings=turn_scope.bindings,
+                    attached_handles=raw_attached_target_handles,
+                )
             if prompt:
                 enhanced_query = f"""{prompt}
 

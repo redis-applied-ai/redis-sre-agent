@@ -30,6 +30,7 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.targets import (
+    build_attached_target_prompt_fallback,
     build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
     build_single_attached_binding_prompt,
@@ -755,14 +756,19 @@ class ChatAgent:
             # Add instance context to the query if available
             enhanced_query = query
             attached_prompt_query: Optional[str] = None
-            if attached_target_count > 1 or has_attached_scope:
+            attached_prompt_scope = attached_target_count > 1 or has_attached_scope
+            if attached_prompt_scope:
                 prompt = await _get_attached_target_prompt()
+                if not prompt:
+                    prompt = build_attached_target_prompt_fallback(
+                        attached_target_count=attached_target_count,
+                        bindings=turn_scope.bindings,
+                        attached_handles=raw_attached_target_handles,
+                    )
+                if not prompt and has_attached_scope and turn_scope.single_binding is not None:
+                    prompt = build_single_attached_binding_prompt(turn_scope.single_binding)
                 if prompt:
                     attached_prompt_query = f"""{prompt}
-
-User Query: {query}"""
-                elif has_attached_scope and turn_scope.single_binding is not None:
-                    attached_prompt_query = f"""{build_single_attached_binding_prompt(turn_scope.single_binding)}
 
 User Query: {query}"""
             if attached_prompt_query:
@@ -799,6 +805,12 @@ User Query: {query}"""
                 enhanced_query = cluster_context
             else:
                 prompt = await _get_attached_target_prompt()
+                if not prompt and attached_prompt_scope:
+                    prompt = build_attached_target_prompt_fallback(
+                        attached_target_count=attached_target_count,
+                        bindings=turn_scope.bindings,
+                        attached_handles=raw_attached_target_handles,
+                    )
                 if prompt:
                     enhanced_query = f"""{prompt}
 

@@ -101,6 +101,69 @@ def build_single_attached_binding_prompt(binding: TargetBinding) -> str:
     )
 
 
+def build_attached_target_prompt_fallback(
+    attached_target_count: int,
+    bindings: Sequence[TargetBinding],
+    attached_handles: Optional[Sequence[str]] = None,
+) -> Optional[str]:
+    """Build deterministic attached-target scope context when async prompt loading fails."""
+    ordered_handles = [
+        handle for handle in (str(handle).strip() for handle in (attached_handles or [])) if handle
+    ]
+    binding_by_handle = {binding.target_handle: binding for binding in bindings}
+    for binding in bindings:
+        if binding.target_handle not in ordered_handles:
+            ordered_handles.append(binding.target_handle)
+
+    target_count = max(attached_target_count, len(ordered_handles))
+    if target_count <= 0:
+        return None
+
+    prompt_lines = [
+        (f"ATTACHED TARGET SCOPE: This conversation has {target_count} attached Redis target(s)."),
+        "Attached targets:" if target_count > 1 else "Attached target:",
+    ]
+
+    if ordered_handles:
+        for handle in ordered_handles:
+            binding = binding_by_handle.get(handle)
+            if binding is None:
+                prompt_lines.append(f"- handle={handle} [metadata unavailable]")
+                continue
+
+            capability_text = ", ".join(binding.capabilities or []) or "unspecified"
+            prompt_lines.append(
+                "- "
+                f"{binding.display_name} [handle={binding.target_handle}, "
+                f"kind={binding.target_kind}, resource_id={binding.resource_id}, "
+                f"capabilities={capability_text}]"
+            )
+    else:
+        prompt_lines.append("- [metadata unavailable]")
+
+    if target_count > 1:
+        prompt_lines.extend(
+            [
+                "MULTI-TARGET REQUIREMENT: Treat these attached targets as a target set.",
+                (
+                    "Do not silently collapse scope to a single instance or cluster unless the "
+                    "user explicitly narrows it."
+                ),
+                (
+                    "When the user asks for investigation or comparison, gather evidence per "
+                    "target, keep the findings separated by handle/display name, and then "
+                    "return a structured comparison."
+                ),
+            ]
+        )
+    else:
+        prompt_lines.append(
+            "Use the target-scoped tools for the attached handle above when investigating it."
+        )
+
+    return "\n".join(prompt_lines)
+
+
 class ResolvedTargetMatch(BaseModel):
     """A ranked candidate returned by the deterministic resolver."""
 
