@@ -92,6 +92,7 @@ class TargetDiscoveryToolProvider(ToolProvider):
         )
 
         attached_handles: List[str] = []
+        scope = None
         toolset_generation = manager.get_toolset_generation() if manager else 0
 
         if attach_tools and manager and result.selected_matches:
@@ -108,7 +109,7 @@ class TargetDiscoveryToolProvider(ToolProvider):
         payload = result.model_dump()
         payload["attached_target_handles"] = attached_handles
         payload["toolset_generation"] = toolset_generation
-        if attach_tools and manager and result.selected_matches:
+        if scope is not None:
             payload.update(
                 {
                     key: value

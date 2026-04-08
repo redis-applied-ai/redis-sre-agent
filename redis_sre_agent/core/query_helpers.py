@@ -95,6 +95,11 @@ async def queue_query_task_helper(
         support_package_context=support_package_context,
         resolution_policy="require_target" if (instance_id or cluster_id) else "allow_zero_scope",
     )
+    thread_context = {
+        key: value
+        for key, value in thread_context.items()
+        if key not in {"thread_id", "session_id"} or value
+    }
     if user_id:
         thread_context["user_id"] = user_id
 

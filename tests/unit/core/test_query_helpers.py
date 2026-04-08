@@ -301,6 +301,8 @@ class TestQueueQueryTaskHelper:
         assert context["requested_agent_type"] == "chat"
         assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
         assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
+        assert "thread_id" not in context
+        assert "session_id" not in context
 
         task_kwargs = task_callable.await_args.kwargs
         assert task_kwargs["thread_id"] == "thread-123"
