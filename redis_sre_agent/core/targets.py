@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 import logging
 import re
@@ -383,13 +384,14 @@ def build_attached_target_prompt_loader(
 ) -> Callable[[], Awaitable[Optional[str]]]:
     """Return a memoized attached-target prompt loader for a single turn."""
 
+    context_snapshot = copy.deepcopy(context) if isinstance(context, dict) else context
     prompt_unset = object()
     attached_target_prompt: Any = prompt_unset
 
     async def _get_attached_target_prompt() -> Optional[str]:
         nonlocal attached_target_prompt
         if attached_target_prompt is prompt_unset and attached_target_count:
-            attached_target_prompt = await prompt_builder(context)
+            attached_target_prompt = await prompt_builder(context_snapshot)
         if attached_target_prompt is prompt_unset:
             return None
         return attached_target_prompt

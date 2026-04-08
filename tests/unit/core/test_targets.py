@@ -844,6 +844,18 @@ async def test_build_attached_target_prompt_loader_memoizes_none_results():
     prompt_builder.assert_awaited_once_with({})
 
 
+@pytest.mark.asyncio
+async def test_build_attached_target_prompt_loader_snapshots_context():
+    prompt_builder = AsyncMock(return_value="ATTACHED TARGET SCOPE")
+    context = {"attached_target_handles": ["tgt_01"]}
+    loader = build_attached_target_prompt_loader(context, 1, prompt_builder)
+
+    context["attached_target_handles"].append("tgt_02")
+
+    assert await loader() == "ATTACHED TARGET SCOPE"
+    prompt_builder.assert_awaited_once_with({"attached_target_handles": ["tgt_01"]})
+
+
 def test_build_ephemeral_target_bindings_generates_opaque_handles():
     matches = [
         ResolvedTargetMatch(

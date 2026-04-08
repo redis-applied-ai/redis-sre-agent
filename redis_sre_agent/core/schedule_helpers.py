@@ -61,7 +61,7 @@ def _build_manual_run_context(
     for key, value in scope_context.items():
         if key in {"thread_id", "session_id"} and not value:
             continue
-        context[key] = value
+        context.setdefault(key, value)
     return context
 
 

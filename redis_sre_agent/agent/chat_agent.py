@@ -804,13 +804,9 @@ Cluster-level admin tools are PRE-CONFIGURED for this cluster when available.
 User Query: {query}"""
                 enhanced_query = cluster_context
             else:
-                prompt = await _get_attached_target_prompt()
-                if not prompt and attached_prompt_scope:
-                    prompt = build_attached_target_prompt_fallback(
-                        attached_target_count=attached_target_count,
-                        bindings=turn_scope.bindings,
-                        attached_handles=raw_attached_target_handles,
-                    )
+                prompt = None
+                if not attached_prompt_scope:
+                    prompt = await _get_attached_target_prompt()
                 if prompt:
                     enhanced_query = f"""{prompt}
 

@@ -117,6 +117,28 @@ class TestScheduleContextHelpers:
         assert context["turn_scope"]["thread_id"] is None
         assert context["turn_scope"]["session_id"] is None
 
+    def test_build_manual_run_context_preserves_explicit_fields_on_scope_collision(self):
+        from redis_sre_agent.core.schedule_helpers import _build_manual_run_context
+
+        current_time = datetime(2026, 4, 8, 5, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.build_legacy_target_scope_adapter",
+            return_value=(
+                None,
+                {
+                    "schedule_name": "overwritten",
+                    "automated": False,
+                    "resolution_policy": "allow_zero_scope",
+                },
+            ),
+        ):
+            context = _build_manual_run_context("schedule-1", _schedule(), current_time)
+
+        assert context["schedule_name"] == "Nightly Check"
+        assert context["automated"] is True
+        assert context["resolution_policy"] == "allow_zero_scope"
+
 
 class TestScheduleMutationHelpers:
     @pytest.mark.asyncio
