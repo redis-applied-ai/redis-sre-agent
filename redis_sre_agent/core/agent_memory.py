@@ -562,13 +562,19 @@ async def prepare_agent_turn_memory(
     """Prepare AMS memory state shared by agent implementations."""
 
     memory_service = AgentMemoryService()
-    turn_scope = TurnScope.from_context(
-        context or {},
-        thread_id=(context or {}).get("thread_id") if context else None,
-        session_id=session_id,
-    )
-    instance_id = context.get("instance_id") if context else None
-    cluster_id = context.get("cluster_id") if context else None
+    normalized_context = context or {}
+    serialized_turn_scope = normalized_context.get("turn_scope")
+    if isinstance(serialized_turn_scope, dict):
+        turn_scope = TurnScope.model_validate(serialized_turn_scope)
+    else:
+        turn_scope = TurnScope.from_context(
+            normalized_context,
+            thread_id=normalized_context.get("thread_id"),
+            session_id=session_id,
+        )
+
+    instance_id = normalized_context.get("instance_id")
+    cluster_id = normalized_context.get("cluster_id")
     if not instance_id and turn_scope.single_binding_kind == "instance":
         instance_id = turn_scope.single_resource_id
     if not cluster_id and turn_scope.single_binding_kind == "cluster":

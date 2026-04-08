@@ -783,7 +783,16 @@ async def _build_initial_context(
             session_id=initial_context.get("session_id"),
             resolution_policy="require_target",
         )
-        initial_context.update(scope_context)
+        for key, value in scope_context.items():
+            if key in {"instance_id", "cluster_id", "attached_target_handles", "target_bindings"}:
+                initial_context[key] = value
+                continue
+            if key == "target_toolset_generation" and value:
+                initial_context[key] = value
+                continue
+            if key in {"thread_id", "session_id"} and not value:
+                continue
+            initial_context.setdefault(key, value)
         try:
             from redis_sre_agent.core.instances import get_instances
 

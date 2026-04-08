@@ -1184,6 +1184,37 @@ class TestModuleLevelHelpers:
             assert ctx["instance_name"] == "Test Instance"
 
     @pytest.mark.asyncio
+    async def test_build_initial_context_preserves_base_scope_metadata(self):
+        """Target scope adapters should not clobber explicit base context metadata."""
+        from redis_sre_agent.core.threads import _build_initial_context
+
+        mock_instance = MagicMock()
+        mock_instance.id = "inst-1"
+        mock_instance.name = "Test Instance"
+
+        with patch(
+            "redis_sre_agent.core.instances.get_instances",
+            new=AsyncMock(return_value=[mock_instance]),
+        ):
+            ctx = await _build_initial_context(
+                "test",
+                instance_id="inst-1",
+                base_context={
+                    "thread_id": "thread-123",
+                    "session_id": "session-123",
+                    "automated": True,
+                    "resolution_policy": "allow_multiple",
+                },
+            )
+
+        assert ctx["thread_id"] == "thread-123"
+        assert ctx["session_id"] == "session-123"
+        assert ctx["automated"] is True
+        assert ctx["resolution_policy"] == "allow_multiple"
+        assert ctx["instance_id"] == "inst-1"
+        assert ctx["attached_target_handles"]
+
+    @pytest.mark.asyncio
     async def test_build_initial_context_instance_lookup_failure(self):
         """Test context building when instance lookup fails."""
         from redis_sre_agent.core.threads import _build_initial_context
