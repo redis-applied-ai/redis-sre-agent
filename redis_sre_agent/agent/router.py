@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.core.llm_helpers import create_nano_llm
+from redis_sre_agent.core.targets import get_attached_target_handles_from_context
 
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 
@@ -78,8 +79,10 @@ async def route_to_appropriate_agent(
 
     has_instance = context and context.get("instance_id")
     has_cluster = context and context.get("cluster_id")
+    attached_target_handles = get_attached_target_handles_from_context(context)
+    has_attached_targets = bool(attached_target_handles)
     has_support_package = context and context.get("support_package_path")
-    has_diagnostic_scope = bool(has_instance or has_cluster)
+    has_diagnostic_scope = bool(has_instance or has_cluster or has_attached_targets)
 
     # 1. Has support package - route to triage (needs diagnostic tools)
     if has_support_package:
@@ -142,9 +145,13 @@ DEFAULT TO CHAT unless you see explicit deep/exhaustive keywords.
 
 Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
 
-        scope_hint = (
-            " [Scope: cluster]" if has_cluster and not has_instance else " [Scope: instance]"
-        )
+        scope_hint = ""
+        if has_cluster and not has_instance:
+            scope_hint = " [Scope: cluster]"
+        elif has_instance:
+            scope_hint = " [Scope: instance]"
+        elif has_attached_targets:
+            scope_hint = f" [Scope: {len(attached_target_handles)} attached targets]"
         query_with_context = f"Categorize this query:{scope_hint} {query}{context_str}"
         messages = [
             SystemMessage(content=system_prompt),

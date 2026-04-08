@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.progress import ProgressEmitter
+from redis_sre_agent.core.turn_scope import TurnScope
 
 logger = logging.getLogger(__name__)
 
@@ -561,8 +562,23 @@ async def prepare_agent_turn_memory(
     """Prepare AMS memory state shared by agent implementations."""
 
     memory_service = AgentMemoryService()
-    instance_id = context.get("instance_id") if context else None
-    cluster_id = context.get("cluster_id") if context else None
+    normalized_context = context or {}
+    serialized_turn_scope = normalized_context.get("turn_scope")
+    if isinstance(serialized_turn_scope, dict):
+        turn_scope = TurnScope.model_validate(serialized_turn_scope)
+    else:
+        turn_scope = TurnScope.from_context(
+            normalized_context,
+            thread_id=normalized_context.get("thread_id"),
+            session_id=session_id,
+        )
+
+    instance_id = normalized_context.get("instance_id")
+    cluster_id = normalized_context.get("cluster_id")
+    if not instance_id and turn_scope.single_binding_kind == "instance":
+        instance_id = turn_scope.single_resource_id
+    if not cluster_id and turn_scope.single_binding_kind == "cluster":
+        cluster_id = turn_scope.single_resource_id
     memory_context = await memory_service.prepare_turn_context(
         query=query,
         session_id=session_id,

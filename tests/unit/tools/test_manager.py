@@ -106,6 +106,39 @@ async def test_attach_bound_targets_scopes_instance_tools_to_opaque_handle():
 
 
 @pytest.mark.asyncio
+async def test_tool_manager_prefers_initial_target_bindings_before_thread_reload():
+    """Explicit initial bindings should be attached without depending on thread state."""
+    binding = TargetBinding(
+        target_handle="tgt_opaque_1",
+        target_kind="instance",
+        resource_id="inst-1",
+        display_name="checkout-cache-prod",
+        capabilities=["redis", "diagnostics"],
+    )
+
+    mgr = ToolManager(
+        initial_target_bindings=[binding],
+        initial_toolset_generation=7,
+        thread_id="thread-123",
+    )
+
+    with (
+        patch.object(mgr, "_load_provider", new=AsyncMock()),
+        patch.object(mgr, "_load_mcp_providers", new=AsyncMock()),
+        patch.object(mgr, "_load_support_package_provider", new=AsyncMock()),
+        patch.object(
+            mgr, "attach_bound_targets", new=AsyncMock(return_value=[binding])
+        ) as mock_attach,
+        patch.object(mgr, "_load_thread_attached_targets", new=AsyncMock()) as mock_thread_reload,
+    ):
+        await mgr.__aenter__()
+        await mgr.__aexit__(None, None, None)
+
+    mock_attach.assert_awaited_once_with([binding], generation=7)
+    mock_thread_reload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_tool_manager_with_instance():
     """Test that instance-specific tools are loaded when instance is provided."""
     from redis_sre_agent.core.instances import RedisInstance

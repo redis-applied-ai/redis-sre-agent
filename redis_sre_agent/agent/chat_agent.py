@@ -29,6 +29,14 @@ from redis_sre_agent.core.progress import (
     ProgressEmitter,
 )
 from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.targets import (
+    build_attached_target_prompt_fallback,
+    build_attached_target_prompt_loader,
+    build_attached_target_scope_prompt,
+    build_single_attached_binding_prompt,
+    get_attached_target_handles_from_context,
+)
+from redis_sre_agent.core.turn_scope import TurnScope
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
 
@@ -664,6 +672,21 @@ class ChatAgent:
             AgentResponse with response text and any knowledge search results used
         """
         logger.info("Chat agent processing query for user %s", user_id or "<anonymous>")
+        normalized_context = dict(context or {})
+        raw_attached_target_handles = get_attached_target_handles_from_context(normalized_context)
+        turn_scope = TurnScope.from_context(
+            normalized_context,
+            thread_id=normalized_context.get("thread_id"),
+            session_id=session_id,
+        )
+        normalized_context.update(turn_scope.to_thread_context())
+        normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
+        attached_target_count = max(len(raw_attached_target_handles), turn_scope.target_count)
+        _get_attached_target_prompt = build_attached_target_prompt_loader(
+            normalized_context,
+            attached_target_count,
+            build_attached_target_scope_prompt,
+        )
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
@@ -671,7 +694,7 @@ class ChatAgent:
             query=query,
             session_id=session_id,
             user_id=user_id,
-            context=context,
+            context=normalized_context,
             emitter=emitter,
         )
         memory_context = prepared_memory.memory_context
@@ -682,16 +705,30 @@ class ChatAgent:
             cache_client = get_redis_client()
             logger.info(f"Tool caching enabled for instance {self.redis_instance.id}")
 
+        support_package_path = self.support_package_path
+        scope_support_package_path = turn_scope.support_package_context.get("support_package_path")
+        if support_package_path is None and scope_support_package_path:
+            support_package_path = Path(scope_support_package_path)
+
+        has_attached_scope = (
+            turn_scope.scope_kind == "target_bindings" and turn_scope.target_count > 0
+        )
+        effective_redis_instance = None if has_attached_scope else self.redis_instance
+        effective_redis_cluster = None if has_attached_scope else self.redis_cluster
+
         # Create ToolManager with Redis instance for full tool access
+        tool_thread_id = turn_scope.thread_id or session_id
         async with ToolManager(
-            redis_instance=self.redis_instance,
-            redis_cluster=self.redis_cluster,
+            redis_instance=effective_redis_instance,
+            redis_cluster=effective_redis_cluster,
+            initial_target_bindings=turn_scope.bindings or None,
+            initial_toolset_generation=turn_scope.toolset_generation,
             exclude_mcp_categories=self.exclude_mcp_categories,
-            support_package_path=self.support_package_path,
+            support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
-            thread_id=session_id,
-            task_id=(context or {}).get("task_id"),
+            thread_id=tool_thread_id,
+            task_id=normalized_context.get("task_id"),
             user_id=user_id,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
@@ -718,36 +755,62 @@ class ChatAgent:
 
             # Add instance context to the query if available
             enhanced_query = query
-            if self.redis_instance:
+            attached_prompt_query: Optional[str] = None
+            attached_prompt_scope = attached_target_count > 1 or has_attached_scope
+            if attached_prompt_scope:
+                prompt = await _get_attached_target_prompt()
+                if not prompt:
+                    prompt = build_attached_target_prompt_fallback(
+                        attached_target_count=attached_target_count,
+                        bindings=turn_scope.bindings,
+                        attached_handles=raw_attached_target_handles,
+                    )
+                if not prompt and has_attached_scope and turn_scope.single_binding is not None:
+                    prompt = build_single_attached_binding_prompt(turn_scope.single_binding)
+                if prompt:
+                    attached_prompt_query = f"""{prompt}
+
+User Query: {query}"""
+            if attached_prompt_query:
+                enhanced_query = attached_prompt_query
+            elif effective_redis_instance:
                 repo_context = ""
-                if self.redis_instance.repo_url:
-                    repo_context = f"""- Repository URL: {self.redis_instance.repo_url}
+                if effective_redis_instance.repo_url:
+                    repo_context = f"""- Repository URL: {effective_redis_instance.repo_url}
 
 If you have GitHub tools available, you can search the repository for code, configuration, or documentation related to this Redis instance.
 """
                 instance_context = f"""
 INSTANCE CONTEXT: This query is about Redis instance:
-- Instance Name: {self.redis_instance.name}
-- Environment: {self.redis_instance.environment}
-- Usage: {self.redis_instance.usage}
-- Instance Type: {self.redis_instance.instance_type}
+- Instance Name: {effective_redis_instance.name}
+- Environment: {effective_redis_instance.environment}
+- Usage: {effective_redis_instance.usage}
+- Instance Type: {effective_redis_instance.instance_type}
 {repo_context}
 Your diagnostic tools are PRE-CONFIGURED for this instance.
 
 User Query: {query}"""
                 enhanced_query = instance_context
-            elif self.redis_cluster:
+            elif effective_redis_cluster:
                 cluster_context = f"""
 CLUSTER CONTEXT: This query is about Redis cluster:
-- Cluster Name: {self.redis_cluster.name}
-- Cluster ID: {self.redis_cluster.id}
-- Environment: {self.redis_cluster.environment}
-- Cluster Type: {self.redis_cluster.cluster_type}
+- Cluster Name: {effective_redis_cluster.name}
+- Cluster ID: {effective_redis_cluster.id}
+- Environment: {effective_redis_cluster.environment}
+- Cluster Type: {effective_redis_cluster.cluster_type}
 
 Cluster-level admin tools are PRE-CONFIGURED for this cluster when available.
 
 User Query: {query}"""
                 enhanced_query = cluster_context
+            else:
+                prompt = None
+                if not attached_prompt_scope:
+                    prompt = await _get_attached_target_prompt()
+                if prompt:
+                    enhanced_query = f"""{prompt}
+
+User Query: {query}"""
 
             if conversation_history:
                 initial_messages.extend(conversation_history)

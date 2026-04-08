@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
+
 logger = logging.getLogger(__name__)
 
 # Create the MCP server instance
@@ -151,6 +153,27 @@ while True:
 )
 
 
+def _build_mcp_query_context(
+    *,
+    instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    extra_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build MCP task context with TurnScope-compatible target metadata."""
+    _, context = build_legacy_target_scope_adapter(
+        instance_id=instance_id,
+        cluster_id=cluster_id,
+        resolution_policy="require_target" if (instance_id or cluster_id) else "allow_zero_scope",
+    )
+    if user_id:
+        context["user_id"] = user_id
+    if extra_context:
+        for key, value in extra_context.items():
+            context.setdefault(key, value)
+    return context
+
+
 @mcp.tool()
 async def redis_sre_deep_triage(
     query: str,
@@ -210,13 +233,11 @@ async def redis_sre_deep_triage(
             }
 
         redis_client = get_redis_client()
-        context: Dict[str, Any] = {}
-        if instance_id:
-            context["instance_id"] = instance_id
-        if cluster_id:
-            context["cluster_id"] = cluster_id
-        if user_id:
-            context["user_id"] = user_id
+        context = _build_mcp_query_context(
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            user_id=user_id,
+        )
 
         result = await create_task(
             message=query,
@@ -311,13 +332,12 @@ async def redis_sre_general_chat(
             raise ValueError("Please provide only one of instance_id or cluster_id")
 
         redis_client = get_redis_client()
-        context: Dict[str, Any] = {"agent_type": "chat"}
-        if instance_id:
-            context["instance_id"] = instance_id
-        if cluster_id:
-            context["cluster_id"] = cluster_id
-        if user_id:
-            context["user_id"] = user_id
+        context = _build_mcp_query_context(
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            user_id=user_id,
+            extra_context={"agent_type": "chat"},
+        )
 
         result = await create_task(
             message=query,
@@ -439,16 +459,15 @@ async def redis_sre_database_chat(
             raise ValueError("Please provide only one of instance_id or cluster_id")
 
         redis_client = get_redis_client()
-        context: Dict[str, Any] = {
-            "agent_type": "chat",
-            "exclude_mcp_categories": exclude_mcp_categories,
-        }
-        if instance_id:
-            context["instance_id"] = instance_id
-        if cluster_id:
-            context["cluster_id"] = cluster_id
-        if user_id:
-            context["user_id"] = user_id
+        context = _build_mcp_query_context(
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            user_id=user_id,
+            extra_context={
+                "agent_type": "chat",
+                "exclude_mcp_categories": exclude_mcp_categories,
+            },
+        )
 
         result = await create_task(
             message=query,

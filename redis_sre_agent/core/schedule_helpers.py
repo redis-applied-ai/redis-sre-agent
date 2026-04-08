@@ -15,6 +15,7 @@ from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
 
 _SCHEDULE_RUNS_PAGE_SIZE = 100
 
@@ -42,6 +43,13 @@ def _build_schedule_subject(schedule: Dict[str, Any]) -> str:
 def _build_manual_run_context(
     schedule_id: str, schedule: Dict[str, Any], current_time: datetime
 ) -> Dict[str, Any]:
+    _, scope_context = build_legacy_target_scope_adapter(
+        instance_id=schedule.get("redis_instance_id"),
+        automation_mode="automated",
+        resolution_policy=(
+            "require_target" if schedule.get("redis_instance_id") else "allow_zero_scope"
+        ),
+    )
     context = {
         "schedule_id": schedule_id,
         "schedule_name": schedule.get("name"),
@@ -50,8 +58,10 @@ def _build_manual_run_context(
         "original_query": schedule.get("instructions"),
         "scheduled_at": current_time.isoformat(),
     }
-    if schedule.get("redis_instance_id"):
-        context["instance_id"] = schedule["redis_instance_id"]
+    for key, value in scope_context.items():
+        if key in {"thread_id", "session_id"} and not value:
+            continue
+        context.setdefault(key, value)
     return context
 
 

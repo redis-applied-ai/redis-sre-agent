@@ -72,6 +72,74 @@ class TestScheduleReadHelpers:
         assert result == {"error": "Schedule not found", "id": "schedule-404"}
 
 
+class TestScheduleContextHelpers:
+    def test_build_manual_run_context_preserves_legacy_instance_scope(self):
+        from redis_sre_agent.core.schedule_helpers import _build_manual_run_context
+
+        current_time = datetime(2026, 4, 8, 5, 0, tzinfo=timezone.utc)
+
+        context = _build_manual_run_context("schedule-1", _schedule(), current_time)
+
+        assert context["schedule_id"] == "schedule-1"
+        assert context["schedule_name"] == "Nightly Check"
+        assert context["automated"] is True
+        assert context["manual_trigger"] is True
+        assert context["original_query"] == "Check memory usage"
+        assert context["scheduled_at"] == current_time.isoformat()
+        assert context["instance_id"] == "redis-prod-1"
+        assert context["resolution_policy"] == "require_target"
+        assert context["target_bindings"][0]["target_kind"] == "instance"
+        assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
+        assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
+
+    def test_build_manual_run_context_omits_instance_when_legacy_scope_missing(self):
+        from redis_sre_agent.core.schedule_helpers import _build_manual_run_context
+
+        current_time = datetime(2026, 4, 8, 5, 0, tzinfo=timezone.utc)
+
+        context = _build_manual_run_context(
+            "schedule-1",
+            _schedule(redis_instance_id=None),
+            current_time,
+        )
+
+        assert "instance_id" not in context
+
+    def test_build_manual_run_context_omits_empty_identity_fields(self):
+        from redis_sre_agent.core.schedule_helpers import _build_manual_run_context
+
+        current_time = datetime(2026, 4, 8, 5, 0, tzinfo=timezone.utc)
+
+        context = _build_manual_run_context("schedule-1", _schedule(), current_time)
+
+        assert "thread_id" not in context
+        assert "session_id" not in context
+        assert context["turn_scope"]["thread_id"] is None
+        assert context["turn_scope"]["session_id"] is None
+
+    def test_build_manual_run_context_preserves_explicit_fields_on_scope_collision(self):
+        from redis_sre_agent.core.schedule_helpers import _build_manual_run_context
+
+        current_time = datetime(2026, 4, 8, 5, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "redis_sre_agent.core.schedule_helpers.build_legacy_target_scope_adapter",
+            return_value=(
+                None,
+                {
+                    "schedule_name": "overwritten",
+                    "automated": False,
+                    "resolution_policy": "allow_zero_scope",
+                },
+            ),
+        ):
+            context = _build_manual_run_context("schedule-1", _schedule(), current_time)
+
+        assert context["schedule_name"] == "Nightly Check"
+        assert context["automated"] is True
+        assert context["resolution_policy"] == "allow_zero_scope"
+
+
 class TestScheduleMutationHelpers:
     @pytest.mark.asyncio
     async def test_create_schedule_helper_creates_schedule(self):

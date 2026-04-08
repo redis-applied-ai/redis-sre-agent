@@ -325,6 +325,24 @@ class TestGeneralChatTool:
             call_kwargs = mock_create.call_args.kwargs
             assert call_kwargs["context"]["instance_id"] == "redis-prod-1"
 
+    def test_build_mcp_query_context_preserves_scope_fields_against_extra_context(self):
+        from redis_sre_agent.mcp_server.server import _build_mcp_query_context
+
+        context = _build_mcp_query_context(
+            instance_id="redis-prod-1",
+            user_id="user-1",
+            extra_context={
+                "instance_id": "redis-overwrite",
+                "turn_scope": {"scope_kind": "zero_scope"},
+                "custom_key": "custom-value",
+            },
+        )
+
+        assert context["instance_id"] == "redis-prod-1"
+        assert context["user_id"] == "user-1"
+        assert context["custom_key"] == "custom-value"
+        assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
+
     @pytest.mark.asyncio
     async def test_general_chat_with_cluster_id(self):
         """Test general_chat with a specific cluster includes it in context."""

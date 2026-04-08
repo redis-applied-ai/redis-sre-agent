@@ -776,7 +776,23 @@ async def _build_initial_context(
         initial_context.update(base_context)
 
     if instance_id:
-        initial_context["instance_id"] = instance_id
+        from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
+
+        _, scope_context = build_legacy_target_scope_adapter(
+            instance_id=instance_id,
+            session_id=initial_context.get("session_id"),
+            resolution_policy="require_target",
+        )
+        for key, value in scope_context.items():
+            if key in {"instance_id", "cluster_id", "attached_target_handles", "target_bindings"}:
+                initial_context[key] = value
+                continue
+            if key == "target_toolset_generation" and value:
+                initial_context[key] = value
+                continue
+            if key in {"thread_id", "session_id"} and not value:
+                continue
+            initial_context.setdefault(key, value)
         try:
             from redis_sre_agent.core.instances import get_instances
 

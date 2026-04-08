@@ -30,8 +30,10 @@ from redis_sre_agent.core.qa import QAManager
 from redis_sre_agent.core.redis import (
     get_redis_client,
 )
+from redis_sre_agent.core.targets import get_attached_target_handles_from_context
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.threads import Message, ThreadManager
+from redis_sre_agent.core.turn_scope import TurnScope
 
 logger = logging.getLogger(__name__)
 
@@ -855,9 +857,18 @@ async def process_agent_turn(
         cluster_id_from_client = context.get("cluster_id") if context else None
         instance_id_from_thread = thread.context.get("instance_id")
         cluster_id_from_thread = thread.context.get("cluster_id")
+        attached_target_handles_from_thread = get_attached_target_handles_from_context(
+            thread.context
+        )
 
         if instance_id_from_client and cluster_id_from_client:
             raise ValueError("Please provide only one of instance_id or cluster_id")
+
+        def _clear_attached_scope(target_context: Dict[str, Any]) -> None:
+            target_context["attached_target_handles"] = []
+            target_context["target_bindings"] = []
+            target_context["target_toolset_generation"] = 0
+            target_context.pop("turn_scope", None)
 
         # Determine active targets
         active_instance_id = None
@@ -873,9 +884,17 @@ async def process_agent_turn(
             # Update thread context with new instance_id and clear cluster scope
             await thread_manager.update_thread_context(
                 thread_id,
-                {"instance_id": active_instance_id, "cluster_id": ""},
+                {
+                    "instance_id": active_instance_id,
+                    "cluster_id": "",
+                    "attached_target_handles": [],
+                    "target_bindings": [],
+                    "target_toolset_generation": 0,
+                    "turn_scope": "",
+                },
                 merge=True,
             )
+            _clear_attached_scope(thread.context)
             await task_manager.add_task_update(
                 task_id,
                 f"Using Redis instance: {active_instance_id}",
@@ -890,16 +909,24 @@ async def process_agent_turn(
             )
             await thread_manager.update_thread_context(
                 thread_id,
-                {"cluster_id": active_cluster_id, "instance_id": ""},
+                {
+                    "cluster_id": active_cluster_id,
+                    "instance_id": "",
+                    "attached_target_handles": [],
+                    "target_bindings": [],
+                    "target_toolset_generation": 0,
+                    "turn_scope": "",
+                },
                 merge=True,
             )
+            _clear_attached_scope(thread.context)
             await task_manager.add_task_update(
                 task_id,
                 f"Using Redis cluster: {active_cluster_id}",
                 "cluster_context",
             )
 
-        elif instance_id_from_thread:
+        elif instance_id_from_thread and not attached_target_handles_from_thread:
             # No instance_id from client, but we have one saved in thread
             active_instance_id = instance_id_from_thread
             logger.info(f"Using instance_id from thread context: {active_instance_id}")
@@ -909,7 +936,7 @@ async def process_agent_turn(
                 "instance_context",
             )
 
-        elif cluster_id_from_thread:
+        elif cluster_id_from_thread and not attached_target_handles_from_thread:
             # No explicit target from client, but cluster is saved on thread
             active_cluster_id = cluster_id_from_thread
             logger.info(f"Using cluster_id from thread context: {active_cluster_id}")
@@ -947,8 +974,18 @@ async def process_agent_turn(
 
                     # Save instance_id to thread context
                     await thread_manager.update_thread_context(
-                        thread_id, {"instance_id": active_instance_id}, merge=True
+                        thread_id,
+                        {
+                            "instance_id": active_instance_id,
+                            "cluster_id": "",
+                            "attached_target_handles": [],
+                            "target_bindings": [],
+                            "target_toolset_generation": 0,
+                            "turn_scope": "",
+                        },
+                        merge=True,
                     )
+                    _clear_attached_scope(thread.context)
                     await task_manager.add_task_update(
                         task_id,
                         f"Created Redis instance: {new_instance.name} ({active_instance_id})",
@@ -964,11 +1001,32 @@ async def process_agent_turn(
                     )
                     # Continue without instance_id - will route to knowledge agent
 
+        def _materialize_turn_scope(routing_payload: Dict[str, Any]) -> TurnScope:
+            scope = TurnScope.from_context(
+                routing_payload,
+                thread_id=thread_id,
+                session_id=thread.metadata.session_id or thread_id,
+                seed_hints={
+                    key: routing_payload[key]
+                    for key in ("instance_id", "cluster_id")
+                    if routing_payload.get(key)
+                },
+            )
+            routing_payload.update(scope.to_thread_context())
+            if scope.scope_kind == "target_bindings":
+                routing_payload.pop("instance_id", None)
+                routing_payload.pop("cluster_id", None)
+            routing_payload["turn_scope"] = scope.model_dump(mode="json")
+            return scope
+
         # Merge context for routing decision
         routing_context = thread.context.copy()
         if context:
             routing_context.update(context)
         routing_context["task_id"] = task_id
+        routing_context["thread_id"] = thread_id
+        routing_context["session_id"] = thread.metadata.session_id or thread_id
+        attached_target_handles = get_attached_target_handles_from_context(routing_context)
 
         # Ensure active_instance_id is in routing context
         if active_instance_id:
@@ -977,6 +1035,8 @@ async def process_agent_turn(
         elif active_cluster_id:
             routing_context["cluster_id"] = active_cluster_id
             routing_context.pop("instance_id", None)
+
+        current_scope = _materialize_turn_scope(routing_context)
 
         requested_agent_type = (context or {}).get("requested_agent_type")
         if requested_agent_type == "triage":
@@ -992,9 +1052,16 @@ async def process_agent_turn(
                 user_preferences=None,  # Could be extended to include user preferences
             )
 
-        if agent_type == AgentType.REDIS_TRIAGE and not (active_instance_id or active_cluster_id):
+        if (
+            agent_type == AgentType.REDIS_TRIAGE
+            and current_scope.scope_kind == "zero_scope"
+            and not (active_instance_id or active_cluster_id or attached_target_handles)
+        ):
             try:
-                from redis_sre_agent.core.targets import attach_target_matches, resolve_target_query
+                from redis_sre_agent.core.targets import (
+                    materialize_bound_target_scope,
+                    resolve_target_query,
+                )
 
                 resolution = await resolve_target_query(
                     query=message,
@@ -1004,26 +1071,14 @@ async def process_agent_turn(
                     preferred_capabilities=["diagnostics", "admin", "cloud"],
                 )
                 if resolution.selected_matches:
-                    attached_bindings, generation = await attach_target_matches(
-                        thread_id=thread_id,
+                    bound_scope = await materialize_bound_target_scope(
                         matches=resolution.selected_matches,
+                        thread_id=thread_id,
                         task_id=task_id,
                         replace_existing=False,
                     )
-                    if attached_bindings:
-                        active_binding = attached_bindings[0]
-                        if active_binding.target_kind == "instance":
-                            active_instance_id = active_binding.resource_id
-                            routing_context["instance_id"] = active_instance_id
-                            routing_context.pop("cluster_id", None)
-                        elif active_binding.target_kind == "cluster":
-                            active_cluster_id = active_binding.resource_id
-                            routing_context["cluster_id"] = active_cluster_id
-                            routing_context.pop("instance_id", None)
-                        routing_context["attached_target_handles"] = [
-                            binding.target_handle for binding in attached_bindings
-                        ]
-                        routing_context["target_toolset_generation"] = generation
+                    if bound_scope.attached_bindings:
+                        routing_context.update(bound_scope.context_updates)
                         await task_manager.add_task_update(
                             task_id,
                             "Resolved target scope from natural language before deep triage",
@@ -1032,9 +1087,10 @@ async def process_agent_turn(
                                 "attached_target_handles": routing_context[
                                     "attached_target_handles"
                                 ],
-                                "match_count": len(attached_bindings),
+                                "match_count": len(bound_scope.selected_bindings),
                             },
                         )
+                        current_scope = _materialize_turn_scope(routing_context)
             except Exception:
                 logger.exception("Failed to pre-resolve target scope for deep triage")
 
@@ -1046,13 +1102,20 @@ async def process_agent_turn(
         if agent_type == AgentType.REDIS_TRIAGE:
             agent = get_sre_agent()
         else:
-            # Get the target instance for the chat agent
-            target_instance = (
-                await get_instance_by_id(active_instance_id) if active_instance_id else None
-            )
-            target_cluster = (
-                await get_cluster_by_id(active_cluster_id) if active_cluster_id else None
-            )
+            if (
+                current_scope.scope_kind == "target_bindings"
+                or len(get_attached_target_handles_from_context(routing_context)) > 1
+            ):
+                target_instance = None
+                target_cluster = None
+            else:
+                # Get the target instance for the chat agent
+                target_instance = (
+                    await get_instance_by_id(active_instance_id) if active_instance_id else None
+                )
+                target_cluster = (
+                    await get_cluster_by_id(active_cluster_id) if active_cluster_id else None
+                )
             agent = get_chat_agent(
                 redis_instance=target_instance,
                 redis_cluster=target_cluster,

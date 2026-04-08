@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from redis_sre_agent.core.targets import (
-    attach_target_matches,
-    build_ephemeral_target_bindings,
+    bind_target_matches,
     resolve_target_query,
 )
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
@@ -93,29 +92,29 @@ class TargetDiscoveryToolProvider(ToolProvider):
         )
 
         attached_handles: List[str] = []
+        scope = None
         toolset_generation = manager.get_toolset_generation() if manager else 0
 
         if attach_tools and manager and result.selected_matches:
-            replace_existing = not allow_multiple
-            if thread_id:
-                bindings, persisted_generation = await attach_target_matches(
-                    thread_id=thread_id,
-                    matches=result.selected_matches,
-                    task_id=task_id,
-                    replace_existing=replace_existing,
-                )
-                await manager.attach_bound_targets(bindings, generation=persisted_generation)
-            else:
-                bindings = build_ephemeral_target_bindings(
-                    result.selected_matches,
-                    thread_id=thread_id,
-                    task_id=task_id,
-                )
-                await manager.attach_bound_targets(bindings)
-            attached_handles = [binding.target_handle for binding in bindings]
-            toolset_generation = manager.get_toolset_generation()
+            scope = await bind_target_matches(
+                matches=result.selected_matches,
+                thread_id=thread_id,
+                task_id=task_id,
+                replace_existing=not allow_multiple,
+                manager=manager,
+            )
+            attached_handles = scope.context_updates.get("attached_target_handles", [])
+            toolset_generation = scope.toolset_generation
 
         payload = result.model_dump()
         payload["attached_target_handles"] = attached_handles
         payload["toolset_generation"] = toolset_generation
+        if scope is not None:
+            payload.update(
+                {
+                    key: value
+                    for key, value in scope.context_updates.items()
+                    if key not in {"instance_id", "cluster_id"}
+                }
+            )
         return payload

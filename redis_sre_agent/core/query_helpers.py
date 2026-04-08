@@ -15,6 +15,7 @@ from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.support_package_helpers import get_support_package_manager
 from redis_sre_agent.core.tasks import create_task
 from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
 
 VALID_QUERY_AGENTS = {"auto", "triage", "chat", "knowledge"}
 
@@ -83,15 +84,24 @@ async def queue_query_task_helper(
         if not cluster:
             raise ValueError(f"Cluster not found: {cluster_id}")
 
-    thread_context: Dict[str, Any] = {}
-    if instance_id:
-        thread_context["instance_id"] = instance_id
-    if cluster_id:
-        thread_context["cluster_id"] = cluster_id
+    support_package_context = (
+        await _resolve_support_package_context(support_package_id) if support_package_id else {}
+    )
+    _, thread_context = build_legacy_target_scope_adapter(
+        instance_id=instance_id,
+        cluster_id=cluster_id,
+        thread_id=thread_id,
+        session_id=thread_id,
+        support_package_context=support_package_context,
+        resolution_policy="require_target" if (instance_id or cluster_id) else "allow_zero_scope",
+    )
+    thread_context = {
+        key: value
+        for key, value in thread_context.items()
+        if key not in {"thread_id", "session_id"} or value
+    }
     if user_id:
         thread_context["user_id"] = user_id
-    if support_package_id:
-        thread_context.update(await _resolve_support_package_context(support_package_id))
 
     turn_context = dict(thread_context)
     if agent_selection != "auto":

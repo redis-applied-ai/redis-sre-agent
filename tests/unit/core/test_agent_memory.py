@@ -10,6 +10,7 @@ from redis_sre_agent.core.agent_memory import (
     TurnMemoryContext,
     prepare_agent_turn_memory,
 )
+from redis_sre_agent.core.turn_scope import TurnScope
 
 
 @pytest.fixture
@@ -259,6 +260,181 @@ class TestPersistTurn:
 
 
 class TestPrepareAgentTurnMemory:
+    @pytest.mark.asyncio
+    async def test_prepare_agent_turn_memory_forwards_cluster_context(self):
+        memory_service = MagicMock()
+        turn_context = TurnMemoryContext(
+            system_prompt="Cluster summary",
+            user_working_memory=None,
+            asset_working_memory=None,
+        )
+        memory_service.prepare_turn_context = AsyncMock(return_value=turn_context)
+
+        with patch(
+            "redis_sre_agent.core.agent_memory.AgentMemoryService",
+            return_value=memory_service,
+        ):
+            prepared = await prepare_agent_turn_memory(
+                query="hello",
+                session_id="session-1",
+                user_id="user-1",
+                context={"cluster_id": "cluster-1"},
+                emitter=None,
+            )
+
+        memory_service.prepare_turn_context.assert_awaited_once_with(
+            query="hello",
+            session_id="session-1",
+            user_id="user-1",
+            instance_id=None,
+            cluster_id="cluster-1",
+            emitter=None,
+        )
+        assert prepared.cluster_id == "cluster-1"
+        assert prepared.instance_id is None
+        assert prepared.memory_context is turn_context
+
+    @pytest.mark.asyncio
+    async def test_prepare_agent_turn_memory_uses_single_bound_target_when_legacy_ids_missing(self):
+        memory_service = MagicMock()
+        turn_context = TurnMemoryContext(
+            system_prompt="Instance summary",
+            user_working_memory=None,
+            asset_working_memory=None,
+        )
+        memory_service.prepare_turn_context = AsyncMock(return_value=turn_context)
+
+        with patch(
+            "redis_sre_agent.core.agent_memory.AgentMemoryService",
+            return_value=memory_service,
+        ):
+            prepared = await prepare_agent_turn_memory(
+                query="hello",
+                session_id="session-1",
+                user_id="user-1",
+                context={
+                    "target_bindings": [
+                        {
+                            "target_handle": "tgt_01",
+                            "target_kind": "instance",
+                            "resource_id": "instance-1",
+                            "display_name": "instance-1",
+                            "capabilities": ["redis"],
+                        }
+                    ]
+                },
+                emitter=None,
+            )
+
+        memory_service.prepare_turn_context.assert_awaited_once_with(
+            query="hello",
+            session_id="session-1",
+            user_id="user-1",
+            instance_id="instance-1",
+            cluster_id=None,
+            emitter=None,
+        )
+        assert prepared.instance_id == "instance-1"
+        assert prepared.cluster_id is None
+
+    @pytest.mark.asyncio
+    async def test_prepare_agent_turn_memory_uses_single_bound_cluster_when_legacy_ids_missing(
+        self,
+    ):
+        memory_service = MagicMock()
+        turn_context = TurnMemoryContext(
+            system_prompt="Cluster summary",
+            user_working_memory=None,
+            asset_working_memory=None,
+        )
+        memory_service.prepare_turn_context = AsyncMock(return_value=turn_context)
+
+        with patch(
+            "redis_sre_agent.core.agent_memory.AgentMemoryService",
+            return_value=memory_service,
+        ):
+            prepared = await prepare_agent_turn_memory(
+                query="hello",
+                session_id="session-1",
+                user_id="user-1",
+                context={
+                    "target_bindings": [
+                        {
+                            "target_handle": "tgt_01",
+                            "target_kind": "cluster",
+                            "resource_id": "cluster-1",
+                            "display_name": "cluster-1",
+                            "capabilities": ["admin"],
+                        }
+                    ]
+                },
+                emitter=None,
+            )
+
+        memory_service.prepare_turn_context.assert_awaited_once_with(
+            query="hello",
+            session_id="session-1",
+            user_id="user-1",
+            instance_id=None,
+            cluster_id="cluster-1",
+            emitter=None,
+        )
+        assert prepared.instance_id is None
+        assert prepared.cluster_id == "cluster-1"
+
+    @pytest.mark.asyncio
+    async def test_prepare_agent_turn_memory_reuses_serialized_turn_scope(self):
+        memory_service = MagicMock()
+        turn_context = TurnMemoryContext(
+            system_prompt="Instance summary",
+            user_working_memory=None,
+            asset_working_memory=None,
+        )
+        memory_service.prepare_turn_context = AsyncMock(return_value=turn_context)
+        serialized_turn_scope = TurnScope.from_context(
+            {
+                "target_bindings": [
+                    {
+                        "target_handle": "tgt_01",
+                        "target_kind": "instance",
+                        "resource_id": "instance-1",
+                        "display_name": "instance-1",
+                        "capabilities": ["redis"],
+                    }
+                ]
+            },
+            session_id="session-1",
+        ).model_dump(mode="json")
+
+        with (
+            patch(
+                "redis_sre_agent.core.agent_memory.AgentMemoryService",
+                return_value=memory_service,
+            ),
+            patch(
+                "redis_sre_agent.core.agent_memory.TurnScope.from_context",
+                side_effect=AssertionError("should not rebuild turn scope"),
+            ),
+        ):
+            prepared = await prepare_agent_turn_memory(
+                query="hello",
+                session_id="session-1",
+                user_id="user-1",
+                context={"turn_scope": serialized_turn_scope},
+                emitter=None,
+            )
+
+        memory_service.prepare_turn_context.assert_awaited_once_with(
+            query="hello",
+            session_id="session-1",
+            user_id="user-1",
+            instance_id="instance-1",
+            cluster_id=None,
+            emitter=None,
+        )
+        assert prepared.instance_id == "instance-1"
+        assert prepared.cluster_id is None
+
     @pytest.mark.asyncio
     async def test_persist_response_fail_open(self):
         memory_service = MagicMock()
