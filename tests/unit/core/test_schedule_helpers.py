@@ -105,6 +105,18 @@ class TestScheduleContextHelpers:
 
         assert "instance_id" not in context
 
+    def test_build_manual_run_context_omits_empty_identity_fields(self):
+        from redis_sre_agent.core.schedule_helpers import _build_manual_run_context
+
+        current_time = datetime(2026, 4, 8, 5, 0, tzinfo=timezone.utc)
+
+        context = _build_manual_run_context("schedule-1", _schedule(), current_time)
+
+        assert "thread_id" not in context
+        assert "session_id" not in context
+        assert context["turn_scope"]["thread_id"] is None
+        assert context["turn_scope"]["session_id"] is None
+
 
 class TestScheduleMutationHelpers:
     @pytest.mark.asyncio

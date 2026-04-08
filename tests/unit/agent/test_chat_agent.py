@@ -639,7 +639,7 @@ class TestChatAgentStartupContext:
             patch(
                 "redis_sre_agent.agent.chat_agent.ToolManager",
                 return_value=mock_tool_manager,
-            ),
+            ) as mock_tool_manager_class,
             patch(
                 "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
                 new=AsyncMock(return_value=[]),
@@ -657,6 +657,7 @@ class TestChatAgentStartupContext:
             )
 
         assert response.response == "final answer"
+        assert mock_tool_manager_class.called
 
         initial_state = fake_app.ainvoke.await_args.args[0]
         system_message = initial_state["messages"][0]
@@ -1436,6 +1437,79 @@ class TestChatAgentStartupContext:
         human_message = fake_app.ainvoke.await_args.args[0]["messages"][-1]
         assert "ATTACHED TARGET SCOPE" in str(human_message.content)
         assert "User Query: Inspect the attached target" in str(human_message.content)
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_uses_single_binding_scope_when_prompt_builder_returns_none(
+        self, mock_create_mini_llm, mock_create_llm, mock_build_startup_context
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_startup_context.return_value = ""
+
+        agent = ChatAgent()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [AIMessage(content="single binding fallback answer")],
+            "signals_envelopes": [],
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        context = {
+            "attached_target_handles": ["tgt_01"],
+            "target_bindings": [
+                {
+                    "target_handle": "tgt_01",
+                    "target_kind": "instance",
+                    "resource_id": "redis-prod-1",
+                    "display_name": "Prod Cache",
+                    "capabilities": ["redis"],
+                }
+            ],
+        }
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ) as mock_tool_manager_class,
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_attached_target_scope_prompt",
+                new=AsyncMock(return_value=None),
+            ) as mock_prompt_builder,
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Inspect the attached target",
+                session_id="test-session",
+                user_id="test-user",
+                context=context,
+            )
+
+        assert response.response == "single binding fallback answer"
+        mock_prompt_builder.assert_awaited_once()
+        human_message = fake_app.ainvoke.await_args.args[0]["messages"][-1]
+        assert "ATTACHED TARGET SCOPE" in str(human_message.content)
+        assert "Prod Cache" in str(human_message.content)
+        assert "resource_id=redis-prod-1" in str(human_message.content)
+        assert mock_tool_manager_class.call_args.kwargs["redis_instance"] is None
+        assert mock_tool_manager_class.call_args.kwargs["redis_cluster"] is None
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")

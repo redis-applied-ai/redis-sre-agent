@@ -58,7 +58,10 @@ def _build_manual_run_context(
         "original_query": schedule.get("instructions"),
         "scheduled_at": current_time.isoformat(),
     }
-    context.update(scope_context)
+    for key, value in scope_context.items():
+        if key in {"thread_id", "session_id"} and not value:
+            continue
+        context[key] = value
     return context
 
 
