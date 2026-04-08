@@ -30,9 +30,9 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.targets import (
-    TargetBinding,
     build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
+    build_single_attached_binding_prompt,
     get_attached_target_handles_from_context,
 )
 from redis_sre_agent.core.turn_scope import TurnScope
@@ -107,18 +107,6 @@ Only call categories that are available in your current tool list.
 - Use available diagnostics/admin-api tools for accurate configuration details
 - Don't suggest CONFIG SET for managed deployments
 """
-
-
-def _build_single_attached_binding_prompt(binding: TargetBinding) -> str:
-    """Build minimal scope context when richer attached-target prompt loading fails."""
-    capability_text = ", ".join(binding.capabilities or []) or "unspecified"
-    return (
-        "ATTACHED TARGET SCOPE: This conversation has 1 attached Redis target.\n"
-        "Attached target:\n"
-        f"- {binding.display_name} [handle={binding.target_handle}, "
-        f"kind={binding.target_kind}, resource_id={binding.resource_id}, "
-        f"capabilities={capability_text}]"
-    )
 
 
 class ChatAgentState(TypedDict):
@@ -774,7 +762,7 @@ class ChatAgent:
 
 User Query: {query}"""
                 elif has_attached_scope and turn_scope.single_binding is not None:
-                    attached_prompt_query = f"""{_build_single_attached_binding_prompt(turn_scope.single_binding)}
+                    attached_prompt_query = f"""{build_single_attached_binding_prompt(turn_scope.single_binding)}
 
 User Query: {query}"""
             if attached_prompt_query:

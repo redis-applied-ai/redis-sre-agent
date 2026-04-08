@@ -41,9 +41,9 @@ from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..core.targets import (
-    TargetBinding,
     build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
+    build_single_attached_binding_prompt,
     get_attached_target_handles_from_context,
 )
 from ..core.turn_scope import TurnScope
@@ -58,18 +58,6 @@ from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-
-def _build_single_attached_binding_prompt(binding: TargetBinding) -> str:
-    """Build minimal scope context when richer attached-target prompt loading fails."""
-    capability_text = ", ".join(binding.capabilities or []) or "unspecified"
-    return (
-        "ATTACHED TARGET SCOPE: This conversation has 1 attached Redis target.\n"
-        "Attached target:\n"
-        f"- {binding.display_name} [handle={binding.target_handle}, "
-        f"kind={binding.target_kind}, resource_id={binding.resource_id}, "
-        f"capabilities={capability_text}]"
-    )
 
 
 def _extract_operation_from_tool_name(tool_name: str) -> str:
@@ -1797,7 +1785,7 @@ Please use the support package tools to analyze this package and answer the user
         if has_attached_scope and not explicit_instance_scope_id and not explicit_cluster_scope_id:
             prompt = await _get_attached_target_prompt()
             if not prompt and turn_scope.single_binding is not None:
-                prompt = _build_single_attached_binding_prompt(turn_scope.single_binding)
+                prompt = build_single_attached_binding_prompt(turn_scope.single_binding)
             if prompt:
                 support_package_context = _build_support_package_context()
                 if support_package_context:

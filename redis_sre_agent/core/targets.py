@@ -89,6 +89,18 @@ class TargetBinding(BaseModel):
     )
 
 
+def build_single_attached_binding_prompt(binding: TargetBinding) -> str:
+    """Build minimal scope context when richer attached-target prompt loading fails."""
+    capability_text = ", ".join(binding.capabilities or []) or "unspecified"
+    return (
+        "ATTACHED TARGET SCOPE: This conversation has 1 attached Redis target.\n"
+        "Attached target:\n"
+        f"- {binding.display_name} [handle={binding.target_handle}, "
+        f"kind={binding.target_kind}, resource_id={binding.resource_id}, "
+        f"capabilities={capability_text}]"
+    )
+
+
 class ResolvedTargetMatch(BaseModel):
     """A ranked candidate returned by the deterministic resolver."""
 
