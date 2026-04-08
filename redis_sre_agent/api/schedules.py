@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from ..core.docket_tasks import get_redis_url, process_agent_turn, scheduler_task
 from ..core.keys import RedisKeys
 from ..core.redis import get_redis_client
+from ..core.schedule_helpers import _build_manual_run_context
 from ..core.schedules import (
     Schedule,
     store_schedule,
@@ -325,17 +326,7 @@ async def trigger_schedule_now(schedule_id: str):
         thread_manager = ThreadManager(redis_client=redis_client)
 
         # Prepare context for the manual run
-        run_context = {
-            "schedule_id": schedule_id,
-            "schedule_name": schedule_data["name"],
-            "automated": True,
-            "manual_trigger": True,  # Mark as manual trigger
-            "original_query": schedule_data["instructions"],
-            "scheduled_at": current_time.isoformat(),
-        }
-
-        if schedule_data.get("redis_instance_id"):
-            run_context["instance_id"] = schedule_data["redis_instance_id"]
+        run_context = _build_manual_run_context(schedule_id, schedule_data, current_time)
 
         # Create thread for the manual run
         thread_id = await thread_manager.create_thread(

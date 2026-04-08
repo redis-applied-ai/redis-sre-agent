@@ -73,3 +73,57 @@ class TestSchedulesRunsAPI:
         # Default when no task found
         assert run["status"] in ("queued", "pending")
         assert run["schedule_id"] == "sch1"
+
+
+class TestSchedulesTriggerAPI:
+    def test_trigger_schedule_now_preserves_legacy_instance_scope(self, client):
+        schedule = {
+            "id": "sch1",
+            "name": "Nightly Check",
+            "instructions": "Check memory usage",
+            "redis_instance_id": "redis-prod-1",
+        }
+        task_callable = AsyncMock(return_value="task-123")
+        docket = MagicMock()
+        docket.__aenter__.return_value = docket
+        docket.__aexit__.return_value = False
+        docket.add.return_value = task_callable
+
+        with (
+            patch(
+                "redis_sre_agent.api.schedules._get_schedule",
+                new=AsyncMock(return_value=schedule),
+            ),
+            patch("redis_sre_agent.api.schedules.get_redis_client", return_value=AsyncMock()),
+            patch("redis_sre_agent.api.schedules.ThreadManager") as tm_patch,
+            patch(
+                "redis_sre_agent.api.schedules.get_redis_url",
+                new=AsyncMock(return_value="redis://localhost:6379/0"),
+            ),
+            patch("redis_sre_agent.api.schedules.Docket", return_value=docket),
+        ):
+            tm = tm_patch.return_value
+            tm.create_thread = AsyncMock(return_value="thread-123")
+            tm.set_thread_subject = AsyncMock()
+
+            resp = client.post("/api/v1/schedules/sch1/trigger")
+
+        assert resp.status_code == 200, resp.text
+        create_kwargs = tm.create_thread.await_args.kwargs
+        assert create_kwargs["user_id"] == "scheduler"
+        assert create_kwargs["session_id"].startswith("manual_schedule_sch1_")
+        assert create_kwargs["tags"] == ["automated", "scheduled", "manual_trigger"]
+        assert create_kwargs["initial_context"]["instance_id"] == "redis-prod-1"
+        assert create_kwargs["initial_context"]["manual_trigger"] is True
+        assert create_kwargs["initial_context"]["schedule_id"] == "sch1"
+
+        task_callable.assert_awaited_once()
+        task_kwargs = task_callable.await_args.kwargs
+        assert task_kwargs["thread_id"] == "thread-123"
+        assert task_kwargs["message"] == "Check memory usage"
+        assert task_kwargs["context"]["instance_id"] == "redis-prod-1"
+
+        payload = resp.json()
+        assert payload["schedule_id"] == "sch1"
+        assert payload["thread_id"] == "thread-123"
+        assert payload["status"] == "pending"

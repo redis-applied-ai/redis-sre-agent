@@ -112,28 +112,25 @@ class TestQueueQueryTaskHelper:
             "message": "Query task queued for processing",
             "agent": "auto",
         }
-        mock_create_task.assert_awaited_once_with(
-            message="Investigate memory usage",
-            thread_id=None,
-            context={
-                "instance_id": "redis-prod-1",
-                "support_package_id": "pkg-1",
-                "support_package_path": "/tmp/extracted/pkg-1",
-                "user_id": "user-1",
-            },
-            redis_client=redis_client,
-        )
-        task_callable.assert_awaited_once_with(
-            thread_id="thread-123",
-            message="Investigate memory usage",
-            context={
-                "instance_id": "redis-prod-1",
-                "support_package_id": "pkg-1",
-                "support_package_path": "/tmp/extracted/pkg-1",
-                "user_id": "user-1",
-            },
-            task_id="task-123",
-        )
+        create_kwargs = mock_create_task.await_args.kwargs
+        assert create_kwargs["message"] == "Investigate memory usage"
+        assert create_kwargs["thread_id"] is None
+        assert create_kwargs["redis_client"] is redis_client
+        context = create_kwargs["context"]
+        assert context["instance_id"] == "redis-prod-1"
+        assert context["support_package_id"] == "pkg-1"
+        assert context["support_package_path"] == "/tmp/extracted/pkg-1"
+        assert context["user_id"] == "user-1"
+        assert context["resolution_policy"] == "require_target"
+        assert context["target_bindings"][0]["target_kind"] == "instance"
+        assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
+        assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
+
+        task_kwargs = task_callable.await_args.kwargs
+        assert task_kwargs["thread_id"] == "thread-123"
+        assert task_kwargs["message"] == "Investigate memory usage"
+        assert task_kwargs["task_id"] == "task-123"
+        assert task_kwargs["context"] == context
 
     @pytest.mark.asyncio
     async def test_queue_query_task_helper_supports_thread_continuation_and_agent_override(self):
@@ -179,18 +176,20 @@ class TestQueueQueryTaskHelper:
             )
 
         assert result["agent"] == "knowledge"
-        mock_create_task.assert_awaited_once_with(
-            message="Follow up",
-            thread_id="thread-123",
-            context={"requested_agent_type": "knowledge"},
-            redis_client=redis_client,
-        )
-        task_callable.assert_awaited_once_with(
-            thread_id="thread-123",
-            message="Follow up",
-            context={"requested_agent_type": "knowledge"},
-            task_id="task-123",
-        )
+        create_kwargs = mock_create_task.await_args.kwargs
+        assert create_kwargs["message"] == "Follow up"
+        assert create_kwargs["thread_id"] == "thread-123"
+        assert create_kwargs["redis_client"] is redis_client
+        context = create_kwargs["context"]
+        assert context["requested_agent_type"] == "knowledge"
+        assert context["resolution_policy"] == "allow_zero_scope"
+        assert context["turn_scope"]["scope_kind"] == "zero_scope"
+
+        task_kwargs = task_callable.await_args.kwargs
+        assert task_kwargs["thread_id"] == "thread-123"
+        assert task_kwargs["message"] == "Follow up"
+        assert task_kwargs["task_id"] == "task-123"
+        assert task_kwargs["context"] == context
 
     @pytest.mark.asyncio
     async def test_queue_query_task_helper_supports_cluster_context_and_awaitable_docket_add(self):
@@ -234,18 +233,80 @@ class TestQueueQueryTaskHelper:
             )
 
         assert result["agent"] == "auto"
-        mock_create_task.assert_awaited_once_with(
-            message="Check cluster",
-            thread_id=None,
-            context={"cluster_id": "cluster-1"},
-            redis_client=redis_client,
-        )
-        task_callable.assert_awaited_once_with(
-            thread_id="thread-123",
-            message="Check cluster",
-            context={"cluster_id": "cluster-1"},
-            task_id="task-123",
-        )
+        create_kwargs = mock_create_task.await_args.kwargs
+        assert create_kwargs["message"] == "Check cluster"
+        assert create_kwargs["thread_id"] is None
+        assert create_kwargs["redis_client"] is redis_client
+        context = create_kwargs["context"]
+        assert context["cluster_id"] == "cluster-1"
+        assert context["resolution_policy"] == "require_target"
+        assert context["target_bindings"][0]["target_kind"] == "cluster"
+        assert context["target_bindings"][0]["resource_id"] == "cluster-1"
+        assert context["turn_scope"]["seed_hints"] == {"cluster_id": "cluster-1"}
+
+        task_kwargs = task_callable.await_args.kwargs
+        assert task_kwargs["thread_id"] == "thread-123"
+        assert task_kwargs["message"] == "Check cluster"
+        assert task_kwargs["task_id"] == "task-123"
+        assert task_kwargs["context"] == context
+
+    @pytest.mark.asyncio
+    async def test_queue_query_task_helper_preserves_instance_hint_with_agent_override(self):
+        redis_client = AsyncMock()
+        task_callable = AsyncMock()
+        docket_instance = AsyncMock()
+        docket_instance.__aenter__.return_value = docket_instance
+        docket_instance.__aexit__.return_value = False
+        docket_instance.add.return_value = task_callable
+
+        with (
+            patch("redis_sre_agent.core.query_helpers.get_redis_client", return_value=redis_client),
+            patch(
+                "redis_sre_agent.core.query_helpers.get_instance_by_id",
+                new_callable=AsyncMock,
+                return_value=SimpleNamespace(id="redis-prod-1"),
+            ),
+            patch(
+                "redis_sre_agent.core.query_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value={
+                    "thread_id": "thread-123",
+                    "task_id": "task-123",
+                    "status": TaskStatus.QUEUED,
+                },
+            ) as mock_create_task,
+            patch(
+                "redis_sre_agent.core.query_helpers.get_redis_url",
+                new_callable=AsyncMock,
+                return_value="redis://localhost:6379/0",
+            ),
+            patch(
+                "redis_sre_agent.core.query_helpers._get_query_task_callable",
+                return_value="process-agent-turn",
+            ),
+            patch("redis_sre_agent.core.query_helpers.Docket", return_value=docket_instance),
+        ):
+            await queue_query_task_helper(
+                query="Investigate with chat",
+                instance_id="redis-prod-1",
+                agent="chat",
+            )
+
+        create_kwargs = mock_create_task.await_args.kwargs
+        assert create_kwargs["message"] == "Investigate with chat"
+        assert create_kwargs["thread_id"] is None
+        assert create_kwargs["redis_client"] is redis_client
+        context = create_kwargs["context"]
+        assert context["instance_id"] == "redis-prod-1"
+        assert context["requested_agent_type"] == "chat"
+        assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
+        assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
+
+        task_kwargs = task_callable.await_args.kwargs
+        assert task_kwargs["thread_id"] == "thread-123"
+        assert task_kwargs["message"] == "Investigate with chat"
+        assert task_kwargs["task_id"] == "task-123"
+        assert task_kwargs["context"] == context
 
     @pytest.mark.asyncio
     async def test_queue_query_task_helper_rejects_multiple_targets(self):

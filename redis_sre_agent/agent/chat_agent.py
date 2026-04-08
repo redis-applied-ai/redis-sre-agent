@@ -32,8 +32,8 @@ from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.targets import (
     build_attached_target_scope_prompt,
     get_attached_target_handles_from_context,
-    get_target_bindings_from_context,
 )
+from redis_sre_agent.core.turn_scope import TurnScope
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
 
@@ -669,15 +669,24 @@ class ChatAgent:
             AgentResponse with response text and any knowledge search results used
         """
         logger.info("Chat agent processing query for user %s", user_id or "<anonymous>")
-        attached_target_handles = get_attached_target_handles_from_context(context)
-        attached_target_bindings = get_target_bindings_from_context(context)
-        attached_target_count = max(len(attached_target_handles), len(attached_target_bindings))
+        normalized_context = dict(context or {})
+        raw_attached_target_handles = get_attached_target_handles_from_context(normalized_context)
+        turn_scope = TurnScope.from_context(
+            normalized_context,
+            thread_id=normalized_context.get("thread_id"),
+            session_id=session_id,
+        )
+        normalized_context.update(turn_scope.to_thread_context())
+        normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
+        attached_target_count = max(len(raw_attached_target_handles), turn_scope.target_count)
         attached_target_prompt: Optional[str] = None
 
         async def _get_attached_target_prompt() -> Optional[str]:
             nonlocal attached_target_prompt
             if attached_target_prompt is None and attached_target_count:
-                attached_target_prompt = await build_attached_target_scope_prompt(context)
+                attached_target_prompt = await build_attached_target_scope_prompt(
+                    normalized_context
+                )
             return attached_target_prompt
 
         # Use provided emitter, or fall back to instance emitter
@@ -686,7 +695,7 @@ class ChatAgent:
             query=query,
             session_id=session_id,
             user_id=user_id,
-            context=context,
+            context=normalized_context,
             emitter=emitter,
         )
         memory_context = prepared_memory.memory_context
@@ -697,16 +706,24 @@ class ChatAgent:
             cache_client = get_redis_client()
             logger.info(f"Tool caching enabled for instance {self.redis_instance.id}")
 
+        support_package_path = self.support_package_path
+        scope_support_package_path = turn_scope.support_package_context.get("support_package_path")
+        if support_package_path is None and scope_support_package_path:
+            support_package_path = Path(scope_support_package_path)
+
         # Create ToolManager with Redis instance for full tool access
+        tool_thread_id = turn_scope.thread_id or session_id
         async with ToolManager(
             redis_instance=self.redis_instance,
             redis_cluster=self.redis_cluster,
+            initial_target_bindings=turn_scope.bindings or None,
+            initial_toolset_generation=turn_scope.toolset_generation or None,
             exclude_mcp_categories=self.exclude_mcp_categories,
-            support_package_path=self.support_package_path,
+            support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
-            thread_id=session_id,
-            task_id=(context or {}).get("task_id"),
+            thread_id=tool_thread_id,
+            task_id=normalized_context.get("task_id"),
             user_id=user_id,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()

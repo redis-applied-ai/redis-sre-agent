@@ -83,6 +83,8 @@ class ToolManager:
         self,
         redis_instance: Optional[RedisInstance] = None,
         redis_cluster: Optional["RedisCluster"] = None,
+        initial_target_bindings: Optional[List[Any]] = None,
+        initial_toolset_generation: Optional[int] = None,
         exclude_mcp_categories: Optional[List[ToolCapability]] = None,
         support_package_path: Optional["Path"] = None,
         cache_client: Optional[Any] = None,
@@ -110,6 +112,8 @@ class ToolManager:
         """
         self.redis_instance = redis_instance
         self.redis_cluster = redis_cluster
+        self._initial_target_bindings = list(initial_target_bindings or [])
+        self._initial_toolset_generation = initial_toolset_generation
         self.exclude_mcp_categories = exclude_mcp_categories
         self.support_package_path = support_package_path
         self.thread_id = thread_id
@@ -242,6 +246,11 @@ class ToolManager:
                 self.redis_cluster.name,
             )
             await self._load_cluster_scoped_providers(self.redis_cluster)
+        elif self._initial_target_bindings:
+            await self.attach_bound_targets(
+                self._initial_target_bindings,
+                generation=self._initial_toolset_generation,
+            )
         else:
             await self._load_thread_attached_targets()
 

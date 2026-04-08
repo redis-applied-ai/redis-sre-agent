@@ -43,8 +43,8 @@ from ..core.redis import get_redis_client
 from ..core.targets import (
     build_attached_target_scope_prompt,
     get_attached_target_handles_from_context,
-    get_target_bindings_from_context,
 )
+from ..core.turn_scope import TurnScope
 from ..tools.manager import ToolManager
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
@@ -1726,6 +1726,16 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             "Processing SRE query for user %s, session %s", user_id or "<anonymous>", session_id
         )
 
+        normalized_context = dict(context or {})
+        raw_attached_target_handles = get_attached_target_handles_from_context(normalized_context)
+        turn_scope = TurnScope.from_context(
+            normalized_context,
+            thread_id=normalized_context.get("thread_id"),
+            session_id=session_id,
+        )
+        normalized_context.update(turn_scope.to_thread_context())
+        normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
+
         # Set progress emitter for this query
         if progress_emitter is not None:
             self._progress_emitter = progress_emitter
@@ -1734,26 +1744,59 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         target_instance = None
         target_cluster = None
         enhanced_query = query
-        attached_target_handles = get_attached_target_handles_from_context(context)
-        attached_target_bindings = get_target_bindings_from_context(context)
-        attached_target_count = max(len(attached_target_handles), len(attached_target_bindings))
+        attached_target_count = max(len(raw_attached_target_handles), turn_scope.target_count)
+        explicit_instance_scope_id = normalized_context.get("instance_id")
+        explicit_cluster_scope_id = normalized_context.get("cluster_id")
+        instance_scope_id = explicit_instance_scope_id
+        cluster_scope_id = explicit_cluster_scope_id
+        has_attached_scope = turn_scope.target_count > 0
         attached_target_prompt: Optional[str] = None
 
         async def _get_attached_target_prompt() -> Optional[str]:
             nonlocal attached_target_prompt
             if attached_target_prompt is None and attached_target_count:
-                attached_target_prompt = await build_attached_target_scope_prompt(context)
+                attached_target_prompt = await build_attached_target_scope_prompt(
+                    normalized_context
+                )
             return attached_target_prompt
 
-        if attached_target_count > 1:
+        def _build_support_package_context() -> Optional[str]:
+            support_pkg_path = normalized_context.get("support_package_path")
+            if not support_pkg_path:
+                return None
+            return f"""IMPORTANT CONTEXT: This query is specifically about a Redis Enterprise support package.
+- Support Package Path: {support_pkg_path}
+
+You have access to support package diagnostic tools that can:
+- List databases in the package (support_package_*_list_databases)
+- Get Redis INFO output for specific databases (support_package_*_get_info)
+- Get SLOWLOG entries (support_package_*_get_slowlog)
+- Get CLIENT LIST output (support_package_*_get_client_list)
+- Search logs for patterns (support_package_*_search_logs)
+- Get log files (support_package_*_get_logs)
+- Get package summary (support_package_*_get_summary)
+
+FOCUS ON THE SUPPORT PACKAGE: Do NOT try to connect to live Redis instances. Instead, use the support package tools to analyze the data captured in the package. Start by listing the databases in the package to understand what's available.
+
+Please use the support package tools to analyze this package and answer the user's question."""
+
+        if has_attached_scope and not explicit_instance_scope_id and not explicit_cluster_scope_id:
             prompt = await _get_attached_target_prompt()
             if prompt:
-                enhanced_query = f"""User Query: {query}
+                support_package_context = _build_support_package_context()
+                if support_package_context:
+                    enhanced_query = f"""User Query: {query}
+
+{prompt}
+
+{support_package_context}"""
+                else:
+                    enhanced_query = f"""User Query: {query}
 
 {prompt}"""
 
-        elif context and context.get("instance_id"):
-            instance_id = context["instance_id"]
+        elif instance_scope_id:
+            instance_id = instance_scope_id
             logger.info(f"Processing query with Redis instance context: {instance_id}")
 
             # Resolve instance ID to get actual connection details
@@ -1798,8 +1841,8 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but the instance
 
 CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an error retrieving instance details. Please proceed with general Redis troubleshooting."""
 
-        elif context and context.get("cluster_id"):
-            cluster_id = context["cluster_id"]
+        elif cluster_scope_id:
+            cluster_id = cluster_scope_id
             logger.info(f"Processing query with Redis cluster context: {cluster_id}")
 
             try:
@@ -1921,27 +1964,13 @@ Focus on cluster-level analysis and use instance-level diagnostics only if the u
 
 CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but there was an error retrieving cluster details. Please proceed with general Redis troubleshooting."""
 
-        elif context and context.get("support_package_path"):
+        elif normalized_context.get("support_package_path"):
             # Support package provided without specific instance - focus on the package
-            support_pkg_path = context["support_package_path"]
+            support_pkg_path = normalized_context["support_package_path"]
             logger.info(
                 f"Support package provided without instance - focusing on package: {support_pkg_path}"
             )
-            support_package_context = f"""IMPORTANT CONTEXT: This query is specifically about a Redis Enterprise support package.
-- Support Package Path: {support_pkg_path}
-
-You have access to support package diagnostic tools that can:
-- List databases in the package (support_package_*_list_databases)
-- Get Redis INFO output for specific databases (support_package_*_get_info)
-- Get SLOWLOG entries (support_package_*_get_slowlog)
-- Get CLIENT LIST output (support_package_*_get_client_list)
-- Search logs for patterns (support_package_*_search_logs)
-- Get log files (support_package_*_get_logs)
-- Get package summary (support_package_*_get_summary)
-
-FOCUS ON THE SUPPORT PACKAGE: Do NOT try to connect to live Redis instances. Instead, use the support package tools to analyze the data captured in the package. Start by listing the databases in the package to understand what's available.
-
-Please use the support package tools to analyze this package and answer the user's question."""
+            support_package_context = _build_support_package_context()
 
             prompt = await _get_attached_target_prompt()
             if prompt:
@@ -2118,7 +2147,7 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
 
         # Defer initial state construction until tools are loaded so startup context
         # can include the actual tool instructions available for this query.
-        initial_instance_context = context if context else None
+        initial_instance_context = normalized_context if normalized_context else None
 
         # INSTANCE TYPE TRIAGE: Detect and validate instance type before loading tools
         if target_instance and target_instance.instance_type in ["unknown", None]:
@@ -2257,8 +2286,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
         # Extract support package path from context if provided
         support_package_path = None
-        if context and context.get("support_package_path"):
-            pkg_path = context["support_package_path"]
+        if turn_scope.support_package_context.get("support_package_path"):
+            pkg_path = turn_scope.support_package_context["support_package_path"]
             support_package_path = Path(pkg_path) if isinstance(pkg_path, str) else pkg_path
             logger.info(f"Processing query with support package: {support_package_path}")
 
@@ -2269,14 +2298,17 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             logger.debug(f"Tool caching enabled for instance {target_instance.id}")
 
         # Create ToolManager for this query with the target instance
+        tool_thread_id = turn_scope.thread_id
         async with ToolManager(
             redis_instance=target_instance,
             redis_cluster=target_cluster,
+            initial_target_bindings=turn_scope.bindings or None,
+            initial_toolset_generation=turn_scope.toolset_generation or None,
             support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
-            thread_id=session_id,
-            task_id=(context or {}).get("task_id") if isinstance(context, dict) else None,
+            thread_id=tool_thread_id or session_id,
+            task_id=normalized_context.get("task_id"),
             user_id=user_id,
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
@@ -2479,12 +2511,20 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         # Initialize in-run caches (LLM memo; tool cache is per-ToolManager context)
         self._begin_run_cache()
         try:
+            normalized_context = dict(context or {})
+            turn_scope = TurnScope.from_context(
+                normalized_context,
+                thread_id=normalized_context.get("thread_id"),
+                session_id=session_id,
+            )
+            normalized_context.update(turn_scope.to_thread_context())
+            normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
             emitter = progress_emitter if progress_emitter is not None else self._progress_emitter
             prepared_memory = await prepare_agent_turn_memory(
                 query=query,
                 session_id=session_id,
                 user_id=user_id,
-                context=context,
+                context=normalized_context,
                 emitter=emitter,
             )
             memory_context = prepared_memory.memory_context
@@ -2498,7 +2538,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 session_id,
                 user_id,
                 max_iterations,
-                context,
+                normalized_context,
                 effective_history or None,
                 progress_emitter,
             )

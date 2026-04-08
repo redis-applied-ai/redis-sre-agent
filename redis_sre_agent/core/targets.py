@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -122,6 +123,23 @@ class ThreadTargetState(BaseModel):
     target_bindings: List[TargetBinding] = Field(default_factory=list)
 
 
+class MaterializedTargetScope(BaseModel):
+    """Shared output for resolved target selection and attachment."""
+
+    selected_bindings: List[TargetBinding] = Field(default_factory=list)
+    attached_bindings: List[TargetBinding] = Field(default_factory=list)
+    target_toolset_generation: int = 0
+    context_updates: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BoundTargetScope(BaseModel):
+    """Shared result shape for attached target binding flows."""
+
+    bindings: List[TargetBinding] = Field(default_factory=list)
+    toolset_generation: int = 0
+    context_updates: Dict[str, Any] = Field(default_factory=dict)
+
+
 def get_attached_target_handles_from_context(context: Optional[Dict[str, Any]]) -> List[str]:
     """Return normalized attached target handles from a routing context."""
     if not isinstance(context, dict):
@@ -155,6 +173,31 @@ def get_target_bindings_from_context(context: Optional[Dict[str, Any]]) -> List[
         except Exception:
             continue
     return bindings
+
+
+def build_bound_target_scope_context(
+    bindings: Sequence[TargetBinding],
+    *,
+    generation: int,
+    active_handle: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build normalized routing/thread context fields for attached bindings."""
+    attached_bindings = list(bindings)
+    attached_handles = [binding.target_handle for binding in attached_bindings]
+    resolved_active_handle = active_handle or (
+        attached_bindings[0].target_handle if attached_bindings else ""
+    )
+
+    context_updates: Dict[str, Any] = {
+        "attached_target_handles": attached_handles,
+        "active_target_handle": resolved_active_handle or "",
+        "target_toolset_generation": generation,
+        "target_bindings": [binding.model_dump(mode="json") for binding in attached_bindings],
+        "instance_id": "",
+        "cluster_id": "",
+    }
+
+    return context_updates
 
 
 async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -932,10 +975,6 @@ async def attach_target_matches(
             attached_by_handle[binding.target_handle] = binding
         selected_bindings.append(binding)
 
-    attached_handles = [
-        binding.target_handle
-        for binding in (selected_bindings if replace_existing else attached_bindings)
-    ]
     bindings_to_store = selected_bindings if replace_existing else attached_bindings
     active_handle = (
         selected_bindings[0].target_handle
@@ -943,26 +982,90 @@ async def attach_target_matches(
         else current_state.active_target_handle
     )
     generation = max(1, current_state.target_toolset_generation) + (1 if selected_bindings else 0)
-
-    active_binding = next(
-        (binding for binding in bindings_to_store if binding.target_handle == active_handle),
-        None,
+    context_updates = build_bound_target_scope_context(
+        bindings_to_store,
+        generation=generation,
+        active_handle=active_handle,
     )
-
-    context_updates: Dict[str, Any] = {
-        "attached_target_handles": attached_handles,
-        "active_target_handle": active_handle or "",
-        "target_toolset_generation": generation,
-        "target_bindings": [binding.model_dump(mode="json") for binding in bindings_to_store],
-        "instance_id": "",
-        "cluster_id": "",
-    }
-
-    if active_binding and len(attached_handles) == 1:
-        if active_binding.target_kind == "instance":
-            context_updates["instance_id"] = active_binding.resource_id
-        elif active_binding.target_kind == "cluster":
-            context_updates["cluster_id"] = active_binding.resource_id
 
     await thread_manager.update_thread_context(thread_id, context_updates, merge=True)
     return selected_bindings, generation
+
+
+async def materialize_bound_target_scope(
+    *,
+    matches: Sequence[ResolvedTargetMatch],
+    thread_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    replace_existing: bool = False,
+) -> MaterializedTargetScope:
+    """Resolve target matches into one authoritative bound-scope payload."""
+    if thread_id:
+        selected_bindings, generation = await attach_target_matches(
+            thread_id=thread_id,
+            matches=matches,
+            task_id=task_id,
+            replace_existing=replace_existing,
+        )
+        state = await get_thread_target_state(thread_id)
+        attached_bindings = list(state.target_bindings)
+        active_handle = state.active_target_handle
+    else:
+        selected_bindings = build_ephemeral_target_bindings(
+            matches,
+            thread_id=thread_id,
+            task_id=task_id,
+        )
+        attached_bindings = list(selected_bindings)
+        generation = 0
+        active_handle = selected_bindings[0].target_handle if selected_bindings else None
+
+    return MaterializedTargetScope(
+        selected_bindings=list(selected_bindings),
+        attached_bindings=attached_bindings,
+        target_toolset_generation=generation,
+        context_updates=build_bound_target_scope_context(
+            attached_bindings,
+            generation=generation,
+            active_handle=active_handle,
+        ),
+    )
+
+
+async def bind_target_matches(
+    *,
+    matches: Sequence[ResolvedTargetMatch],
+    thread_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    replace_existing: bool = False,
+    manager: Optional[Any] = None,
+) -> BoundTargetScope:
+    """Bind resolved matches through the shared attached-target flow."""
+    materialized = await materialize_bound_target_scope(
+        matches=matches,
+        thread_id=thread_id,
+        task_id=task_id,
+        replace_existing=replace_existing,
+    )
+    attached_bindings = list(materialized.attached_bindings)
+    generation = materialized.target_toolset_generation
+
+    if manager and attached_bindings:
+        if thread_id:
+            await manager.attach_bound_targets(attached_bindings, generation=generation)
+        else:
+            await manager.attach_bound_targets(attached_bindings)
+        updated_generation = manager.get_toolset_generation()
+        if inspect.isawaitable(updated_generation):
+            updated_generation = await updated_generation
+        generation = int(updated_generation)
+
+    return BoundTargetScope(
+        bindings=attached_bindings,
+        toolset_generation=generation,
+        context_updates=build_bound_target_scope_context(
+            attached_bindings,
+            generation=generation,
+            active_handle=materialized.context_updates.get("active_target_handle"),
+        ),
+    )

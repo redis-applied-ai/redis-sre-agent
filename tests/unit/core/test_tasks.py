@@ -27,6 +27,7 @@ from redis_sre_agent.core.docket_tasks import (
     test_task_system,
 )
 from redis_sre_agent.core.targets import (
+    BoundTargetScope,
     ResolvedTargetMatch,
     TargetBinding,
     TargetResolutionResult,
@@ -1367,6 +1368,12 @@ class TestProcessAgentTurn:
 
         mock_router.assert_not_called()
         mock_chat_agent.process_query.assert_awaited_once()
+        _, kwargs = mock_chat_agent.process_query.await_args
+        assert kwargs["context"]["thread_id"] == "thread-123"
+        assert kwargs["context"]["session_id"] == "session-1"
+        assert kwargs["context"]["turn_scope"]["thread_id"] == "thread-123"
+        assert kwargs["context"]["turn_scope"]["session_id"] == "session-1"
+        assert kwargs["context"]["turn_scope"]["scope_kind"] == "zero_scope"
         assert result["message_id"] == "01HXTESTMESSAGEID1234567890"
 
     @pytest.mark.asyncio
@@ -1450,8 +1457,23 @@ class TestProcessAgentTurn:
                 new=AsyncMock(return_value=resolution),
             ),
             patch(
-                "redis_sre_agent.core.targets.attach_target_matches",
-                new=AsyncMock(return_value=(bindings, 3)),
+                "redis_sre_agent.core.targets.bind_target_matches",
+                new=AsyncMock(
+                    return_value=BoundTargetScope(
+                        bindings=bindings,
+                        toolset_generation=3,
+                        context_updates={
+                            "attached_target_handles": ["tgt_01"],
+                            "active_target_handle": "tgt_01",
+                            "target_toolset_generation": 3,
+                            "target_bindings": [
+                                binding.model_dump(mode="json") for binding in bindings
+                            ],
+                            "instance_id": "",
+                            "cluster_id": "",
+                        },
+                    )
+                ),
             ),
             patch("redis_sre_agent.core.docket_tasks.get_sre_agent", return_value=MagicMock()),
             patch(
@@ -1475,9 +1497,10 @@ class TestProcessAgentTurn:
             )
 
         _, kwargs = mock_run_agent.await_args
-        assert kwargs["agent_context"]["instance_id"] == "redis-prod-checkout-cache"
         assert kwargs["agent_context"]["attached_target_handles"] == ["tgt_01"]
         assert kwargs["agent_context"]["target_toolset_generation"] == 3
+        assert "instance_id" not in kwargs["agent_context"]
+        assert "cluster_id" not in kwargs["agent_context"]
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_passes_single_resolved_cluster_scope_to_triage(self):
@@ -1557,8 +1580,23 @@ class TestProcessAgentTurn:
                 new=AsyncMock(return_value=resolution),
             ),
             patch(
-                "redis_sre_agent.core.targets.attach_target_matches",
-                new=AsyncMock(return_value=(bindings, 5)),
+                "redis_sre_agent.core.targets.bind_target_matches",
+                new=AsyncMock(
+                    return_value=BoundTargetScope(
+                        bindings=bindings,
+                        toolset_generation=5,
+                        context_updates={
+                            "attached_target_handles": ["tgt_cluster"],
+                            "active_target_handle": "tgt_cluster",
+                            "target_toolset_generation": 5,
+                            "target_bindings": [
+                                binding.model_dump(mode="json") for binding in bindings
+                            ],
+                            "instance_id": "",
+                            "cluster_id": "",
+                        },
+                    )
+                ),
             ),
             patch("redis_sre_agent.core.docket_tasks.get_sre_agent", return_value=MagicMock()),
             patch(
@@ -1582,9 +1620,10 @@ class TestProcessAgentTurn:
             )
 
         _, kwargs = mock_run_agent.await_args
-        assert kwargs["agent_context"]["cluster_id"] == "cluster-prod-checkout"
         assert kwargs["agent_context"]["attached_target_handles"] == ["tgt_cluster"]
         assert kwargs["agent_context"]["target_toolset_generation"] == 5
+        assert "instance_id" not in kwargs["agent_context"]
+        assert "cluster_id" not in kwargs["agent_context"]
 
     @pytest.mark.asyncio
     async def test_pre_resolved_multi_target_scope_reaches_agent_without_singular_target_ids(self):
@@ -1683,8 +1722,23 @@ class TestProcessAgentTurn:
                 new=AsyncMock(return_value=resolution),
             ),
             patch(
-                "redis_sre_agent.core.targets.attach_target_matches",
-                new=AsyncMock(return_value=(bindings, 4)),
+                "redis_sre_agent.core.targets.bind_target_matches",
+                new=AsyncMock(
+                    return_value=BoundTargetScope(
+                        bindings=bindings,
+                        toolset_generation=4,
+                        context_updates={
+                            "attached_target_handles": ["tgt_01", "tgt_02"],
+                            "active_target_handle": "tgt_01",
+                            "target_toolset_generation": 4,
+                            "target_bindings": [
+                                binding.model_dump(mode="json") for binding in bindings
+                            ],
+                            "instance_id": "",
+                            "cluster_id": "",
+                        },
+                    )
+                ),
             ),
             patch("redis_sre_agent.core.docket_tasks.get_sre_agent", return_value=MagicMock()),
             patch(

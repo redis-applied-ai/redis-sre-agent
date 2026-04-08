@@ -1,5 +1,6 @@
 """Unit tests for the lightweight Chat Agent."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -635,7 +636,10 @@ class TestChatAgentStartupContext:
         fake_workflow.compile.return_value = fake_app
 
         with (
-            patch("redis_sre_agent.agent.chat_agent.ToolManager", return_value=mock_tool_manager),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
             patch(
                 "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
                 new=AsyncMock(return_value=[]),
@@ -732,6 +736,228 @@ class TestChatAgentStartupContext:
         assert response.response == "final answer"
         assert mock_tool_manager_class.call_args.kwargs["user_id"] is None
         prepared_memory.persist_response_fail_open.assert_awaited_once_with("final answer")
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_prefers_thread_id_from_context_for_tool_manager(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="session-123",
+            user_id="test-user",
+            query="Compare targets",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [AIMessage(content="final answer")],
+            "signals_envelopes": [],
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ) as mock_prepare_memory,
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ) as mock_tool_manager_class,
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            await agent.process_query(
+                query="Compare targets",
+                session_id="session-123",
+                user_id="test-user",
+                context={"thread_id": "thread-456"},
+            )
+
+        assert mock_tool_manager_class.call_args.kwargs["thread_id"] == "thread-456"
+        assert (
+            mock_prepare_memory.await_args.kwargs["context"]["turn_scope"]["thread_id"]
+            == "thread-456"
+        )
+        assert (
+            mock_prepare_memory.await_args.kwargs["context"]["turn_scope"]["session_id"]
+            == "session-123"
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_uses_support_package_path_from_turn_scope_context(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="test-session",
+            user_id="test-user",
+            query="Inspect package",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [AIMessage(content="final answer")],
+            "signals_envelopes": [],
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ) as mock_tool_manager_class,
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            await agent.process_query(
+                query="Inspect package",
+                session_id="test-session",
+                user_id="test-user",
+                context={"support_package_path": "/tmp/support-package.zip"},
+            )
+
+        assert mock_tool_manager_class.call_args.kwargs["support_package_path"] == Path(
+            "/tmp/support-package.zip"
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_includes_cluster_context(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        cluster = RedisCluster(
+            id="cluster-1",
+            name="test-cluster",
+            cluster_type=RedisClusterType.redis_enterprise,
+            environment="test",
+            description="Test cluster",
+            admin_url="https://cluster.example.com:9443",
+            admin_username="admin@redis.com",
+            admin_password="secret",
+        )
+        agent = ChatAgent(redis_cluster=cluster)
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="test-session",
+            user_id="test-user",
+            query="Inspect cluster",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [AIMessage(content="final answer")],
+            "signals_envelopes": [],
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            await agent.process_query(
+                query="Inspect cluster",
+                session_id="test-session",
+                user_id="test-user",
+            )
+
+        human_message = fake_app.ainvoke.await_args.args[0]["messages"][-1].content
+        assert "CLUSTER CONTEXT: This query is about Redis cluster" in human_message
+        assert "Cluster Name: test-cluster" in human_message
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
@@ -877,7 +1103,10 @@ class TestChatAgentStartupContext:
             }.get(instance_id)
 
         with (
-            patch("redis_sre_agent.agent.chat_agent.ToolManager", return_value=mock_tool_manager),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ) as mock_tool_manager_class,
             patch(
                 "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
                 new=AsyncMock(return_value=[]),
@@ -903,6 +1132,8 @@ class TestChatAgentStartupContext:
         assert "checkout-cache-prod" in str(human_message.content)
         assert "session-cache-stage" in str(human_message.content)
         assert "MULTI-TARGET REQUIREMENT" in str(human_message.content)
+        assert len(mock_tool_manager_class.call_args.kwargs["initial_target_bindings"]) == 2
+        assert mock_tool_manager_class.call_args.kwargs["initial_toolset_generation"] is None
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")

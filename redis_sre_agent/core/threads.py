@@ -776,7 +776,14 @@ async def _build_initial_context(
         initial_context.update(base_context)
 
     if instance_id:
-        initial_context["instance_id"] = instance_id
+        from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
+
+        _, scope_context = build_legacy_target_scope_adapter(
+            instance_id=instance_id,
+            session_id=initial_context.get("session_id"),
+            resolution_policy="require_target",
+        )
+        initial_context.update(scope_context)
         try:
             from redis_sre_agent.core.instances import get_instances
 

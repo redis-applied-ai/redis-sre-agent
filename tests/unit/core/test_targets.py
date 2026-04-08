@@ -1,6 +1,6 @@
 """Tests for unified target discovery and safe thread binding state."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -8,15 +8,19 @@ from redis_sre_agent.core import targets as target_module
 from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.targets import (
+    MaterializedTargetScope,
     ResolvedTargetMatch,
     TargetCatalogDoc,
     attach_target_matches,
+    bind_target_matches,
     build_attached_target_scope_prompt,
+    build_bound_target_scope_context,
     build_ephemeral_target_bindings,
     build_target_doc_from_cluster,
     build_target_doc_from_instance,
     get_attached_target_handles_from_context,
     get_target_bindings_from_context,
+    materialize_bound_target_scope,
     resolve_target_query,
     sync_target_catalog,
 )
@@ -306,7 +310,7 @@ async def test_attach_target_matches_persists_safe_thread_context():
     assert generation == 2
 
     update_payload = mock_thread_manager.update_thread_context.await_args.args[1]
-    assert update_payload["instance_id"] == "redis-prod-checkout-cache"
+    assert update_payload["instance_id"] == ""
     assert update_payload["cluster_id"] == ""
     assert update_payload["attached_target_handles"] == [bindings[0].target_handle]
     assert "connection_url" not in str(update_payload)
@@ -368,6 +372,325 @@ async def test_attach_target_matches_append_mode_clears_singular_scope_ids_for_m
     assert len(update_payload["attached_target_handles"]) == 2
 
 
+def test_build_bound_target_scope_context_clears_legacy_scope_ids_for_single_target():
+    binding = target_module.TargetBinding(
+        target_handle="tgt_01",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        capabilities=["redis", "diagnostics"],
+    )
+
+    context_updates = build_bound_target_scope_context([binding], generation=3)
+
+    assert context_updates["attached_target_handles"] == ["tgt_01"]
+    assert context_updates["active_target_handle"] == "tgt_01"
+    assert context_updates["instance_id"] == ""
+    assert context_updates["cluster_id"] == ""
+
+
+def test_build_bound_target_scope_context_clears_singular_scope_ids_for_multi_target():
+    bindings = [
+        target_module.TargetBinding(
+            target_handle="tgt_01",
+            target_kind="instance",
+            resource_id="redis-prod-checkout-cache",
+            display_name="checkout-cache-prod",
+            capabilities=["redis", "diagnostics"],
+        ),
+        target_module.TargetBinding(
+            target_handle="tgt_02",
+            target_kind="cluster",
+            resource_id="cluster-prod-checkout",
+            display_name="checkout-cluster-prod",
+            capabilities=["admin"],
+        ),
+    ]
+
+    context_updates = build_bound_target_scope_context(bindings, generation=4)
+
+    assert context_updates["attached_target_handles"] == ["tgt_01", "tgt_02"]
+    assert context_updates["instance_id"] == ""
+    assert context_updates["cluster_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_bind_target_matches_without_thread_uses_ephemeral_bindings_and_manager():
+    match = ResolvedTargetMatch(
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        environment="production",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        confidence=0.94,
+        match_reasons=["matched environment=production"],
+    )
+    manager = MagicMock()
+    manager.attach_bound_targets = AsyncMock()
+    manager.get_toolset_generation.return_value = 7
+
+    scope = await bind_target_matches(
+        matches=[match],
+        thread_id=None,
+        task_id="task-1",
+        replace_existing=False,
+        manager=manager,
+    )
+
+    manager.attach_bound_targets.assert_awaited_once()
+    assert len(scope.bindings) == 1
+    assert scope.bindings[0].thread_id is None
+    assert scope.toolset_generation == 7
+    assert scope.context_updates["attached_target_handles"] == [scope.bindings[0].target_handle]
+    assert scope.context_updates["instance_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_bind_target_matches_with_thread_returns_materialized_attached_scope():
+    existing_binding = target_module.TargetBinding(
+        target_handle="tgt_existing",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        capabilities=["redis", "diagnostics"],
+        thread_id="thread-1",
+        task_id="task-existing",
+    )
+    new_match = ResolvedTargetMatch(
+        target_kind="cluster",
+        resource_id="cluster-prod-checkout",
+        display_name="checkout-cluster-prod",
+        environment="production",
+        target_type="redis_enterprise",
+        capabilities=["admin"],
+        confidence=0.9,
+        match_reasons=["matched name=checkout-cluster-prod"],
+    )
+    updated_context = build_bound_target_scope_context(
+        [
+            existing_binding,
+            target_module.TargetBinding(
+                target_handle="tgt_new",
+                target_kind="cluster",
+                resource_id="cluster-prod-checkout",
+                display_name="checkout-cluster-prod",
+                capabilities=["admin"],
+                thread_id="thread-1",
+                task_id="task-1",
+            ),
+        ],
+        generation=3,
+        active_handle="tgt_new",
+    )
+    mock_thread_manager = AsyncMock()
+    mock_thread_manager.get_thread = AsyncMock(
+        side_effect=[
+            Thread(
+                thread_id="thread-1",
+                messages=[],
+                context=build_bound_target_scope_context([existing_binding], generation=2),
+                metadata=ThreadMetadata(),
+            ),
+            Thread(
+                thread_id="thread-1",
+                messages=[],
+                context=updated_context,
+                metadata=ThreadMetadata(),
+            ),
+        ]
+    )
+    mock_thread_manager.update_thread_context = AsyncMock(return_value=True)
+
+    with (
+        patch("redis_sre_agent.core.targets.ThreadManager", return_value=mock_thread_manager),
+        patch("redis_sre_agent.core.targets.ULID", return_value="new"),
+    ):
+        scope = await bind_target_matches(
+            matches=[new_match],
+            thread_id="thread-1",
+            task_id="task-1",
+            replace_existing=False,
+        )
+
+    assert [binding.target_handle for binding in scope.bindings] == ["tgt_existing", "tgt_new"]
+    assert scope.toolset_generation == 3
+    assert scope.context_updates["attached_target_handles"] == ["tgt_existing", "tgt_new"]
+    assert scope.context_updates["active_target_handle"] == "tgt_new"
+    assert scope.context_updates["instance_id"] == ""
+    assert scope.context_updates["cluster_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_materialize_bound_target_scope_reloads_full_thread_state_after_attach():
+    selected_binding = target_module.TargetBinding(
+        target_handle="tgt_new",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        capabilities=["redis", "diagnostics"],
+        thread_id="thread-1",
+        task_id="task-1",
+    )
+    existing_binding = target_module.TargetBinding(
+        target_handle="tgt_existing",
+        target_kind="cluster",
+        resource_id="cluster-prod-checkout",
+        display_name="checkout-cluster-prod",
+        capabilities=["admin"],
+        thread_id="thread-1",
+        task_id="task-1",
+    )
+    matches = [
+        ResolvedTargetMatch(
+            target_kind="instance",
+            resource_id="redis-prod-checkout-cache",
+            display_name="checkout-cache-prod",
+            environment="production",
+            target_type="oss_single",
+            capabilities=["redis", "diagnostics"],
+            confidence=0.94,
+            match_reasons=["matched environment=production"],
+        )
+    ]
+
+    with (
+        patch(
+            "redis_sre_agent.core.targets.attach_target_matches",
+            new=AsyncMock(return_value=([selected_binding], 3)),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_thread_target_state",
+            new=AsyncMock(
+                return_value=target_module.ThreadTargetState(
+                    attached_target_handles=["tgt_existing", "tgt_new"],
+                    active_target_handle="tgt_new",
+                    target_toolset_generation=3,
+                    target_bindings=[existing_binding, selected_binding],
+                )
+            ),
+        ),
+    ):
+        scope = await materialize_bound_target_scope(
+            matches=matches,
+            thread_id="thread-1",
+            task_id="task-1",
+            replace_existing=False,
+        )
+
+    assert [binding.target_handle for binding in scope.selected_bindings] == ["tgt_new"]
+    assert [binding.target_handle for binding in scope.attached_bindings] == [
+        "tgt_existing",
+        "tgt_new",
+    ]
+    assert scope.target_toolset_generation == 3
+    assert scope.context_updates["attached_target_handles"] == ["tgt_existing", "tgt_new"]
+    assert scope.context_updates["active_target_handle"] == "tgt_new"
+    assert scope.context_updates["instance_id"] == ""
+    assert scope.context_updates["cluster_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_bind_target_matches_attaches_full_materialized_scope_to_manager():
+    selected_binding = target_module.TargetBinding(
+        target_handle="tgt_new",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        capabilities=["redis", "diagnostics"],
+        thread_id="thread-1",
+        task_id="task-1",
+    )
+    existing_binding = target_module.TargetBinding(
+        target_handle="tgt_existing",
+        target_kind="cluster",
+        resource_id="cluster-prod-checkout",
+        display_name="checkout-cluster-prod",
+        capabilities=["admin"],
+        thread_id="thread-1",
+        task_id="task-1",
+    )
+    materialized_scope = MaterializedTargetScope(
+        selected_bindings=[selected_binding],
+        attached_bindings=[existing_binding, selected_binding],
+        target_toolset_generation=3,
+        context_updates={
+            "attached_target_handles": ["tgt_existing", "tgt_new"],
+            "active_target_handle": "tgt_new",
+            "target_toolset_generation": 3,
+            "target_bindings": [
+                existing_binding.model_dump(mode="json"),
+                selected_binding.model_dump(mode="json"),
+            ],
+            "instance_id": "",
+            "cluster_id": "",
+        },
+    )
+    manager = MagicMock()
+    manager.attach_bound_targets = AsyncMock()
+    manager.get_toolset_generation.return_value = 7
+    matches = [
+        ResolvedTargetMatch(
+            target_kind="instance",
+            resource_id="redis-prod-checkout-cache",
+            display_name="checkout-cache-prod",
+            environment="production",
+            target_type="oss_single",
+            capabilities=["redis", "diagnostics"],
+            confidence=0.94,
+            match_reasons=["matched environment=production"],
+        )
+    ]
+
+    with patch(
+        "redis_sre_agent.core.targets.materialize_bound_target_scope",
+        new=AsyncMock(return_value=materialized_scope),
+    ):
+        scope = await bind_target_matches(
+            matches=matches,
+            thread_id="thread-1",
+            task_id="task-1",
+            replace_existing=False,
+            manager=manager,
+        )
+
+    manager.attach_bound_targets.assert_awaited_once_with(
+        [existing_binding, selected_binding],
+        generation=3,
+    )
+    assert [binding.target_handle for binding in scope.bindings] == ["tgt_existing", "tgt_new"]
+    assert scope.toolset_generation == 7
+    assert scope.context_updates["attached_target_handles"] == ["tgt_existing", "tgt_new"]
+    assert scope.context_updates["target_toolset_generation"] == 7
+
+
+@pytest.mark.asyncio
+async def test_bind_target_matches_awaits_async_toolset_generation():
+    match = ResolvedTargetMatch(
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        environment="production",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        confidence=0.94,
+        match_reasons=["matched environment=production"],
+    )
+    manager = MagicMock()
+    manager.attach_bound_targets = AsyncMock()
+    manager.get_toolset_generation = AsyncMock(return_value=9)
+
+    scope = await bind_target_matches(
+        matches=[match],
+        thread_id=None,
+        task_id="task-1",
+        replace_existing=False,
+        manager=manager,
+    )
+
+    assert scope.toolset_generation == 9
+
+
 def test_get_attached_target_handles_from_context_rejects_non_list_values():
     assert get_attached_target_handles_from_context(None) == []
     assert get_attached_target_handles_from_context({"attached_target_handles": "tgt_01"}) == []
@@ -391,6 +714,12 @@ def test_get_target_bindings_from_context_skips_invalid_bindings():
     assert len(bindings) == 1
     assert bindings[0].target_handle == "tgt_valid"
     assert get_target_bindings_from_context({"target_bindings": "invalid"}) == []
+    assert get_target_bindings_from_context(None) == []
+
+
+@pytest.mark.asyncio
+async def test_build_attached_target_scope_prompt_returns_none_without_scope():
+    assert await build_attached_target_scope_prompt({}) is None
 
 
 @pytest.mark.asyncio
