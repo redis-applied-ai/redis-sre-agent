@@ -1932,6 +1932,7 @@ class TestProcessAgentTurn:
         assert update_call.args[1]["attached_target_handles"] == []
         assert update_call.args[1]["target_bindings"] == []
         assert update_call.args[1]["target_toolset_generation"] == 0
+        assert update_call.args[1]["turn_scope"] == ""
         assert mock_get_chat_agent.call_args.kwargs["redis_instance"] == instance
         _, kwargs = mock_chat_agent.process_query.await_args
         assert kwargs["context"]["instance_id"] == "redis-explicit-instance"
@@ -2024,6 +2025,7 @@ class TestProcessAgentTurn:
         assert update_call.args[1]["attached_target_handles"] == []
         assert update_call.args[1]["target_bindings"] == []
         assert update_call.args[1]["target_toolset_generation"] == 0
+        assert update_call.args[1]["turn_scope"] == ""
         assert mock_get_chat_agent.call_args.kwargs["redis_cluster"] == cluster
 
     @pytest.mark.asyncio
@@ -2132,6 +2134,7 @@ class TestProcessAgentTurn:
         assert update_call.args[1]["attached_target_handles"] == []
         assert update_call.args[1]["target_bindings"] == []
         assert update_call.args[1]["target_toolset_generation"] == 0
+        assert update_call.args[1]["turn_scope"] == ""
 
 
 class TestRunAgentWithProgress:

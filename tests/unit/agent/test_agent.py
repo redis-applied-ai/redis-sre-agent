@@ -534,7 +534,7 @@ class TestSRELangGraphAgent:
         assert mock_tool_manager_cls.call_args.kwargs.get("redis_instance") is None
         assert mock_tool_manager_cls.call_args.kwargs.get("redis_cluster") is None
         assert len(mock_tool_manager_cls.call_args.kwargs["initial_target_bindings"]) == 2
-        assert mock_tool_manager_cls.call_args.kwargs["initial_toolset_generation"] is None
+        assert mock_tool_manager_cls.call_args.kwargs["initial_toolset_generation"] == 0
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
@@ -1117,6 +1117,140 @@ class TestSRELangGraphAgent:
 
         human_message = captured["initial_state"]["messages"][-1].content
         assert "NO REDIS INSTANCES CONFIGURED" in human_message
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_requests_connection_details_for_live_redis_query_without_instances(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        fake_corrector = MagicMock()
+        fake_corrector.ainvoke = AsyncMock(side_effect=lambda state: state)
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.get_instances",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.query_needs_live_redis_scope",
+                AsyncMock(return_value=True),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector",
+                return_value=fake_corrector,
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="Why is this Redis cache evicting keys?",
+                session_id="s1",
+                user_id="u1",
+            )
+
+        human_message = captured["initial_state"]["messages"][-1].content
+        assert "NO REDIS INSTANCES CONFIGURED" in human_message
+        assert "Your query appears to be about a specific Redis instance." in human_message
+        assert "Redis Connection URL" in human_message
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_falls_back_to_original_query_when_instance_lookup_fails(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        fake_corrector = MagicMock()
+        fake_corrector.ainvoke = AsyncMock(side_effect=lambda state: state)
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.get_instances",
+                AsyncMock(side_effect=RuntimeError("redis down")),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector",
+                return_value=fake_corrector,
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="Check Redis health",
+                session_id="s1",
+                user_id="u1",
+            )
+
+        human_message = captured["initial_state"]["messages"][-1].content
+        assert human_message == "Check Redis health"
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")

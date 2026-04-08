@@ -714,7 +714,7 @@ class ChatAgent:
             redis_instance=self.redis_instance,
             redis_cluster=self.redis_cluster,
             initial_target_bindings=turn_scope.bindings or None,
-            initial_toolset_generation=turn_scope.toolset_generation or None,
+            initial_toolset_generation=turn_scope.toolset_generation,
             exclude_mcp_categories=self.exclude_mcp_categories,
             support_package_path=support_package_path,
             cache_client=cache_client,

@@ -890,6 +890,7 @@ async def process_agent_turn(
                     "attached_target_handles": [],
                     "target_bindings": [],
                     "target_toolset_generation": 0,
+                    "turn_scope": "",
                 },
                 merge=True,
             )
@@ -914,6 +915,7 @@ async def process_agent_turn(
                     "attached_target_handles": [],
                     "target_bindings": [],
                     "target_toolset_generation": 0,
+                    "turn_scope": "",
                 },
                 merge=True,
             )
@@ -979,6 +981,7 @@ async def process_agent_turn(
                             "attached_target_handles": [],
                             "target_bindings": [],
                             "target_toolset_generation": 0,
+                            "turn_scope": "",
                         },
                         merge=True,
                     )

@@ -1133,7 +1133,7 @@ class TestChatAgentStartupContext:
         assert "session-cache-stage" in str(human_message.content)
         assert "MULTI-TARGET REQUIREMENT" in str(human_message.content)
         assert len(mock_tool_manager_class.call_args.kwargs["initial_target_bindings"]) == 2
-        assert mock_tool_manager_class.call_args.kwargs["initial_toolset_generation"] is None
+        assert mock_tool_manager_class.call_args.kwargs["initial_toolset_generation"] == 0
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
