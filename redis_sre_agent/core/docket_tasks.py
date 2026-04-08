@@ -864,6 +864,12 @@ async def process_agent_turn(
         if instance_id_from_client and cluster_id_from_client:
             raise ValueError("Please provide only one of instance_id or cluster_id")
 
+        def _clear_attached_scope(target_context: Dict[str, Any]) -> None:
+            target_context["attached_target_handles"] = []
+            target_context["target_bindings"] = []
+            target_context["target_toolset_generation"] = 0
+            target_context.pop("turn_scope", None)
+
         # Determine active targets
         active_instance_id = None
         active_cluster_id = None
@@ -878,9 +884,16 @@ async def process_agent_turn(
             # Update thread context with new instance_id and clear cluster scope
             await thread_manager.update_thread_context(
                 thread_id,
-                {"instance_id": active_instance_id, "cluster_id": ""},
+                {
+                    "instance_id": active_instance_id,
+                    "cluster_id": "",
+                    "attached_target_handles": [],
+                    "target_bindings": [],
+                    "target_toolset_generation": 0,
+                },
                 merge=True,
             )
+            _clear_attached_scope(thread.context)
             await task_manager.add_task_update(
                 task_id,
                 f"Using Redis instance: {active_instance_id}",
@@ -895,9 +908,16 @@ async def process_agent_turn(
             )
             await thread_manager.update_thread_context(
                 thread_id,
-                {"cluster_id": active_cluster_id, "instance_id": ""},
+                {
+                    "cluster_id": active_cluster_id,
+                    "instance_id": "",
+                    "attached_target_handles": [],
+                    "target_bindings": [],
+                    "target_toolset_generation": 0,
+                },
                 merge=True,
             )
+            _clear_attached_scope(thread.context)
             await task_manager.add_task_update(
                 task_id,
                 f"Using Redis cluster: {active_cluster_id}",
@@ -952,8 +972,17 @@ async def process_agent_turn(
 
                     # Save instance_id to thread context
                     await thread_manager.update_thread_context(
-                        thread_id, {"instance_id": active_instance_id}, merge=True
+                        thread_id,
+                        {
+                            "instance_id": active_instance_id,
+                            "cluster_id": "",
+                            "attached_target_handles": [],
+                            "target_bindings": [],
+                            "target_toolset_generation": 0,
+                        },
+                        merge=True,
                     )
+                    _clear_attached_scope(thread.context)
                     await task_manager.add_task_update(
                         task_id,
                         f"Created Redis instance: {new_instance.name} ({active_instance_id})",
@@ -1026,7 +1055,10 @@ async def process_agent_turn(
             and not (active_instance_id or active_cluster_id or attached_target_handles)
         ):
             try:
-                from redis_sre_agent.core.targets import bind_target_matches, resolve_target_query
+                from redis_sre_agent.core.targets import (
+                    materialize_bound_target_scope,
+                    resolve_target_query,
+                )
 
                 resolution = await resolve_target_query(
                     query=message,
@@ -1036,13 +1068,13 @@ async def process_agent_turn(
                     preferred_capabilities=["diagnostics", "admin", "cloud"],
                 )
                 if resolution.selected_matches:
-                    bound_scope = await bind_target_matches(
+                    bound_scope = await materialize_bound_target_scope(
                         matches=resolution.selected_matches,
                         thread_id=thread_id,
                         task_id=task_id,
                         replace_existing=False,
                     )
-                    if bound_scope.bindings:
+                    if bound_scope.attached_bindings:
                         routing_context.update(bound_scope.context_updates)
                         await task_manager.add_task_update(
                             task_id,
@@ -1052,7 +1084,7 @@ async def process_agent_turn(
                                 "attached_target_handles": routing_context[
                                     "attached_target_handles"
                                 ],
-                                "match_count": len(bound_scope.bindings),
+                                "match_count": len(bound_scope.selected_bindings),
                             },
                         )
                         current_scope = _materialize_turn_scope(routing_context)

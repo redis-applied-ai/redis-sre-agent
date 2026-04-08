@@ -1232,6 +1232,7 @@ class TestChatAgentStartupContext:
             usage="cache",
             description="Checkout cache",
             instance_type="oss_single",
+            repo_url="https://github.com/acme/checkout-service",
         )
         agent = ChatAgent(redis_instance=instance)
 
@@ -1279,11 +1280,15 @@ class TestChatAgentStartupContext:
                 session_id="test-session",
                 user_id="test-user",
                 context=context,
+                conversation_history=[HumanMessage(content="Previous question")],
             )
 
         assert response.response == "bound instance answer"
         mock_prompt_builder.assert_not_awaited()
         human_message = fake_app.ainvoke.await_args.args[0]["messages"][-1]
+        assert "Repository URL: https://github.com/acme/checkout-service" in str(
+            human_message.content
+        )
         assert "INSTANCE CONTEXT" in str(human_message.content)
         assert "ATTACHED TARGET SCOPE" not in str(human_message.content)
 

@@ -1132,7 +1132,7 @@ class TestSRELangGraphAgent:
         instance.connection_url.get_secret_value.return_value = "redis://localhost:6381"
         instance.environment = "production"
         instance.usage = "cache"
-        instance.repo_url = None
+        instance.repo_url = "https://github.com/acme/solo-service"
 
         mock_tool_mgr = MagicMock()
         mock_tool_mgr.get_tools.return_value = []
@@ -1184,6 +1184,75 @@ class TestSRELangGraphAgent:
         human_message = captured["initial_state"]["messages"][-1].content
         assert "AUTO-DETECTED CONTEXT" in human_message
         assert "solo-instance" in human_message
+        assert "Repository URL: https://github.com/acme/solo-service" in human_message
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_prompts_for_instance_selection_when_multiple_instances_exist(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        first = MagicMock()
+        first.name = "redis-one"
+        first.environment = "production"
+        first.connection_url = "redis://one:6379"
+        second = MagicMock()
+        second.name = "redis-two"
+        second.environment = "staging"
+        second.connection_url = "redis://two:6379"
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["initial_state"] = initial_state
+                return {
+                    "messages": [AIMessage(content="ok", tool_calls=[])],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = SRELangGraphAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.get_instances",
+                AsyncMock(return_value=[first, second]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            await agent.process_query(
+                query="Inspect Redis",
+                session_id="s1",
+                user_id="u1",
+            )
+
+        human_message = captured["initial_state"]["messages"][-1].content
+        assert "MULTIPLE REDIS INSTANCES DETECTED" in human_message
+        assert "redis-one (production): redis://one:6379" in human_message
+        assert "redis-two (staging): redis://two:6379" in human_message
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
@@ -1566,12 +1635,50 @@ class TestSRELangGraphAgent:
 
         sent_messages = mock_llm.ainvoke.call_args.args[0]
         assert isinstance(sent_messages[0], SystemMessage)
-        assert "STARTUP_CONTEXT" in sent_messages[0].content
-        mock_build_startup_context.assert_awaited_once_with(
-            query="follow-up question",
-            version="latest",
-            available_tools=[],
+
+    @pytest.mark.asyncio
+    async def test_process_query_prepends_memory_system_prompt_to_history(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt="MEMORY_CONTEXT",
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="session-123",
+            user_id="user-1",
+            query="basic question",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
         )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+        agent_response = AgentResponse(response="done", search_results=[], tool_envelopes=[])
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch.object(
+                agent, "_process_query", AsyncMock(return_value=agent_response)
+            ) as mock_inner,
+        ):
+            await agent.process_query(
+                query="basic question",
+                session_id="session-123",
+                user_id="user-1",
+                context={"thread_id": "thread-456"},
+                conversation_history=[HumanMessage(content="follow-up question")],
+            )
+
+        forwarded_history = mock_inner.await_args.args[5]
+        assert isinstance(forwarded_history[0], SystemMessage)
+        assert forwarded_history[0].content == "MEMORY_CONTEXT"
+        assert forwarded_history[1].content == "follow-up question"
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")

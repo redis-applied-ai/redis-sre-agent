@@ -30,6 +30,7 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.targets import (
+    build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
     get_attached_target_handles_from_context,
 )
@@ -679,18 +680,11 @@ class ChatAgent:
         normalized_context.update(turn_scope.to_thread_context())
         normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
         attached_target_count = max(len(raw_attached_target_handles), turn_scope.target_count)
-        prompt_unset = object()
-        attached_target_prompt: Any = prompt_unset
-
-        async def _get_attached_target_prompt() -> Optional[str]:
-            nonlocal attached_target_prompt
-            if attached_target_prompt is prompt_unset and attached_target_count:
-                attached_target_prompt = await build_attached_target_scope_prompt(
-                    normalized_context
-                )
-            if attached_target_prompt is prompt_unset:
-                return None
-            return attached_target_prompt
+        _get_attached_target_prompt = build_attached_target_prompt_loader(
+            normalized_context,
+            attached_target_count,
+            build_attached_target_scope_prompt,
+        )
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter

@@ -13,6 +13,7 @@ from redis_sre_agent.core.targets import (
     TargetCatalogDoc,
     attach_target_matches,
     bind_target_matches,
+    build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
     build_bound_target_scope_context,
     build_ephemeral_target_bindings,
@@ -831,6 +832,16 @@ async def test_build_attached_target_scope_prompt_single_target_uses_single_targ
 
     assert prompt is not None
     assert "Use the target-scoped tools for the attached handle above" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_attached_target_prompt_loader_memoizes_none_results():
+    prompt_builder = AsyncMock(return_value=None)
+    loader = build_attached_target_prompt_loader({}, 1, prompt_builder)
+
+    assert await loader() is None
+    assert await loader() is None
+    prompt_builder.assert_awaited_once_with({})
 
 
 def test_build_ephemeral_target_bindings_generates_opaque_handles():

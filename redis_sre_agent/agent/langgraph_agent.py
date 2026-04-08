@@ -41,6 +41,7 @@ from ..core.llm_helpers import create_llm, create_mini_llm
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..core.targets import (
+    build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
     get_attached_target_handles_from_context,
 )
@@ -1752,18 +1753,11 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
         instance_scope_id = explicit_instance_scope_id
         cluster_scope_id = explicit_cluster_scope_id
         has_attached_scope = turn_scope.target_count > 0
-        prompt_unset = object()
-        attached_target_prompt: Any = prompt_unset
-
-        async def _get_attached_target_prompt() -> Optional[str]:
-            nonlocal attached_target_prompt
-            if attached_target_prompt is prompt_unset and attached_target_count:
-                attached_target_prompt = await build_attached_target_scope_prompt(
-                    normalized_context
-                )
-            if attached_target_prompt is prompt_unset:
-                return None
-            return attached_target_prompt
+        _get_attached_target_prompt = build_attached_target_prompt_loader(
+            normalized_context,
+            attached_target_count,
+            build_attached_target_scope_prompt,
+        )
 
         def _build_support_package_context() -> Optional[str]:
             support_pkg_path = normalized_context.get("support_package_path")

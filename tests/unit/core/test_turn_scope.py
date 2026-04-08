@@ -1,5 +1,7 @@
 """Tests for the normalized TurnScope contract."""
 
+import pytest
+
 from redis_sre_agent.core.targets import TargetBinding
 from redis_sre_agent.core.turn_scope import TurnScope, build_legacy_target_scope_adapter
 
@@ -112,6 +114,25 @@ def test_turn_scope_to_thread_context_omits_empty_binding_fields_for_zero_scope(
     assert "target_toolset_generation" not in context
 
 
+def test_turn_scope_from_context_falls_back_when_toolset_generation_invalid():
+    scope = TurnScope.from_context({"target_toolset_generation": "invalid"})
+
+    assert scope.toolset_generation == 0
+
+
+def test_turn_scope_to_thread_context_keeps_generation_without_bindings():
+    scope = TurnScope(
+        thread_id="thread-123",
+        session_id="session-123",
+        scope_kind="zero_scope",
+        toolset_generation=4,
+    )
+
+    context = scope.to_thread_context()
+
+    assert context["target_toolset_generation"] == 4
+
+
 def test_build_legacy_target_scope_adapter_wraps_instance_scope_in_turn_scope_context():
     scope, context = build_legacy_target_scope_adapter(
         instance_id="redis-prod-checkout-cache",
@@ -145,3 +166,8 @@ def test_build_legacy_target_scope_adapter_supports_automated_support_package_sc
     assert context["automated"] is True
     assert context["support_package_id"] == "pkg-1"
     assert context["support_package_path"] == "/tmp/pkg-1"
+
+
+def test_build_legacy_target_scope_adapter_rejects_instance_and_cluster():
+    with pytest.raises(ValueError, match="Please provide only one of instance_id or cluster_id"):
+        build_legacy_target_scope_adapter(instance_id="inst-1", cluster_id="cluster-1")

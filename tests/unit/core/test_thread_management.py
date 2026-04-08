@@ -1215,6 +1215,32 @@ class TestModuleLevelHelpers:
         assert ctx["attached_target_handles"]
 
     @pytest.mark.asyncio
+    async def test_build_initial_context_preserves_nonzero_toolset_generation(self):
+        from redis_sre_agent.core.threads import _build_initial_context
+
+        with (
+            patch(
+                "redis_sre_agent.core.turn_scope.build_legacy_target_scope_adapter",
+                return_value=(
+                    MagicMock(),
+                    {
+                        "instance_id": "inst-1",
+                        "attached_target_handles": ["tgt_01"],
+                        "target_bindings": [],
+                        "target_toolset_generation": 9,
+                    },
+                ),
+            ),
+            patch(
+                "redis_sre_agent.core.instances.get_instances",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            ctx = await _build_initial_context("test", instance_id="inst-1")
+
+        assert ctx["target_toolset_generation"] == 9
+
+    @pytest.mark.asyncio
     async def test_build_initial_context_instance_lookup_failure(self):
         """Test context building when instance lookup fails."""
         from redis_sre_agent.core.threads import _build_initial_context

@@ -6,7 +6,7 @@ import inspect
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
@@ -299,6 +299,27 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
         )
 
     return "\n".join(prompt_lines)
+
+
+def build_attached_target_prompt_loader(
+    context: Optional[Dict[str, Any]],
+    attached_target_count: int,
+    prompt_builder: Callable[[Optional[Dict[str, Any]]], Awaitable[Optional[str]]],
+) -> Callable[[], Awaitable[Optional[str]]]:
+    """Return a memoized attached-target prompt loader for a single turn."""
+
+    prompt_unset = object()
+    attached_target_prompt: Any = prompt_unset
+
+    async def _get_attached_target_prompt() -> Optional[str]:
+        nonlocal attached_target_prompt
+        if attached_target_prompt is prompt_unset and attached_target_count:
+            attached_target_prompt = await prompt_builder(context)
+        if attached_target_prompt is prompt_unset:
+            return None
+        return attached_target_prompt
+
+    return _get_attached_target_prompt
 
 
 def _to_epoch(ts: Optional[str]) -> float:
