@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
+from redis_sre_agent.core.turn_scope import TurnScope
 
 
 @pytest.fixture
@@ -325,6 +326,71 @@ class TestSRELangGraphAgent:
             mock_prepare_memory.await_args.kwargs["context"]["turn_scope"]["session_id"]
             == "session-123"
         )
+
+    @pytest.mark.asyncio
+    async def test_process_query_constructs_turn_scope_once(self, mock_settings, mock_llm):
+        agent = SRELangGraphAgent()
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                return {"messages": [AIMessage(content="done")]}
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.prepare_agent_turn_memory",
+                AsyncMock(
+                    return_value=PreparedAgentTurnMemory(
+                        memory_service=MagicMock(),
+                        memory_context=TurnMemoryContext(
+                            system_prompt=None,
+                            user_working_memory=None,
+                            asset_working_memory=None,
+                        ),
+                        session_id="session-123",
+                        user_id="user-1",
+                        query="basic question",
+                        instance_id=None,
+                        cluster_id=None,
+                        emitter=None,
+                    )
+                ),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context",
+                AsyncMock(return_value=""),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.TurnScope.from_context",
+                wraps=TurnScope.from_context,
+            ) as mock_turn_scope_from_context,
+        ):
+            await agent.process_query(
+                query="basic question",
+                session_id="session-123",
+                user_id="user-1",
+                context={"thread_id": "thread-456"},
+            )
+
+        assert mock_turn_scope_from_context.call_count == 1
 
     @pytest.mark.asyncio
     async def test_process_query_non_redis_skip_fail_open_on_persist_error(
