@@ -11,9 +11,8 @@ from redisvl.query import FilterQuery
 from redisvl.query.filter import Tag
 from ulid import ULID
 
-from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.keys import RedisKeys
-from redis_sre_agent.core.llm_helpers import create_nano_async_openai_client
+from redis_sre_agent.core.llm_helpers import create_nano_llm
 from redis_sre_agent.core.redis import SRE_THREADS_INDEX, get_redis_client, get_threads_index
 
 logger = logging.getLogger(__name__)
@@ -85,13 +84,37 @@ class ThreadManager:
         """Get all Redis keys for a thread."""
         return RedisKeys.all_thread_keys(thread_id)
 
+    @staticmethod
+    def _thread_subject_fallback(original_message: str) -> str:
+        """Return a deterministic fallback subject when LLM generation fails."""
+        return original_message[:50].strip() + ("..." if len(original_message) > 50 else "")
+
+    @staticmethod
+    def _normalize_thread_subject(content: Any) -> str:
+        """Normalize string or block-style LLM content into a short subject."""
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                elif isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+            content = " ".join(parts)
+
+        if not isinstance(content, str):
+            raise ValueError("LLM returned a non-text subject")
+
+        subject = content.strip()
+        if not subject:
+            raise ValueError("LLM returned an empty subject")
+
+        return subject.strip('"').strip("'")[:50]
+
     async def _generate_thread_subject(self, original_message: str) -> str:
         """Generate a concise subject for the thread based on the original message."""
-        try:
-            # Use a small, fast model for subject generation
-            client = create_nano_async_openai_client()
-
-            prompt = f"""Generate a concise, descriptive subject line (max 50 characters) for this SRE support request:
+        prompt = f"""Generate a concise, descriptive subject line (max 50 characters) for this SRE support request:
 
 "{original_message[:200]}..."
 
@@ -109,23 +132,15 @@ Examples:
 
 Subject:"""
 
-            response = await client.chat.completions.create(
-                model=settings.openai_model_nano,
-                messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=20,
-            )
-
-            subject = response.choices[0].message.content.strip()
-            # Remove quotes if present and truncate to 50 chars
-            subject = subject.strip('"').strip("'")[:50]
-
+        try:
+            llm = create_nano_llm(max_tokens=20)
+            response = await llm.ainvoke(prompt)
+            subject = self._normalize_thread_subject(response.content)
             logger.debug(f"Generated subject: {subject}")
             return subject
-
         except Exception as e:
             logger.warning(f"Failed to generate thread subject: {e}")
-            # Fallback to truncated original message
-            return original_message[:50].strip() + ("..." if len(original_message) > 50 else "")
+            return self._thread_subject_fallback(original_message)
 
     async def create_thread(
         self,
@@ -761,7 +776,23 @@ async def _build_initial_context(
         initial_context.update(base_context)
 
     if instance_id:
-        initial_context["instance_id"] = instance_id
+        from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
+
+        _, scope_context = build_legacy_target_scope_adapter(
+            instance_id=instance_id,
+            session_id=initial_context.get("session_id"),
+            resolution_policy="require_target",
+        )
+        for key, value in scope_context.items():
+            if key in {"instance_id", "cluster_id", "attached_target_handles", "target_bindings"}:
+                initial_context[key] = value
+                continue
+            if key == "target_toolset_generation" and value:
+                initial_context[key] = value
+                continue
+            if key in {"thread_id", "session_id"} and not value:
+                continue
+            initial_context.setdefault(key, value)
         try:
             from redis_sre_agent.core.instances import get_instances
 

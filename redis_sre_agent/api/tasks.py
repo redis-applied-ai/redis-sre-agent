@@ -27,7 +27,9 @@ router = APIRouter()
 
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
-    context = req.context or {}
+    context = dict(req.context or {})
+    if req.user_id:
+        context.setdefault("user_id", req.user_id)
     if context.get("instance_id") and context.get("cluster_id"):
         raise HTTPException(
             status_code=400,
@@ -39,7 +41,8 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
         data = await create_task(
             message=req.message,
             thread_id=req.thread_id,
-            context=req.context,
+            user_id=req.user_id,
+            context=context,
             redis_client=redis_client,
         )
         task = TaskCreateResponse(**data)
@@ -54,7 +57,7 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
             await task_func(
                 thread_id=task.thread_id,
                 message=req.message,
-                context=req.context or {},
+                context=context,
                 task_id=task.task_id,
             )
 

@@ -10,6 +10,37 @@ from redis_sre_agent.core.knowledge_helpers import (
 
 logger = logging.getLogger(__name__)
 
+PINNED_CONTEXT_TOOL_KEY = "knowledge.pinned_context"
+PINNED_CONTEXT_RETRIEVAL_KIND = "pinned_context"
+PINNED_CONTEXT_RETRIEVAL_LABEL = "Pinned context"
+
+
+class StartupKnowledgeContext(str):
+    """String startup context that also carries internal tool envelopes."""
+
+    internal_tool_envelopes: List[Dict[str, Any]]
+
+    def __new__(
+        cls,
+        context: str,
+        internal_tool_envelopes: Optional[List[Dict[str, Any]]] = None,
+    ) -> "StartupKnowledgeContext":
+        obj = super().__new__(cls, context)
+        obj.internal_tool_envelopes = list(internal_tool_envelopes or [])
+        return obj
+
+
+def merge_internal_tool_envelopes(
+    existing: Optional[List[Dict[str, Any]]],
+    new: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Append internal envelopes while avoiding duplicate dict entries."""
+    merged = list(existing or [])
+    for envelope in new or []:
+        if envelope not in merged:
+            merged.append(envelope)
+    return merged
+
 
 def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
     """Render the ADR skills table of contents lines."""
@@ -105,6 +136,57 @@ def _tool_instruction_lines_for_categories(
     return lines
 
 
+def _build_internal_pinned_context_envelope(
+    pinned_docs: List[Dict[str, Any]],
+    *,
+    version: Optional[str],
+    pinned_limit: int,
+    pinned_content_char_budget: int,
+) -> Optional[Dict[str, Any]]:
+    """Build an internal knowledge envelope for pinned startup documents."""
+    if not pinned_docs:
+        return None
+
+    results: List[Dict[str, Any]] = []
+    for document in pinned_docs:
+        document_hash = str(document.get("document_hash", "")).strip()
+        name = str(document.get("name", "")).strip() or document_hash or "Pinned document"
+        results.append(
+            {
+                "id": document_hash or name,
+                "title": name,
+                "source": str(document.get("source", "")).strip(),
+                "document_hash": document_hash,
+                "doc_type": str(document.get("doc_type", "")).strip(),
+                "priority": str(document.get("priority", "normal")).strip().lower(),
+                "summary": str(document.get("summary", "")).strip(),
+                "pinned": True,
+                "truncated": bool(document.get("truncated")),
+                "retrieval_kind": PINNED_CONTEXT_RETRIEVAL_KIND,
+                "retrieval_label": PINNED_CONTEXT_RETRIEVAL_LABEL,
+            }
+        )
+
+    return {
+        "tool_key": PINNED_CONTEXT_TOOL_KEY,
+        "name": "pinned_context",
+        "description": "Internal pinned-context retrieval recorded during startup grounding.",
+        "args": {
+            "version": version,
+            "limit": pinned_limit,
+            "content_char_budget": pinned_content_char_budget,
+        },
+        "status": "success",
+        "data": {
+            "results": results,
+            "results_count": len(results),
+            "retrieval_kind": PINNED_CONTEXT_RETRIEVAL_KIND,
+            "retrieval_label": PINNED_CONTEXT_RETRIEVAL_LABEL,
+        },
+        "summary": f"Loaded {len(results)} pinned document{'s' if len(results) != 1 else ''} into startup context.",
+    }
+
+
 async def build_startup_knowledge_context(
     query: str,
     version: Optional[str] = "latest",
@@ -115,6 +197,7 @@ async def build_startup_knowledge_context(
 ) -> str:
     """Build first-turn context in ADR order: pinned, skills, tools."""
     sections: List[str] = []
+    internal_tool_envelopes: List[Dict[str, Any]] = []
 
     try:
         pinned_result = await get_pinned_documents_helper(
@@ -143,6 +226,15 @@ async def build_startup_knowledge_context(
             pinned_lines.append(str(document.get("full_content", "")).strip())
         sections.append("\n".join(pinned_lines))
 
+        pinned_envelope = _build_internal_pinned_context_envelope(
+            pinned_docs,
+            version=version,
+            pinned_limit=pinned_limit,
+            pinned_content_char_budget=pinned_content_char_budget,
+        )
+        if pinned_envelope:
+            internal_tool_envelopes.append(pinned_envelope)
+
     try:
         skills_result = await skills_check_helper(
             query=query,
@@ -162,4 +254,7 @@ async def build_startup_knowledge_context(
     if tool_lines:
         sections.append("\n".join(tool_lines))
 
-    return "\n\n".join(section for section in sections if section.strip())
+    return StartupKnowledgeContext(
+        "\n\n".join(section for section in sections if section.strip()),
+        internal_tool_envelopes=internal_tool_envelopes,
+    )

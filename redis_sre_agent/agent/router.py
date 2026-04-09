@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.core.llm_helpers import create_nano_llm
+from redis_sre_agent.core.targets import get_attached_target_handles_from_context
 
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 
@@ -23,7 +24,7 @@ class AgentType(Enum):
 
     REDIS_TRIAGE = "redis_triage"  # Full triage/health check agent
     REDIS_CHAT = "redis_chat"  # Lightweight chat agent for quick Q&A
-    KNOWLEDGE_ONLY = "knowledge_only"  # No instance, general knowledge
+    KNOWLEDGE_ONLY = "knowledge_only"  # Deprecated compatibility mode
 
     # Keep old value for backward compatibility
     REDIS_FOCUSED = "redis_triage"  # Alias for REDIS_TRIAGE
@@ -61,9 +62,9 @@ async def route_to_appropriate_agent(
     Route a query to the appropriate agent using a fast LLM categorization.
 
     Routing logic:
-    - No Redis diagnostic scope (instance/cluster): KNOWLEDGE_ONLY (general knowledge questions)
-    - Has Redis diagnostic scope + asks for deep/comprehensive triage: REDIS_TRIAGE
-    - Has Redis diagnostic scope + quick/standard question: REDIS_CHAT (fast diagnostic loop)
+    - Requests with support-package scope always use REDIS_TRIAGE
+    - Explicit deep/comprehensive triage requests use REDIS_TRIAGE
+    - All other requests use REDIS_CHAT, including zero-scope knowledge questions
 
     Args:
         query: The user's query text
@@ -78,55 +79,23 @@ async def route_to_appropriate_agent(
 
     has_instance = context and context.get("instance_id")
     has_cluster = context and context.get("cluster_id")
+    attached_target_handles = get_attached_target_handles_from_context(context)
+    has_attached_targets = bool(attached_target_handles)
     has_support_package = context and context.get("support_package_path")
-    has_diagnostic_scope = bool(has_instance or has_cluster)
+    has_diagnostic_scope = bool(has_instance or has_cluster or has_attached_targets)
 
     # 1. Has support package - route to triage (needs diagnostic tools)
     if has_support_package:
         logger.info("Support package provided - routing to REDIS_TRIAGE for diagnostic tools")
         return AgentType.REDIS_TRIAGE
 
-    # 2. No diagnostic scope (instance/cluster) - route to knowledge agent
+    # 2. No diagnostic scope (instance/cluster) - default to chat.
+    # Chat now serves as the zero-scope knowledge/default agent.
     if not has_diagnostic_scope:
-        # Use LLM to decide if query needs instance access or is knowledge-only
-        try:
-            llm = create_nano_llm(timeout=10.0)
-
-            # Include conversation context if available
-            context_str = format_conversation_context(conversation_history)
-
-            system_prompt = """You are a query categorization system for a Redis SRE agent.
-
-Categorize if this query requires access to a live Redis instance or is just seeking general knowledge.
-Consider the conversation context if provided - a follow-up like "yes" or "check that" refers to the previous discussion.
-
-1. NEEDS_INSTANCE: Queries that require access to a specific Redis instance for diagnostics, monitoring, or troubleshooting.
-   Examples: "Check my Redis memory", "Why is Redis slow?", "Show me the slowlog"
-
-2. KNOWLEDGE_ONLY: Queries seeking general knowledge, best practices, or guidance.
-   Examples: "What are Redis best practices?", "How does Redis replication work?"
-
-Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
-
-            query_with_context = f"Categorize this query: {query}{context_str}"
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=query_with_context),
-            ]
-
-            response = await llm.ainvoke(messages)
-            category = response.content.strip().upper()
-
-            if "NEEDS_INSTANCE" in category:
-                logger.info("Query needs instance but none provided - routing to KNOWLEDGE_ONLY")
-            else:
-                logger.info("LLM categorized query as KNOWLEDGE_ONLY")
-
-            return AgentType.KNOWLEDGE_ONLY
-
-        except Exception as e:
-            logger.error(f"Error during LLM routing: {e}, defaulting to KNOWLEDGE_ONLY")
-            return AgentType.KNOWLEDGE_ONLY
+        logger.info(
+            "No diagnostic scope - routing to REDIS_CHAT as the default general-purpose agent"
+        )
+        return AgentType.REDIS_CHAT
 
     # 3. Has instance or cluster scope - decide between triage (full) and chat (quick)
     # Check user preferences first
@@ -176,9 +145,13 @@ DEFAULT TO CHAT unless you see explicit deep/exhaustive keywords.
 
 Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
 
-        scope_hint = (
-            " [Scope: cluster]" if has_cluster and not has_instance else " [Scope: instance]"
-        )
+        scope_hint = ""
+        if has_cluster and not has_instance:
+            scope_hint = " [Scope: cluster]"
+        elif has_instance:
+            scope_hint = " [Scope: instance]"
+        elif has_attached_targets:
+            scope_hint = f" [Scope: {len(attached_target_handles)} attached targets]"
         query_with_context = f"Categorize this query:{scope_hint} {query}{context_str}"
         messages = [
             SystemMessage(content=system_prompt),
@@ -220,3 +193,39 @@ Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
             return AgentType.REDIS_TRIAGE
         logger.error(f"Error during LLM routing: {e}, defaulting to REDIS_CHAT")
         return AgentType.REDIS_CHAT
+
+
+async def query_needs_live_redis_scope(
+    query: str,
+    conversation_history: Optional[List[BaseMessage]] = None,
+) -> bool:
+    """Best-effort classifier for whether a zero-scope query needs live Redis access."""
+    try:
+        llm = create_nano_llm(timeout=10.0)
+        context_str = format_conversation_context(conversation_history)
+        system_prompt = """You are a query categorization system for a Redis SRE agent.
+
+Categorize if this query requires access to a live Redis instance or is just seeking general knowledge.
+Consider the conversation context if provided - a follow-up like "yes" or "check that" refers to the previous discussion.
+
+1. NEEDS_INSTANCE: Queries that require access to a specific Redis instance for diagnostics, monitoring, or troubleshooting.
+   Examples: "Check my Redis memory", "Why is Redis slow?", "Show me the slowlog"
+
+2. KNOWLEDGE_ONLY: Queries seeking general knowledge, best practices, or guidance.
+   Examples: "What are Redis best practices?", "How does Redis replication work?"
+
+Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
+        response = await llm.ainvoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"Categorize this query: {query}{context_str}"),
+            ]
+        )
+        category = response.content.strip().upper()
+        return "NEEDS_INSTANCE" in category
+    except Exception as e:
+        logger.error(
+            "Error during live-scope classification for zero-scope query: %s; defaulting to False",
+            e,
+        )
+        return False

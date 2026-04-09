@@ -188,15 +188,8 @@ redis-sre-agent mcp serve --transport stdio
 Add external MCP servers to give the agent additional capabilities:
 
 ```yaml
-# config.yaml
+# config.yaml (YAML shown; config.toml and config.json are also supported)
 mcp_servers:
-  # Memory server for long-term agent memory
-  redis-memory-server:
-    command: uv
-    args: ["tool", "run", "--from", "agent-memory-server", "agent-memory", "mcp"]
-    env:
-      REDIS_URL: redis://localhost:6399
-
   # GitHub MCP server
   github:
     url: "https://api.githubcopilot.com/mcp/"

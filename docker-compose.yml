@@ -146,10 +146,25 @@ services:
     networks:
       - sre-network
 
+  # Redis Agent Memory Server - Working memory + long-term recall
+  agent-memory-server:
+    image: redislabs/agent-memory-server:latest
+    ports:
+      - "8012:8000"
+    environment:
+      # Redis Search indexes for AMS must be created on DB 0 in this Redis setup.
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL
+      - INDEX_ALL_MESSAGES_IN_LONG_TERM_MEMORY=false
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: agent-memory api --host 0.0.0.0 --port 8000 --task-backend=asyncio
+    networks:
+      - sre-network
+
   # SRE Agent API
-  # NOTE: Uses LiteLLM proxy for LLM calls. The OPENAI_API_KEY here is the
-  # LiteLLM master key (for auth to proxy), NOT the real OpenAI key.
-  # The real OpenAI key is configured only in the litellm service below.
   sre-agent:
     build:
       context: .
@@ -162,19 +177,20 @@ services:
       - TOOLS_LOKI_URL=http://loki:3100
       - GRAFANA_URL=http://grafana:3000
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
-      # LiteLLM proxy config: point to proxy, use master key for auth
-      - OPENAI_BASE_URL=http://litellm:4000/v1
-      - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
+      - OPENAI_BASE_URL
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AGENT_MEMORY_ENABLED=true
+      - AGENT_MEMORY_BASE_URL=http://agent-memory-server:8000
       # OTEL: export spans to Tempo via OTLP HTTP
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
+      agent-memory-server:
+        condition: service_started
       prometheus:
         condition: service_started
-      litellm:
-        condition: service_healthy
       tempo:
         condition: service_started  # no health check configured yet
 
@@ -182,16 +198,16 @@ services:
       - .env:/app/.env
       - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
       - ./artifacts:/app/artifacts  # For data pipeline
+      - /var/run/docker.sock:/var/run/docker.sock  # Needed for command-based MCP servers
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
+    group_add:
+      - "0"  # Docker Desktop exposes the socket as root:root
     command: uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - sre-network
 
   # SRE Agent Background Worker
-  # NOTE: Uses LiteLLM proxy for LLM calls. The OPENAI_API_KEY here is the
-  # LiteLLM master key (for auth to proxy), NOT the real OpenAI key.
-  # The real OpenAI key is configured only in the litellm service below.
   sre-worker:
     build:
       context: .
@@ -201,17 +217,20 @@ services:
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY}
       - TOOLS_PROMETHEUS_URL=http://prometheus:9090
       - TOOLS_LOKI_URL=http://loki:3100
-      # LiteLLM proxy config: point to proxy, use master key for auth
-      - OPENAI_BASE_URL=http://litellm:4000/v1
-      - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-1234}
+      - OPENAI_BASE_URL
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AGENT_MEMORY_ENABLED=true
+      - AGENT_MEMORY_BASE_URL=http://agent-memory-server:8000
       # OpenTelemetry export to Tempo
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.1.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
-      litellm:
-        condition: service_healthy
+      agent-memory-server:
+        condition: service_started
+      tempo:
+        condition: service_started
     volumes:
       - .env:/app/.env
       - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
@@ -220,6 +239,8 @@ services:
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
       - uv_cache:/root/.cache/uv  # Persist UV cache for MCP server deps
+    group_add:
+      - "0"  # Docker Desktop exposes the socket as root:root
     # Run the worker directly from the project virtualenv instead of via
     # `uv run` to avoid querying /app/.venv/bin/python3 at runtime.
     command: redis-sre-agent worker start
@@ -242,7 +263,7 @@ services:
       --pass-environment
       --port=8082
       --host=0.0.0.0
-      docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+      -- docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -304,7 +325,8 @@ services:
       - "3002:3000"
     environment:
       - NODE_ENV=development
-      - VITE_API_URL=http://sre-agent:8080/api/v1
+      - VITE_API_URL=http://sre-agent:8000
+      - VITE_API_BASE_URL=http://localhost:8080/api/v1
     depends_on:
       - sre-agent
     volumes:
@@ -312,65 +334,6 @@ services:
       - /app/node_modules  # Anonymous volume for node_modules
     networks:
       - sre-network
-
-
-  # LiteLLM Database - PostgreSQL for UI and usage tracking
-  litellm-db:
-    image: postgres:16-alpine
-    environment:
-      - POSTGRES_USER=litellm
-      - POSTGRES_PASSWORD=litellm
-      - POSTGRES_DB=litellm
-    volumes:
-      - litellm_db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - sre-network
-
-  # LiteLLM Proxy - LLM gateway for OpenAI, Anthropic, etc.
-  #
-  # TOKEN FLOW:
-  # 1. LiteLLM receives the REAL provider API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY)
-  # 2. Clients (sre-agent, sre-worker) authenticate to LiteLLM using LITELLM_MASTER_KEY
-  # 3. Clients set OPENAI_BASE_URL=http://litellm:4000/v1 and OPENAI_API_KEY=$LITELLM_MASTER_KEY
-  #
-  # In .env you need:
-  #   OPENAI_API_KEY=sk-your-real-openai-key    # Real key, used ONLY by LiteLLM
-  #   LITELLM_MASTER_KEY=sk-1234                # Proxy auth key, used by clients
-  #
-  litellm:
-    image: ghcr.io/berriai/litellm:v1.81.0-stable
-    ports:
-      - "4000:4000"
-    environment:
-      # Real provider API keys - LiteLLM uses these to call OpenAI/Anthropic
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Master key for client authentication (sre-agent, sre-worker use this)
-      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-1234}
-      # UI credentials
-      - UI_USERNAME=${LITELLM_UI_USERNAME:-admin}
-      - UI_PASSWORD=${LITELLM_UI_PASSWORD:-admin}
-      - DATABASE_URL=postgresql://litellm:litellm@litellm-db:5432/litellm
-    volumes:
-      - ./monitoring/litellm/config.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
-    depends_on:
-      litellm-db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    networks:
-      - sre-network
-
   # Tempo - Traces backend (OTLP receiver + query)
   # Pinned to 2.6.1 - Tempo 2.10+ has breaking changes requiring Kafka/S3
   tempo:
@@ -432,5 +395,4 @@ volumes:
   grafana_data:
   loki_data:
   tempo_data:
-  litellm_db_data:
   uv_cache:  # Persist UV cache for MCP server dependencies

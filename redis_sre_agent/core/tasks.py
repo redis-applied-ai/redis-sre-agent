@@ -398,6 +398,7 @@ async def create_task(
     *,
     message: str,
     thread_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     context: Optional[Dict[str, Any]] = None,
     redis_client=None,
 ) -> Dict[str, Any]:
@@ -413,7 +414,11 @@ async def create_task(
         base_ctx = dict(context or {})
         base_ctx.setdefault("messages", [])
         base_ctx.setdefault("original_query", message)
-        thread_id = await thread_manager.create_thread(initial_context=base_ctx)
+        resolved_user_id = user_id or base_ctx.get("user_id")
+        thread_id = await thread_manager.create_thread(
+            user_id=resolved_user_id,
+            initial_context=base_ctx,
+        )
         created_new_thread = True
         await thread_manager.update_thread_subject(thread_id, message)
 
@@ -421,7 +426,7 @@ async def create_task(
     state = await thread_manager.get_thread(thread_id)
     task_id = await task_manager.create_task(
         thread_id=thread_id,
-        user_id=(state.metadata.user_id if state else None),
+        user_id=(state.metadata.user_id if state else user_id or (context or {}).get("user_id")),
         subject=message,
     )
 

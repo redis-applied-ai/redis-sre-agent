@@ -2,13 +2,13 @@
 
 Use this page as the complete reference for settings loaded by [`redis_sre_agent/core/config.py`](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/redis_sre_agent/core/config.py).
 
-For configuration precedence, `.env` behavior, YAML discovery order, and setup examples, see [Configuration How-to](../how-to/configuration.md).
+For configuration precedence, `.env` behavior, config-file discovery order, and setup examples, see [Configuration How-to](../how-to/configuration.md).
 
 ### Config File Selector
 
 | Setting | Environment Variable | Type | Default | Notes |
 |---|---|---|---|---|
-| YAML config path | `SRE_AGENT_CONFIG` | `str` | unset | Optional path to a YAML config file. If unset, the app checks `config.yaml`, `config.yml`, `sre_agent_config.yaml`, `sre_agent_config.yml`. |
+| Config file path | `SRE_AGENT_CONFIG` | `str` | unset | Optional path to a YAML, TOML, or JSON config file. If unset, the app checks `config.yaml`, `config.yml`, `config.toml`, `config.json`, `sre_agent_config.yaml`, `sre_agent_config.yml`, `sre_agent_config.toml`, `sre_agent_config.json`. |
 
 ### Application
 
@@ -125,7 +125,7 @@ For configuration precedence, `.env` behavior, YAML discovery order, and setup e
 
 | Field | Environment Variable | Type | Default | Notes |
 |---|---|---|---|---|
-| `mcp_servers` | `MCP_SERVERS` | `dict[str, MCPServerConfig]` | Built-in `redis-memory-server` config | JSON object of MCP server definitions. |
+| `mcp_servers` | `MCP_SERVERS` | `dict[str, MCPServerConfig]` | Empty dict | JSON object of MCP server definitions. No MCP integrations are enabled unless you configure them. |
 
 `MCPServerConfig` object keys:
 

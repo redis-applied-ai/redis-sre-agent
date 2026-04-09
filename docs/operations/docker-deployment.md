@@ -1,14 +1,16 @@
 # Docker Deployment Guide
 
-This guide covers deploying Redis SRE Agent using Docker in environments with
-internet access. For air-gapped environments, see [Air-Gapped Deployment](airgap-deployment.md).
+This guide covers deploying Redis SRE Agent with Docker Compose in environments with
+internet access. Use it as the fastest evaluation path and as a reference deployment for
+containerized environments. For air-gapped environments, see
+[Air-Gapped Deployment](airgap-deployment.md).
 
 ## Overview
 
 The standard Docker deployment includes:
 
 - **Redis** - Agent state, task queue, and vector storage
-- **LiteLLM Proxy** - LLM gateway supporting OpenAI, Anthropic, Azure, etc.
+- **Direct LLM access** - OpenAI by default, or any OpenAI-compatible endpoint via `OPENAI_BASE_URL`
 - **Prometheus/Grafana** - Metrics and dashboards
 - **Loki** - Log aggregation
 - **Tempo** - Distributed tracing
@@ -30,14 +32,11 @@ cp .env.example .env
 Edit `.env`:
 
 ```bash
-# Required: OpenAI API key (used by LiteLLM proxy)
+# Required: OpenAI API key
 OPENAI_API_KEY=sk-your-openai-key
 
-# Optional: Anthropic for Claude models
-ANTHROPIC_API_KEY=sk-ant-your-key
-
-# LiteLLM proxy authentication (clients use this to auth to proxy)
-LITELLM_MASTER_KEY=sk-1234
+# Optional: route through a compatible gateway instead of api.openai.com
+# OPENAI_BASE_URL=https://your-llm-endpoint.example.com/v1
 
 # API authentication
 REDIS_SRE_MASTER_KEY=your-secret-key
@@ -47,10 +46,10 @@ REDIS_SRE_MASTER_KEY=your-secret-key
 
 ```bash
 # Start core services
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f sre-agent sre-worker
+docker compose logs -f sre-agent sre-worker
 ```
 
 ### 4. Access Services
@@ -61,15 +60,14 @@ docker-compose logs -f sre-agent sre-worker
 | SRE Agent UI | http://localhost:3002 | - |
 | Grafana | http://localhost:3001 | admin / admin |
 | Prometheus | http://localhost:9090 | - |
-| LiteLLM UI | http://localhost:4000/ui | admin / admin |
 
 ## Architecture
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  SRE Agent  │────▶│   LiteLLM   │────▶│   OpenAI    │
-│     API     │     │    Proxy    │     │  Anthropic  │
-└─────────────┘     └─────────────┘     └─────────────┘
+│  SRE Agent  │────▶│   OpenAI    │
+│     API     │     │ or gateway  │
+└─────────────┘     └─────────────┘
        │
        ▼
 ┌─────────────┐     ┌─────────────┐
@@ -93,7 +91,6 @@ docker-compose logs -f sre-agent sre-worker
 | `sre-agent` | API server | 8080 |
 | `sre-worker` | Background task processor | - |
 | `redis` | Agent state and vectors | 7843 |
-| `litellm` | LLM proxy | 4000 |
 
 ### Monitoring Stack
 
@@ -135,19 +132,20 @@ VECTOR_DIM=384
 
 ### LLM Configuration
 
-LiteLLM supports multiple providers. Edit `monitoring/litellm/config.yaml`:
+By default, the standard deployment calls OpenAI directly:
 
-```yaml
-model_list:
-  - model_name: gpt-4
-    litellm_params:
-      model: openai/gpt-4
-      api_key: os.environ/OPENAI_API_KEY
+```bash
+OPENAI_API_KEY=sk-your-openai-key
+OPENAI_MODEL=gpt-5
+OPENAI_MODEL_MINI=gpt-5-mini
+OPENAI_MODEL_NANO=gpt-5-nano
+```
 
-  - model_name: claude-3
-    litellm_params:
-      model: anthropic/claude-3-sonnet-20240229
-      api_key: os.environ/ANTHROPIC_API_KEY
+To route requests through an OpenAI-compatible gateway instead, set:
+
+```bash
+OPENAI_BASE_URL=https://your-llm-endpoint.example.com/v1
+OPENAI_API_KEY=your-gateway-api-key
 ```
 
 ### MCP Servers (Optional)
@@ -156,7 +154,7 @@ Enable MCP integrations with the `mcp` profile:
 
 ```bash
 # Start with GitHub MCP server
-docker-compose --profile mcp up -d
+docker compose --profile mcp up -d
 ```
 
 For HTTPS MCP (required for Claude Desktop):
@@ -166,7 +164,7 @@ For HTTPS MCP (required for Claude Desktop):
 ./scripts/generate-mcp-certs.sh
 
 # Start with SSL
-docker-compose --profile ssl up -d
+docker compose --profile ssl up -d
 ```
 
 ## Development Mode
@@ -206,7 +204,7 @@ Pre-built images are available on Docker Hub:
 Example production overrides:
 
 ```yaml
-# docker-compose.prod.yml
+# compose.prod.yml
 services:
   sre-agent:
     image: redislabs/redis-sre-agent:latest
@@ -224,7 +222,7 @@ services:
 |---------|----------|------------|
 | Internet required | Yes | No |
 | Embedding models | OpenAI API | Bundled HuggingFace |
-| LLM access | Direct or LiteLLM | Customer's internal proxy |
+| LLM access | Direct or OpenAI-compatible endpoint | Customer's internal proxy |
 | Redis | Included | Customer provides |
 | Image size | ~1.5GB | ~4GB (includes models) |
 | MCP servers | Full support | Limited (no npx) |
@@ -235,27 +233,30 @@ services:
 
 ```bash
 # Check logs
-docker-compose logs sre-agent
+docker compose logs sre-agent
 
 # Verify Redis is healthy
-docker-compose exec redis redis-cli ping
+docker compose exec redis redis-cli ping
 ```
 
 ### LLM Errors
 
 ```bash
-# Test LiteLLM
-curl http://localhost:4000/health
+# Verify the configured model credentials work
+docker compose exec sre-agent python - <<'PY'
+from openai import OpenAI
+import os
 
-# Check LiteLLM logs
-docker-compose logs litellm
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=os.environ.get("OPENAI_BASE_URL") or None)
+print(client.models.list())
+PY
 ```
 
 ### Worker Not Processing Tasks
 
 ```bash
 # Check worker logs
-docker-compose logs sre-worker
+docker compose logs sre-worker
 
 # Verify worker is connected
 curl http://localhost:8080/api/v1/health

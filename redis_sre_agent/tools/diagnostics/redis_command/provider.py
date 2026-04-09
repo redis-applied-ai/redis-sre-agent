@@ -26,6 +26,20 @@ from redis_sre_agent.tools.protocols import ToolProvider
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
+_COMMAND_UNAVAILABLE_PATTERNS = (
+    "not allowed",
+    "unknown command",
+    "disabled",
+    "noperm",
+    "no permission",
+)
+
+
+def _is_command_unavailable_error(exc: Exception) -> bool:
+    """Best-effort detection for ACL/feature-limited Redis commands."""
+    lowered = str(exc).lower()
+    return any(pattern in lowered for pattern in _COMMAND_UNAVAILABLE_PATTERNS)
+
 
 class RedisCliConfig(BaseModel):
     """Configuration for Redis Command Diagnostics provider.
@@ -661,6 +675,14 @@ class RedisCommandToolProvider(ToolProvider):
                 "stats": result,
             }
         except Exception as e:
+            if _is_command_unavailable_error(e):
+                logger.warning(f"MEMORY STATS unavailable on this Redis instance: {e}")
+                return {
+                    "status": "error",
+                    "error": str(e),
+                    "error_type": "unsupported_command",
+                }
+
             logger.error(f"Failed to execute MEMORY STATS: {e}")
             return {
                 "status": "error",

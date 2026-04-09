@@ -39,9 +39,10 @@ nav:
   - Home: index.md
   - Quickstarts:
       - End-to-end setup: quickstarts/end-to-end-setup.md
-      - Local Development: quickstarts/local.md
+      - Local Demo: quickstarts/local.md
       - VM Deployment (Redis Enterprise): quickstarts/vm-deployment.md
   - How-to:
+      - Agent Memory Server Integration: how-to/agent-memory-server-integration.md
       - How to connect to Redis: how-to/connect-to-redis.md
       - Configuration: how-to/configuration.md
       - Tool Providers: how-to/tool-providers.md
@@ -55,14 +56,14 @@ nav:
       - Scheduling flows: how-to/scheduling-flows.md
       - Release tutorials:
           - v0.2.8 release tutorial: how-to/release-tutorials/v0.2.8.md
-  - UI (Experimental): ui/experimental.md
+  - UI: ui/experimental.md
   - Concepts:
       - Overview: concepts/core.md
   - Operations:
       - Docker Deployment: operations/docker-deployment.md
       - Air-Gap Deployment: operations/airgap-deployment.md
       - Observability & Health: operations/observability.md
-      - Gotchas & Rough Spots: operations/gotchas.md
+      - Operational Notes & Limitations: operations/gotchas.md
   - Reference:
       - CLI Reference: reference/cli.md
       - REST API: reference/api.md

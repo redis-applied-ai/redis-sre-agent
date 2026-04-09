@@ -10,13 +10,13 @@ import click
 from langchain_core.messages import AIMessage, HumanMessage
 from rich.console import Console
 from rich.markdown import Markdown
+from ulid import ULID
 
 from redis_sre_agent.agent.chat_agent import get_chat_agent
-from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.core.citation_message import (
-    format_citation_message,
+    build_citation_message_payloads,
     should_include_citations,
 )
 from redis_sre_agent.core.clusters import get_cluster_by_id
@@ -27,6 +27,9 @@ from redis_sre_agent.core.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
 
+# Backward-compatible module attribute for legacy tests and patches.
+get_knowledge_agent = get_chat_agent
+
 
 @click.command()
 @click.argument("query")
@@ -34,6 +37,7 @@ logger = logging.getLogger(__name__)
 @click.option("--redis-cluster-id", "-c", help="Redis cluster ID to investigate")
 @click.option("--support-package-id", "-p", help="Support package ID to analyze")
 @click.option("--thread-id", "-t", help="Thread ID to continue an existing conversation")
+@click.option("--user-id", help="User ID to scope thread ownership and memory retrieval")
 @click.option(
     "--agent",
     "-a",
@@ -47,6 +51,7 @@ def query(
     redis_cluster_id: Optional[str],
     support_package_id: Optional[str],
     thread_id: Optional[str],
+    user_id: Optional[str],
     agent: str,
 ):
     """Execute an agent query.
@@ -56,8 +61,8 @@ def query(
 
     \b
     The agent is automatically selected based on the query, or use --agent:
-      - knowledge: General Redis questions (no instance needed)
-      - chat: Quick questions with a Redis instance
+      - knowledge: Backward-compatible alias for chat mode
+      - chat: Default general-purpose agent, with or without explicit scope
       - triage: Full health checks and diagnostics
       - auto: Let the router decide (default)
     """
@@ -111,7 +116,9 @@ def query(
 
         # Get or create thread
         active_thread_id = thread_id
+        active_session_id = thread_id
         conversation_history = []
+        resolved_user_id = user_id
 
         if thread_id:
             # Continue existing thread
@@ -119,6 +126,9 @@ def query(
             if not thread:
                 console.print(f"[red]❌ Thread not found: {thread_id}[/red]")
                 exit(1)
+
+            resolved_user_id = user_id or thread.metadata.user_id
+            active_session_id = thread.metadata.session_id or thread_id
 
             console.print(f"[dim]📎 Continuing thread: {thread_id}[/dim]")
 
@@ -141,6 +151,7 @@ def query(
 
         else:
             # Create new thread
+            active_session_id = f"cli:{ULID()}"
             initial_context = {}
             if instance:
                 initial_context["instance_id"] = instance.id
@@ -151,8 +162,8 @@ def query(
                 initial_context["support_package_path"] = str(support_package_path)
 
             active_thread_id = await thread_manager.create_thread(
-                user_id="cli_user",
-                session_id="cli",
+                user_id=resolved_user_id,
+                session_id=active_session_id,
                 initial_context=initial_context,
                 tags=["cli"],
             )
@@ -179,13 +190,13 @@ def query(
         agent_choice_map = {
             "triage": AgentType.REDIS_TRIAGE,
             "chat": AgentType.REDIS_CHAT,
-            "knowledge": AgentType.KNOWLEDGE_ONLY,
+            "knowledge": AgentType.REDIS_CHAT,
         }
 
         # Determine which agent to use
         if agent != "auto":
             agent_type = agent_choice_map[agent.lower()]
-            agent_label = agent.capitalize()
+            agent_label = "Chat" if agent.lower() == "knowledge" else agent.capitalize()
             console.print(f"[dim]🔧 Agent: {agent_label} (selected)[/dim]")
         else:
             agent_type = await route_to_appropriate_agent(
@@ -196,20 +207,18 @@ def query(
             agent_label = {
                 AgentType.REDIS_TRIAGE: "Triage",
                 AgentType.REDIS_CHAT: "Chat",
-                AgentType.KNOWLEDGE_ONLY: "Knowledge",
+                AgentType.KNOWLEDGE_ONLY: "Chat",
             }.get(agent_type, agent_type.value)
             console.print(f"[dim]🔧 Agent: {agent_label}[/dim]")
 
         # Get the appropriate agent instance
         if agent_type == AgentType.REDIS_TRIAGE:
             selected_agent = get_sre_agent()
-        elif agent_type == AgentType.REDIS_CHAT:
+        else:
             selected_agent = get_chat_agent(
                 redis_instance=instance,
                 redis_cluster=cluster,
             )
-        else:
-            selected_agent = get_knowledge_agent()
 
         try:
             # Build context with instance and/or support package
@@ -224,8 +233,8 @@ def query(
             # Run the agent
             agent_response = await selected_agent.process_query(
                 query,
-                session_id="cli",
-                user_id="cli_user",
+                session_id=active_session_id or active_thread_id or "cli",
+                user_id=resolved_user_id,
                 max_iterations=settings.max_iterations,
                 context=context if context else None,
                 conversation_history=conversation_history if conversation_history else None,
@@ -234,9 +243,6 @@ def query(
             # Extract response text and search results from AgentResponse
             response_text = agent_response.response
             search_results = agent_response.search_results
-
-            # Generate message_id for the assistant response (for decision trace)
-            from ulid import ULID
 
             assistant_message_id = str(ULID())
 
@@ -260,8 +266,14 @@ def query(
 
             # Add citation system message if there are search results
             if should_include_citations(search_results):
-                citation_msg = format_citation_message(search_results)
-                messages_to_save.append({"role": "system", "content": citation_msg})
+                for citation_msg in build_citation_message_payloads(search_results):
+                    messages_to_save.append(
+                        {
+                            "role": "system",
+                            "content": citation_msg["content"],
+                            "metadata": citation_msg["metadata"],
+                        }
+                    )
 
             # Save messages to thread
             await thread_manager.append_messages(active_thread_id, messages_to_save)

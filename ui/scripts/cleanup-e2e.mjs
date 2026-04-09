@@ -1,9 +1,9 @@
 // Cleanup script for E2E-created threads and schedules in the Redis SRE Agent backend
 // Usage:
-//   API_BASE_URL=http://localhost:8000/api/v1 node scripts/cleanup-e2e.mjs
+//   API_BASE_URL=http://localhost:8080/api/v1 node scripts/cleanup-e2e.mjs
 // Defaults to localhost if API_BASE_URL not set
 
-const base = process.env.API_BASE_URL || 'http://localhost:8000/api/v1';
+const base = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
 
 const E2E_PATTERNS = [
   /^e2e\b/i,

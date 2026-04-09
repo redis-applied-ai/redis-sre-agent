@@ -1,6 +1,6 @@
-## Gotchas and Rough Spots
+## Operational Notes and Limitations
 
-Known issues, limitations, and things that might trip you up. This is an early release - some rough edges are still being smoothed out.
+Known limitations, tradeoffs, and details worth understanding before you roll the agent into a production workflow.
 
 ---
 
@@ -76,8 +76,8 @@ The agent's deep-research approach is thorough but slow. A single triage session
 
 ## General
 
-### Docker-compose is not for production
-The `docker-compose.yml` setup is for local development and testing only. It includes:
+### Docker Compose is not for production
+The `docker-compose.yml` setup is for local development and evaluation only. It includes:
 - Demo Redis instances
 - Full observability stack (Prometheus, Grafana, Loki, Tempo)
 - Redis Enterprise test cluster
@@ -85,12 +85,20 @@ The `docker-compose.yml` setup is for local development and testing only. It inc
 For production, deploy the agent on VMs or in a container orchestration system and connect to your existing observability infrastructure.
 
 ### Redis Enterprise vs Redis OSS
-The agent requires Redis with the RediSearch module for vector search. Options:
-- **Redis Enterprise**: RediSearch included, recommended for production
-- **Redis Stack**: RediSearch included, good for development
-- **Redis OSS**: Requires manual RediSearch module installation
+The agent requires Redis with Redis Search / Query Engine support for vector search. Common paths:
+- **Redis Enterprise**: recommended for production
+- **Redis 8 OSS**: recommended for local evaluation and new open source deployments
+- **Older Redis/Search deployments**: supported when Redis Search / Redis Query Engine 2.4+ is available
 
-Redis 8.x is recommended. Redis 7.x works but may have different module versions.
+Minimum supported search engine version:
+- **Redis Search / Redis Query Engine 2.4+** is the effective minimum requirement for this agent's knowledge retrieval path
+- Exact identifier lookup uses `DIALECT 2` TAG queries, and vector retrieval also depends on Redis Search 2.4+ features
+
+Hybrid search compatibility:
+- On newer Redis/Search releases, the agent uses native server-side hybrid retrieval when available
+- On older or partially compatible releases, native hybrid retrieval may be unavailable even though text and vector search still work
+- In those cases, the agent falls back to client-side **reciprocal rank fusion (RRF)**, which runs separate text and vector queries and merges the ranked results in the application
+- The RRF fallback is a compatibility path, not a legacy path: it still requires Redis Search 2.4+ because it depends on Redis Search text and vector queries
 
 ---
 
@@ -111,10 +119,10 @@ python3 -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
 - `.env` file is loaded automatically in development
 - In production, use environment variables directly (systemd, Kubernetes, etc.)
 - Don't commit `.env` to version control
-- Docker-compose mounts `.env` as a volume (dev convenience only)
+- Docker Compose mounts `.env` as a volume (dev convenience only)
 
 ### REDIS_URL port confusion
-The agent's operational Redis (where it stores state) defaults to port 7843 in docker-compose to avoid conflicts with target Redis instances on 6379. In production:
+The agent's operational Redis (where it stores state) defaults to port 7843 in Docker Compose to avoid conflicts with target Redis instances on 6379. In production:
 - Use whatever port your Redis Enterprise database is on
 - Don't confuse the agent's operational Redis with target instances you're monitoring
 
@@ -191,7 +199,7 @@ Tasks are queued but won't execute without a worker. Symptoms:
 - No progress updates
 - Health check shows 0 workers
 
-Solution: Start the worker with `uv run redis-sre-agent worker`
+Solution: Start the worker with `uv run redis-sre-agent worker start`
 
 ### Worker concurrency affects memory
 Default concurrency is 4 (`--concurrency 4`). Each concurrent task:

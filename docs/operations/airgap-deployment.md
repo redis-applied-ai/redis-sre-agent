@@ -20,7 +20,7 @@ The air-gapped deployment uses:
 | Component | Description | Notes |
 |-----------|-------------|-------|
 | Redis | Redis 7+ with RediSearch module | For agent state, task queue, vector storage |
-| LLM Proxy | OpenAI-compatible API | Azure OpenAI, vLLM, Ollama, LiteLLM, etc. |
+| LLM Proxy | OpenAI-compatible API | Azure OpenAI, vLLM, Ollama, custom gateway, etc. |
 
 ### Optional Infrastructure
 
@@ -176,7 +176,7 @@ TOOLS_LOKI_URL=http://your-loki:3100
 ### 4. Start Services
 
 ```bash
-docker-compose -f docker-compose.airgap.yml up -d
+docker compose -f docker-compose.airgap.yml up -d
 ```
 
 For Podman:
@@ -190,7 +190,7 @@ The airgap image includes pre-scraped artifacts in `/app/artifacts`. You only ne
 **ingest** them into Redis:
 
 ```bash
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
+docker compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent pipeline ingest
 ```
 
@@ -200,11 +200,11 @@ This generates embeddings using the local model and indexes the content into Red
     To add your own documents, place markdown files in a mounted volume and run:
     ```bash
     # Prepare your custom docs
-    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+    docker compose -f docker-compose.airgap.yml exec sre-agent \
       redis-sre-agent pipeline prepare-sources --source-dir /your/docs
 
     # Re-ingest to include them
-    docker-compose -f docker-compose.airgap.yml exec sre-agent \
+    docker compose -f docker-compose.airgap.yml exec sre-agent \
       redis-sre-agent pipeline ingest
     ```
 
@@ -214,11 +214,11 @@ Test that the knowledge base and vector search are working:
 
 ```bash
 # Check version
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
+docker compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent version
 
 # Test vector search (does not require LLM)
-docker-compose -f docker-compose.airgap.yml exec sre-agent \
+docker compose -f docker-compose.airgap.yml exec sre-agent \
   redis-sre-agent knowledge search "redis memory management"
 ```
 
@@ -450,12 +450,11 @@ The air-gap image includes pre-installed MCP servers that work without internet:
 
 | Server | Status | Notes |
 |--------|--------|-------|
-| `redis-memory-server` | ✅ Enabled | Pre-installed via `uv tool install`, uses Redis for storage |
 | `github` | ✅ Enabled | Pre-installed via `npm install -g`, requires `GITHUB_PERSONAL_ACCESS_TOKEN` |
 
-Both servers are pre-installed in the image so they don't need to download
-anything at runtime. The GitHub MCP server uses `mcp-server-github` (the
-globally installed binary) instead of `npx`.
+Configured MCP servers do not need to download anything at runtime. The GitHub
+MCP server uses `mcp-server-github` (the globally installed binary) instead of
+`npx`.
 
 !!! note "GitHub Token Required"
     The GitHub MCP server requires `GITHUB_PERSONAL_ACCESS_TOKEN` to be set.
@@ -499,7 +498,7 @@ docker load -i redis-sre-agent-airgap.tar.gz
 If you see "model not found" errors:
 ```bash
 # Verify HF_HUB_OFFLINE is set
-docker-compose exec sre-agent env | grep HF
+docker compose exec sre-agent env | grep HF
 
 # Should show:
 # HF_HUB_OFFLINE=1
@@ -510,14 +509,14 @@ docker-compose exec sre-agent env | grep HF
 
 ```bash
 # Test Redis connectivity
-docker-compose exec sre-agent redis-cli -u $REDIS_URL ping
+docker compose exec sre-agent redis-cli -u $REDIS_URL ping
 ```
 
 ### LLM Proxy Issues
 
 ```bash
 # Test LLM connectivity
-docker-compose exec sre-agent curl -s $OPENAI_BASE_URL/models
+docker compose exec sre-agent curl -s $OPENAI_BASE_URL/models
 ```
 
 ## Security Considerations

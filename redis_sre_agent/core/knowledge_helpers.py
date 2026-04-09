@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from opentelemetry import trace
 from redisvl.query import BaseQuery, FilterQuery, HybridQuery, VectorQuery, VectorRangeQuery
 from redisvl.query.filter import FilterExpression, Tag
+from redisvl.query.query import TokenEscaper
 from ulid import ULID
 
 from redis_sre_agent.core.config import Settings
@@ -58,6 +59,37 @@ _SEARCH_RETURN_FIELDS = [
 _EXACT_MATCH_TAG_FIELDS = ("name", "document_hash", "source")
 _SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
 _TEXT_PHRASE_QUERY_FIELDS = ("title", "summary", "content")
+_RRF_K = 60
+_HYBRID_UNSUPPORTED_INDEX_TYPES: set[str] = set()
+_HYBRID_QUERY_UNSUPPORTED_MARKERS = (
+    "syntax error",
+    "unknown argument",
+    "unknown keyword",
+    "unsupported",
+    "not supported",
+)
+_HYBRID_MISSING_COMMAND_MARKERS = ("unknown command", "no such command")
+_TAG_EXACT_MATCH_ESCAPER = TokenEscaper(re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?\|]"))
+
+
+def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+    """Best-effort conversion for pagination args that may arrive as null/strings."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(coerced, 0)
+
+
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    """Best-effort conversion for limits that must stay >= 1."""
+    return max(_coerce_non_negative_int(value, default=default), 1)
+
+
+def _is_unknown_field_error(exc: Exception, field_name: str) -> bool:
+    """Return True when a RediSearch query failed because a field is missing."""
+    message = str(exc).lower()
+    return "unknown field" in message and field_name.lower() in message
 
 
 class _RawTextQuery(BaseQuery):
@@ -272,14 +304,31 @@ def _normalize_exact_match_value(value: str, index_type: str) -> str:
     return str(value or "").strip()
 
 
-def _quote_tag_value(value: str) -> str:
-    """Quote a RediSearch TAG value so punctuation is treated literally."""
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
 def _tag_equals_expression(field_name: str, value: str) -> FilterExpression:
-    """Build an exact TAG match expression that survives punctuation like `|`."""
-    return FilterExpression(f"@{field_name}:{{{_quote_tag_value(value)}}}")
+    """Build a canonical TAG equality expression with explicit escaping."""
+    escaped_value = _TAG_EXACT_MATCH_ESCAPER.escape(str(value or ""))
+    return FilterExpression(f"@{field_name}:{{{escaped_value}}}")
+
+
+def _exact_match_filter_expression(
+    field_name: str,
+    normalized_query: str,
+    *,
+    version: Optional[str],
+    category: Optional[str],
+    doc_type: Optional[str],
+) -> FilterExpression:
+    """Build a field-scoped exact-match filter with the shared TAG constraints."""
+    filter_expr = _tag_equals_expression(field_name, normalized_query)
+
+    if version is not None:
+        filter_expr = filter_expr & _tag_equals_expression("version", version)
+    if category is not None:
+        filter_expr = filter_expr & _tag_equals_expression("category", category)
+    if doc_type is not None:
+        filter_expr = filter_expr & _tag_equals_expression("doc_type", doc_type.strip().lower())
+
+    return filter_expr
 
 
 def _looks_like_precise_search_query(query: str, index_type: str) -> bool:
@@ -342,28 +391,24 @@ async def _find_exact_document_matches(
 
     index = await _get_index_for_type(normalized_index_type, config=config)
 
-    filter_expr = None
+    rows: List[Dict[str, Any]] = []
     for field_name in _EXACT_MATCH_TAG_FIELDS:
-        field_expr = _tag_equals_expression(field_name, normalized_query)
-        filter_expr = field_expr if filter_expr is None else (filter_expr | field_expr)
-
-    if version is not None:
-        version_expr = _tag_equals_expression("version", version)
-        filter_expr = version_expr if filter_expr is None else (filter_expr & version_expr)
-    if category is not None:
-        category_expr = _tag_equals_expression("category", category)
-        filter_expr = category_expr if filter_expr is None else (filter_expr & category_expr)
-    if doc_type is not None:
-        doc_type_expr = _tag_equals_expression("doc_type", doc_type.strip().lower())
-        filter_expr = doc_type_expr if filter_expr is None else (filter_expr & doc_type_expr)
-
-    rows = await index.query(
-        FilterQuery(
-            filter_expression=filter_expr,
-            return_fields=_SEARCH_RETURN_FIELDS,
-            num_results=50,
+        rows.extend(
+            await index.query(
+                FilterQuery(
+                    filter_expression=_exact_match_filter_expression(
+                        field_name,
+                        normalized_query,
+                        version=version,
+                        category=category,
+                        doc_type=doc_type,
+                    ),
+                    return_fields=_SEARCH_RETURN_FIELDS,
+                    num_results=50,
+                    dialect=2,
+                )
+            )
         )
-    )
 
     candidates = [
         doc
@@ -403,6 +448,124 @@ def _quoted_text_phrase_query(phrase: str) -> str:
         field_queries.append(f'@{field_name}:("{escaped_phrase}")')
 
     return "(" + " | ".join(field_queries) + ")"
+
+
+def _hybrid_text_query(query: str) -> str:
+    """Build a best-effort token query across searchable text fields."""
+    escaper = TokenEscaper()
+    tokens = [
+        escaper.escape(token.strip().strip(",").replace("“", "").replace("”", "").lower())
+        for token in str(query or "").split()
+    ]
+    tokens = [token for token in tokens if token]
+    if not tokens:
+        normalized_query, _ = _strip_outer_quotes(query)
+        if not normalized_query:
+            return "*"
+        tokens = [escaper.escape(normalized_query.lower())]
+
+    token_query = " | ".join(tokens)
+    return (
+        "(" + " | ".join(f"@{field}:({token_query})" for field in _TEXT_PHRASE_QUERY_FIELDS) + ")"
+    )
+
+
+def _doc_rrf_key(doc: Dict[str, Any]) -> tuple[Any, ...]:
+    """Stable chunk-level key for reciprocal-rank fusion."""
+    return (
+        doc.get("id"),
+        doc.get("document_hash"),
+        doc.get("chunk_index"),
+        doc.get("source"),
+    )
+
+
+def _reciprocal_rank_fuse(
+    ranked_lists: List[List[Dict[str, Any]]],
+    *,
+    limit: int,
+    rrf_k: int = _RRF_K,
+) -> List[Dict[str, Any]]:
+    """Merge ranked result sets with reciprocal-rank fusion."""
+    scores: Dict[tuple[Any, ...], float] = {}
+    docs_by_key: Dict[tuple[Any, ...], Dict[str, Any]] = {}
+    first_rank: Dict[tuple[Any, ...], int] = {}
+    first_list_index: Dict[tuple[Any, ...], int] = {}
+
+    for list_index, ranked_docs in enumerate(ranked_lists):
+        for rank, doc in enumerate(_dedupe_docs(ranked_docs), start=1):
+            key = _doc_rrf_key(doc)
+            if key not in docs_by_key:
+                docs_by_key[key] = dict(doc)
+                first_rank[key] = rank
+                first_list_index[key] = list_index
+            else:
+                docs_by_key[key].update(
+                    {field: value for field, value in doc.items() if value not in (None, "")}
+                )
+                first_rank[key] = min(first_rank[key], rank)
+
+            scores[key] = scores.get(key, 0.0) + (1.0 / (rrf_k + rank))
+
+    ordered_keys = sorted(
+        docs_by_key,
+        key=lambda key: (
+            -scores.get(key, 0.0),
+            first_list_index.get(key, 10**9),
+            first_rank.get(key, 10**9),
+            _doc_name(docs_by_key[key]).lower(),
+            str(docs_by_key[key].get("source", "")).lower(),
+            _doc_chunk_index(docs_by_key[key]),
+        ),
+    )
+
+    fused = []
+    for key in ordered_keys[:limit]:
+        doc = dict(docs_by_key[key])
+        doc["rrf_score"] = scores[key]
+        fused.append(doc)
+    return fused
+
+
+def _is_hybrid_query_unsupported_error(exc: Exception) -> bool:
+    """Whether Redis rejected the HybridQuery syntax/capability."""
+    message = str(exc or "").lower()
+    if any(marker in message for marker in _HYBRID_QUERY_UNSUPPORTED_MARKERS):
+        return True
+
+    return "ft.hybrid" in message and any(
+        marker in message for marker in _HYBRID_MISSING_COMMAND_MARKERS
+    )
+
+
+async def _run_hybrid_rrf_fallback(
+    *,
+    index: Any,
+    query: str,
+    query_vector: List[float],
+    query_filter: Optional[FilterExpression],
+    return_fields: List[str],
+    num_results: int,
+) -> List[Dict[str, Any]]:
+    """Approximate HybridQuery semantics with separate RedisVL text/vector queries."""
+    text_results = await index.query(
+        _RawTextQuery(
+            _hybrid_text_query(query),
+            filter_expression=query_filter,
+            return_fields=return_fields,
+            num_results=num_results,
+        )
+    )
+    vector_results = await index.query(
+        VectorQuery(
+            vector=query_vector,
+            vector_field_name="vector",
+            return_fields=return_fields,
+            num_results=num_results,
+            filter_expression=query_filter,
+        )
+    )
+    return _reciprocal_rank_fuse([text_results, vector_results], limit=num_results)
 
 
 def _result_score(doc: Dict[str, Any]) -> float:
@@ -500,6 +663,8 @@ async def skills_check_helper(
 
     If query is provided, skill selection is relevance-ranked via vector search.
     """
+    limit = _coerce_positive_int(limit, default=20)
+    offset = _coerce_non_negative_int(offset, default=0)
     logger.info(
         "Listing skills (query=%s, version=%s, offset=%s, limit=%s)",
         bool(query),
@@ -764,6 +929,8 @@ async def search_support_tickets_helper(
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Search support tickets only."""
+    limit = _coerce_positive_int(limit, default=10)
+    offset = _coerce_non_negative_int(offset, default=0)
     # Fetch one extra page so per-ticket dedupe still has enough rows to fill
     # the requested page when multiple chunks collapse into the same ticket.
     effective_limit = limit + offset + max(limit, 1)
@@ -937,16 +1104,30 @@ async def get_pinned_documents_helper(
         "version",
     ]
 
-    async def _query_pinned_rows(index_type: str) -> List[Dict[str, Any]]:
+    async def _query_rows(
+        index_type: str, *, filter_expression: Optional[FilterExpression] = None
+    ) -> List[Dict[str, Any]]:
         index = await _get_index_for_type(index_type, config=config)
         rows = await index.query(
             FilterQuery(
-                filter_expression=Tag("pinned") == "true",
+                filter_expression=filter_expression,
                 return_fields=return_fields,
                 num_results=2000,
             )
         )
         return [{**row, "_index_type": index_type} for row in rows]
+
+    async def _query_pinned_rows(index_type: str) -> List[Dict[str, Any]]:
+        try:
+            return await _query_rows(index_type, filter_expression=Tag("pinned") == "true")
+        except Exception as exc:
+            if not _is_unknown_field_error(exc, "pinned"):
+                raise
+            logger.info(
+                "Pinned field unavailable on %s index; falling back to unfiltered query",
+                index_type,
+            )
+            return await _query_rows(index_type, filter_expression=Tag("document_hash") != "")
 
     rows: List[Dict[str, Any]] = []
     for index_type in ("knowledge", "skills", "support_tickets"):
@@ -1090,6 +1271,8 @@ async def search_knowledge_base_helper(
     Returns:
         Dictionary with search results including task_id, query, results, etc.
     """
+    limit = _coerce_positive_int(limit, default=10)
+    offset = _coerce_non_negative_int(offset, default=0)
     logger.info(f"Searching SRE knowledge: '{query}' (version={version}, offset={offset})")
     normalized_index_type = index_type.strip().lower()
     index = await _get_index_for_type(normalized_index_type, config=config)
@@ -1162,10 +1345,25 @@ async def search_knowledge_base_helper(
         # Oversample when version filtering to improve recall after post-filtering.
         fetch_limit = min(fetch_limit * 4, 200)
 
-    def _build_query(query_filter, num_results: int):
+    async def _run_query(query_filter, num_results: int):
         if effective_hybrid_search:
+            if normalized_index_type in _HYBRID_UNSUPPORTED_INDEX_TYPES:
+                logger.info(
+                    "Using RedisVL RRF fallback for hybrid search on %s index: %s",
+                    normalized_index_type,
+                    query,
+                )
+                return await _run_hybrid_rrf_fallback(
+                    index=index,
+                    query=query,
+                    query_vector=query_vector,
+                    query_filter=query_filter,
+                    return_fields=return_fields,
+                    num_results=num_results,
+                )
+
             logger.info(f"Using hybrid search (vector + full-text) for query: {query}")
-            return HybridQuery(
+            hybrid_query = HybridQuery(
                 vector=query_vector,
                 vector_field_name="vector",
                 text_field_name="content",
@@ -1174,6 +1372,25 @@ async def search_knowledge_base_helper(
                 return_fields=return_fields,
                 filter_expression=query_filter,
             )
+            try:
+                return await index.query(hybrid_query)
+            except Exception as exc:
+                if not _is_hybrid_query_unsupported_error(exc):
+                    raise
+                logger.warning(
+                    "HybridQuery unsupported on %s index; falling back to RedisVL RRF search: %s",
+                    normalized_index_type,
+                    exc,
+                )
+                _HYBRID_UNSUPPORTED_INDEX_TYPES.add(normalized_index_type)
+                return await _run_hybrid_rrf_fallback(
+                    index=index,
+                    query=query,
+                    query_vector=query_vector,
+                    query_filter=query_filter,
+                    return_fields=return_fields,
+                    num_results=num_results,
+                )
 
         # Build pure vector query
         # distance_threshold default is 0.5; None disables threshold (pure KNN)
@@ -1195,11 +1412,10 @@ async def search_knowledge_base_helper(
             )
         if query_filter is not None:
             q.set_filter(query_filter)
-        return q
+        return await index.query(q)
 
     # Perform vector search
     _t2 = time.monotonic()
-    query_obj = _build_query(filter_expr, fetch_limit)
     with tracer.start_as_current_span("knowledge.index.query") as _span:
         _span.set_attribute("limit", int(limit))
         _span.set_attribute("offset", int(offset))
@@ -1209,8 +1425,8 @@ async def search_knowledge_base_helper(
             "distance_threshold",
             float(distance_threshold) if distance_threshold is not None else -1.0,
         )
-        all_results = await index.query(query_obj)
         _span.set_attribute("query.filtered", bool(filter_expr is not None))
+        all_results = await _run_query(filter_expr, fetch_limit)
     _t3 = time.monotonic()
 
     merged_results = _dedupe_docs([*exact_matches, *precise_text_matches, *all_results])
@@ -1231,7 +1447,6 @@ async def search_knowledge_base_helper(
     # while preserving other filters such as version/doc_type.
     if category is not None and len(filtered_results) == 0:
         category_fallback_expr = Tag("version") == version if version is not None else None
-        category_fallback_query = _build_query(category_fallback_expr, fetch_limit)
         with tracer.start_as_current_span("knowledge.index.query") as _span:
             _span.set_attribute("limit", int(limit))
             _span.set_attribute("offset", int(offset))
@@ -1242,7 +1457,7 @@ async def search_knowledge_base_helper(
                 float(distance_threshold) if distance_threshold is not None else -1.0,
             )
             _span.set_attribute("query.filtered", bool(category_fallback_expr is not None))
-            category_fallback_results = await index.query(category_fallback_query)
+            category_fallback_results = await _run_query(category_fallback_expr, fetch_limit)
 
         fallback_exact_matches = (
             await _find_exact_document_matches(
@@ -1468,13 +1683,8 @@ async def get_all_document_fragments(
         normalized_index_type = index_type.strip().lower()
         index = await _get_index_for_type(normalized_index_type, config=config)
 
-        # Use FT.SEARCH to find all chunks for this document
-        # document_hash is indexed as a TAG field, so we can filter on it.
-        # Tag values that include punctuation (e.g., '-') must be quoted.
-        from redisvl.query import FilterQuery
-
         filter_query = FilterQuery(
-            filter_expression=str(_tag_equals_expression("document_hash", document_hash)),
+            filter_expression=_tag_equals_expression("document_hash", document_hash),
             return_fields=[
                 "title",
                 "content",
@@ -1493,6 +1703,7 @@ async def get_all_document_fragments(
                 "version",
             ],
             num_results=1000,  # Set high limit to get all chunks
+            dialect=2,
         )
 
         # Execute search

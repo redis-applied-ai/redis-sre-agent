@@ -4,12 +4,16 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union
 
+import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import (
     BaseSettings,
+    InitSettingsSource,
+    JsonConfigSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
+    TomlConfigSettingsSource,
     YamlConfigSettingsSource,
 )
 
@@ -131,27 +135,63 @@ except (FileNotFoundError, OSError):
 DEFAULT_CONFIG_PATHS = [
     "config.yaml",
     "config.yml",
+    "config.toml",
+    "config.json",
     "sre_agent_config.yaml",
     "sre_agent_config.yml",
+    "sre_agent_config.toml",
+    "sre_agent_config.json",
 ]
 
 
-def _get_yaml_config_path() -> str | list[str] | None:
-    """Get the YAML config file path to use.
+def _get_config_file_path() -> str | None:
+    """Get the config file path to use.
 
     Returns:
         - The path from SRE_AGENT_CONFIG env var if set
-        - Or the list of default paths to check
-        - Or None if SRE_AGENT_CONFIG is set to a nonexistent file
+        - Or the first existing supported default path
+        - Or None if no supported config file exists
     """
     config_path = os.environ.get("SRE_AGENT_CONFIG")
 
     if config_path:
-        # If explicitly specified, use it (pydantic will handle missing files)
+        # If explicitly specified, use it even if it does not exist.
+        # The underlying source will treat missing files as empty config.
         return config_path
 
-    # Return list of default paths - pydantic-settings will check each in order
-    return DEFAULT_CONFIG_PATHS
+    for default_path in DEFAULT_CONFIG_PATHS:
+        if Path(default_path).is_file():
+            return default_path
+
+    return None
+
+
+def _build_config_file_source(settings_cls: Type[BaseSettings]) -> PydanticBaseSettingsSource:
+    """Build the appropriate config-file settings source for the selected path."""
+    config_path = _get_config_file_path()
+    if config_path is None:
+        return InitSettingsSource(settings_cls, {})
+
+    config_suffix = Path(config_path).suffix.lower()
+
+    # Preserve compatibility for custom YAML paths that may not use a .yaml suffix.
+    if config_suffix in {".yaml", ".yml", ""}:
+        source_type = YamlConfigSettingsSource
+        source_kwargs = {"yaml_file": config_path}
+    elif config_suffix == ".toml":
+        source_type = TomlConfigSettingsSource
+        source_kwargs = {"toml_file": config_path}
+    elif config_suffix == ".json":
+        source_type = JsonConfigSettingsSource
+        source_kwargs = {"json_file": config_path}
+    else:
+        source_type = YamlConfigSettingsSource
+        source_kwargs = {"yaml_file": config_path}
+
+    try:
+        return source_type(settings_cls, **source_kwargs)
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return InitSettingsSource(settings_cls, {})
 
 
 class Settings(BaseSettings):
@@ -160,16 +200,17 @@ class Settings(BaseSettings):
     Loads settings from environment variables. In local development, these can be
     provided via a .env file. In Docker/production, they should be set directly.
 
-    Configuration can also be loaded from YAML files. The following paths are checked
-    (first match wins):
+    Configuration can also be loaded from YAML, TOML, or JSON files. The following paths are
+    checked (first match wins):
     - Path specified in SRE_AGENT_CONFIG environment variable
-    - config.yaml, config.yml, sre_agent_config.yaml, sre_agent_config.yml
+    - config.yaml, config.yml, config.toml, config.json
+    - sre_agent_config.yaml, sre_agent_config.yml, sre_agent_config.toml, sre_agent_config.json
 
     Priority (highest to lowest):
     1. Values passed to Settings() constructor
     2. Environment variables
     3. .env file
-    4. YAML config file
+    4. Config file
     5. Default values
     """
 
@@ -180,7 +221,7 @@ class Settings(BaseSettings):
         extra="ignore",
         # Don't error if .env file is missing (Docker/production use env vars directly)
         env_ignore_empty=True,
-        # Note: yaml_file is set dynamically in settings_customise_sources
+        # Note: config file selection is done dynamically in settings_customise_sources
         # to support SRE_AGENT_CONFIG env var being set after module import
     )
 
@@ -199,6 +240,47 @@ class Settings(BaseSettings):
         description="Redis connection URL. Include credentials in URL: redis://user:pass@host:port/db",
     )
 
+    # Agent Memory Server (optional)
+    agent_memory_enabled: bool = Field(
+        default=False,
+        description="Enable Redis Agent Memory Server integration for working/long-term memory.",
+    )
+    agent_memory_base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for the Redis Agent Memory Server API.",
+    )
+    agent_memory_namespace: str = Field(
+        default="redis-sre-agent-user",
+        description="Default namespace for user-scoped AMS working and long-term memory operations.",
+    )
+    agent_memory_asset_namespace: str = Field(
+        default="redis-sre-agent-asset",
+        description="Namespace for asset-scoped AMS working and long-term memory operations.",
+    )
+    agent_memory_timeout: float = Field(
+        default=10.0,
+        description="HTTP timeout in seconds for AMS requests.",
+    )
+    agent_memory_model_name: Optional[str] = Field(
+        default="gpt-5-mini",
+        description="Model name reported to AMS for working-memory sizing and summarization.",
+    )
+    agent_memory_retrieval_limit: int = Field(
+        default=5,
+        description="Maximum number of long-term memories retrieved per turn.",
+    )
+    agent_memory_recent_message_limit: int = Field(
+        default=12,
+        description="Maximum recent working-memory messages to retain per session update.",
+    )
+    agent_memory_working_ttl_seconds: Optional[int] = Field(
+        default=None,
+        description="Optional TTL for AMS working memory sessions. None keeps sessions persistent.",
+    )
+    agent_memory_custom_prompt: Optional[str] = Field(
+        default=None,
+        description="Optional override for the AMS custom long-term extraction prompt.",
+    )
     # OpenAI (optional at import time to allow CLI/docs to load without secrets)
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: Optional[str] = Field(
@@ -371,83 +453,15 @@ class Settings(BaseSettings):
     )
 
     # MCP Server Configuration
-    # The agent-memory-server should be pre-installed via 'uv tool install agent-memory-server'.
-    # Override via MCP_SERVERS environment variable (JSON) if needed.
+    # No external MCP servers are enabled by default.
+    # Configure MCP_SERVERS or a config file explicitly for any MCP integrations.
     mcp_servers: Dict[str, Union[MCPServerConfig, Dict[str, Any]]] = Field(
-        default_factory=lambda: {
-            "redis-memory-server": {
-                "command": "agent-memory",
-                "args": ["mcp"],
-                "env": {"REDIS_URL": "${REDIS_URL}"},
-                # Only include specific tools, with context-aware descriptions.
-                # Use {original} to include the tool's original description.
-                "tools": {
-                    "get_current_datetime": {
-                        "description": (
-                            "Get the current date and time. Use this when you need to "
-                            "record timestamps for Redis instance events or incidents.\n\n"
-                            "{original}"
-                        ),
-                    },
-                    "create_long_term_memories": {
-                        "description": (
-                            "Save long-term memories about Redis instances. Use this to "
-                            "record: past incidents and their resolutions, configuration "
-                            "changes, performance baselines, known issues, maintenance "
-                            "history, and lessons learned. Always include the instance_id "
-                            "in the memory text for future retrieval.\n\n{original}"
-                        ),
-                    },
-                    "search_long_term_memory": {
-                        "description": (
-                            "Search saved memories about Redis instances. ALWAYS use this "
-                            "before troubleshooting a Redis instance to recall past issues, "
-                            "solutions, and context. Search by instance_id, error patterns, "
-                            "or symptoms.\n\n{original}"
-                        ),
-                    },
-                    "get_long_term_memory": {
-                        "description": (
-                            "Retrieve a specific memory by ID. Use this to get full details "
-                            "of a memory found via search.\n\n{original}"
-                        ),
-                    },
-                    "edit_long_term_memory": {
-                        "description": (
-                            "Update an existing memory. Use this to add new information to "
-                            "a past incident record, update resolution status, or correct "
-                            "outdated information.\n\n{original}"
-                        ),
-                    },
-                    "delete_long_term_memories": {
-                        "description": (
-                            "Delete memories that are no longer relevant. Use sparingly - "
-                            "prefer editing to add context rather than deleting.\n\n{original}"
-                        ),
-                    },
-                },
-            }
-        },
+        default_factory=dict,
         description="MCP (Model Context Protocol) servers to connect to. "
         "Each key is the server name, and the value is the server configuration. "
         "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
         "'tools': {'search_memories': {'capability': 'logs'}}}}",
     )
-
-    def model_post_init(self, __context: Any) -> None:
-        """Adjust configuration after all fields are loaded.
-
-        In air-gap mode (embedding_provider='local'), use pre-installed binaries
-        instead of 'uv tool run' which requires network access to PyPI.
-        """
-        if self.embedding_provider == "local":
-            # Air-gap mode: use pre-installed agent-memory binary directly
-            if "redis-memory-server" in self.mcp_servers:
-                server_config = self.mcp_servers["redis-memory-server"]
-                if isinstance(server_config, dict):
-                    # Change from 'uv tool run' to direct binary call
-                    server_config["command"] = "agent-memory"
-                    server_config["args"] = ["mcp"]
 
     @classmethod
     def settings_customise_sources(
@@ -458,24 +472,20 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
-        """Customize settings sources to include YAML config file.
+        """Customize settings sources to include file-based config.
 
         Priority (highest to lowest):
         1. init_settings (passed to Settings())
         2. env_settings (environment variables)
         3. dotenv_settings (.env file)
-        4. yaml_settings (config.yaml file)
+        4. config_file_settings (yaml, toml, or json)
         5. file_secret_settings (Docker secrets)
         """
-        # Use the built-in YamlConfigSettingsSource from pydantic-settings
-        # Get the yaml_file path dynamically to respect SRE_AGENT_CONFIG env var
-        # set after module import
-        yaml_file = _get_yaml_config_path()
         return (
             init_settings,
             env_settings,
             dotenv_settings,
-            YamlConfigSettingsSource(settings_cls, yaml_file=yaml_file),
+            _build_config_file_source(settings_cls),
             file_secret_settings,
         )
 

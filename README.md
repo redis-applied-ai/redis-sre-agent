@@ -1,81 +1,92 @@
-# 🧑‍🚒 Redis SRE Agent
+# Redis SRE Agent
 
-A LangGraph-based Redis SRE Agent for intelligent infrastructure monitoring and incident response.
+Redis SRE Agent gives platform teams an AI operator for Redis. It combines your runbooks and Redis documentation with live signals from metrics, logs, support packages, and Redis diagnostics to return actionable triage with citations.
 
-📖 For more details, check out our [documentation](https://redis-applied-ai.github.io/redis-sre-agent/).
+Documentation: <https://redis-applied-ai.github.io/redis-sre-agent/>
 
-## Overview
+## Why Teams Use It
 
-Redis SRE Agent is an AI teammate for Redis operations. It answers questions from your knowledge base and actively triages live Redis issues. It’s easy to customize to your monitoring and observability systems.
+- Cut time from alert to first useful hypothesis.
+- Give engineers one place to ask Redis questions and investigate live incidents.
+- Run ad-hoc checks from the CLI or API, or schedule recurring health checks.
+- Keep your existing observability stack by plugging in providers for Prometheus, Loki, Redis Enterprise, MCP servers, and custom tools.
 
-- Answers questions using your runbooks and Redis docs
-- Triages problems with Redis instances by gathering signals from metrics, logs, and diganostic tools, and recommends fixes
-- Fully asynchronous: runs as an asynchronous task triggered via CLI/API or schedule
-- Integrations: bring your own monitoring/ticketing via providers (Prometheus, Grafana, Loki, etc.)
+## What It Can Do
+
+- Answer Redis questions using ingested documentation and internal runbooks.
+- Triage live Redis instances by gathering metrics, logs, and diagnostic data.
+- Route work through a background worker and persist tasks, threads, and citations.
+- Analyze Redis Enterprise support packages alongside live targets.
+- Expose the same core capabilities through a CLI, REST API, Docker stack, and MCP server.
+
+## Five-Minute Quickstart
+
+### Prerequisites
+
+- Docker with Compose v2
+- OpenAI API key or compatible endpoint
+- Python 3.12+ and `uv` if you want to run the CLI on your host
+
+### Fastest Seeded Demo
+
+```bash
+git clone https://github.com/redis-applied-ai/redis-sre-agent.git
+cd redis-sre-agent
+
+cp .env.example .env
+# Set OPENAI_API_KEY
+# Generate REDIS_SRE_MASTER_KEY with:
+# python3 -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
+
+make quick-demo
+```
+
+Ask your first question without any target setup:
+
+```bash
+docker compose exec -T sre-agent uv run redis-sre-agent \
+  query "What are Redis eviction policies?"
+```
+
+Inspect the seeded demo target, then run live triage:
+
+```bash
+docker compose exec -T sre-agent uv run redis-sre-agent instance list
+
+docker compose exec -T sre-agent uv run redis-sre-agent \
+  query "Check memory pressure and slow ops" -r <instance_id>
+```
+
+### Redis Compatibility
+
+- Redis 8.x is the recommended default for local evaluation and new deployments.
+- Older Redis/Search deployments are supported when Redis Search / Redis Query Engine 2.4+ is available.
+
+For compatibility details and fallback behavior, see [Operational Notes](docs/operations/gotchas.md#redis-enterprise-vs-redis-oss).
+
+## Deployment Paths
+
+- Local demo: [docs/quickstarts/local.md](docs/quickstarts/local.md)
+- Full Docker walkthrough: [docs/quickstarts/end-to-end-setup.md](docs/quickstarts/end-to-end-setup.md)
+- VM deployment with Redis Enterprise: [docs/quickstarts/vm-deployment.md](docs/quickstarts/vm-deployment.md)
+- Air-gapped deployment: [docs/operations/airgap-deployment.md](docs/operations/airgap-deployment.md)
 
 ## Architecture
 
-**Flow**: API/CLI → Background Task → LangGraph Agent → SRE Tools → Redis/Monitoring Systems → Large Language Model → Response as Task Result
+**Flow**: API/CLI → Background Task → LangGraph Agent → SRE Tools → Redis/Monitoring Systems → Large Language Model → Task Result + Thread History + Citations
 
-<img src="images/sre-arch-flow.png" style="max-width: 800px;"/>
+<img src="images/sre-arch-flow.png" style="max-width: 800px;" alt="Redis SRE Agent architecture flow"/>
 
-## Quick Start
+## Current Scope
 
-### Prerequisites
-- Python 3.12+, Redis 8+ or 7.x with RediSearch module, `uv` package manager
-- OpenAI API key or OpenAI-compatible proxy
-- Optional: Prometheus, Loki, and Grafana access for monitoring integration
+The current release ships a production-oriented core: FastAPI API, background worker, CLI, knowledge ingestion pipeline, support package workflows, Docker-based evaluation stack, and a UI for local evaluation.
 
-### Development Setup
-```bash
-# Clone and setup
-git clone <repo-url>
-cd redis-sre-agent
+Optional integrations:
 
-# Install dependencies
-uv sync
+- Agent Memory Server: [docs/how-to/agent-memory-server-integration.md](docs/how-to/agent-memory-server-integration.md)
+  Adds fail-open long-term memory retrieval and working-memory sync for user-scoped and asset-scoped operational context.
 
-# Environment setup
-cp .env.example .env
-# Edit .env with your API keys and configuration
-
-# Start Redis 8
-docker run -d -p 7843:6379 redis:8-alpine
-
-# Start worker
-uv run redis-sre-agent worker
-
-# Start API
-uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### Usage
-
-**API**:
-```bash
-# Detailed health check
-curl http://localhost:8000/api/v1/health
-
-# Submit a triage request (returns task_id and thread_id)
-curl -X POST http://localhost:8000/api/v1/tasks \\
-  -H "Content-Type: application/json" \\
-  -d '{"message": "Check Redis cluster health and memory usage", "context": {"instance_id": "<instance_id>"}}'
-
-# Check task status
-curl http://localhost:8000/api/v1/tasks/{task_id}
-# Includes `tool_calls` when task status is `done`
-```
-
-## SRE Tools
-
-The agent uses an **extensible tool system** that provides interfaces for different SRE capabilities.
-
-For details on adding integrations and custom providers, see [Tool Providers](docs/how-to/tool-providers.md).
-
-## Project Status
-
-🚧 **Under Development** - Core infrastructure and basic agent workflow in progress.
-Built with FastAPI, LangGraph, RedisVL, and Docket for reliable SRE automation.
+For provider architecture and extensibility details, see [Tool Providers](docs/how-to/tool-providers.md).
 
 ## License
 

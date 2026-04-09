@@ -52,13 +52,18 @@ make local-services-logs # Tail logs
 - CLI: `redis_sre_agent/cli/`
 - Configuration: `redis_sre_agent/core/config.py`
 - Docker config: `docker-compose.yml`
+- Written specs: `specs/`
 - Source documents: `source_documents/`
+
+## Specs
+- Put newly written design specs and implementation specs in `specs/`.
+- Prefer `specs/` over `docs/` for work-in-progress or review-oriented specification documents.
 
 ## Environment Variables
 See `.env.example` for full configuration. Key variables:
 - `OPENAI_API_KEY`: Required for LLM functionality
+- `OPENAI_BASE_URL`: Optional OpenAI-compatible endpoint override
 - `REDIS_URL`: Redis connection string (default: redis://localhost:7843/0)
-- `LITELLM_MASTER_KEY`: Auth key for LiteLLM proxy (Docker only)
 
 ## Knowledge Base
 - **Data sources**: redis.io/kb articles, local redis-docs clone, `source_documents/`

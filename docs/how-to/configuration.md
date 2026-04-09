@@ -8,7 +8,7 @@ Configuration values are loaded from these sources (highest precedence first):
 
 1. Environment variables (recommended for prod)
 2. `.env` file (loaded automatically in dev if present)
-3. **YAML config file** (for complex nested configurations like MCP servers)
+3. **Config file** (`.yaml`, `.yml`, `.toml`, or `.json`; useful for nested settings like `mcp_servers`)
 4. Code defaults in `redis_sre_agent/core/config.py`
 
 ```mermaid
@@ -17,35 +17,41 @@ flowchart TB
         direction TB
         ENV["1. Environment Variables<br><i>Highest priority</i>"]
         DOTENV["2. .env File<br><i>Auto-loaded in dev</i>"]
-        YAML["3. YAML Config File<br><i>config.yaml</i>"]
+        CFG["3. Config File<br><i>config.yaml / config.toml / config.json</i>"]
         CODE["4. Code Defaults<br><i>config.py</i>"]
     end
 
     ENV --> |overrides| DOTENV
-    DOTENV --> |overrides| YAML
-    YAML --> |overrides| CODE
+    DOTENV --> |overrides| CFG
+    CFG --> |overrides| CODE
 
     CODE --> FINAL["Final Settings"]
-    YAML --> FINAL
+    CFG --> FINAL
     DOTENV --> FINAL
     ENV --> FINAL
 ```
 
 For example, if `REDIS_URL` is set in both `.env` and as an environment variable, the environment variable wins.
 
-### YAML configuration
+### File-based configuration
 
-For complex nested settings like MCP server configurations, you can use a YAML config file. This is particularly useful for configuring multiple MCP servers with tool descriptions.
+The agent can load settings from YAML, TOML, or JSON config files. YAML is usually the easiest choice for complex nested settings like `mcp_servers`, while TOML and JSON are useful when your deployment tooling already emits those formats.
 
 **Config file discovery order:**
 
 1. Path specified in `SRE_AGENT_CONFIG` environment variable
 2. `config.yaml` in the current working directory
 3. `config.yml` in the current working directory
-4. `sre_agent_config.yaml` in the current working directory
-5. `sre_agent_config.yml` in the current working directory
+4. `config.toml` in the current working directory
+5. `config.json` in the current working directory
+6. `sre_agent_config.yaml` in the current working directory
+7. `sre_agent_config.yml` in the current working directory
+8. `sre_agent_config.toml` in the current working directory
+9. `sre_agent_config.json` in the current working directory
 
-**Example `config.yaml`:**
+When `SRE_AGENT_CONFIG` is set, the parser is selected by suffix: `.yaml` / `.yml`, `.toml`, or `.json`.
+
+**Example `config.yaml` (recommended for nested configuration):**
 
 ```yaml
 # Application settings
@@ -54,25 +60,6 @@ log_level: INFO
 
 # MCP (Model Context Protocol) servers configuration
 mcp_servers:
-  # Memory server for long-term agent memory
-  redis-memory-server:
-    command: uv
-    args:
-      - tool
-      - run
-      - --from
-      - agent-memory-server
-      - agent-memory
-      - mcp
-    env:
-      REDIS_URL: redis://localhost:6399
-    tools:
-      search_long_term_memory:
-        description: |
-          Search saved memories about Redis instances. ALWAYS use this
-          before troubleshooting to recall past issues and solutions.
-          {original}
-
   # GitHub MCP server (remote) - uses GitHub's hosted MCP endpoint
   # Requires a GitHub Personal Access Token with appropriate permissions
   # Uses Streamable HTTP transport (default for URL-based connections)
@@ -85,10 +72,30 @@ mcp_servers:
 
 See `config.yaml.example` for a complete example with all available options.
 
+**Example `config.toml` (simple flat settings):**
+
+```toml
+app_name = "Redis SRE Agent"
+debug = false
+log_level = "INFO"
+recursion_limit = 64
+```
+
+**Example `config.json` (simple flat settings):**
+
+```json
+{
+  "app_name": "Redis SRE Agent",
+  "debug": false,
+  "log_level": "INFO",
+  "recursion_limit": 64
+}
+```
+
 **Using a custom config path:**
 
 ```bash
-export SRE_AGENT_CONFIG=/path/to/my-config.yaml
+export SRE_AGENT_CONFIG=/path/to/my-config.toml
 ```
 
 ### Required
@@ -137,7 +144,7 @@ Override cache TTLs for specific tools by mapping tool name patterns to TTL valu
 TOOL_CACHE_TTL_OVERRIDES='{"info": 120, "slowlog": 30, "config_get": 600}'
 ```
 
-**YAML config:**
+**Config file (YAML shown):**
 
 ```yaml
 # Maps tool name patterns to TTL in seconds
@@ -204,7 +211,7 @@ Set `LLM_FACTORY` to a dot-path import string pointing to your factory function:
 LLM_FACTORY=mypackage.llm.anthropic_factory
 ```
 
-Or in `config.yaml`:
+Or in a config file (YAML shown):
 
 ```yaml
 llm_factory: mypackage.llm.anthropic_factory
@@ -253,16 +260,16 @@ The agent uses three tiers of models for different tasks:
 
 | Tier | Default Model | Used For |
 |------|---------------|----------|
-| `main` | `gpt-4o` | Primary agent reasoning, complex analysis |
-| `mini` | `gpt-4o-mini` | Knowledge search, utility tasks |
-| `nano` | `gpt-4o-mini` | Simple classification, triage |
+| `main` | `gpt-5` | Primary agent reasoning and deeper analysis |
+| `mini` | `gpt-5-mini` | Knowledge search and utility tasks |
+| `nano` | `gpt-5-nano` | Simple classification and lightweight triage |
 
 Configure default models via environment variables:
 
 ```bash
-OPENAI_MODEL=gpt-4o
-OPENAI_MODEL_MINI=gpt-4o-mini
-OPENAI_MODEL_NANO=gpt-4o-mini
+OPENAI_MODEL=gpt-5
+OPENAI_MODEL_MINI=gpt-5-mini
+OPENAI_MODEL_NANO=gpt-5-nano
 ```
 
 #### Programmatic registration (advanced)
@@ -341,9 +348,13 @@ export EMBEDDING_PROVIDER=local
 export EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 export VECTOR_DIM=384
 
-# Re-ingest knowledge base
-redis-sre-agent pipeline ingest --force
+# Rebuild artifacts from source_documents and re-ingest the knowledge base
+redis-sre-agent pipeline prepare-sources \
+  --source-dir ./source_documents \
+  --artifacts-path ./artifacts
 ```
+
+Use the same re-ingestion flow after upgrades that change indexed metadata or schema. The index is not auto-migrated at startup.
 
 ### Advanced: Encryption of secrets
 

@@ -1,5 +1,5 @@
 # Makefile for redis-sre-agent
-# Requires: uv (https://github.com/astral-sh/uv), docker-compose, mkdocs (installed via uv dev deps)
+# Requires: uv (https://github.com/astral-sh/uv), Docker Compose, mkdocs (installed via uv dev deps)
 
 # Default goal
 .DEFAULT_GOAL := help
@@ -13,7 +13,7 @@ UI_DIST ?= $(UI_DIR)/dist
 REDIS_DOCS_REPO_URL ?= https://github.com/redis/docs.git
 REDIS_DOCS_BRANCH ?= main
 
-.PHONY: help venv sync hooks-install lint docs-build docs-serve local-services local-services-down local-services-logs test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
+.PHONY: help venv sync hooks-install lint docs-build docs-serve local-services local-services-down local-services-logs quick-demo test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
 
 help: ## Show this help and available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9][^:]*:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -51,11 +51,11 @@ docs-gen-check: docs-gen ## Generate reference docs and fail if files changed
 
 # --- Local services ---
 
-local-services: ## Start local services with docker-compose up -d
+local-services: ## Start local services with docker compose up -d
 	docker compose up -d
 	@echo ""
 	@echo "Local services started:"
-	@echo "  - SRE Agent API:       http://localhost:8000"
+	@echo "  - SRE Agent API:       http://localhost:8080"
 	@echo "  - SRE Agent UI:        http://localhost:3002"
 	@echo "  - Grafana:             http://localhost:3001  (login: admin / admin)"
 	@echo "  - Prometheus:          http://localhost:9090"
@@ -71,11 +71,14 @@ local-services: ## Start local services with docker-compose up -d
 	@echo "  docker compose logs -f grafana prometheus redis redis-demo"
 	@echo ""
 
+quick-demo: ## Start a seeded local demo stack and register a demo Redis target
+	./scripts/quick-setup.sh
+
 local-services-enterprise: ## Start local services with Redis Enterprise cluster
 	docker compose -f docker-compose.yml -f docker-compose.enterprise.yml up -d
 	@echo ""
 	@echo "Local services started (with Redis Enterprise):"
-	@echo "  - SRE Agent API:       http://localhost:8000"
+	@echo "  - SRE Agent API:       http://localhost:8080"
 	@echo "  - SRE Agent UI:        http://localhost:3002"
 	@echo "  - Grafana:             http://localhost:3001  (login: admin / admin)"
 	@echo "  - Prometheus:          http://localhost:9090"

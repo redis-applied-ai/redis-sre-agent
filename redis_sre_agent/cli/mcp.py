@@ -1,5 +1,8 @@
 """MCP server CLI commands."""
 
+import logging
+import sys
+
 import click
 
 
@@ -7,6 +10,22 @@ import click
 def mcp():
     """MCP server commands - expose agent capabilities via Model Context Protocol."""
     pass
+
+
+def _configure_stdio_logging() -> None:
+    """Reserve stdout for MCP protocol traffic before importing server dependencies.
+
+    Some dependencies configure root logging at import time and default to stdout.
+    In stdio transport that corrupts the JSON-RPC stream, so force logs to stderr
+    before importing the MCP server module.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s   %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+        force=True,
+    )
 
 
 @mcp.command("serve")
@@ -57,17 +76,22 @@ def serve(transport: str, host: str, port: int):
       # Run in SSE mode (legacy, for older clients)
       redis-sre-agent mcp serve --transport sse --port 8081
     """
-    from redis_sre_agent.mcp_server.server import run_http, run_sse, run_stdio
-
     if transport == "stdio":
+        _configure_stdio_logging()
+        from redis_sre_agent.mcp_server.server import run_stdio
+
         # Don't print anything to stdout in stdio mode - it corrupts the JSON-RPC stream
         run_stdio()
     elif transport == "http":
+        from redis_sre_agent.mcp_server.server import run_http
+
         click.echo(f"Starting MCP server in HTTP mode on {host}:{port}...")
         click.echo(f"MCP endpoint: http://{host}:{port}/mcp")
         click.echo("Add this URL as a Custom Connector in Claude settings.")
         run_http(host=host, port=port)
     else:
+        from redis_sre_agent.mcp_server.server import run_sse
+
         click.echo(f"Starting MCP server in SSE mode on {host}:{port}...")
         run_sse(host=host, port=port)
 

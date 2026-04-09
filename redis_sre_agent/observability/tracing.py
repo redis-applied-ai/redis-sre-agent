@@ -14,6 +14,7 @@ import os
 from enum import Enum
 from functools import wraps
 from typing import Any, Callable, Optional, TypeVar
+from urllib.parse import urlparse, urlunparse
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -122,6 +123,30 @@ def _redis_response_hook(span: trace.Span, instance: Any, response: Any) -> None
         span.set_attribute("redis.response_type", resp_type)
 
 
+def _normalize_otlp_trace_endpoint(endpoint: str) -> str:
+    """Normalize HTTP OTLP endpoints to the trace ingestion path.
+
+    The OTLP HTTP trace exporter expects the full traces path. Local container
+    config sometimes provides only the collector base URL (for example
+    ``http://tempo:4318``), which causes exports to hit ``/`` and receive 404s.
+    """
+    parsed = urlparse(endpoint)
+    if not parsed.scheme or not parsed.netloc:
+        return endpoint
+
+    if parsed.path.rstrip("/"):
+        return endpoint
+
+    return urlunparse(parsed._replace(path="/v1/traces"))
+
+
+def _get_otlp_trace_endpoint() -> Optional[str]:
+    """Return the configured OTLP trace endpoint, preferring trace-specific config."""
+    return os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or os.environ.get(
+        "OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+
+
 def setup_tracing(
     service_name: str,
     service_version: str = "0.1.0",
@@ -130,12 +155,22 @@ def setup_tracing(
 
     Returns True if tracing was enabled, False otherwise.
     """
-    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    otlp_endpoint = _get_otlp_trace_endpoint()
     if not otlp_endpoint:
         logger.info(
-            f"OpenTelemetry tracing disabled for {service_name} (no OTEL_EXPORTER_OTLP_ENDPOINT)"
+            "OpenTelemetry tracing disabled for %s "
+            "(no OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT)",
+            service_name,
         )
         return False
+
+    normalized_otlp_endpoint = _normalize_otlp_trace_endpoint(otlp_endpoint)
+    if normalized_otlp_endpoint != otlp_endpoint:
+        logger.info(
+            "Normalized OTLP trace endpoint from %s to %s",
+            otlp_endpoint,
+            normalized_otlp_endpoint,
+        )
 
     resource = Resource.create(
         {
@@ -145,7 +180,7 @@ def setup_tracing(
     )
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(
-        endpoint=otlp_endpoint,
+        endpoint=normalized_otlp_endpoint,
         headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
     )
     provider.add_span_processor(BatchSpanProcessor(exporter))

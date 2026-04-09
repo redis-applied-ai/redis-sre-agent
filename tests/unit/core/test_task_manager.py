@@ -757,6 +757,41 @@ class TestCreateTaskFunction:
             assert "Thread created" in result["message"]
 
     @pytest.mark.asyncio
+    async def test_create_task_new_thread_preserves_user_id(self):
+        """Test create_task forwards explicit/context user_id into new thread/task creation."""
+        mock_redis = AsyncMock()
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.create_thread = AsyncMock(return_value="new-thread-123")
+        mock_thread_manager.update_thread_subject = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.tasks.ThreadManager", return_value=mock_thread_manager),
+            patch("redis_sre_agent.core.tasks.TaskManager", return_value=mock_task_manager),
+        ):
+            await create_task(
+                message="Test query",
+                user_id="user-123",
+                context={"user_id": "user-ctx"},
+                redis_client=mock_redis,
+            )
+
+        mock_thread_manager.create_thread.assert_awaited_once_with(
+            user_id="user-123",
+            initial_context={"messages": [], "original_query": "Test query", "user_id": "user-ctx"},
+        )
+        mock_task_manager.create_task.assert_awaited_once_with(
+            thread_id="new-thread-123",
+            user_id="user-123",
+            subject="Test query",
+        )
+
+    @pytest.mark.asyncio
     async def test_create_task_existing_thread(self):
         """Test create_task with existing thread."""
         mock_redis = AsyncMock()

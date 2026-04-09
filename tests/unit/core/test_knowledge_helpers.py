@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import redis_sre_agent.core.knowledge_helpers as knowledge_helpers
 from redis_sre_agent.core.knowledge_helpers import (
     _dedupe_docs,
     _doc_matches_requested_version,
@@ -72,6 +73,30 @@ class TestKnowledgeHelpers:
         assert _exact_match_sort_key(source_match, "ticket-ret-4421.md")[0] == 2
         assert _exact_match_sort_key(non_match, "ticket-ret-4421.md")[0] == 3
 
+    def test_tag_equals_expression_uses_canonical_tag_syntax(self):
+        """Exact TAG filters should use escaped canonical syntax, not quoted values."""
+        assert str(knowledge_helpers._tag_equals_expression("name", "INC432323")) == (
+            "@name:{INC432323}"
+        )
+        assert str(knowledge_helpers._tag_equals_expression("name", "foo|bar/baz[prod]")) == (
+            r"@name:{foo\|bar\/baz\[prod\]}"
+        )
+
+    def test_hybrid_unsupported_error_detector_avoids_generic_ft_hybrid_mentions(self):
+        """Only explicit capability/command failures should trip the fallback detector."""
+        assert knowledge_helpers._is_hybrid_query_unsupported_error(
+            RuntimeError("ERR unknown command 'FT.HYBRID'")
+        )
+        assert knowledge_helpers._is_hybrid_query_unsupported_error(
+            RuntimeError("ERR no such command 'FT.HYBRID'")
+        )
+        assert not knowledge_helpers._is_hybrid_query_unsupported_error(
+            RuntimeError("transport failure while issuing FT.HYBRID request")
+        )
+        assert not knowledge_helpers._is_hybrid_query_unsupported_error(
+            RuntimeError("ERR no such index")
+        )
+
 
 class TestSearchKnowledgeBaseHelper:
     """Test search_knowledge_base_helper function."""
@@ -123,6 +148,51 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["doc_type"] == "runbook"
 
     @pytest.mark.asyncio
+    async def test_search_knowledge_base_treats_none_offset_as_zero(self):
+        """Knowledge helper should normalize nullable pagination values."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {
+                    "id": "doc-1",
+                    "document_hash": "hash-1",
+                    "chunk_index": 0,
+                    "title": "Redis Memory",
+                    "content": "Redis memory management guide",
+                    "source": "docs",
+                    "category": "monitoring",
+                    "doc_type": "runbook",
+                    "version": "latest",
+                    "score": 0.95,
+                }
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="redis memory",
+                limit=3,
+                offset=None,
+            )
+
+        assert result["offset"] == 0
+        assert result["limit"] == 3
+        assert result["results_count"] == 1
+
+    @pytest.mark.asyncio
     async def test_search_knowledge_base_promotes_exact_name_match(self):
         """Exact tag matches should appear ahead of semantic-only matches."""
         mock_index = AsyncMock()
@@ -142,6 +212,8 @@ class TestSearchKnowledgeBaseHelper:
                         "version": "latest",
                     }
                 ],
+                [],
+                [],
                 [],
                 [
                     {
@@ -181,8 +253,8 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["id"] == "doc-exact"
         assert result["results"][0]["name"] == "ret-4421"
         assert result["results"][1]["id"] == "doc-semantic"
-        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "_RawTextQuery"
-        assert mock_index.query.await_args_list[2].args[0].__class__.__name__ == "HybridQuery"
+        assert mock_index.query.await_args_list[3].args[0].__class__.__name__ == "_RawTextQuery"
+        assert mock_index.query.await_args_list[4].args[0].__class__.__name__ == "HybridQuery"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_promotes_exact_document_hash_match(self):
@@ -190,6 +262,7 @@ class TestSearchKnowledgeBaseHelper:
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             side_effect=[
+                [],
                 [
                     {
                         "id": "doc-exact",
@@ -203,6 +276,7 @@ class TestSearchKnowledgeBaseHelper:
                         "version": "latest",
                     }
                 ],
+                [],
                 [],
                 [
                     {
@@ -247,6 +321,8 @@ class TestSearchKnowledgeBaseHelper:
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             side_effect=[
+                [],
+                [],
                 [],
                 [
                     {
@@ -295,7 +371,7 @@ class TestSearchKnowledgeBaseHelper:
         ):
             result = await search_knowledge_base_helper(query="RET-4421", limit=10)
 
-        literal_query = str(mock_index.query.await_args_list[1].args[0])
+        literal_query = str(mock_index.query.await_args_list[3].args[0])
         assert '@title:("ret-4421")' in literal_query
         assert '@summary:("ret-4421")' in literal_query
         assert '@content:("ret-4421")' in literal_query
@@ -309,6 +385,8 @@ class TestSearchKnowledgeBaseHelper:
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             side_effect=[
+                [],
+                [],
                 [],
                 [
                     {
@@ -357,13 +435,13 @@ class TestSearchKnowledgeBaseHelper:
         ):
             result = await search_knowledge_base_helper(query='"DB memory full"', limit=10)
 
-        literal_query = str(mock_index.query.await_args_list[1].args[0])
+        literal_query = str(mock_index.query.await_args_list[3].args[0])
         assert '@title:("db memory full")' in literal_query
         assert '@summary:("db memory full")' in literal_query
         assert '@content:("db memory full")' in literal_query
         assert result["results_count"] == 2
         assert result["results"][0]["id"] == "doc-phrase"
-        assert mock_index.query.await_args_list[2].args[0].__class__.__name__ == "HybridQuery"
+        assert mock_index.query.await_args_list[4].args[0].__class__.__name__ == "HybridQuery"
 
     def test_quoted_text_phrase_query_uses_implicit_and_for_filters(self):
         """Phrase queries should only contain the literal TEXT search expression."""
@@ -611,6 +689,209 @@ class TestSearchKnowledgeBaseHelper:
         assert mock_index.query.await_args_list[0].args[0].__class__.__name__ == "HybridQuery"
 
     @pytest.mark.asyncio
+    async def test_search_knowledge_base_hybrid_falls_back_to_rrf_when_unsupported(self):
+        """Older RediSearch deployments should fall back to separate text/vector queries."""
+        knowledge_helpers._HYBRID_UNSUPPORTED_INDEX_TYPES.clear()
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                RuntimeError("Syntax error at offset 42 near YIELD_DISTANCE_AS"),
+                [
+                    {
+                        "id": "doc-text",
+                        "document_hash": "hash-text",
+                        "chunk_index": 0,
+                        "title": "Redis memory guide",
+                        "content": "Tune memory fragmentation first.",
+                        "source": "docs",
+                        "category": "monitoring",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+                [
+                    {
+                        "id": "doc-vector",
+                        "document_hash": "hash-vector",
+                        "chunk_index": 0,
+                        "title": "Latency checklist",
+                        "content": "Check allocator pressure and swap activity.",
+                        "source": "docs",
+                        "category": "monitoring",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "vector_distance": 0.15,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        try:
+            with (
+                patch(
+                    "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                    new_callable=AsyncMock,
+                    return_value=mock_index,
+                ),
+                patch(
+                    "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                    return_value=mock_vectorizer,
+                ),
+            ):
+                result = await search_knowledge_base_helper(
+                    query="redis memory",
+                    hybrid_search=True,
+                    limit=10,
+                )
+        finally:
+            knowledge_helpers._HYBRID_UNSUPPORTED_INDEX_TYPES.clear()
+
+        assert result["results_count"] == 2
+        assert [doc["id"] for doc in result["results"]] == ["doc-text", "doc-vector"]
+        assert mock_index.query.await_args_list[0].args[0].__class__.__name__ == "HybridQuery"
+        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "_RawTextQuery"
+        assert mock_index.query.await_args_list[2].args[0].__class__.__name__ == "VectorQuery"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_hybrid_falls_back_to_rrf_on_unknown_command(self):
+        """Servers that reject FT.HYBRID outright should still fall back cleanly."""
+        knowledge_helpers._HYBRID_UNSUPPORTED_INDEX_TYPES.clear()
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                RuntimeError("ERR unknown command 'FT.HYBRID'"),
+                [
+                    {
+                        "id": "doc-text",
+                        "document_hash": "hash-text",
+                        "chunk_index": 0,
+                        "title": "Redis memory guide",
+                        "content": "Tune memory fragmentation first.",
+                        "source": "docs",
+                        "category": "monitoring",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+                [
+                    {
+                        "id": "doc-vector",
+                        "document_hash": "hash-vector",
+                        "chunk_index": 0,
+                        "title": "Latency checklist",
+                        "content": "Check allocator pressure and swap activity.",
+                        "source": "docs",
+                        "category": "monitoring",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "vector_distance": 0.15,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        try:
+            with (
+                patch(
+                    "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                    new_callable=AsyncMock,
+                    return_value=mock_index,
+                ),
+                patch(
+                    "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                    return_value=mock_vectorizer,
+                ),
+            ):
+                result = await search_knowledge_base_helper(
+                    query="redis memory",
+                    hybrid_search=True,
+                    limit=10,
+                )
+        finally:
+            knowledge_helpers._HYBRID_UNSUPPORTED_INDEX_TYPES.clear()
+
+        assert result["results_count"] == 2
+        assert [doc["id"] for doc in result["results"]] == ["doc-text", "doc-vector"]
+        assert mock_index.query.await_args_list[0].args[0].__class__.__name__ == "HybridQuery"
+        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "_RawTextQuery"
+        assert mock_index.query.await_args_list[2].args[0].__class__.__name__ == "VectorQuery"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_hybrid_uses_cached_rrf_fallback(self):
+        """Once a server is known to lack HybridQuery support, skip the failing probe."""
+        knowledge_helpers._HYBRID_UNSUPPORTED_INDEX_TYPES.clear()
+        knowledge_helpers._HYBRID_UNSUPPORTED_INDEX_TYPES.add("knowledge")
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "id": "doc-text",
+                        "document_hash": "hash-text",
+                        "chunk_index": 0,
+                        "title": "Redis memory guide",
+                        "content": "Tune memory fragmentation first.",
+                        "source": "docs",
+                        "category": "monitoring",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+                [
+                    {
+                        "id": "doc-vector",
+                        "document_hash": "hash-vector",
+                        "chunk_index": 0,
+                        "title": "Latency checklist",
+                        "content": "Check allocator pressure and swap activity.",
+                        "source": "docs",
+                        "category": "monitoring",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "vector_distance": 0.15,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        try:
+            with (
+                patch(
+                    "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                    new_callable=AsyncMock,
+                    return_value=mock_index,
+                ),
+                patch(
+                    "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                    return_value=mock_vectorizer,
+                ),
+            ):
+                result = await search_knowledge_base_helper(
+                    query="redis memory",
+                    hybrid_search=True,
+                    limit=10,
+                )
+        finally:
+            knowledge_helpers._HYBRID_UNSUPPORTED_INDEX_TYPES.clear()
+
+        assert result["results_count"] == 2
+        assert mock_index.query.call_count == 2
+        assert mock_index.query.await_args_list[0].args[0].__class__.__name__ == "_RawTextQuery"
+        assert mock_index.query.await_args_list[1].args[0].__class__.__name__ == "VectorQuery"
+
+    @pytest.mark.asyncio
     async def test_search_knowledge_base_natural_language_query_skips_exact_prequery(self):
         """Natural-language searches should not pay for exact TAG/TEXT probes."""
         mock_index = AsyncMock()
@@ -646,6 +927,10 @@ class TestSearchKnowledgeBaseHelper:
         mock_index = AsyncMock()
         mock_index.query = AsyncMock(
             side_effect=[
+                [],
+                [],
+                [],
+                [],
                 [],
                 [],
                 [],
@@ -691,8 +976,8 @@ class TestSearchKnowledgeBaseHelper:
 
         assert result["results_count"] == 1
         assert result["results"][0]["id"] == "doc-fallback-phrase"
-        assert mock_index.query.call_count == 6
-        assert mock_index.query.await_args_list[5].args[0].__class__.__name__ == "_RawTextQuery"
+        assert mock_index.query.call_count == 10
+        assert mock_index.query.await_args_list[9].args[0].__class__.__name__ == "_RawTextQuery"
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_category_fallback_skips_exact_prequery_for_natural_language_hybrid(
@@ -1050,6 +1335,38 @@ class TestGetAllDocumentFragments:
         assert result["fragments_count"] == 1
         assert result["fragments"][0]["content"] == "Version 7.4 content"
 
+    @pytest.mark.asyncio
+    async def test_get_all_fragments_uses_filter_expression_object(self):
+        """Fragment lookup should pass a FilterExpression, not a raw string."""
+
+        class _StrictFilterQuery:
+            def __init__(self, *, filter_expression, return_fields, num_results, dialect=2):
+                if isinstance(filter_expression, str):
+                    raise TypeError("filter_expression must be a FilterExpression")
+                self._filter_expression = filter_expression
+                self._return_fields = return_fields
+                self.num_results = num_results
+                self.dialect = dialect
+
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.FilterQuery",
+                _StrictFilterQuery,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+        ):
+            result = await get_all_document_fragments(document_hash="test-hash-123")
+
+        assert result["document_hash"] == "test-hash-123"
+        assert result["fragments"] == []
+
 
 class TestGetRelatedDocumentFragments:
     """Test get_related_document_fragments function."""
@@ -1361,6 +1678,56 @@ class TestSkillHelpers:
 
 
 class TestSupportTicketHelpers:
+    @pytest.mark.asyncio
+    async def test_find_support_ticket_exact_matches_runs_one_query_per_exact_tag_field(self):
+        support_tickets_index = AsyncMock()
+        matching_doc = {
+            "id": "sre_support_tickets:ticket-hash:chunk:0",
+            "document_hash": "ticket-hash",
+            "chunk_index": 0,
+            "title": "Incident ticket",
+            "content": "Exact match content",
+            "source": "foo|bar/baz[prod]",
+            "doc_type": "support_ticket",
+            "name": "foo|bar/baz[prod]",
+            "version": "latest",
+        }
+        support_tickets_index.query = AsyncMock(
+            side_effect=[[matching_doc], [matching_doc], [matching_doc]]
+        )
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+            new_callable=AsyncMock,
+            return_value=support_tickets_index,
+        ):
+            result = await knowledge_helpers._find_support_ticket_exact_matches(
+                query="foo|bar/baz[prod]",
+                version="latest",
+            )
+
+        assert len(result) == 1
+        assert result[0]["document_hash"] == "ticket-hash"
+        assert support_tickets_index.query.await_count == len(
+            knowledge_helpers._EXACT_MATCH_TAG_FIELDS
+        )
+
+        expected_field_filters = (
+            r"@name:{foo\|bar\/baz\[prod\]}",
+            r"@document_hash:{foo\|bar\/baz\[prod\]}",
+            r"@source:{foo\|bar\/baz\[prod\]}",
+        )
+        observed_filters = [
+            str(call.args[0]._filter_expression)
+            for call in support_tickets_index.query.await_args_list
+        ]
+
+        for expected_filter, observed_filter in zip(expected_field_filters, observed_filters):
+            assert expected_filter in observed_filter
+            assert "@doc_type:{support_ticket}" in observed_filter
+            assert "@version:{latest}" in observed_filter
+            assert '"foo|bar/baz[prod]"' not in observed_filter
+
     @pytest.mark.asyncio
     async def test_search_support_tickets_helper_normalizes_ticket_id_from_chunk_key(self):
         with (
@@ -1682,3 +2049,65 @@ class TestPinnedDocumentsHelper:
             result = await get_pinned_documents_helper(version="latest", limit=10)
 
         assert result["results_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_pinned_documents_falls_back_when_pinned_field_missing(self):
+        """Older indices without a pinned field should not emit hard warnings or fail."""
+
+        class _FallbackIndex:
+            def __init__(self, rows):
+                self.rows = rows
+                self.calls = 0
+
+            async def query(self, query):
+                self.calls += 1
+                filter_expr = getattr(query, "_filter_expression", None)
+                if self.calls == 1 and "pinned" in str(filter_expr):
+                    raise RuntimeError(
+                        "Error while searching: unknown field at offset 0 near pinned"
+                    )
+                return self.rows
+
+        knowledge_index = AsyncMock()
+        knowledge_index.query = AsyncMock(return_value=[])
+        skills_index = _FallbackIndex(
+            [
+                {
+                    "id": "skill-1",
+                    "document_hash": "skill-1",
+                    "chunk_index": 0,
+                    "title": "Pinned Skill",
+                    "content": "Dedicated skill content",
+                    "source": "skills/pinned.md",
+                    "name": "Pinned Skill",
+                    "priority": "critical",
+                    "pinned": "true",
+                    "doc_type": "skill",
+                    "version": "latest",
+                }
+            ]
+        )
+        tickets_index = _FallbackIndex([])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=knowledge_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new_callable=AsyncMock,
+                return_value=skills_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_support_tickets_index",
+                new_callable=AsyncMock,
+                return_value=tickets_index,
+            ),
+        ):
+            result = await get_pinned_documents_helper(version="latest", limit=10)
+
+        assert result["results_count"] == 1
+        assert result["pinned_documents"][0]["name"] == "Pinned Skill"
+        assert skills_index.calls == 2

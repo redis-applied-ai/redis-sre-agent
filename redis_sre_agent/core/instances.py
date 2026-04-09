@@ -683,6 +683,15 @@ async def save_instances(instances: List[RedisInstance]) -> bool:
                 await client.delete(f"{SRE_INSTANCES_INDEX}:{sid}")
             except Exception:
                 pass
+
+        # Keep the unified discovery catalog in sync without changing the
+        # authoritative instance index behavior.
+        try:
+            from redis_sre_agent.core.targets import sync_target_catalog
+
+            await sync_target_catalog(instances=instances)
+        except Exception:
+            logger.debug("Best-effort target catalog sync failed after saving instances")
         return True
     except Exception as e:
         logger.exception("Failed to save instances to Redis: %s", e)

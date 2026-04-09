@@ -1,9 +1,10 @@
 # Getting Started with the SRE Agent
 
+If you want the fastest seeded local demo, start with `make quick-demo` from the repository root. This guide walks through the full manual path so you can see each step of the stack and the knowledge pipeline.
+
 ## Prerequisites
 
-- Docker
-- Docker Compose
+- Docker with Compose v2
 - OpenAI API key
 - Python >= 3.12
 - uv package manager
@@ -22,16 +23,35 @@ Update the `.env` file to include your OpenAI key:
 OPENAI_API_KEY=your_key
 ```
 
-Generate master keys for the SRE agent and LiteLLM proxy:
+Generate a master key for the SRE agent:
 
 ```bash
 python -c 'import os, base64; print("REDIS_SRE_MASTER_KEY=" + base64.b64encode(os.urandom(32)).decode())'
-python -c 'import os, base64; print("LITELLM_MASTER_KEY=" + base64.b64encode(os.urandom(32)).decode())'
 ```
 
-Copy the output and add both lines to your `.env` file.
+Copy the output into your `.env` file.
 
-**Note:** The example environment file sets default models. If you are using newer models, confirm that they are available in the LiteLLM config at `/monitoring/litellm/config.yaml`.
+**Note:** The example environment file sets default models. If you are using a custom OpenAI-compatible endpoint, confirm the configured model names are available there.
+
+## Fastest path
+
+```bash
+cp .env.example .env
+# Set OPENAI_API_KEY
+# Generate REDIS_SRE_MASTER_KEY with:
+# python3 -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
+
+make quick-demo
+```
+
+After the stack is up, you can prove the value quickly with:
+
+```bash
+docker compose exec -T sre-agent uv run redis-sre-agent \
+  query "What are Redis eviction policies?"
+```
+
+For a full walkthrough, continue below.
 
 ## Docker Compose
 
@@ -48,7 +68,6 @@ Here's what each service does:
 - **sre-agent**: The SRE agent API
 - **sre-worker**: The SRE agent worker
 - **sre-ui**: The web UI for interacting with the agent
-- **litellm**: LLM proxy for OpenAI API calls
 - **prometheus**: Prometheus instance for metrics
 - **grafana**: Grafana instance for dashboards
 - **loki**: Loki instance for log aggregation

@@ -23,6 +23,7 @@ def index_list(as_json: bool):
 
     async def _run():
         from redis_sre_agent.core.redis import (
+            SRE_CLUSTERS_INDEX,
             SRE_INSTANCES_INDEX,
             SRE_KNOWLEDGE_INDEX,
             SRE_SCHEDULES_INDEX,
@@ -30,6 +31,7 @@ def index_list(as_json: bool):
             SRE_SUPPORT_TICKETS_INDEX,
             SRE_TASKS_INDEX,
             SRE_THREADS_INDEX,
+            get_clusters_index,
             get_instances_index,
             get_knowledge_index,
             get_schedules_index,
@@ -48,6 +50,7 @@ def index_list(as_json: bool):
             ("threads", SRE_THREADS_INDEX, get_threads_index),
             ("tasks", SRE_TASKS_INDEX, get_tasks_index),
             ("instances", SRE_INSTANCES_INDEX, get_instances_index),
+            ("clusters", SRE_CLUSTERS_INDEX, get_clusters_index),
         ]
 
         results = []
@@ -127,6 +130,7 @@ def index_list(as_json: bool):
             "threads",
             "tasks",
             "instances",
+            "clusters",
             "all",
         ]
     ),
@@ -169,5 +173,130 @@ def index_recreate(index_name: str, yes: bool, as_json: bool):
                 console.print(f"  - {idx_name}: {status}")
         else:
             console.print(f"[red]❌ Failed to recreate indices: {result.get('error')}[/red]")
+
+    asyncio.run(_run())
+
+
+@index.command("schema-status")
+@click.option(
+    "--index-name",
+    type=click.Choice(
+        [
+            "knowledge",
+            "skills",
+            "support_tickets",
+            "schedules",
+            "threads",
+            "tasks",
+            "instances",
+            "clusters",
+            "all",
+        ]
+    ),
+    default="all",
+    help="Which index to inspect (default: all)",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output JSON")
+def index_schema_status(index_name: str, as_json: bool):
+    """Show whether existing index schemas match the current code definitions."""
+
+    async def _run():
+        from redis_sre_agent.core.redis import get_index_schema_status
+
+        console = Console()
+        result = await get_index_schema_status(index_name if index_name != "all" else None)
+
+        if as_json:
+            print(_json.dumps(result, indent=2))
+            return
+
+        table = Table(title="RediSearch Schema Status")
+        table.add_column("Name", no_wrap=True)
+        table.add_column("Index Name", no_wrap=True)
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Details")
+
+        for name, info in result.get("indices", {}).items():
+            details = []
+            if info.get("missing_fields"):
+                details.append("missing: " + ", ".join(info["missing_fields"]))
+            if info.get("unexpected_fields"):
+                details.append("unexpected: " + ", ".join(info["unexpected_fields"]))
+            if info.get("mismatched_fields"):
+                details.append("type/attrs drift: " + ", ".join(sorted(info["mismatched_fields"])))
+            if info.get("error"):
+                details.append(f"error: {info['error']}")
+            if not details:
+                details.append("schema matches current code")
+
+            table.add_row(
+                name,
+                info.get("index_name", "-"),
+                info.get("status", "unknown"),
+                "; ".join(details),
+            )
+
+        console.print(table)
+
+    asyncio.run(_run())
+
+
+@index.command("sync-schemas")
+@click.option(
+    "--index-name",
+    type=click.Choice(
+        [
+            "knowledge",
+            "skills",
+            "support_tickets",
+            "schedules",
+            "threads",
+            "tasks",
+            "instances",
+            "clusters",
+            "all",
+        ]
+    ),
+    default="all",
+    help="Which index to sync (default: all)",
+)
+@click.option("-y", "--yes", is_flag=True, help="Skip confirmation prompt")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON")
+def index_sync_schemas(index_name: str, yes: bool, as_json: bool):
+    """Create or recreate only indices whose schema has drifted."""
+
+    async def _run():
+        from redis_sre_agent.core.redis import sync_index_schemas
+
+        console = Console()
+
+        if not yes and not as_json:
+            console.print(
+                "[yellow]Warning:[/yellow] Drifted indices will be recreated with the "
+                "current schema. Existing Redis hashes remain, but RediSearch will rebuild "
+                "the selected indices."
+            )
+            if not click.confirm("Continue?"):
+                console.print("Aborted.")
+                return
+
+        result = await sync_index_schemas(index_name if index_name != "all" else None)
+
+        if as_json:
+            print(_json.dumps(result, indent=2))
+            return
+
+        if result.get("success"):
+            console.print("[green]✅ Schema sync completed[/green]")
+        else:
+            console.print("[red]❌ Schema sync completed with errors[/red]")
+
+        for name, info in result.get("indices", {}).items():
+            console.print(
+                f"  - {name}: {info.get('action', 'unknown')} "
+                f"(previously {info.get('previous_status', 'unknown')})"
+            )
+            if info.get("error"):
+                console.print(f"    error: {info['error']}")
 
     asyncio.run(_run())

@@ -19,6 +19,7 @@ dependencies = [
     "langchain>=0.3.25",
     "langchain-openai>=0.2.0",
     "openai>=1.0.0",
+    "agent-memory-client>=0.14.0",
     # Redis and vector search
     "redis>=4.5.0",
     "redisvl>=0.9.0,<1.0",
@@ -33,7 +34,7 @@ dependencies = [
     # HTTP and async
     "aiohttp>=3.8.0",
     "httpx>=0.25.0",
-    "redis-enterprise>=0.8.3; sys_platform == 'darwin'",
+    "redis-enterprise>=0.8.7",
     "aiofiles>=24.1.0",
     "websockets>=12.0",
     # Data processing
@@ -64,8 +65,6 @@ dependencies = [
     "cryptography>=45.0.0,<46",
     "mcp>=1.23.3",
     "nltk>=3.9.1",
-    # MCP memory server
-    "agent-memory-server>=0.3.0",
     "jmespath>=1.0.1",
 ]
 
@@ -85,7 +84,6 @@ dev = [
     "openapi-python-client>=0.21.0",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.6.22",
-    "mfcqi>=0.0.4",
 ]
 
 
@@ -138,6 +136,16 @@ ignore = ["E501"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+
+[tool.coverage.run]
+omit = [
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client/*",
+]
+
+[tool.coverage.report]
+omit = [
+    "redis_sre_agent/tools/cloud/redis_cloud/api_client/*",
+]
 
 [tool.mypy]
 python_version = "3.12"

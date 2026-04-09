@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypedD
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode as LGToolNode
 from opentelemetry import trace
 
+from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
@@ -29,6 +29,14 @@ from redis_sre_agent.core.progress import (
     ProgressEmitter,
 )
 from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.targets import (
+    build_attached_target_prompt_fallback,
+    build_attached_target_prompt_loader,
+    build_attached_target_scope_prompt,
+    build_single_attached_binding_prompt,
+    get_attached_target_handles_from_context,
+)
+from redis_sre_agent.core.turn_scope import TurnScope
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
 
@@ -36,7 +44,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from .helpers import build_result_envelope
-from .knowledge_context import build_startup_knowledge_context
+from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -107,12 +115,13 @@ class ChatAgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
     startup_system_prompt: Optional[str]
     startup_prompt_initialized: NotRequired[bool]
+    toolset_generation: NotRequired[int]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -292,6 +301,29 @@ class ChatAgent:
             },
         }
 
+    def _tool_call_progress_message(
+        self,
+        tool_mgr: ToolManager,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+    ) -> str:
+        """Build the user-facing progress message for a tool call."""
+        status_msg = tool_mgr.get_status_update(tool_name, tool_args)
+        if status_msg:
+            return status_msg
+
+        if tool_name == "expand_evidence":
+            query = str(tool_args.get("query") or "").strip()
+            message = (
+                "I have a preview of the last tool call's output. "
+                "I'm retrieving the full output now."
+            )
+            if query:
+                message += f" Applying JMESPath query: {query}"
+            return message
+
+        return f"Executing tool: {tool_name}"
+
     def _summarize_envelope_sync(self, env: Dict[str, Any]) -> Dict[str, Any]:
         """Set summary field for large envelope data, preserving full data.
 
@@ -379,40 +411,71 @@ class ChatAgent:
     def _build_workflow(
         self,
         tool_mgr: ToolManager,
-        llm_with_tools: ChatOpenAI,
-        adapters: List[Any],
         emitter: Optional[ProgressEmitter] = None,
     ) -> StateGraph:
         """Build the LangGraph workflow for chat interactions.
 
         Args:
             tool_mgr: ToolManager instance for resolving tool calls
-            llm_with_tools: LLM instance with tools bound
-            adapters: List of tool adapters for the ToolNode
             emitter: Optional progress emitter for status updates
         """
-        tooldefs_by_name = {t.name: t for t in tool_mgr.get_tools()}
-
         # Mutable container for envelopes - expand_evidence references this
         # so it can access envelopes as they're added by tool calls
         envelopes_container: Dict[str, List[Dict[str, Any]]] = {"envelopes": []}
+        runtime_tools_by_generation: Dict[int, Dict[str, Any]] = {}
 
-        # Build expand_evidence tool upfront so LLM knows it exists
-        expand_spec = self._build_expand_evidence_tool(envelopes_container)
-        expand_tool = StructuredTool.from_function(
-            func=expand_spec["func"],
-            name=expand_spec["name"],
-            description=expand_spec["description"],
-        )
-        all_adapters = list(adapters) + [expand_tool]
-        llm_with_expand = self.llm.bind_tools(all_adapters)
+        async def ensure_runtime_tools(
+            requested_generation: Optional[int] = None,
+        ) -> Dict[str, Any]:
+            current_generation = tool_mgr.get_toolset_generation()
+            generation = (
+                requested_generation if requested_generation is not None else current_generation
+            )
+            cached = runtime_tools_by_generation.get(generation)
+            if cached is not None:
+                return cached
+
+            if requested_generation is not None and requested_generation != current_generation:
+                logger.warning(
+                    "Requested chat tool generation %s is unavailable; using current generation %s",
+                    requested_generation,
+                    current_generation,
+                )
+                generation = current_generation
+                cached = runtime_tools_by_generation.get(generation)
+                if cached is not None:
+                    return cached
+
+            from .helpers import build_adapters_for_tooldefs as _build_adapters
+
+            tooldefs = tool_mgr.get_tools()
+            adapters = await _build_adapters(tool_mgr, tooldefs)
+            expand_spec = self._build_expand_evidence_tool(envelopes_container)
+            expand_tool = StructuredTool.from_function(
+                func=expand_spec["func"],
+                name=expand_spec["name"],
+                description=expand_spec["description"],
+            )
+            all_adapters = list(adapters) + [expand_tool]
+            runtime = {
+                "generation": generation,
+                "tooldefs_by_name": {t.name: t for t in tooldefs},
+                "all_adapters": all_adapters,
+                "llm_with_expand": self.llm.bind_tools(all_adapters),
+                "tool_node": LGToolNode(all_adapters),
+            }
+            runtime_tools_by_generation[generation] = runtime
+            return runtime
 
         async def agent_node(state: ChatAgentState) -> Dict[str, Any]:
             """Main agent node - invokes LLM with tools."""
+            runtime = await ensure_runtime_tools()
+            tooldefs_by_name = runtime["tooldefs_by_name"]
             messages = state["messages"]
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
             startup_prompt_initialized = state.get("startup_prompt_initialized", False)
+            signals_envelopes = list(state.get("signals_envelopes") or [])
 
             if (
                 startup_system_prompt is None
@@ -437,6 +500,10 @@ class ChatAgent:
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
                     )
+                    signals_envelopes = merge_internal_tool_envelopes(
+                        signals_envelopes,
+                        getattr(startup_context, "internal_tool_envelopes", []),
+                    )
                     startup_system_prompt = (
                         f"{startup_context}\n\n{CHAT_SYSTEM_PROMPT}"
                         if startup_context.strip()
@@ -447,7 +514,7 @@ class ChatAgent:
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             with tracer.start_as_current_span("chat_agent_node"):
-                response = await llm_with_expand.ainvoke(messages)
+                response = await runtime["llm_with_expand"].ainvoke(messages)
 
             # Persist only the original workflow state messages plus response.
             # If we injected a SystemMessage just for this invocation, keep it ephemeral.
@@ -457,6 +524,8 @@ class ChatAgent:
                 "iteration_count": iteration_count + 1,
                 "startup_system_prompt": startup_system_prompt,
                 "startup_prompt_initialized": startup_prompt_initialized,
+                "toolset_generation": runtime["generation"],
+                "signals_envelopes": signals_envelopes,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -464,6 +533,8 @@ class ChatAgent:
 
         async def tool_node(state: ChatAgentState) -> Dict[str, Any]:
             """Execute tool calls from the agent."""
+            runtime = await ensure_runtime_tools(state.get("toolset_generation"))
+            tooldefs_by_name = runtime["tooldefs_by_name"]
             messages = state["messages"]
             envelopes = list(state.get("signals_envelopes") or [])
 
@@ -483,17 +554,13 @@ class ChatAgent:
                         tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
                     ) or {}
                     if tool_name:
-                        # Try to get provider-supplied status message
-                        status_msg = tool_mgr.get_status_update(tool_name, tool_args)
-                        if status_msg:
-                            await emitter.emit(status_msg, "tool_call")
-                        else:
-                            # Default status message
-                            await emitter.emit(f"Executing tool: {tool_name}", "tool_call")
+                        status_msg = self._tool_call_progress_message(
+                            tool_mgr, tool_name, tool_args
+                        )
+                        await emitter.emit(status_msg, "tool_call")
 
             with tracer.start_as_current_span("chat_tool_node"):
-                lg_tool_node = LGToolNode(all_adapters)
-                out = await lg_tool_node.ainvoke({"messages": messages})
+                out = await runtime["tool_node"].ainvoke({"messages": messages})
                 out_messages = out.get("messages", [])
                 new_tool_messages = [m for m in out_messages if isinstance(m, ToolMessage)]
 
@@ -549,6 +616,7 @@ class ChatAgent:
             return {
                 "messages": list(messages) + messages_for_llm,
                 "current_tool_calls": [],
+                "toolset_generation": runtime["generation"],
                 "signals_envelopes": envelopes,
             }
 
@@ -583,7 +651,7 @@ class ChatAgent:
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = 10,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
@@ -594,7 +662,7 @@ class ChatAgent:
         Args:
             query: User's question
             session_id: Session identifier
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum agent iterations (default 10)
             context: Additional context (e.g., instance_id)
             progress_emitter: Emitter for progress/notification updates
@@ -603,10 +671,33 @@ class ChatAgent:
         Returns:
             AgentResponse with response text and any knowledge search results used
         """
-        logger.info(f"Chat agent processing query for user {user_id}")
+        logger.info("Chat agent processing query for user %s", user_id or "<anonymous>")
+        normalized_context = dict(context or {})
+        raw_attached_target_handles = get_attached_target_handles_from_context(normalized_context)
+        turn_scope = TurnScope.from_context(
+            normalized_context,
+            thread_id=normalized_context.get("thread_id"),
+            session_id=session_id,
+        )
+        normalized_context.update(turn_scope.to_thread_context())
+        normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
+        attached_target_count = max(len(raw_attached_target_handles), turn_scope.target_count)
+        _get_attached_target_prompt = build_attached_target_prompt_loader(
+            normalized_context,
+            attached_target_count,
+            build_attached_target_scope_prompt,
+        )
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
+        prepared_memory = await prepare_agent_turn_memory(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            context=normalized_context,
+            emitter=emitter,
+        )
+        memory_context = prepared_memory.memory_context
 
         # Get cache client if tool caching is enabled
         cache_client = None
@@ -614,24 +705,35 @@ class ChatAgent:
             cache_client = get_redis_client()
             logger.info(f"Tool caching enabled for instance {self.redis_instance.id}")
 
+        support_package_path = self.support_package_path
+        scope_support_package_path = turn_scope.support_package_context.get("support_package_path")
+        if support_package_path is None and scope_support_package_path:
+            support_package_path = Path(scope_support_package_path)
+
+        has_attached_scope = (
+            turn_scope.scope_kind == "target_bindings" and turn_scope.target_count > 0
+        )
+        effective_redis_instance = None if has_attached_scope else self.redis_instance
+        effective_redis_cluster = None if has_attached_scope else self.redis_cluster
+
         # Create ToolManager with Redis instance for full tool access
+        tool_thread_id = turn_scope.thread_id or session_id
         async with ToolManager(
-            redis_instance=self.redis_instance,
-            redis_cluster=self.redis_cluster,
+            redis_instance=effective_redis_instance,
+            redis_cluster=effective_redis_cluster,
+            initial_target_bindings=turn_scope.bindings or None,
+            initial_toolset_generation=turn_scope.toolset_generation,
             exclude_mcp_categories=self.exclude_mcp_categories,
-            support_package_path=self.support_package_path,
+            support_package_path=support_package_path,
             cache_client=cache_client,
             cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
+            thread_id=tool_thread_id,
+            task_id=normalized_context.get("task_id"),
+            user_id=user_id,
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
             logger.info(f"Chat agent loaded {len(tools)} tools")
-
-            from .helpers import build_adapters_for_tooldefs as _build_adapters
-
-            adapters = await _build_adapters(tool_mgr, tools)
-            llm_with_tools = self.llm.bind_tools(adapters)
-
-            workflow = self._build_workflow(tool_mgr, llm_with_tools, adapters, emitter)
+            workflow = self._build_workflow(tool_mgr, emitter)
 
             checkpointer = MemorySaver()
             app = workflow.compile(checkpointer=checkpointer)
@@ -648,45 +750,74 @@ class ChatAgent:
                 else CHAT_SYSTEM_PROMPT
             )
             initial_messages: List[BaseMessage] = [SystemMessage(content=system_prompt)]
+            if memory_context.system_prompt:
+                initial_messages.append(SystemMessage(content=memory_context.system_prompt))
 
             # Add instance context to the query if available
             enhanced_query = query
-            if self.redis_instance:
+            attached_prompt_query: Optional[str] = None
+            attached_prompt_scope = attached_target_count > 1 or has_attached_scope
+            if attached_prompt_scope:
+                prompt = await _get_attached_target_prompt()
+                if not prompt:
+                    prompt = build_attached_target_prompt_fallback(
+                        attached_target_count=attached_target_count,
+                        bindings=turn_scope.bindings,
+                        attached_handles=raw_attached_target_handles,
+                    )
+                if not prompt and has_attached_scope and turn_scope.single_binding is not None:
+                    prompt = build_single_attached_binding_prompt(turn_scope.single_binding)
+                if prompt:
+                    attached_prompt_query = f"""{prompt}
+
+User Query: {query}"""
+            if attached_prompt_query:
+                enhanced_query = attached_prompt_query
+            elif effective_redis_instance:
                 repo_context = ""
-                if self.redis_instance.repo_url:
-                    repo_context = f"""- Repository URL: {self.redis_instance.repo_url}
+                if effective_redis_instance.repo_url:
+                    repo_context = f"""- Repository URL: {effective_redis_instance.repo_url}
 
 If you have GitHub tools available, you can search the repository for code, configuration, or documentation related to this Redis instance.
 """
                 instance_context = f"""
 INSTANCE CONTEXT: This query is about Redis instance:
-- Instance Name: {self.redis_instance.name}
-- Environment: {self.redis_instance.environment}
-- Usage: {self.redis_instance.usage}
-- Instance Type: {self.redis_instance.instance_type}
+- Instance Name: {effective_redis_instance.name}
+- Environment: {effective_redis_instance.environment}
+- Usage: {effective_redis_instance.usage}
+- Instance Type: {effective_redis_instance.instance_type}
 {repo_context}
 Your diagnostic tools are PRE-CONFIGURED for this instance.
 
 User Query: {query}"""
                 enhanced_query = instance_context
-            elif self.redis_cluster:
+            elif effective_redis_cluster:
                 cluster_context = f"""
 CLUSTER CONTEXT: This query is about Redis cluster:
-- Cluster Name: {self.redis_cluster.name}
-- Cluster ID: {self.redis_cluster.id}
-- Environment: {self.redis_cluster.environment}
-- Cluster Type: {self.redis_cluster.cluster_type}
+- Cluster Name: {effective_redis_cluster.name}
+- Cluster ID: {effective_redis_cluster.id}
+- Environment: {effective_redis_cluster.environment}
+- Cluster Type: {effective_redis_cluster.cluster_type}
 
 Cluster-level admin tools are PRE-CONFIGURED for this cluster when available.
 
 User Query: {query}"""
                 enhanced_query = cluster_context
+            else:
+                prompt = None
+                if not attached_prompt_scope:
+                    prompt = await _get_attached_target_prompt()
+                if prompt:
+                    enhanced_query = f"""{prompt}
+
+User Query: {query}"""
 
             if conversation_history:
                 initial_messages.extend(conversation_history)
 
             initial_messages.append(HumanMessage(content=enhanced_query))
 
+            initial_generation = tool_mgr.get_toolset_generation()
             initial_state: ChatAgentState = {
                 "messages": initial_messages,
                 "session_id": session_id,
@@ -696,7 +827,11 @@ User Query: {query}"""
                 "max_iterations": max_iterations,
                 "startup_system_prompt": system_prompt,
                 "startup_prompt_initialized": True,
-                "signals_envelopes": [],  # Track tool outputs - citations derived via extract_citations()
+                "toolset_generation": initial_generation,
+                "signals_envelopes": merge_internal_tool_envelopes(
+                    [],
+                    getattr(startup_context, "internal_tool_envelopes", []),
+                ),
             }
 
             thread_config = {"configurable": {"thread_id": session_id}}
@@ -713,18 +848,22 @@ User Query: {query}"""
                 if messages:
                     last_message = messages[-1]
                     if isinstance(last_message, AIMessage):
-                        return AgentResponse(
+                        response = AgentResponse(
                             response=last_message.content,
                             tool_envelopes=tool_envelopes,
                         )
-                    return AgentResponse(
-                        response=str(last_message.content),
-                        tool_envelopes=tool_envelopes,
-                    )
+                    else:
+                        response = AgentResponse(
+                            response=str(last_message.content),
+                            tool_envelopes=tool_envelopes,
+                        )
+                    await prepared_memory.persist_response_fail_open(response.response)
+                    return response
 
-                return AgentResponse(
+                fallback = AgentResponse(
                     response="I couldn't process that query. Please try rephrasing.",
                 )
+                return fallback
 
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")

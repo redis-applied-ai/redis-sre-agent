@@ -189,6 +189,36 @@ uv run redis-sre-agent pipeline prepare-sources \
     --source-dir ./source_documents
 ```
 
+### Keeping The Index Up To Date
+
+Treat ingestion as an explicit maintenance step, not an automatic background sync.
+
+- When you add, edit, or remove files under `source_documents/`, rerun `pipeline prepare-sources` so the Redis index reflects those changes.
+- After upgrading to a release that changes indexed metadata or search schema, rerun the same prepare-and-ingest flow to refresh the stored documents.
+- Re-ingestion is incremental: unchanged chunks reuse existing embeddings, changed chunks are regenerated, and deleted chunks are removed from the index.
+
+Recommended command after source-document changes or schema-affecting upgrades:
+
+```bash
+uv run redis-sre-agent pipeline prepare-sources \
+    --source-dir ./source_documents \
+    --artifacts-path ./artifacts
+```
+
+If you prefer the two-step flow:
+
+```bash
+uv run redis-sre-agent pipeline prepare-sources \
+    --source-dir ./source_documents \
+    --prepare-only \
+    --artifacts-path ./artifacts
+
+uv run redis-sre-agent pipeline ingest \
+    --artifacts-path ./artifacts
+```
+
+Note: this refreshes the knowledge corpus built from `source_documents/`. If a release introduces schema changes for other indexed corpora, such as skills or support tickets, rerun the corresponding ingest/reindex path for those datasets as well.
+
 ### Adding Your Own Documents
 
 1. Create a markdown file in the appropriate subdirectory:

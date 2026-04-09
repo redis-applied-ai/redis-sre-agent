@@ -17,6 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
+from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.progress import (
@@ -25,8 +26,8 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.tools.manager import ToolManager
 
-from .helpers import build_result_envelope
-from .knowledge_context import build_startup_knowledge_context
+from .helpers import build_result_envelope, extract_citations
+from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ class KnowledgeAgentState(TypedDict):
 
     messages: List[BaseMessage]
     session_id: str
-    user_id: str
+    user_id: Optional[str]
     current_tool_calls: List[Dict[str, Any]]
     iteration_count: int
     max_iterations: int
@@ -140,6 +141,7 @@ class KnowledgeOnlyAgent:
             iteration_count = state.get("iteration_count", 0)
             startup_system_prompt = state.get("startup_system_prompt")
             startup_prompt_initialized = state.get("startup_prompt_initialized", False)
+            signals_envelopes = list(state.get("signals_envelopes") or [])
 
             # Cache and reuse startup prompt for this workflow execution to avoid repeated
             # knowledge-context lookups in tool-call loops.
@@ -165,6 +167,10 @@ class KnowledgeOnlyAgent:
                         query=context_query,
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
+                    )
+                    signals_envelopes = merge_internal_tool_envelopes(
+                        signals_envelopes,
+                        getattr(startup_context, "internal_tool_envelopes", []),
                     )
                     startup_system_prompt = (
                         f"{startup_context}\n\n{KNOWLEDGE_SYSTEM_PROMPT}"
@@ -265,6 +271,7 @@ class KnowledgeOnlyAgent:
                 # No per-iteration progress message; providers will emit status updates
                 state["startup_system_prompt"] = startup_system_prompt
                 state["startup_prompt_initialized"] = startup_prompt_initialized
+                state["signals_envelopes"] = signals_envelopes
                 return state
 
             except Exception as e:
@@ -276,6 +283,7 @@ class KnowledgeOnlyAgent:
                 state["current_tool_calls"] = []
                 state["startup_system_prompt"] = startup_system_prompt
                 state["startup_prompt_initialized"] = startup_prompt_initialized
+                state["signals_envelopes"] = signals_envelopes
                 return state
 
         async def safe_tool_node(state: KnowledgeAgentState) -> KnowledgeAgentState:
@@ -486,7 +494,7 @@ class KnowledgeOnlyAgent:
         self,
         query: str,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         max_iterations: int = 5,
         context: Optional[Dict[str, Any]] = None,
         progress_emitter: Optional[ProgressEmitter] = None,
@@ -498,7 +506,7 @@ class KnowledgeOnlyAgent:
         Args:
             query: User's question or request
             session_id: Session identifier
-            user_id: User identifier
+            user_id: Optional user identifier
             max_iterations: Maximum number of agent iterations
             context: Additional context (currently ignored for knowledge-only agent)
             progress_emitter: Emitter for progress/notification updates
@@ -507,10 +515,18 @@ class KnowledgeOnlyAgent:
         Returns:
             Agent's response as a string
         """
-        logger.info(f"Processing knowledge query for user {user_id}")
+        logger.info("Processing knowledge query for user %s", user_id or "<anonymous>")
 
         # Use provided emitter, or fall back to instance emitter
         emitter = progress_emitter if progress_emitter is not None else self._emitter
+        prepared_memory = await prepare_agent_turn_memory(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            context=context,
+            emitter=emitter,
+        )
+        memory_context = prepared_memory.memory_context
 
         # Create ToolManager with Redis instance-independent tools
         async with ToolManager(redis_instance=None) as tool_mgr:
@@ -540,6 +556,8 @@ class KnowledgeOnlyAgent:
 
             # Create initial state with conversation history
             initial_messages = [SystemMessage(content=system_prompt)]
+            if memory_context.system_prompt:
+                initial_messages.append(SystemMessage(content=memory_context.system_prompt))
             if conversation_history:
                 initial_messages.extend(conversation_history)
                 logger.info(
@@ -558,7 +576,10 @@ class KnowledgeOnlyAgent:
                 "startup_prompt_initialized": True,
                 "tool_calls_executed": 0,
                 "knowledge_search_results": [],
-                "signals_envelopes": [],
+                "signals_envelopes": merge_internal_tool_envelopes(
+                    [],
+                    getattr(startup_context, "internal_tool_envelopes", []),
+                ),
             }
 
             # Create MemorySaver for this query
@@ -581,11 +602,9 @@ class KnowledgeOnlyAgent:
                 # Run the workflow (with recursion limit to match settings)
                 final_state = await app.ainvoke(initial_state, config=thread_config)
 
-                # Extract knowledge search results for citation tracking
-                search_results = final_state.get("knowledge_search_results", [])
-
                 # Get tool envelopes for decision traces
                 tool_envelopes = final_state.get("signals_envelopes", [])
+                search_results = extract_citations(tool_envelopes)
 
                 # Extract the final response
                 messages = final_state.get("messages", [])
@@ -605,9 +624,12 @@ class KnowledgeOnlyAgent:
                 )
 
                 logger.info(f"Knowledge query completed for user {user_id}")
-                return AgentResponse(
+                result = AgentResponse(
                     response=response, search_results=search_results, tool_envelopes=tool_envelopes
                 )
+                if messages:
+                    await prepared_memory.persist_response_fail_open(result.response)
+                return result
 
             except Exception as e:
                 logger.error(f"Knowledge agent processing failed: {e}")

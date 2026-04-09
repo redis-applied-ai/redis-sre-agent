@@ -2,7 +2,7 @@
 
 The agent exposes capabilities to the LLM via a provider system managed by ToolManager.
 
-This is an early release with an initial set of built-in providers. More providers for popular observability systems are coming. The tool system is fully extensible - you can write your own providers or add MCP servers.
+Out of the box, the agent can draw on Prometheus, Loki, Redis diagnostics, host telemetry, and optional MCP servers. The provider system is fully extensible, so you can map the agent onto your existing observability, admin, and ticketing systems without changing the core agent loop.
 
 ### What loads
 - **Without an instance**: Knowledge base and basic utilities (date conversions, calculator)
@@ -10,7 +10,7 @@ This is an early release with an initial set of built-in providers. More provide
 - **Conditional providers**: Additional providers based on instance type (e.g., Redis Enterprise admin API, Redis Cloud API)
 - **MCP servers**: External tools from configured MCP servers (see below)
 
-### Built-in providers (v0.1)
+### Built-in providers
 - **Prometheus metrics**: `redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider`
   - Config: `TOOLS_PROMETHEUS_URL`, `TOOLS_PROMETHEUS_DISABLE_SSL`
 - **Loki logs**: `redis_sre_agent.tools.logs.loki.provider.LokiToolProvider`
@@ -19,8 +19,6 @@ This is an early release with an initial set of built-in providers. More provide
   - Runs Redis commands against target instances
 - **Host telemetry**: `redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider`
   - System-level metrics and diagnostics
-
-More providers coming for popular observability and cloud platforms.
 
 Configure providers (environment override)
 ```bash
@@ -99,24 +97,10 @@ Add external MCP servers to give the agent additional tools. The agent connects 
 
 ### Configuration
 
-Add MCP servers in `config.yaml`:
+Add MCP servers in a config file. YAML is shown here because nested MCP configuration is easier to read in YAML:
 
 ```yaml
 mcp_servers:
-  # Memory server (stdio transport - launches process)
-  redis-memory-server:
-    command: uv
-    args: ["tool", "run", "--from", "agent-memory-server", "agent-memory", "mcp"]
-    env:
-      REDIS_URL: redis://localhost:6399
-    tools:
-      # Optional: customize tool descriptions for better LLM understanding
-      search_long_term_memories:
-        description: |
-          Search memories for past incidents, resolutions, and context about
-          this Redis instance. Use when investigating recurring issues.
-          {original}
-
   # GitHub MCP server (HTTP transport - remote endpoint)
   github:
     url: "https://api.githubcopilot.com/mcp/"
@@ -165,4 +149,4 @@ tool_manager = ToolManager(
 )
 ```
 
-See `config.yaml.example` for full MCP configuration examples.
+See `config.yaml.example` for full YAML MCP configuration examples.

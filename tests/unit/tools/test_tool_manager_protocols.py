@@ -39,6 +39,8 @@ async def test_protocol_selection_for_utilities_subset():
             # Skip MCP tools which have a different naming convention (mcp_servername_hash_toolname)
             if t.name.startswith("mcp_"):
                 continue
+            if t.name.startswith("target_discovery_"):
+                continue
             assert t.name.startswith("utilities_"), f"Unexpected provider prefix: {t.name}"
             parts = t.name.split("_", 2)
             op = parts[2] if len(parts) >= 3 else parts[-1]

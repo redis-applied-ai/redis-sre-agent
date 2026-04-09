@@ -32,7 +32,7 @@ describe("SREAgentAPI", () => {
 
       // Verify the correct API endpoint was called with delete parameter
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8000/api/v1/tasks/test-thread-123?delete=true",
+        "http://localhost:8080/api/v1/tasks/test-thread-123?delete=true",
         {
           method: "DELETE",
         },
@@ -84,7 +84,7 @@ describe("SREAgentAPI", () => {
       ).resolves.toBeUndefined();
 
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8000/api/v1/tasks/test-thread-123",
+        "http://localhost:8080/api/v1/tasks/test-thread-123",
         {
           method: "DELETE",
         },
@@ -126,7 +126,7 @@ describe("SREAgentAPI", () => {
 
       expect(result).toEqual(mockStatus);
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8000/api/v1/tasks/test-thread-123",
+        "http://localhost:8080/api/v1/tasks/test-thread-123",
       );
     });
   });
