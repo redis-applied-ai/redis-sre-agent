@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from redis_sre_agent.cli.pipeline import pipeline
+from redis_sre_agent.cli.pipeline import _merge_source_document_changes, pipeline
 
 
 @pytest.fixture
@@ -218,7 +218,6 @@ def test_prepare_sources_command_branches(cli_runner, temp_artifacts_path, tmp_p
     )
     assert invalid.exit_code == 0
     assert "Invalid batch date format" in invalid.output
-
     no_markdown = cli_runner.invoke(
         pipeline,
         [
@@ -253,11 +252,23 @@ def test_prepare_sources_command_branches(cli_runner, temp_artifacts_path, tmp_p
                 "chunks_indexed": 3,
                 "source_document_changes": {
                     "added": 1,
-                    "updated": 1,
+                    "updated": 0,
                     "deleted": 0,
                     "unchanged": 0,
                     "files": [
                         {"action": "add", "path": "shared/new.md"},
+                    ],
+                },
+            },
+            {
+                "status": "success",
+                "chunks_indexed": 2,
+                "source_document_changes": {
+                    "added": 0,
+                    "updated": 1,
+                    "deleted": 0,
+                    "unchanged": 0,
+                    "files": [
                         {"action": "update", "path": "shared/current.md"},
                     ],
                 },
@@ -295,8 +306,10 @@ def test_prepare_sources_command_branches(cli_runner, temp_artifacts_path, tmp_p
         )
         assert full.exit_code == 0
         assert "Batch date: 2025-08-21" in full.output
-        assert "Successfully ingested: 1 documents" in full.output
+        assert "Successfully ingested: 2 documents" in full.output
         assert "Failed to ingest: 1 documents" in full.output
+        assert "Total chunks indexed: 5" in full.output
+        assert "added=1 updated=1 deleted=0 unchanged=0" in full.output
         assert "add: shared/new.md" in full.output
         assert "update: shared/current.md" in full.output
 
@@ -313,3 +326,40 @@ def test_prepare_sources_command_branches(cli_runner, temp_artifacts_path, tmp_p
         )
         assert failed.exit_code != 0
         assert "Source preparation failed: prepare boom" in failed.output
+
+
+def test_merge_source_document_changes_skips_empty_entries_and_dedupes_scope_prefixes():
+    merged = _merge_source_document_changes(
+        [
+            None,
+            {},
+            {
+                "added": 1,
+                "updated": 0,
+                "deleted": 0,
+                "unchanged": 2,
+                "files": [{"action": "add", "path": "shared/new.md"}],
+                "scope_prefixes": ["shared/", "shared/"],
+            },
+            {
+                "added": 0,
+                "updated": 1,
+                "deleted": 1,
+                "unchanged": 0,
+                "files": [{"action": "delete", "path": "shared/old.md"}],
+                "scope_prefixes": ["runbooks/", "shared/"],
+            },
+        ]
+    )
+
+    assert merged == {
+        "added": 1,
+        "updated": 1,
+        "deleted": 1,
+        "unchanged": 2,
+        "files": [
+            {"action": "add", "path": "shared/new.md"},
+            {"action": "delete", "path": "shared/old.md"},
+        ],
+        "scope_prefixes": ["shared/", "runbooks/"],
+    }

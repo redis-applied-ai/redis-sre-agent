@@ -50,6 +50,30 @@ def _echo_source_document_changes(
             click.echo(f"{indent}   • {change['action']}: {change['path']}")
 
 
+def _merge_source_document_changes(source_changes_list: list[dict | None]) -> dict | None:
+    """Aggregate source-document change summaries across multiple results."""
+    merged = {
+        "added": 0,
+        "updated": 0,
+        "deleted": 0,
+        "unchanged": 0,
+        "files": [],
+        "scope_prefixes": [],
+    }
+    saw_changes = False
+    for source_changes in source_changes_list:
+        if not source_changes:
+            continue
+        saw_changes = True
+        for key in ("added", "updated", "deleted", "unchanged"):
+            merged[key] += int(source_changes.get(key, 0) or 0)
+        merged["files"].extend(source_changes.get("files", []))
+        for scope_prefix in source_changes.get("scope_prefixes", []):
+            if scope_prefix not in merged["scope_prefixes"]:
+                merged["scope_prefixes"].append(scope_prefix)
+    return merged if saw_changes else None
+
+
 def _echo_runbook_test_result(result: dict) -> None:
     """Print the outcome of a runbook URL extraction check."""
     if result["success"]:
@@ -510,7 +534,9 @@ def prepare_sources(
                     total_chunks = sum(r.get("chunks_indexed", 0) for r in successful)
                     click.echo(f"   📦 Total chunks indexed: {total_chunks}")
                     _echo_source_document_changes(
-                        successful[0].get("source_document_changes"),
+                        _merge_source_document_changes(
+                            [r.get("source_document_changes") for r in successful]
+                        ),
                         verbose=verbose,
                     )
 
