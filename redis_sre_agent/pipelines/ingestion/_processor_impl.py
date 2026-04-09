@@ -334,9 +334,16 @@ class IngestionPipeline(PipelineWorkflowMixin):
         # Process documents in parallel batches
         async def process_document(json_file: Path) -> Dict[str, Any]:
             """Process a single document and return stats."""
+            source_document_path = ""
+            source_document_scope = ""
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
                     doc_data = json.load(f)
+
+                metadata = doc_data.get("metadata", {})
+                if isinstance(metadata, dict):
+                    source_document_path = str(metadata.get("source_document_path") or "").strip()
+                    source_document_scope = str(metadata.get("source_document_scope") or "").strip()
 
                 document = ScrapedDocument.from_dict(doc_data)
                 chunks = self.processor.chunk_document(document)
@@ -348,13 +355,24 @@ class IngestionPipeline(PipelineWorkflowMixin):
                     tracked_source_documents=tracked_source_documents,
                 )
                 logger.debug(f"Processed document: {document.title} ({len(chunks)} chunks)")
-                return {"success": True, **indexed}
+                return {
+                    "success": True,
+                    **indexed,
+                    "source_document_path": str(
+                        indexed.get("source_document_path") or source_document_path
+                    ),
+                    "source_document_scope": str(
+                        indexed.get("source_document_scope") or source_document_scope
+                    ),
+                }
 
             except Exception as e:
                 error_msg = f"Failed to process {json_file.name}: {str(e)}"
                 logger.error(error_msg)
                 return {
                     "success": False,
+                    "source_document_path": source_document_path,
+                    "source_document_scope": source_document_scope,
                     "error": error_msg,
                 }
 
@@ -371,17 +389,15 @@ class IngestionPipeline(PipelineWorkflowMixin):
 
             # Aggregate stats
             for result in results:
+                if result.get("source_document_path"):
+                    stats["source_document_paths"].append(result["source_document_path"])
+                    stats["source_document_scopes"].append(result.get("source_document_scope", ""))
                 if result["success"]:
                     stats["documents_processed"] += 1
                     stats["chunks_created"] += result["chunks_created"]
                     stats["chunks_indexed"] += result["chunks_indexed"]
                     if result.get("source_document_change"):
                         stats["source_document_changes"].append(result["source_document_change"])
-                    if result.get("source_document_path"):
-                        stats["source_document_paths"].append(result["source_document_path"])
-                        stats["source_document_scopes"].append(
-                            result.get("source_document_scope", "")
-                        )
                 else:
                     stats["errors"].append(result["error"])
 

@@ -412,6 +412,43 @@ async def test_process_category_ignores_empty_scope_for_non_source_docs(pipeline
     assert result["source_document_scopes"] == []
 
 
+@pytest.mark.asyncio
+async def test_process_category_keeps_failed_source_documents_in_scope(pipeline, tmp_path):
+    category_path = tmp_path / "shared"
+    category_path.mkdir()
+    doc_path = category_path / "doc.json"
+    doc_path.write_text(
+        json.dumps(
+            {
+                "title": "Tracked Doc",
+                "content": "body",
+                "source_url": "https://redis.io/docs",
+                "category": "shared",
+                "doc_type": "knowledge",
+                "severity": "medium",
+                "metadata": {
+                    "source_document_path": "shared/doc.md",
+                    "source_document_scope": "shared/",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch.object(pipeline.processor, "chunk_document", side_effect=RuntimeError("bad doc")):
+        result = await pipeline._process_category(
+            category_path,
+            "shared",
+            MagicMock(),
+            {"knowledge": AsyncMock()},
+        )
+
+    assert result["documents_processed"] == 0
+    assert result["source_document_paths"] == ["shared/doc.md"]
+    assert result["source_document_scopes"] == ["shared/"]
+    assert result["errors"] == ["Failed to process doc.json: bad doc"]
+
+
 def test_source_document_identity_and_category_resolution(pipeline, tmp_path):
     source_root = tmp_path / "source_documents"
     nested_dir = source_root / "enterprise" / "guides"
@@ -545,6 +582,13 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
                         "severity": "high",
                     }
                 ],
+                "shared/broken.md": [
+                    {
+                        "deduplicator_key": "knowledge",
+                        "document_hash": "broken-hash",
+                        "title": "Broken",
+                    }
+                ],
             },
         ),
         patch.object(
@@ -559,6 +603,10 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
         "old-skill-hash", "shared/tracked.md"
     )
     knowledge.delete_tracked_source_document.assert_any_await("deleted-hash", "shared/deleted.md")
+    assert (
+        call("broken-hash", "shared/broken.md")
+        not in knowledge.delete_tracked_source_document.await_args_list
+    )
     assert any(
         result["action"] == "update" for result in results if result["file"] == "shared/tracked.md"
     )

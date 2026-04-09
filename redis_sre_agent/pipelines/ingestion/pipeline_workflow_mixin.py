@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .processor_indexing_helpers import index_processed_document
-from .processor_source_helpers import create_scraped_document_from_markdown, find_markdown_files
+from .processor_source_helpers import (
+    create_scraped_document_from_markdown,
+    find_markdown_files,
+    resolve_source_document_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +73,12 @@ class PipelineWorkflowMixin:
 
         for md_file in markdown_files:
             logger.info("Processing: %s", md_file.name)
+            source_document_path, source_document_scope = resolve_source_document_identity(
+                md_file, source_dir
+            )
+            if source_document_path:
+                current_source_paths.add(source_document_path)
+                scope_prefixes.add(source_document_scope)
             try:
                 document = create_scraped_document_from_markdown(md_file, source_dir)
                 chunks = self.processor.chunk_document(document)
@@ -79,12 +89,7 @@ class PipelineWorkflowMixin:
                     deduplicators=deduplicators,
                     tracked_source_documents=tracked_source_documents,
                 )
-                source_document_path = str(indexed.get("source_document_path") or "")
-                source_document_scope = str(indexed.get("source_document_scope") or "")
                 source_document_change = indexed.get("source_document_change") or {}
-                if source_document_path:
-                    current_source_paths.add(source_document_path)
-                    scope_prefixes.add(source_document_scope)
 
                 results.append(
                     {
