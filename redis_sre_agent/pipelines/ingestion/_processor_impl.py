@@ -377,8 +377,9 @@ class IngestionPipeline(PipelineWorkflowMixin):
                         stats["source_document_changes"].append(result["source_document_change"])
                     if result.get("source_document_path"):
                         stats["source_document_paths"].append(result["source_document_path"])
-                    if result.get("source_document_scope") is not None:
-                        stats["source_document_scopes"].append(result["source_document_scope"])
+                        stats["source_document_scopes"].append(
+                            result.get("source_document_scope", "")
+                        )
                 else:
                     stats["errors"].append(result["error"])
 

@@ -335,6 +335,53 @@ async def test_process_category_latest_only_and_error_paths(pipeline, tmp_path):
     assert "broken.json" in result["errors"][0]
 
 
+@pytest.mark.asyncio
+async def test_process_category_ignores_empty_scope_for_non_source_docs(pipeline, tmp_path):
+    category_path = tmp_path / "shared"
+    category_path.mkdir()
+    doc_path = category_path / "doc.json"
+    doc_path.write_text(
+        json.dumps(
+            {
+                "title": "Regular Doc",
+                "content": "body",
+                "source_url": "https://redis.io/docs",
+                "category": "shared",
+                "doc_type": "knowledge",
+                "severity": "medium",
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with (
+        patch.object(pipeline.processor, "chunk_document", return_value=[{"id": "chunk-1"}]),
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.index_processed_document",
+            new=AsyncMock(
+                return_value={
+                    "chunks_created": 1,
+                    "chunks_indexed": 1,
+                    "source_document_change": None,
+                    "source_document_path": "",
+                    "source_document_scope": "",
+                }
+            ),
+        ),
+    ):
+        result = await pipeline._process_category(
+            category_path,
+            "shared",
+            MagicMock(),
+            {"knowledge": AsyncMock()},
+        )
+
+    assert result["documents_processed"] == 1
+    assert result["source_document_paths"] == []
+    assert result["source_document_scopes"] == []
+
+
 def test_source_document_identity_and_category_resolution(pipeline, tmp_path):
     source_root = tmp_path / "source_documents"
     nested_dir = source_root / "enterprise" / "guides"

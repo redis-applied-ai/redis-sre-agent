@@ -909,3 +909,58 @@ class TestIngestionPipeline:
             "shared/deleted.md",
         }
         mock_save.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ingest_batch_non_source_docs_do_not_widen_source_delete_scope(
+        self, pipeline, tmp_path
+    ):
+        """Regular batch docs must not trigger stale-source deletion tracking."""
+        batch_date = "2025-01-20"
+        batch_path = tmp_path / batch_date
+        (batch_path / "shared").mkdir(parents=True)
+
+        manifest = {"batch_date": batch_date, "documents": [{"category": "shared"}]}
+        knowledge_deduplicator = AsyncMock()
+
+        with patch.object(pipeline.storage, "get_batch_manifest", return_value=manifest):
+            with patch.object(
+                pipeline, "_build_deduplicators", return_value={"knowledge": knowledge_deduplicator}
+            ):
+                with patch(
+                    "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
+                    return_value=MagicMock(),
+                ):
+                    with patch.object(
+                        pipeline,
+                        "_list_tracked_source_documents",
+                        return_value={
+                            "shared/tracked.md": [
+                                {
+                                    "deduplicator_key": "knowledge",
+                                    "document_hash": "tracked-hash",
+                                    "title": "Tracked Doc",
+                                    "doc_type": "knowledge",
+                                }
+                            ]
+                        },
+                    ):
+                        with patch.object(
+                            pipeline,
+                            "_process_category",
+                            return_value={
+                                "category": "shared",
+                                "documents_processed": 1,
+                                "chunks_created": 2,
+                                "chunks_indexed": 2,
+                                "source_document_changes": [],
+                                "source_document_paths": [],
+                                "source_document_scopes": [],
+                                "errors": [],
+                            },
+                        ):
+                            with patch.object(pipeline, "_save_ingestion_manifest"):
+                                result = await pipeline.ingest_batch(batch_date)
+
+        knowledge_deduplicator.delete_tracked_source_document.assert_not_awaited()
+        assert result["source_document_changes"]["deleted"] == 0
+        assert result["source_document_changes"]["scope_prefixes"] == []

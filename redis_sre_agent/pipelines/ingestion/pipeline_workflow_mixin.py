@@ -83,7 +83,7 @@ class PipelineWorkflowMixin:
                 source_document_scope = str(indexed.get("source_document_scope") or "")
                 if source_document_path:
                     current_source_paths.add(source_document_path)
-                scope_prefixes.add(source_document_scope)
+                    scope_prefixes.add(source_document_scope)
 
                 results.append(
                     {
