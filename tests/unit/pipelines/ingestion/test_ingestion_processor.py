@@ -708,63 +708,6 @@ class TestIngestionPipeline:
         assert len(result["errors"]) == 1  # One error for invalid document
         assert "invalid_doc.json" in result["errors"][0]
 
-    @pytest.mark.asyncio
-    async def test_index_chunks_success(self, pipeline, mock_redis_components):
-        """Test successful chunk indexing."""
-        mock_index, mock_vectorizer = mock_redis_components
-
-        chunks = [
-            {
-                "id": "chunk_1",
-                "content": "First chunk content",
-                "title": "Test Doc",
-                "source": "https://test.com",
-            },
-            {
-                "id": "chunk_2",
-                "content": "Second chunk content",
-                "title": "Test Doc",
-                "source": "https://test.com",
-            },
-        ]
-
-        result = await pipeline._index_chunks(chunks, mock_index, mock_vectorizer)
-
-        assert result == 2  # Two chunks indexed
-
-        # Verify embeddings were generated
-        mock_vectorizer.aembed_many.assert_called_once_with(
-            ["First chunk content", "Second chunk content"]
-        )
-
-        # Verify index.load was called with correct parameters
-        mock_index.load.assert_called_once()
-        call_args = mock_index.load.call_args
-
-        from redis_sre_agent.core.keys import RedisKeys
-
-        assert call_args[1]["id_field"] == "id"
-        assert len(call_args[1]["keys"]) == 2
-        assert all(key.startswith(RedisKeys.PREFIX_KNOWLEDGE + ":") for key in call_args[1]["keys"])
-
-        # Check that embeddings were added to documents
-        indexed_docs = call_args[1]["data"]
-        assert len(indexed_docs) == 2
-        assert all("vector" in doc for doc in indexed_docs)
-        assert all("created_at" in doc for doc in indexed_docs)
-
-    @pytest.mark.asyncio
-    async def test_index_chunks_empty_list(self, pipeline, mock_redis_components):
-        """Test indexing with empty chunk list."""
-        mock_index, mock_vectorizer = mock_redis_components
-
-        result = await pipeline._index_chunks([], mock_index, mock_vectorizer)
-
-        assert result == 0
-        mock_vectorizer.aembed_many.assert_not_called()
-        mock_index.load.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_save_ingestion_manifest(self, pipeline, tmp_path):
         """Test ingestion manifest saving."""
         batch_date = "2025-01-20"

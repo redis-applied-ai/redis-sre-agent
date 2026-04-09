@@ -724,16 +724,6 @@ async def test_prepare_source_artifacts_and_ingest_prepared_batch(pipeline, tmp_
 
 
 @pytest.mark.asyncio
-async def test_index_chunks_error_path(pipeline):
-    index = AsyncMock()
-    vectorizer = AsyncMock()
-    vectorizer.aembed_many.side_effect = RuntimeError("embed failed")
-
-    with pytest.raises(RuntimeError, match="embed failed"):
-        await pipeline._index_chunks([{"id": "chunk-1", "content": "body"}], index, vectorizer)
-
-
-@pytest.mark.asyncio
 async def test_ingest_batch_error_path(pipeline, tmp_path):
     batch_date = "2025-01-20"
     batch_path = tmp_path / batch_date

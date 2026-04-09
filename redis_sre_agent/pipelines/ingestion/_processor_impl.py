@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ...core.keys import RedisKeys
-
 # Avoid importing Redis/vectorizer at module import time to keep optional deps lazy
 from ...pipelines.scraper.base import ArtifactStorage, ScrapedDocument
 from .deduplication import DocumentDeduplicator
@@ -411,45 +409,3 @@ class IngestionPipeline(PipelineWorkflowMixin):
             json.dump(stats, f, indent=2, default=str)
 
         logger.info(f"Saved ingestion manifest: {manifest_path}")
-
-    async def _index_chunks(self, chunks: List[Dict[str, Any]], index: Any, vectorizer: Any) -> int:
-        """Index chunks in the vector store.
-
-        Args:
-            chunks: List of chunk dictionaries to index
-            index: Vector store index instance
-            vectorizer: Vectorizer instance for embedding generation
-
-        Returns:
-            Number of chunks successfully indexed
-        """
-        if not chunks:
-            return 0
-
-        try:
-            # Extract content for vectorization
-            texts = [chunk["content"] for chunk in chunks]
-
-            # Generate embeddings
-            embeddings = await vectorizer.aembed_many(texts)
-
-            # Prepare chunks with embeddings for indexing
-            indexed_chunks = []
-            keys = []
-            for chunk, embedding in zip(chunks, embeddings):
-                chunk_with_embedding = {
-                    **chunk,
-                    "vector": embedding,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
-                indexed_chunks.append(chunk_with_embedding)
-                keys.append(RedisKeys.knowledge_document(chunk["id"]))
-
-            # Load chunks into index with expected parameters
-            await index.load(id_field="id", keys=keys, data=indexed_chunks)
-
-            return len(chunks)
-
-        except Exception as e:
-            logger.error(f"Failed to index {len(chunks)} chunks: {e}")
-            raise
