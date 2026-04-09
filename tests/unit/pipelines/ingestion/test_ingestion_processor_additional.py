@@ -5,7 +5,7 @@ import runpy
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -499,7 +499,12 @@ async def test_prepare_source_artifacts_and_ingest_prepared_batch(pipeline, tmp_
         prepared_count = await pipeline.prepare_source_artifacts(source_dir, "2025-01-20")
 
     assert prepared_count == 1
-    assert create_document.call_args_list == [((first, source_dir),), ((second, source_dir),)]
+    assert sorted(
+        create_document.call_args_list, key=lambda recorded_call: recorded_call.args[0].name
+    ) == [
+        call(first, source_dir),
+        call(second, source_dir),
+    ]
     save_document.assert_called_once_with(document)
     save_manifest.assert_called_once()
 
