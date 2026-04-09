@@ -21,6 +21,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_list_threads,
     redis_sre_search_support_tickets,
 )
+from redis_sre_agent.mcp_server.task_contract import runtime_task_execution_context
 
 
 class TestMCPServerSetup:
@@ -82,6 +83,8 @@ class TestDeepTriageTool:
             assert result["thread_id"] == "thread-123"
             assert result["task_id"] == "task-456"
             assert "status" in result
+            assert result["execution"]["mode"] == "agent_task"
+            assert result["task"]["status_tool"] == "redis_sre_get_task_status"
             mock_create.assert_called_once()
 
     @pytest.mark.asyncio
@@ -164,6 +167,7 @@ class TestGeneralChatTool:
             assert result["thread_id"] == "thread-123"
             assert result["task_id"] == "task-456"
             assert "status" in result
+            assert result["execution"]["mode"] == "agent_task"
             mock_create.assert_called_once()
 
     @pytest.mark.asyncio
@@ -237,6 +241,36 @@ class TestGeneralChatTool:
             assert result["status"] == "failed"
             assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_general_chat_executes_inline_under_runtime_contract(self):
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "queued",
+        }
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
+            patch(
+                "redis_sre_agent.core.docket_tasks.process_chat_turn",
+                new_callable=AsyncMock,
+            ) as mock_process,
+        ):
+            mock_create.return_value = mock_result
+            mock_process.return_value = {"response": "inline-result"}
+
+            with runtime_task_execution_context({"outerTaskId": "runtime-task-1"}):
+                result = await redis_sre_general_chat(query="What's the memory usage?")
+
+            assert result["task_id"] == "task-456"
+            assert result["status"] == "done"
+            assert result["execution"]["mode"] == "inline"
+            assert result["execution"]["task_system"] == "runtime"
+            assert result["execution"]["outer_task_id"] == "runtime-task-1"
+            assert result["result"] == {"response": "inline-result"}
+            mock_process.assert_awaited_once()
+
 
 class TestDatabaseChatTool:
     """Test the redis_sre_database_chat MCP tool with category exclusion."""
@@ -259,6 +293,7 @@ class TestDatabaseChatTool:
             result = await redis_sre_database_chat(query="What's the memory usage?")
 
             assert result["task_id"] == "task-456"
+            assert result["execution"]["mode"] == "agent_task"
             # Verify that exclude_mcp_categories is set in context
             call_kwargs = mock_create.call_args.kwargs
             assert "exclude_mcp_categories" in call_kwargs["context"]
@@ -417,6 +452,7 @@ class TestKnowledgeQueryTool:
             assert result["thread_id"] == "thread-123"
             assert result["task_id"] == "task-456"
             assert "status" in result
+            assert result["execution"]["mode"] == "agent_task"
             mock_create.assert_called_once()
             # Verify agent_type is set in context
             call_kwargs = mock_create.call_args.kwargs

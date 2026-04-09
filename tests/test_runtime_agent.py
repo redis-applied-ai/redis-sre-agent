@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import importlib.util
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +71,7 @@ class _FakeTaskEmitter:
 async def test_runtime_sre_agent_dispatches_mcp_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_module()
     emitter = _FakeTaskEmitter()
+    module._REDIS_BOOTSTRAP_COMPLETE = True
 
     async def _fake_tool(*, query: str) -> dict[str, Any]:
         return {"query": query, "hits": 1}
@@ -95,6 +98,68 @@ async def test_runtime_sre_agent_dispatches_mcp_tools(monkeypatch: pytest.Monkey
     }
 
 
+def test_runtime_sre_agent_builds_execution_contract_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+
+    async def _fake_tool(*, query: str) -> dict[str, Any]:
+        return {"query": query}
+
+    monkeypatch.setattr(
+        module,
+        "_load_mcp_tool_registry",
+        lambda: {"redis_sre_general_chat": _fake_tool, "redis_sre_knowledge_search": _fake_tool},
+    )
+
+    capabilities = module._build_mcp_capabilities()
+    tools = {entry["name"]: entry for entry in capabilities["tools"]}
+
+    assert tools["redis_sre_general_chat"]["executionContract"]["nativeMode"] == "agent_task"
+    assert tools["redis_sre_general_chat"]["executionContract"]["runtimeMode"] == "inline"
+    assert tools["redis_sre_general_chat"]["executionContract"]["statusTool"] == "redis_sre_get_task_status"
+    assert tools["redis_sre_knowledge_search"]["executionContract"] == {
+        "nativeMode": "inline",
+        "runtimeMode": "inline",
+    }
+
+
+def test_load_mcp_tool_registry_includes_pipeline_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_module()
+
+    async def _fake_tool(**_: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    fake_server = type(
+        "_Server",
+        (),
+        {
+            "redis_sre_list_instances": _fake_tool,
+        },
+    )()
+    monkeypatch.setattr(module.importlib, "import_module", lambda name: fake_server)
+
+    registry = module._load_mcp_tool_registry()
+
+    assert "redis_sre_get_pipeline_status" in registry
+    assert "redis_sre_get_pipeline_batch" in registry
+    assert "redis_sre_prepare_source_documents" in registry
+    assert "redis_sre_run_pipeline_full" in registry
+    assert "redis_sre_run_pipeline_ingest" in registry
+
+
+def test_entrypoint_metadata_exports_pipeline_tools() -> None:
+    module = _load_module()
+
+    tools = {entry["name"] for entry in module.agent.mcp_capabilities["tools"]}
+
+    assert "redis_sre_get_pipeline_status" in tools
+    assert "redis_sre_get_pipeline_batch" in tools
+    assert "redis_sre_prepare_source_documents" in tools
+    assert "redis_sre_run_pipeline_full" in tools
+    assert "redis_sre_run_pipeline_ingest" in tools
+
+
 @pytest.mark.asyncio
 async def test_runtime_sre_agent_chat_does_not_tunnel_mcp_commands(
     monkeypatch: pytest.MonkeyPatch,
@@ -102,6 +167,7 @@ async def test_runtime_sre_agent_chat_does_not_tunnel_mcp_commands(
 ) -> None:
     module = _load_module()
     emitter = _FakeTaskEmitter()
+    module._REDIS_BOOTSTRAP_COMPLETE = True
 
     monkeypatch.setenv("RAK_APP_STATE_DIR", str(tmp_path))
 
@@ -169,6 +235,7 @@ async def test_runtime_sre_agent_chat_persists_context_history(
 ) -> None:
     module = _load_module()
     emitter = _FakeTaskEmitter()
+    module._REDIS_BOOTSTRAP_COMPLETE = True
 
     monkeypatch.setenv("RAK_APP_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("RAR_TASK_RUN_ID", "task-run-1")
@@ -263,3 +330,45 @@ def test_bootstrap_runtime_environment_prefers_runtime_redis(monkeypatch: pytest
     module._bootstrap_runtime_environment()
 
     assert os.environ["REDIS_URL"] == "redis://runtime/0"
+
+
+@pytest.mark.asyncio
+async def test_runtime_sre_agent_bootstraps_redis_indices_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    emitter = _FakeTaskEmitter()
+    module._REDIS_BOOTSTRAP_COMPLETE = False
+    module._REDIS_BOOTSTRAP_LOCK = asyncio.Lock()
+    monkeypatch.setenv("REDIS_URL", "redis://runtime/0")
+
+    create_calls: list[str] = []
+
+    async def _fake_create_indices() -> bool:
+        create_calls.append("create")
+        return True
+
+    async def _fake_tool(*, query: str) -> dict[str, Any]:
+        return {"query": query}
+
+    monkeypatch.setattr(
+        module,
+        "_load_mcp_tool_registry",
+        lambda: {"redis_sre_knowledge_search": _fake_tool},
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.core.redis",
+        types.SimpleNamespace(create_indices=_fake_create_indices),
+    )
+
+    await module.runtime_sre_agent(
+        {"tool": "redis_sre_knowledge_search", "arguments": {"query": "memory"}},
+        emitter,
+    )
+    await module.runtime_sre_agent(
+        {"tool": "redis_sre_knowledge_search", "arguments": {"query": "latency"}},
+        emitter,
+    )
+
+    assert create_calls == ["create"]
