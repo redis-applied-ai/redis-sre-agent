@@ -397,6 +397,7 @@ async def test_replace_source_document_chunks_variants(deduplicator):
                 "title": "Doc",
                 "source": "file://doc",
                 "category": "shared",
+                "severity": "high",
                 "doc_type": "skill",
                 "source_document_scope": "shared/",
                 "pinned": "true",
@@ -407,7 +408,19 @@ async def test_replace_source_document_chunks_variants(deduplicator):
     deduplicator.delete_tracked_source_document.assert_awaited_once_with(
         "old-hash", "shared/file.md", remove_source_tracking=False
     )
-    deduplicator.update_source_document_tracking.assert_awaited_once()
+    deduplicator.update_source_document_tracking.assert_awaited_once_with(
+        "shared/file.md",
+        {
+            "document_hash": "new-hash",
+            "title": "Doc",
+            "source": "file://doc",
+            "category": "shared",
+            "severity": "high",
+            "doc_type": "skill",
+            "source_document_scope": "shared/",
+            "pinned": "true",
+        },
+    )
     assert updated["action"] == "update"
     assert updated["previous_document_hash"] == "old-hash"
 

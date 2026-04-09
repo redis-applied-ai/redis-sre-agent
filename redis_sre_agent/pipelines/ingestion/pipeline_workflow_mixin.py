@@ -119,6 +119,8 @@ class PipelineWorkflowMixin:
                 {
                     "file": deletion["path"],
                     "title": deletion.get("title", ""),
+                    "category": deletion.get("category", ""),
+                    "severity": deletion.get("severity", ""),
                     "status": "success",
                     "action": "delete",
                     "chunks_created": 0,

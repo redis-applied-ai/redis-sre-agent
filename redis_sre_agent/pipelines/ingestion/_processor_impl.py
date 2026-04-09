@@ -168,6 +168,8 @@ class IngestionPipeline(PipelineWorkflowMixin):
                         "path": source_document_path,
                         "action": "delete",
                         "title": str(tracked_entry.get("title") or ""),
+                        "category": tracked_entry.get("category", ""),
+                        "severity": tracked_entry.get("severity", ""),
                         "doc_type": str(tracked_entry.get("doc_type") or ""),
                     }
                 )

@@ -20,6 +20,7 @@ from redis_sre_agent.pipelines.ingestion.processor import (
 from redis_sre_agent.pipelines.ingestion.processor_indexing_helpers import (
     delete_cross_index_tracked_entries,
     get_source_tracking_fields,
+    index_processed_document,
     select_deduplicator,
 )
 from redis_sre_agent.pipelines.ingestion.processor_source_helpers import (
@@ -255,6 +256,8 @@ async def test_delete_stale_source_documents_respects_scope_and_current_paths(pi
                     "deduplicator_key": "knowledge",
                     "document_hash": "deleted",
                     "title": "Deleted",
+                    "category": "shared",
+                    "severity": "high",
                     "doc_type": "knowledge",
                 }
             ],
@@ -273,9 +276,35 @@ async def test_delete_stale_source_documents_respects_scope_and_current_paths(pi
             "path": "shared/deleted.md",
             "action": "delete",
             "title": "Deleted",
+            "category": "shared",
+            "severity": "high",
             "doc_type": "knowledge",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_index_processed_document_skips_cross_index_delete_for_non_source_docs():
+    document = _make_document(metadata={})
+    deduplicator = MagicMock()
+    deduplicator.replace_document_chunks = AsyncMock(return_value=2)
+
+    with patch(
+        "redis_sre_agent.pipelines.ingestion.processor_indexing_helpers."
+        "delete_cross_index_tracked_entries",
+        new=AsyncMock(return_value=True),
+    ) as delete_cross_index:
+        result = await index_processed_document(
+            document=document,
+            chunks=[{"id": "chunk-1"}],
+            vectorizer=MagicMock(),
+            deduplicators={"knowledge": deduplicator},
+            tracked_source_documents={"shared/doc.md": [{"document_hash": "old"}]},
+        )
+
+    delete_cross_index.assert_not_awaited()
+    deduplicator.replace_document_chunks.assert_awaited_once()
+    assert result["source_document_change"] is None
 
 
 @pytest.mark.asyncio
@@ -512,6 +541,8 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
                         "deduplicator_key": "knowledge",
                         "document_hash": "deleted-hash",
                         "title": "Deleted",
+                        "category": "shared",
+                        "severity": "high",
                     }
                 ],
             },
@@ -534,6 +565,13 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
     assert any(
         result["action"] == "delete" for result in results if result["file"] == "shared/deleted.md"
     )
+    assert {
+        key: value
+        for key, value in next(
+            result for result in results if result["file"] == "shared/deleted.md"
+        ).items()
+        if key in {"category", "severity"}
+    } == {"category": "shared", "severity": "high"}
     assert any(result["status"] == "error" and result["file"] == "broken.md" for result in results)
 
 

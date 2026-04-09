@@ -56,20 +56,20 @@ async def index_processed_document(
     if tracked_source_documents and source_document_path:
         tracked_entries = tracked_source_documents.get(source_document_path, [])
 
-    existed_before = await delete_cross_index_tracked_entries(
-        deduplicators=deduplicators,
-        tracked_entries=tracked_entries,
-        doc_type_key=doc_type_key,
-        source_document_path=source_document_path,
-    )
-
     if source_document_path:
+        existed_before = await delete_cross_index_tracked_entries(
+            deduplicators=deduplicators,
+            tracked_entries=tracked_entries,
+            doc_type_key=doc_type_key,
+            source_document_path=source_document_path,
+        )
         replacement = await deduplicator.replace_source_document_chunks(chunks, vectorizer)
         action = replacement.get("action", "unchanged")
         if existed_before and action == "add":
             action = "update"
         indexed_count = int(replacement.get("indexed_count", 0))
     else:
+        existed_before = False
         indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
         action = None
 
