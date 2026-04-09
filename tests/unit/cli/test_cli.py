@@ -113,6 +113,13 @@ class TestPipelineIngestCLI:
             "documents_processed": 15,
             "chunks_created": 45,
             "chunks_indexed": 45,
+            "source_document_changes": {
+                "added": 1,
+                "updated": 2,
+                "deleted": 1,
+                "unchanged": 3,
+                "files": [],
+            },
             "categories_processed": {
                 "monitoring": {"documents_processed": 10, "chunks_indexed": 30, "errors": []},
                 "troubleshooting": {
@@ -132,6 +139,7 @@ class TestPipelineIngestCLI:
         assert "Chunks indexed: 45" in result.output
         assert "monitoring: 10 docs, 30 chunks" in result.output
         assert "1 errors" in result.output
+        assert "added=1 updated=2 deleted=1 unchanged=3" in result.output
 
     def test_ingest_command_with_batch_date(
         self, cli_runner, temp_artifacts_path, mock_orchestrator
@@ -161,6 +169,38 @@ class TestPipelineIngestCLI:
 
         assert result.exit_code != 0
         assert "Ingestion failed: Redis connection failed" in result.output
+
+    def test_ingest_command_verbose_shows_source_file_changes(
+        self, cli_runner, temp_artifacts_path, mock_orchestrator
+    ):
+        """Verbose ingest output should print per-file source document actions."""
+        mock_orchestrator.run_ingestion_pipeline.return_value = {
+            "batch_date": "2025-08-20",
+            "documents_processed": 2,
+            "chunks_created": 4,
+            "chunks_indexed": 4,
+            "source_document_changes": {
+                "added": 1,
+                "updated": 1,
+                "deleted": 1,
+                "unchanged": 0,
+                "files": [
+                    {"action": "add", "path": "shared/new.md"},
+                    {"action": "update", "path": "shared/current.md"},
+                    {"action": "delete", "path": "shared/removed.md"},
+                ],
+            },
+            "categories_processed": {},
+        }
+
+        result = cli_runner.invoke(
+            pipeline, ["ingest", "--artifacts-path", temp_artifacts_path, "--verbose"]
+        )
+
+        assert result.exit_code == 0
+        assert "add: shared/new.md" in result.output
+        assert "update: shared/current.md" in result.output
+        assert "delete: shared/removed.md" in result.output
 
 
 class TestPipelineFullCLI:

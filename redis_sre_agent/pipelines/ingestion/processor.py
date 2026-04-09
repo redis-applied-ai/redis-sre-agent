@@ -211,6 +211,8 @@ class DocumentProcessor:
             "severity": document.severity.value,
             "version": version,
             "chunk_index": chunk_index,
+            "source_document_path": str(document.metadata.get("source_document_path") or ""),
+            "source_document_scope": str(document.metadata.get("source_document_scope") or ""),
             "metadata": {
                 **document.metadata,
                 "original_title": document.title,
@@ -272,6 +274,121 @@ class IngestionPipeline:
         self.config = config or {}
         self.knowledge_settings = knowledge_settings
 
+    async def _build_deduplicators(self) -> Dict[str, DocumentDeduplicator]:
+        """Initialize index-specific deduplicators."""
+        knowledge_index = await get_knowledge_index()
+        skills_index = await get_skills_index()
+        support_tickets_index = await get_support_tickets_index()
+        return {
+            "knowledge": DocumentDeduplicator(knowledge_index, key_prefix="sre_knowledge"),
+            "skill": DocumentDeduplicator(skills_index, key_prefix="sre_skills"),
+            "support_ticket": DocumentDeduplicator(
+                support_tickets_index,
+                key_prefix="sre_support_tickets",
+            ),
+        }
+
+    async def _list_tracked_source_documents(
+        self, deduplicators: Dict[str, DocumentDeduplicator]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Collect tracked source-document records across all indices."""
+        tracked_by_path: Dict[str, List[Dict[str, Any]]] = {}
+        for deduplicator_key, deduplicator in deduplicators.items():
+            tracked_documents = await deduplicator.list_tracked_source_documents()
+            for source_document_path, metadata in tracked_documents.items():
+                tracked_by_path.setdefault(source_document_path, []).append(
+                    {"deduplicator_key": deduplicator_key, **metadata}
+                )
+        return tracked_by_path
+
+    @staticmethod
+    def _path_in_scope(source_document_path: str, scope_prefixes: set[str]) -> bool:
+        """Return True when a tracked source file belongs to the active ingest scope."""
+        if not scope_prefixes:
+            return False
+        if "" in scope_prefixes:
+            return True
+        return any(source_document_path.startswith(prefix) for prefix in scope_prefixes if prefix)
+
+    @staticmethod
+    def _empty_source_change_summary() -> Dict[str, Any]:
+        """Create an empty source-document change summary payload."""
+        return {
+            "added": 0,
+            "updated": 0,
+            "deleted": 0,
+            "unchanged": 0,
+            "files": [],
+            "scope_prefixes": [],
+        }
+
+    def _record_source_change(
+        self,
+        summary: Dict[str, Any],
+        *,
+        path: str,
+        action: str,
+        doc_type: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> None:
+        """Accumulate source-document change reporting."""
+        action_map = {
+            "add": "added",
+            "added": "added",
+            "update": "updated",
+            "updated": "updated",
+            "delete": "deleted",
+            "deleted": "deleted",
+            "unchanged": "unchanged",
+        }
+        action_key = action_map.get(action)
+        if not action_key:
+            return
+        summary[action_key] += 1
+        summary["files"].append(
+            {
+                "path": path,
+                "action": {
+                    "added": "add",
+                    "updated": "update",
+                    "deleted": "delete",
+                    "unchanged": "unchanged",
+                }[action_key],
+                "doc_type": doc_type or "",
+                "title": title or "",
+            }
+        )
+
+    async def _delete_stale_source_documents(
+        self,
+        deduplicators: Dict[str, DocumentDeduplicator],
+        tracked_by_path: Dict[str, List[Dict[str, Any]]],
+        current_paths: set[str],
+        scope_prefixes: set[str],
+    ) -> List[Dict[str, Any]]:
+        """Delete source documents that were removed from the current ingest scope."""
+        deletions: List[Dict[str, Any]] = []
+        for source_document_path, tracked_entries in tracked_by_path.items():
+            if not self._path_in_scope(source_document_path, scope_prefixes):
+                continue
+            if source_document_path in current_paths:
+                continue
+            for tracked_entry in tracked_entries:
+                deduplicator = deduplicators[tracked_entry["deduplicator_key"]]
+                await deduplicator.delete_tracked_source_document(
+                    str(tracked_entry.get("document_hash") or ""),
+                    source_document_path,
+                )
+                deletions.append(
+                    {
+                        "path": source_document_path,
+                        "action": "delete",
+                        "title": str(tracked_entry.get("title") or ""),
+                        "doc_type": str(tracked_entry.get("doc_type") or ""),
+                    }
+                )
+        return deletions
+
     async def ingest_batch(self, batch_date: str) -> Dict[str, Any]:
         """Ingest a complete batch of scraped documents."""
         logger.info(f"Starting ingestion for batch: {batch_date}")
@@ -293,25 +410,17 @@ class IngestionPipeline:
             "chunks_created": 0,
             "chunks_indexed": 0,
             "categories_processed": {},
+            "source_document_changes": self._empty_source_change_summary(),
             "errors": [],
             "success": False,
         }
 
         try:
-            # Get Redis components (via patchable wrappers)
-            knowledge_index = await get_knowledge_index()
-            skills_index = await get_skills_index()
-            support_tickets_index = await get_support_tickets_index()
+            deduplicators = await self._build_deduplicators()
             vectorizer = get_vectorizer()
-
-            deduplicators = {
-                "knowledge": DocumentDeduplicator(knowledge_index, key_prefix="sre_knowledge"),
-                "skill": DocumentDeduplicator(skills_index, key_prefix="sre_skills"),
-                "support_ticket": DocumentDeduplicator(
-                    support_tickets_index,
-                    key_prefix="sre_support_tickets",
-                ),
-            }
+            tracked_source_documents = await self._list_tracked_source_documents(deduplicators)
+            current_source_paths: set[str] = set()
+            source_scope_prefixes: set[str] = set()
 
             # Process each category
             for category in ["oss", "enterprise", "shared"]:
@@ -324,6 +433,7 @@ class IngestionPipeline:
                     category,
                     vectorizer,
                     deduplicators,
+                    tracked_source_documents=tracked_source_documents,
                 )
 
                 ingestion_stats["categories_processed"][category] = category_stats
@@ -331,6 +441,36 @@ class IngestionPipeline:
                 ingestion_stats["chunks_created"] += category_stats["chunks_created"]
                 ingestion_stats["chunks_indexed"] += category_stats["chunks_indexed"]
                 ingestion_stats["errors"].extend(category_stats["errors"])
+                current_source_paths.update(category_stats.get("source_document_paths", []))
+                source_scope_prefixes.update(category_stats.get("source_document_scopes", []))
+
+                for change in category_stats.get("source_document_changes", []):
+                    self._record_source_change(
+                        ingestion_stats["source_document_changes"],
+                        path=change["path"],
+                        action=change["action"],
+                        doc_type=change.get("doc_type"),
+                        title=change.get("title"),
+                    )
+
+            stale_source_documents = await self._delete_stale_source_documents(
+                deduplicators,
+                tracked_source_documents,
+                current_source_paths,
+                source_scope_prefixes,
+            )
+            for deletion in stale_source_documents:
+                self._record_source_change(
+                    ingestion_stats["source_document_changes"],
+                    path=deletion["path"],
+                    action="deleted",
+                    doc_type=deletion.get("doc_type"),
+                    title=deletion.get("title"),
+                )
+
+            ingestion_stats["source_document_changes"]["scope_prefixes"] = sorted(
+                source_scope_prefixes
+            )
 
             ingestion_stats["completed_at"] = datetime.now(timezone.utc).isoformat()
             ingestion_stats["success"] = True
@@ -354,6 +494,7 @@ class IngestionPipeline:
         category: str,
         vectorizer: Any,
         deduplicators: Dict[str, DocumentDeduplicator],
+        tracked_source_documents: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         """Process all documents in a category folder."""
         logger.info(f"Processing category: {category}")
@@ -363,6 +504,9 @@ class IngestionPipeline:
             "documents_processed": 0,
             "chunks_created": 0,
             "chunks_indexed": 0,
+            "source_document_changes": [],
+            "source_document_paths": [],
+            "source_document_scopes": [],
             "errors": [],
         }
 
@@ -416,9 +560,38 @@ class IngestionPipeline:
 
                 doc_type_key = str(document.doc_type.value).strip().lower() or "knowledge"
                 deduplicator = deduplicators.get(doc_type_key) or deduplicators["knowledge"]
+                source_document_path = str(
+                    document.metadata.get("source_document_path") or ""
+                ).strip()
+                source_document_scope = str(
+                    document.metadata.get("source_document_scope") or ""
+                ).strip()
+                tracked_entries = []
+                if tracked_source_documents and source_document_path:
+                    tracked_entries = tracked_source_documents.get(source_document_path, [])
+
+                existed_before = bool(tracked_entries)
+                for tracked_entry in tracked_entries:
+                    tracked_deduplicator_key = tracked_entry["deduplicator_key"]
+                    if tracked_deduplicator_key == doc_type_key:
+                        continue
+                    await deduplicators[tracked_deduplicator_key].delete_tracked_source_document(
+                        str(tracked_entry.get("document_hash") or ""),
+                        source_document_path,
+                    )
 
                 # Index chunks with deduplication
-                indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
+                if source_document_path:
+                    replacement = await deduplicator.replace_source_document_chunks(
+                        chunks, vectorizer
+                    )
+                    action = replacement.get("action", "unchanged")
+                    if existed_before and action == "add":
+                        action = "update"
+                    indexed_count = int(replacement.get("indexed_count", 0))
+                else:
+                    indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
+                    action = None
 
                 logger.debug(f"Processed document: {document.title} ({len(chunks)} chunks)")
 
@@ -426,6 +599,18 @@ class IngestionPipeline:
                     "success": True,
                     "chunks_created": len(chunks),
                     "chunks_indexed": indexed_count,
+                    "source_document_change": (
+                        {
+                            "path": source_document_path,
+                            "action": action,
+                            "title": document.title,
+                            "doc_type": doc_type_key,
+                        }
+                        if source_document_path
+                        else None
+                    ),
+                    "source_document_path": source_document_path,
+                    "source_document_scope": source_document_scope,
                 }
 
             except Exception as e:
@@ -453,6 +638,12 @@ class IngestionPipeline:
                     stats["documents_processed"] += 1
                     stats["chunks_created"] += result["chunks_created"]
                     stats["chunks_indexed"] += result["chunks_indexed"]
+                    if result.get("source_document_change"):
+                        stats["source_document_changes"].append(result["source_document_change"])
+                    if result.get("source_document_path"):
+                        stats["source_document_paths"].append(result["source_document_path"])
+                    if result.get("source_document_scope") is not None:
+                        stats["source_document_scopes"].append(result["source_document_scope"])
                 else:
                     stats["errors"].append(result["error"])
 
@@ -552,10 +743,47 @@ class IngestionPipeline:
             return normalized
         return "normal"
 
-    def _create_scraped_document_from_markdown(self, md_file: Path) -> ScrapedDocument:
+    @staticmethod
+    def _find_source_documents_root(source_dir: Path) -> Path:
+        """Resolve the canonical source_documents root when ingesting a subtree."""
+        resolved_source_dir = source_dir.resolve()
+        for candidate in (resolved_source_dir, *resolved_source_dir.parents):
+            if candidate.name == "source_documents":
+                return candidate
+        return resolved_source_dir
+
+    def _resolve_source_document_identity(self, md_file: Path, source_dir: Path) -> tuple[str, str]:
+        """Return the stable source path and scope prefix for a source document."""
+        resolved_file = md_file.resolve()
+        resolved_source_dir = source_dir.resolve()
+        source_root = self._find_source_documents_root(source_dir)
+
+        try:
+            source_document_path = resolved_file.relative_to(source_root).as_posix()
+        except ValueError:
+            source_document_path = resolved_file.relative_to(resolved_source_dir).as_posix()
+
+        try:
+            scope_prefix = resolved_source_dir.relative_to(source_root).as_posix()
+        except ValueError:
+            scope_prefix = ""
+
+        if scope_prefix in {".", ""}:
+            return source_document_path, ""
+        return source_document_path, f"{scope_prefix.rstrip('/')}/"
+
+    def _create_scraped_document_from_markdown(
+        self, md_file: Path, source_dir: Optional[Path] = None
+    ) -> ScrapedDocument:
         """Convert a markdown file to a ScrapedDocument for processing."""
         content = md_file.read_text(encoding="utf-8")
         metadata = self._parse_markdown_metadata(content)
+        source_document_path = ""
+        source_document_scope = ""
+        if source_dir is not None:
+            source_document_path, source_document_scope = self._resolve_source_document_identity(
+                md_file, source_dir
+            )
 
         # Extract or generate title
         title = metadata.get("title", md_file.stem.replace("-", " ").title())
@@ -600,6 +828,8 @@ class IngestionPipeline:
             "summary",
             "priority",
             "pinned",
+            "source_document_path",
+            "source_document_scope",
         }
         passthrough_metadata = {
             key: value for key, value in metadata.items() if key not in reserved_metadata_keys
@@ -625,6 +855,8 @@ class IngestionPipeline:
                 "summary": summary or None,
                 "priority": priority,
                 "pinned": pinned,
+                "source_document_path": source_document_path,
+                "source_document_scope": source_document_scope,
             },
         )
 
@@ -678,52 +910,67 @@ class IngestionPipeline:
 
         logger.info(f"Found {len(markdown_files)} markdown files to process")
 
-        # Get Redis components (via patchable wrappers)
-        knowledge_index = await get_knowledge_index()
-        skills_index = await get_skills_index()
-        support_tickets_index = await get_support_tickets_index()
+        deduplicators = await self._build_deduplicators()
         vectorizer = get_vectorizer()
-
-        deduplicators = {
-            "knowledge": DocumentDeduplicator(knowledge_index, key_prefix="sre_knowledge"),
-            "skill": DocumentDeduplicator(skills_index, key_prefix="sre_skills"),
-            "support_ticket": DocumentDeduplicator(
-                support_tickets_index,
-                key_prefix="sre_support_tickets",
-            ),
-        }
+        tracked_source_documents = await self._list_tracked_source_documents(deduplicators)
 
         results = []
+        current_source_paths: set[str] = set()
+        scope_prefixes: set[str] = set()
 
         for md_file in markdown_files:
             logger.info(f"Processing: {md_file.name}")
 
             try:
                 # Convert markdown to ScrapedDocument
-                document = self._create_scraped_document_from_markdown(md_file)
+                document = self._create_scraped_document_from_markdown(md_file, source_dir)
 
                 # Process document into chunks
                 chunks = self.processor.chunk_document(document)
 
                 doc_type_key = str(document.doc_type.value).strip().lower() or "knowledge"
                 deduplicator = deduplicators.get(doc_type_key) or deduplicators["knowledge"]
+                source_document_path = str(
+                    document.metadata.get("source_document_path") or ""
+                ).strip()
+                source_document_scope = str(
+                    document.metadata.get("source_document_scope") or ""
+                ).strip()
+                tracked_entries = tracked_source_documents.get(source_document_path, [])
+                existed_before = bool(tracked_entries)
+                for tracked_entry in tracked_entries:
+                    tracked_deduplicator_key = tracked_entry["deduplicator_key"]
+                    if tracked_deduplicator_key == doc_type_key:
+                        continue
+                    await deduplicators[tracked_deduplicator_key].delete_tracked_source_document(
+                        str(tracked_entry.get("document_hash") or ""),
+                        source_document_path,
+                    )
 
                 # Index chunks with deduplication
-                indexed_count = await deduplicator.replace_document_chunks(chunks, vectorizer)
+                replacement = await deduplicator.replace_source_document_chunks(chunks, vectorizer)
+                action = replacement.get("action", "unchanged")
+                if existed_before and action == "add":
+                    action = "update"
+
+                if source_document_path:
+                    current_source_paths.add(source_document_path)
+                scope_prefixes.add(source_document_scope)
 
                 result = {
-                    "file": md_file.name,
+                    "file": source_document_path or md_file.name,
                     "title": document.title,
                     "category": document.category,
                     "severity": document.severity,
                     "status": "success",
+                    "action": action,
                     "chunks_created": len(chunks),
-                    "chunks_indexed": indexed_count,
+                    "chunks_indexed": int(replacement.get("indexed_count", 0)),
                 }
 
                 results.append(result)
                 logger.info(
-                    f"✅ Processed {md_file.name}: {len(chunks)} chunks, {indexed_count} indexed"
+                    f"✅ Processed {md_file.name}: {len(chunks)} chunks, {result['chunks_indexed']} indexed"
                 )
 
             except Exception as e:
@@ -732,6 +979,24 @@ class IngestionPipeline:
 
                 result = {"file": md_file.name, "status": "error", "error": error_msg}
                 results.append(result)
+
+        stale_source_documents = await self._delete_stale_source_documents(
+            deduplicators,
+            tracked_source_documents,
+            current_source_paths,
+            scope_prefixes,
+        )
+        for deletion in stale_source_documents:
+            results.append(
+                {
+                    "file": deletion["path"],
+                    "title": deletion.get("title", ""),
+                    "status": "success",
+                    "action": "delete",
+                    "chunks_created": 0,
+                    "chunks_indexed": 0,
+                }
+            )
 
         return results
 

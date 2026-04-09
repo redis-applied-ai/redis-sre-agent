@@ -56,8 +56,8 @@ Generated from the Click command tree.
 - pipeline — Data pipeline commands for scraping and ingestion.
 - pipeline cleanup — Clean up old batch directories.
 - pipeline full — Run the complete pipeline: scraping + ingestion.
-- pipeline ingest — Run the ingestion pipeline to process scraped documents.
-- pipeline prepare-sources — Prepare source documents as batch artifacts, optionally ingest them.
+- pipeline ingest — Run the ingestion pipeline to process scraped documents. For `source_documents/` batches, reports add/update/delete counts and supports `--verbose` for per-file actions.
+- pipeline prepare-sources — Prepare source documents as batch artifacts, optionally ingest them. Source files are replaced by path on re-ingest, and removed files are deleted during ingestion.
 - pipeline runbooks — Generate standardized runbooks from web sources using GPT-5.
 - pipeline scrape — Run the scraping pipeline to collect SRE documents.
 - pipeline show-batch — Show detailed information about a specific batch.

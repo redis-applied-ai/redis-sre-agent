@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -336,6 +336,22 @@ class TestIngestionPipeline:
         assert document.metadata["name"] == "no-frontmatter"
         assert document.metadata["summary"] is None
 
+    def test_create_scraped_document_from_markdown_tracks_source_document_identity(
+        self, pipeline, tmp_path
+    ):
+        """Source docs should carry a stable path relative to source_documents root."""
+        source_root = tmp_path / "source_documents"
+        source_dir = source_root / "shared"
+        source_dir.mkdir(parents=True)
+        md_file = source_dir / "nested" / "tracked.md"
+        md_file.parent.mkdir(parents=True)
+        md_file.write_text("# Tracked\n\nSome content.\n", encoding="utf-8")
+
+        document = pipeline._create_scraped_document_from_markdown(md_file, source_dir)
+
+        assert document.metadata["source_document_path"] == "shared/nested/tracked.md"
+        assert document.metadata["source_document_scope"] == "shared/"
+
     def test_create_scraped_document_from_markdown_parses_adr_frontmatter_fields(
         self, pipeline, tmp_path
     ):
@@ -379,6 +395,8 @@ class TestIngestionPipeline:
                 "original_severity: injected-severity\n"
                 "original_doc_type: injected-doc-type\n"
                 "determined_category: injected-determined-category\n"
+                "source_document_path: injected-source-path\n"
+                "source_document_scope: injected-source-scope\n"
                 "---\n\n"
                 "# Test Title\n"
             ),
@@ -393,6 +411,8 @@ class TestIngestionPipeline:
         assert document.metadata["original_severity"] == "normal"
         assert document.metadata["original_doc_type"] == "support_ticket"
         assert document.metadata["determined_category"] == "shared"
+        assert document.metadata["source_document_path"] == ""
+        assert document.metadata["source_document_scope"] == ""
 
     def test_parse_markdown_metadata_normalizes_spaced_keys(self, pipeline):
         """Test metadata keys with spaces normalize to snake_case."""
@@ -541,6 +561,105 @@ class TestIngestionPipeline:
         assert result["chunks_created"] > 0
         assert result["chunks_indexed"] > 0
         assert len(result["errors"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_process_category_uses_source_document_path_tracking(self, pipeline, tmp_path):
+        """Source-document artifacts should route through path-based replacement."""
+        category_path = tmp_path / "shared"
+        category_path.mkdir()
+
+        doc_data = {
+            "title": "Tracked Source Document",
+            "content": "Tracked content. " * 20,
+            "source_url": "file:///tmp/source_documents/shared/tracked.md",
+            "category": "shared",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {
+                "source_document_path": "shared/tracked.md",
+                "source_document_scope": "",
+            },
+        }
+
+        with open(category_path / "tracked.json", "w") as f:
+            json.dump(doc_data, f)
+
+        mock_deduplicator = AsyncMock()
+        mock_deduplicator.replace_source_document_chunks.return_value = {
+            "action": "update",
+            "indexed_count": 2,
+        }
+
+        result = await pipeline._process_category(
+            category_path,
+            "shared",
+            MagicMock(),
+            {"knowledge": mock_deduplicator},
+            tracked_source_documents={
+                "shared/tracked.md": [
+                    {"deduplicator_key": "knowledge", "document_hash": "old-hash"}
+                ]
+            },
+        )
+
+        mock_deduplicator.replace_source_document_chunks.assert_awaited_once()
+        assert result["source_document_changes"] == [
+            {
+                "path": "shared/tracked.md",
+                "action": "update",
+                "title": "Tracked Source Document",
+                "doc_type": "knowledge",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_process_category_deletes_cross_index_source_document_before_replacing(
+        self, pipeline, tmp_path
+    ):
+        """Changing doc_type should remove the old indexed copy before re-indexing."""
+        category_path = tmp_path / "shared"
+        category_path.mkdir()
+
+        doc_data = {
+            "title": "Moved Source Document",
+            "content": "Tracked content. " * 20,
+            "source_url": "file:///tmp/source_documents/shared/moved.md",
+            "category": "shared",
+            "doc_type": "skill",
+            "severity": "medium",
+            "metadata": {
+                "source_document_path": "shared/moved.md",
+                "source_document_scope": "",
+            },
+        }
+
+        with open(category_path / "moved.json", "w") as f:
+            json.dump(doc_data, f)
+
+        knowledge_deduplicator = AsyncMock()
+        skill_deduplicator = AsyncMock()
+        skill_deduplicator.replace_source_document_chunks.return_value = {
+            "action": "add",
+            "indexed_count": 1,
+        }
+
+        result = await pipeline._process_category(
+            category_path,
+            "shared",
+            MagicMock(),
+            {"knowledge": knowledge_deduplicator, "skill": skill_deduplicator},
+            tracked_source_documents={
+                "shared/moved.md": [
+                    {"deduplicator_key": "knowledge", "document_hash": "old-knowledge-hash"}
+                ]
+            },
+        )
+
+        knowledge_deduplicator.delete_tracked_source_document.assert_awaited_once_with(
+            "old-knowledge-hash", "shared/moved.md"
+        )
+        skill_deduplicator.replace_source_document_chunks.assert_awaited_once()
+        assert result["source_document_changes"][0]["action"] == "update"
 
     @pytest.mark.asyncio
     async def test_process_category_with_errors(self, pipeline, tmp_path, mock_redis_components):
@@ -716,3 +835,69 @@ class TestIngestionPipeline:
 
         assert result == mock_result
         mock_ingest.assert_called_once_with(batch_date)
+
+    @pytest.mark.asyncio
+    async def test_ingest_batch_reports_deleted_source_documents(self, pipeline, tmp_path):
+        """Prepared source batches should report files removed from the current scope."""
+        batch_date = "2025-01-20"
+        batch_path = tmp_path / batch_date
+        (batch_path / "shared").mkdir(parents=True)
+
+        manifest = {"batch_date": batch_date, "documents": [{"category": "shared"}]}
+        knowledge_deduplicator = AsyncMock()
+
+        with patch.object(pipeline.storage, "get_batch_manifest", return_value=manifest):
+            with patch.object(
+                pipeline, "_build_deduplicators", return_value={"knowledge": knowledge_deduplicator}
+            ):
+                with patch.object(
+                    pipeline,
+                    "_list_tracked_source_documents",
+                    return_value={
+                        "shared/current.md": [
+                            {"deduplicator_key": "knowledge", "document_hash": "current-hash"}
+                        ],
+                        "shared/deleted.md": [
+                            {
+                                "deduplicator_key": "knowledge",
+                                "document_hash": "deleted-hash",
+                                "title": "Deleted Doc",
+                                "doc_type": "knowledge",
+                            }
+                        ],
+                    },
+                ):
+                    with patch.object(
+                        pipeline,
+                        "_process_category",
+                        return_value={
+                            "category": "shared",
+                            "documents_processed": 1,
+                            "chunks_created": 2,
+                            "chunks_indexed": 2,
+                            "source_document_changes": [
+                                {
+                                    "path": "shared/current.md",
+                                    "action": "update",
+                                    "title": "Current Doc",
+                                    "doc_type": "knowledge",
+                                }
+                            ],
+                            "source_document_paths": ["shared/current.md"],
+                            "source_document_scopes": [""],
+                            "errors": [],
+                        },
+                    ):
+                        with patch.object(pipeline, "_save_ingestion_manifest") as mock_save:
+                            result = await pipeline.ingest_batch(batch_date)
+
+        knowledge_deduplicator.delete_tracked_source_document.assert_awaited_once_with(
+            "deleted-hash", "shared/deleted.md"
+        )
+        assert result["source_document_changes"]["updated"] == 1
+        assert result["source_document_changes"]["deleted"] == 1
+        assert {change["path"] for change in result["source_document_changes"]["files"]} == {
+            "shared/current.md",
+            "shared/deleted.md",
+        }
+        mock_save.assert_awaited_once()

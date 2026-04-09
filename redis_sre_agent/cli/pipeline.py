@@ -80,7 +80,8 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
     is_flag=True,
     help="Only index latest Redis docs from the batch (skip versioned docs like 7.x)",
 )
-def ingest(batch_date: str, artifacts_path: str, latest_only: bool):
+@click.option("--verbose", "-v", is_flag=True, help="Show per-file source document changes")
+def ingest(batch_date: str, artifacts_path: str, latest_only: bool, verbose: bool):
     """Run the ingestion pipeline to process scraped documents."""
     click.echo("📥 Starting ingestion pipeline...")
 
@@ -104,6 +105,20 @@ def ingest(batch_date: str, artifacts_path: str, latest_only: bool):
                 )
                 if stats["errors"]:
                     click.echo(f"      ⚠️  {len(stats['errors'])} errors")
+
+            source_changes = results.get("source_document_changes") or {}
+            if any(source_changes.get(key, 0) for key in ("added", "updated", "deleted")):
+                click.echo("   🗂️ Source document changes:")
+                click.echo(
+                    "      "
+                    f"added={source_changes.get('added', 0)} "
+                    f"updated={source_changes.get('updated', 0)} "
+                    f"deleted={source_changes.get('deleted', 0)} "
+                    f"unchanged={source_changes.get('unchanged', 0)}"
+                )
+                if verbose:
+                    for change in source_changes.get("files", []):
+                        click.echo(f"      • {change['action']}: {change['path']}")
 
             return results
 
@@ -398,7 +413,10 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
 @click.option("--batch-date", help="Batch date (YYYY-MM-DD), defaults to today")
 @click.option("--prepare-only", is_flag=True, help="Only prepare batch artifacts, don't ingest")
 @click.option("--artifacts-path", default="./artifacts", help="Path to artifacts storage")
-def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifacts_path: str):
+@click.option("--verbose", "-v", is_flag=True, help="Show per-file source document changes")
+def prepare_sources(
+    source_dir: str, batch_date: str, prepare_only: bool, artifacts_path: str, verbose: bool
+):
     """Prepare source documents as batch artifacts, optionally ingest them."""
 
     async def run_source_preparation():
@@ -440,9 +458,7 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
             click.echo(f"❌ No markdown files found in {source_path}")
             return
 
-        click.echo(f"📋 Found {len(markdown_files)} files to prepare:")
-        for md_file in markdown_files:
-            click.echo(f"   • {md_file.relative_to(source_path)}")
+        click.echo(f"📋 Found {len(markdown_files)} files to prepare")
 
         try:
             pipeline = IngestionPipeline(storage)
@@ -468,6 +484,17 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
                 if successful:
                     total_chunks = sum(r.get("chunks_indexed", 0) for r in successful)
                     click.echo(f"   📦 Total chunks indexed: {total_chunks}")
+                    source_changes = successful[0].get("source_document_changes") or {}
+                    click.echo(
+                        "   🗂️ Source document changes: "
+                        f"added={source_changes.get('added', 0)} "
+                        f"updated={source_changes.get('updated', 0)} "
+                        f"deleted={source_changes.get('deleted', 0)} "
+                        f"unchanged={source_changes.get('unchanged', 0)}"
+                    )
+                    if verbose:
+                        for change in source_changes.get("files", []):
+                            click.echo(f"      • {change['action']}: {change['path']}")
 
                 if failed:
                     click.echo(f"   ❌ Failed to ingest: {len(failed)} documents")
