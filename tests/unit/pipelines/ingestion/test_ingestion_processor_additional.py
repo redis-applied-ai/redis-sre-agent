@@ -538,6 +538,54 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_ingest_source_documents_tolerates_missing_source_change(pipeline, tmp_path):
+    source_dir = tmp_path / "source_documents"
+    source_dir.mkdir()
+    md_file = source_dir / "doc.md"
+    md_file.write_text("# Doc\n\nBody", encoding="utf-8")
+
+    with (
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            pipeline,
+            "_build_deduplicators",
+            return_value={"knowledge": AsyncMock(), "skill": AsyncMock()},
+        ),
+        patch.object(pipeline, "_list_tracked_source_documents", return_value={}),
+        patch.object(pipeline.processor, "chunk_document", return_value=[{"id": "chunk-1"}]),
+        patch(
+            "redis_sre_agent.pipelines.ingestion.pipeline_workflow_mixin.index_processed_document",
+            new=AsyncMock(
+                return_value={
+                    "chunks_created": 1,
+                    "chunks_indexed": 1,
+                    "source_document_change": None,
+                    "source_document_path": "",
+                    "source_document_scope": "",
+                }
+            ),
+        ),
+    ):
+        results = await pipeline.ingest_source_documents(source_dir)
+
+    assert results == [
+        {
+            "file": "doc.md",
+            "title": "Doc",
+            "category": DocumentCategory.SHARED,
+            "severity": SeverityLevel.MEDIUM,
+            "status": "success",
+            "action": "",
+            "chunks_created": 1,
+            "chunks_indexed": 1,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_prepare_source_artifacts_and_ingest_prepared_batch(pipeline, tmp_path):
     missing_dir = tmp_path / "missing"
     with pytest.raises(ValueError, match="Source directory does not exist"):

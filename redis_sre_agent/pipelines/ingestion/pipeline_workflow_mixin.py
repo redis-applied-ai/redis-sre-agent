@@ -81,6 +81,7 @@ class PipelineWorkflowMixin:
                 )
                 source_document_path = str(indexed.get("source_document_path") or "")
                 source_document_scope = str(indexed.get("source_document_scope") or "")
+                source_document_change = indexed.get("source_document_change") or {}
                 if source_document_path:
                     current_source_paths.add(source_document_path)
                     scope_prefixes.add(source_document_scope)
@@ -92,7 +93,7 @@ class PipelineWorkflowMixin:
                         "category": document.category,
                         "severity": document.severity,
                         "status": "success",
-                        "action": indexed["source_document_change"]["action"],
+                        "action": str(source_document_change.get("action") or ""),
                         "chunks_created": indexed["chunks_created"],
                         "chunks_indexed": indexed["chunks_indexed"],
                     }
