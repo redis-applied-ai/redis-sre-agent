@@ -25,6 +25,7 @@ from redis_sre_agent.pipelines.ingestion.processor_indexing_helpers import (
 from redis_sre_agent.pipelines.ingestion.processor_source_helpers import (
     create_scraped_document_from_markdown,
     determine_document_category,
+    find_markdown_files,
     find_source_documents_root,
     normalize_doc_type,
     normalize_metadata_key,
@@ -418,6 +419,23 @@ def test_source_document_identity_and_category_resolution(pipeline, tmp_path):
     assert determine_document_category(Path("/tmp/misc/doc.md"), {}) == DocumentCategory.SHARED
 
 
+def test_find_markdown_files_returns_sorted_non_readme_paths(tmp_path):
+    source_dir = tmp_path / "source_documents"
+    source_dir.mkdir()
+    (source_dir / "z-last.md").write_text("# Z", encoding="utf-8")
+    nested_dir = source_dir / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "a-first.md").write_text("# A", encoding="utf-8")
+    (source_dir / "README.md").write_text("# Ignore", encoding="utf-8")
+
+    assert [
+        path.relative_to(source_dir).as_posix() for path in find_markdown_files(source_dir)
+    ] == [
+        "nested/a-first.md",
+        "z-last.md",
+    ]
+
+
 def test_create_scraped_document_from_markdown_additional_paths(pipeline, tmp_path):
     md_file = tmp_path / "ops-guide.md"
     md_file.write_text(
@@ -465,6 +483,12 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
     knowledge = AsyncMock()
     skill = AsyncMock()
     knowledge.replace_source_document_chunks.return_value = {"action": "add", "indexed_count": 2}
+
+    def chunk_document_side_effect(document):
+        if str(document.metadata.get("file_path", "")).endswith("broken.md"):
+            raise RuntimeError("bad doc")
+        return [{"document_hash": "new-hash", "source_document_path": "shared/tracked.md"}]
+
     with (
         patch(
             "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
@@ -495,10 +519,7 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
         patch.object(
             pipeline.processor,
             "chunk_document",
-            side_effect=[
-                [{"document_hash": "new-hash", "source_document_path": "shared/tracked.md"}],
-                RuntimeError("bad doc"),
-            ],
+            side_effect=chunk_document_side_effect,
         ),
     ):
         results = await pipeline.ingest_source_documents(source_dir.parent)

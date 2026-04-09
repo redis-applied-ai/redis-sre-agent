@@ -234,4 +234,7 @@ def create_scraped_document_from_markdown(
 
 def find_markdown_files(source_dir: Path) -> List[Path]:
     """Return markdown source files, excluding README placeholders."""
-    return [path for path in source_dir.rglob("*.md") if path.name.lower() != "readme.md"]
+    return sorted(
+        (path for path in source_dir.rglob("*.md") if path.name.lower() != "readme.md"),
+        key=lambda path: path.as_posix(),
+    )
