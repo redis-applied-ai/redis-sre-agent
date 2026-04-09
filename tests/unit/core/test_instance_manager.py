@@ -1125,6 +1125,10 @@ class TestCreateInstance:
                 new_callable=AsyncMock,
                 return_value=True,
             ),
+            patch(
+                "redis_sre_agent.core.instances.ULID",
+                return_value="01HXTESTINSTANCEID123456789",
+            ),
         ):
             inst = await create_instance(
                 name="New Instance",
@@ -1137,6 +1141,7 @@ class TestCreateInstance:
             assert inst.name == "New Instance"
             assert inst.environment == "production"
             assert inst.created_by == "agent"
+            assert inst.id == "redis-production-01HXTESTINSTANCEID123456789"
 
     @pytest.mark.asyncio
     async def test_create_instance_duplicate_name(self):

@@ -271,6 +271,10 @@ def test_instance_create_accepts_cluster_id_when_cluster_exists_and_is_compatibl
         patch.object(
             core_clusters, "get_cluster_by_id", new=AsyncMock(return_value=linked_cluster)
         ),
+        patch(
+            "redis_sre_agent.cli.instance.ULID",
+            return_value="01HXTESTINSTANCEID123456789",
+        ),
     ):
         result = runner.invoke(
             instance,
@@ -297,6 +301,7 @@ def test_instance_create_accepts_cluster_id_when_cluster_exists_and_is_compatibl
     assert "Created instance" in result.output
     saved_instances = mock_save.call_args[0][0]
     assert len(saved_instances) == 1
+    assert saved_instances[0].id == "redis-production-01HXTESTINSTANCEID123456789"
     assert saved_instances[0].cluster_id == "cluster-prod-1"
 
 

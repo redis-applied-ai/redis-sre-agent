@@ -63,6 +63,10 @@ def test_cluster_create_redis_enterprise_success():
     with (
         patch.object(core_clusters, "get_clusters", new=AsyncMock(return_value=[])),
         patch.object(core_clusters, "save_clusters", new=AsyncMock(return_value=True)) as mock_save,
+        patch(
+            "redis_sre_agent.cli.cluster.ULID",
+            return_value="01HXTESTCLUSTERID1234567890",
+        ),
     ):
         result = runner.invoke(
             cluster,
@@ -89,6 +93,7 @@ def test_cluster_create_redis_enterprise_success():
     assert "Created cluster" in result.output
     saved_clusters = mock_save.call_args[0][0]
     assert len(saved_clusters) == 1
+    assert saved_clusters[0].id == "cluster-production-01HXTESTCLUSTERID1234567890"
     assert saved_clusters[0].cluster_type == core_clusters.RedisClusterType.redis_enterprise
 
 

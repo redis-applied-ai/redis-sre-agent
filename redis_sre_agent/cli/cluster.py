@@ -11,6 +11,7 @@ import click
 from pydantic import SecretStr
 from rich.console import Console
 from rich.table import Table
+from ulid import ULID
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.cluster_admin_defaults import (
@@ -218,7 +219,7 @@ def clusters_create(
                 if missing_fields:
                     raise RuntimeError(build_enterprise_admin_missing_fields_error(missing_fields))
 
-            cluster_id = f"cluster-{environment.lower()}-{int(datetime.now().timestamp())}"
+            cluster_id = f"cluster-{environment.lower()}-{ULID()}"
             new_cluster = core_clusters.RedisCluster(
                 id=cluster_id,
                 name=name,

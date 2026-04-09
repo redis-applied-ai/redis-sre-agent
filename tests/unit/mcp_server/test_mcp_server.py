@@ -1453,6 +1453,10 @@ class TestCreateInstanceTool:
                 "redis_sre_agent.core.instances.save_instances",
                 new_callable=AsyncMock,
             ) as mock_save,
+            patch(
+                "redis_sre_agent.mcp_server.server.ULID",
+                return_value="01HXTESTINSTANCEID123456789",
+            ),
         ):
             mock_get.return_value = []
             mock_save.return_value = True
@@ -1467,7 +1471,7 @@ class TestCreateInstanceTool:
 
             assert result["status"] == "created"
             assert result["name"] == "test-redis"
-            assert "id" in result
+            assert result["id"] == "redis-development-01HXTESTINSTANCEID123456789"
 
     @pytest.mark.asyncio
     async def test_create_instance_invalid_environment(self):

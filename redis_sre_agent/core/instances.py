@@ -17,6 +17,7 @@ from typing import Annotated, Any, Dict, List, Optional
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator, model_validator
 from redisvl.query import CountQuery, FilterQuery
 from redisvl.query.filter import FilterExpression, Tag
+from ulid import ULID
 
 from .encryption import encrypt_secret, get_secret_value
 from .keys import RedisKeys
@@ -785,7 +786,7 @@ async def create_instance(
         instances = await get_instances()
         if any(inst.name == name for inst in instances):
             raise ValueError(f"Instance with name '{name}' already exists")
-        instance_id = f"redis-{environment}-{int(datetime.now().timestamp())}"
+        instance_id = f"redis-{environment}-{ULID()}"
         new_inst = RedisInstance(
             id=instance_id,
             name=name,
