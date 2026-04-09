@@ -1,0 +1,556 @@
+"""Additional focused tests for ingestion processor helpers."""
+
+import json
+import runpy
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from redis_sre_agent.pipelines.ingestion.processor import (
+    DocumentProcessor,
+    IngestionPipeline,
+    get_knowledge_index,
+    get_skills_index,
+    get_support_tickets_index,
+    get_vectorizer,
+)
+from redis_sre_agent.pipelines.ingestion.processor_indexing_helpers import (
+    delete_cross_index_tracked_entries,
+    get_source_tracking_fields,
+    select_deduplicator,
+)
+from redis_sre_agent.pipelines.ingestion.processor_source_helpers import (
+    create_scraped_document_from_markdown,
+    determine_document_category,
+    find_source_documents_root,
+    normalize_doc_type,
+    normalize_metadata_key,
+    normalize_priority,
+    parse_markdown_metadata,
+    resolve_source_document_identity,
+)
+from redis_sre_agent.pipelines.scraper.base import (
+    ArtifactStorage,
+    DocumentCategory,
+    DocumentType,
+    ScrapedDocument,
+    SeverityLevel,
+)
+
+
+@pytest.fixture
+def storage(tmp_path):
+    return ArtifactStorage(tmp_path)
+
+
+@pytest.fixture
+def pipeline(storage):
+    return IngestionPipeline(storage)
+
+
+def _make_document(**overrides):
+    base = ScrapedDocument(
+        title="Doc",
+        content="body",
+        source_url="https://example.com",
+        category=DocumentCategory.SHARED,
+        doc_type=DocumentType.KNOWLEDGE,
+        severity=SeverityLevel.MEDIUM,
+        metadata={},
+    )
+    for key, value in overrides.items():
+        setattr(base, key, value)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_wrapper_functions_delegate_to_core_redis():
+    with (
+        patch("redis_sre_agent.core.redis.get_knowledge_index", new=AsyncMock(return_value="k")),
+        patch("redis_sre_agent.core.redis.get_skills_index", new=AsyncMock(return_value="s")),
+        patch(
+            "redis_sre_agent.core.redis.get_support_tickets_index",
+            new=AsyncMock(return_value="t"),
+        ),
+        patch("redis_sre_agent.core.redis.get_vectorizer", return_value="v"),
+    ):
+        assert await get_knowledge_index() == "k"
+        assert await get_skills_index() == "s"
+        assert await get_support_tickets_index() == "t"
+        assert get_vectorizer() == "v"
+
+
+def test_document_processor_knowledge_settings_and_helpers():
+    knowledge_settings = SimpleNamespace(
+        chunk_size=321,
+        chunk_overlap=22,
+        max_documents_per_batch=7,
+        splitting_strategy="semantic",
+        enable_metadata_extraction=False,
+        enable_semantic_chunking=True,
+        similarity_threshold=0.9,
+        embedding_model="text-embedding-3-large",
+    )
+    processor = DocumentProcessor(knowledge_settings=knowledge_settings)
+    assert processor.config["chunk_size"] == 321
+    assert processor.config["max_chunks_per_doc"] == 7
+
+    assert DocumentProcessor._parse_bool(True) is True
+    assert DocumentProcessor._parse_bool(None, default=True) is True
+    assert DocumentProcessor._parse_bool("yes") is True
+    assert DocumentProcessor._parse_bool("off", default=True) is False
+    assert DocumentProcessor._parse_bool("maybe", default=True) is True
+
+    assert processor._strip_yaml_front_matter("plain text") == ("plain text", False)
+    assert processor._strip_yaml_front_matter("---\ninvalid") == ("---\ninvalid", False)
+    assert processor._strip_yaml_front_matter("---\nkey: value\n---\nbody") == ("body", True)
+
+    assert normalize_doc_type("") == (DocumentType.KNOWLEDGE, "knowledge")
+    assert normalize_doc_type("unknown type") == (
+        DocumentType.KNOWLEDGE,
+        "knowledge",
+    )
+    assert normalize_priority("critical") == "critical"
+    assert normalize_priority("unexpected") == "normal"
+
+    class BrokenText:
+        def startswith(self, prefix):
+            return True
+
+        def find(self, needle, start):
+            raise RuntimeError("boom")
+
+    broken = BrokenText()
+    assert processor._strip_yaml_front_matter(broken) == (broken, False)
+
+
+def test_chunk_document_special_cases_and_empty_body():
+    processor = DocumentProcessor({"chunk_size": 40, "chunk_overlap": 0, "min_chunk_size": 1})
+
+    empty_doc = _make_document(title="Empty", content="---\nfoo: bar\n---\n")
+    assert processor.chunk_document(empty_doc) == []
+
+    cli_doc = _make_document(
+        title="rladmin reference",
+        content="rladmin create db",
+        source_url="https://example.com/docs",
+    )
+    assert len(processor.chunk_document(cli_doc)) == 1
+
+    api_doc = _make_document(
+        content="curl example",
+        source_url="https://example.com/references/rest-api/",
+    )
+    assert len(processor.chunk_document(api_doc)) == 1
+
+    regular_doc = _make_document(
+        content="abcdefghij abcdefghij abcdefghij",
+        metadata={"priority": "HIGH", "pinned": "yes"},
+    )
+    chunks = processor.chunk_document(regular_doc)
+    assert len(chunks) == 1
+    assert chunks[0]["priority"] == "high"
+    assert chunks[0]["pinned"] == "true"
+
+    split_doc = _make_document(content="alpha beta gamma delta epsilon zeta eta theta iota")
+    split_chunks = processor.chunk_document(split_doc)
+    assert len(split_chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_build_deduplicators_and_tracking_helpers(pipeline):
+    with (
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_knowledge_index",
+            new=AsyncMock(return_value="knowledge-index"),
+        ),
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_skills_index",
+            new=AsyncMock(return_value="skills-index"),
+        ),
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_support_tickets_index",
+            new=AsyncMock(return_value="tickets-index"),
+        ),
+    ):
+        deduplicators = await pipeline._build_deduplicators()
+
+    assert deduplicators["knowledge"].index == "knowledge-index"
+    assert deduplicators["skill"].key_prefix == "sre_skills"
+    assert deduplicators["support_ticket"].key_prefix == "sre_support_tickets"
+
+    deduplicators = {
+        "knowledge": AsyncMock(),
+        "skill": AsyncMock(),
+    }
+    deduplicators["knowledge"].list_tracked_source_documents.return_value = {
+        "shared/doc.md": {"document_hash": "k-hash"}
+    }
+    deduplicators["skill"].list_tracked_source_documents.return_value = {
+        "shared/doc.md": {"document_hash": "s-hash"},
+        "enterprise/doc.md": {"document_hash": "e-hash"},
+    }
+
+    tracked = await pipeline._list_tracked_source_documents(deduplicators)
+    assert tracked["shared/doc.md"] == [
+        {"deduplicator_key": "knowledge", "document_hash": "k-hash"},
+        {"deduplicator_key": "skill", "document_hash": "s-hash"},
+    ]
+    assert IngestionPipeline._path_in_scope("shared/doc.md", set()) is False
+    assert IngestionPipeline._path_in_scope("shared/doc.md", {""}) is True
+    assert IngestionPipeline._path_in_scope("shared/doc.md", {"enterprise/"}) is False
+    assert IngestionPipeline._path_in_scope("shared/doc.md", {"shared/"}) is True
+
+    summary = pipeline._empty_source_change_summary()
+    pipeline._record_source_change(summary, path="shared/doc.md", action="add", doc_type="skill")
+    pipeline._record_source_change(summary, path="shared/doc.md", action="updated", title="Doc")
+    pipeline._record_source_change(summary, path="shared/doc.md", action="deleted")
+    pipeline._record_source_change(summary, path="shared/doc.md", action="unchanged")
+    pipeline._record_source_change(summary, path="shared/doc.md", action="unknown")
+    assert summary["added"] == 1
+    assert summary["updated"] == 1
+    assert summary["deleted"] == 1
+    assert summary["unchanged"] == 1
+    assert len(summary["files"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_processor_wrapper_helpers_delegate_to_extracted_functions(pipeline):
+    document = _make_document(metadata={"source_document_path": "shared/doc.md"})
+    deduplicators = {"knowledge": MagicMock()}
+    deduplicators["knowledge"].delete_tracked_source_document = AsyncMock(return_value=True)
+
+    assert get_source_tracking_fields(document) == ("shared/doc.md", "")
+    assert select_deduplicator(document, deduplicators) == (
+        "knowledge",
+        deduplicators["knowledge"],
+    )
+    assert (
+        await delete_cross_index_tracked_entries(
+            deduplicators={"knowledge": deduplicators["knowledge"]},
+            tracked_entries=[{"deduplicator_key": "knowledge", "document_hash": "hash-1"}],
+            doc_type_key="knowledge",
+            source_document_path="shared/doc.md",
+        )
+        is True
+    )
+    deduplicators["knowledge"].delete_tracked_source_document.assert_not_awaited()
+
+    assert normalize_metadata_key("Custom-Key") == "custom_key"
+
+
+@pytest.mark.asyncio
+async def test_delete_stale_source_documents_respects_scope_and_current_paths(pipeline):
+    knowledge = AsyncMock()
+    deletions = await pipeline._delete_stale_source_documents(
+        {"knowledge": knowledge},
+        {
+            "shared/current.md": [{"deduplicator_key": "knowledge", "document_hash": "current"}],
+            "shared/deleted.md": [
+                {
+                    "deduplicator_key": "knowledge",
+                    "document_hash": "deleted",
+                    "title": "Deleted",
+                    "doc_type": "knowledge",
+                }
+            ],
+            "enterprise/out-of-scope.md": [
+                {"deduplicator_key": "knowledge", "document_hash": "ignored"}
+            ],
+        },
+        {"shared/current.md"},
+        {"shared/"},
+    )
+    knowledge.delete_tracked_source_document.assert_awaited_once_with(
+        "deleted", "shared/deleted.md"
+    )
+    assert deletions == [
+        {
+            "path": "shared/deleted.md",
+            "action": "delete",
+            "title": "Deleted",
+            "doc_type": "knowledge",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_process_category_latest_only_and_error_paths(pipeline, tmp_path):
+    category_path = tmp_path / "enterprise"
+    category_path.mkdir()
+    docs = {
+        "versioned.json": {
+            "title": "Old",
+            "content": "body",
+            "source_url": "https://redis.io/docs/7.4/file",
+            "category": "enterprise",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {},
+        },
+        "non_latest.json": {
+            "title": "Old Enterprise",
+            "content": "body",
+            "source_url": "https://redis.io/operate/rs/reference",
+            "category": "enterprise",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {},
+        },
+        "keep.json": {
+            "title": "Keep",
+            "content": "body",
+            "source_url": "https://redis.io/operate/rs/latest/reference",
+            "category": "enterprise",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {},
+        },
+        "broken.json": "{not valid json",
+    }
+    for name, content in docs.items():
+        path = category_path / name
+        if isinstance(content, dict):
+            path.write_text(json.dumps(content), encoding="utf-8")
+        else:
+            path.write_text(content, encoding="utf-8")
+
+    deduplicator = AsyncMock()
+    deduplicator.replace_document_chunks.return_value = 1
+    latest_only_pipeline = IngestionPipeline(pipeline.storage, {"latest_only": True})
+
+    result = await latest_only_pipeline._process_category(
+        category_path,
+        "enterprise",
+        MagicMock(),
+        {"knowledge": deduplicator},
+    )
+
+    deduplicator.replace_document_chunks.assert_awaited_once()
+    assert result["documents_processed"] == 1
+    assert len(result["errors"]) == 1
+    assert "broken.json" in result["errors"][0]
+
+
+def test_source_document_identity_and_category_resolution(pipeline, tmp_path):
+    source_root = tmp_path / "source_documents"
+    nested_dir = source_root / "enterprise" / "guides"
+    nested_dir.mkdir(parents=True)
+    md_file = nested_dir / "doc.md"
+    md_file.write_text("# Doc", encoding="utf-8")
+
+    assert find_source_documents_root(nested_dir) == source_root
+    assert resolve_source_document_identity(md_file, nested_dir) == (
+        "enterprise/guides/doc.md",
+        "enterprise/guides/",
+    )
+
+    outside_root = tmp_path / "other"
+    outside_root.mkdir()
+    outside_file = outside_root / "outside.md"
+    outside_file.write_text("# Outside", encoding="utf-8")
+    assert resolve_source_document_identity(outside_file, outside_root) == (
+        "outside.md",
+        "",
+    )
+
+    with patch(
+        "redis_sre_agent.pipelines.ingestion.processor_source_helpers.find_source_documents_root",
+        return_value=tmp_path / "unrelated",
+    ):
+        assert resolve_source_document_identity(md_file, nested_dir) == (
+            "doc.md",
+            "",
+        )
+
+    assert determine_document_category(md_file, {"category": "cloud"}) == DocumentCategory.SHARED
+    assert determine_document_category(Path("/tmp/oss/doc.md"), {}) == DocumentCategory.OSS
+    assert determine_document_category(Path("/tmp/misc/doc.md"), {}) == DocumentCategory.SHARED
+
+
+def test_create_scraped_document_from_markdown_additional_paths(pipeline, tmp_path):
+    md_file = tmp_path / "ops-guide.md"
+    md_file.write_text(
+        "---\n"
+        "severity: info\n"
+        "doc_type: strange\n"
+        "name:  \n"
+        "summary:  \n"
+        "category: enterprise\n"
+        "custom-key: value\n"
+        "---\n\n",
+        encoding="utf-8",
+    )
+
+    document = create_scraped_document_from_markdown(md_file)
+    assert document.title == "Ops Guide"
+    assert document.severity == SeverityLevel.LOW
+    assert document.doc_type == DocumentType.KNOWLEDGE
+    assert document.metadata["name"] == "ops-guide"
+    assert document.metadata["summary"] is None
+    assert document.metadata["custom_key"] == "value"
+    assert document.category == DocumentCategory.ENTERPRISE
+
+    metadata = parse_markdown_metadata("---\ninvalid\n---\n# Title\n")
+    assert metadata["title"] == "Title"
+
+
+@pytest.mark.asyncio
+async def test_ingest_source_documents_paths(pipeline, tmp_path):
+    missing_dir = tmp_path / "missing"
+    with pytest.raises(ValueError, match="Source directory does not exist"):
+        await pipeline.ingest_source_documents(missing_dir)
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    assert await pipeline.ingest_source_documents(empty_dir) == []
+
+    source_dir = tmp_path / "source_documents" / "shared"
+    source_dir.mkdir(parents=True)
+    tracked_file = source_dir / "tracked.md"
+    tracked_file.write_text("# Tracked\n\nBody", encoding="utf-8")
+    broken_file = source_dir / "broken.md"
+    broken_file.write_text("# Broken\n\nBody", encoding="utf-8")
+
+    knowledge = AsyncMock()
+    skill = AsyncMock()
+    knowledge.replace_source_document_chunks.return_value = {"action": "add", "indexed_count": 2}
+    with (
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            pipeline,
+            "_build_deduplicators",
+            return_value={"knowledge": knowledge, "skill": skill},
+        ),
+        patch.object(
+            pipeline,
+            "_list_tracked_source_documents",
+            return_value={
+                "shared/tracked.md": [
+                    {"deduplicator_key": "knowledge", "document_hash": "same-type-hash"},
+                    {"deduplicator_key": "skill", "document_hash": "old-skill-hash"},
+                ],
+                "shared/deleted.md": [
+                    {
+                        "deduplicator_key": "knowledge",
+                        "document_hash": "deleted-hash",
+                        "title": "Deleted",
+                    }
+                ],
+            },
+        ),
+        patch.object(
+            pipeline.processor,
+            "chunk_document",
+            side_effect=[
+                [{"document_hash": "new-hash", "source_document_path": "shared/tracked.md"}],
+                RuntimeError("bad doc"),
+            ],
+        ),
+    ):
+        results = await pipeline.ingest_source_documents(source_dir.parent)
+
+    skill.delete_tracked_source_document.assert_awaited_once_with(
+        "old-skill-hash", "shared/tracked.md"
+    )
+    knowledge.delete_tracked_source_document.assert_any_await("deleted-hash", "shared/deleted.md")
+    assert any(
+        result["action"] == "update" for result in results if result["file"] == "shared/tracked.md"
+    )
+    assert any(
+        result["action"] == "delete" for result in results if result["file"] == "shared/deleted.md"
+    )
+    assert any(result["status"] == "error" and result["file"] == "broken.md" for result in results)
+
+
+@pytest.mark.asyncio
+async def test_prepare_source_artifacts_and_ingest_prepared_batch(pipeline, tmp_path):
+    missing_dir = tmp_path / "missing"
+    with pytest.raises(ValueError, match="Source directory does not exist"):
+        await pipeline.prepare_source_artifacts(missing_dir, "2025-01-20")
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    assert await pipeline.prepare_source_artifacts(empty_dir, "2025-01-20") == 0
+
+    source_dir = tmp_path / "source_documents"
+    source_dir.mkdir()
+    first = source_dir / "first.md"
+    second = source_dir / "second.md"
+    first.write_text("# First", encoding="utf-8")
+    second.write_text("# Second", encoding="utf-8")
+
+    document = _make_document()
+    with (
+        patch(
+            "redis_sre_agent.pipelines.ingestion.pipeline_workflow_mixin.create_scraped_document_from_markdown",
+            side_effect=[document, RuntimeError("bad file")],
+        ),
+        patch.object(pipeline.storage, "save_document") as save_document,
+        patch.object(pipeline.storage, "save_batch_manifest") as save_manifest,
+    ):
+        prepared_count = await pipeline.prepare_source_artifacts(source_dir, "2025-01-20")
+
+    assert prepared_count == 1
+    save_document.assert_called_once_with(document)
+    save_manifest.assert_called_once()
+
+    with patch.object(
+        pipeline, "ingest_batch", return_value={"success": True, "chunks_indexed": 2}
+    ):
+        assert await pipeline.ingest_prepared_batch("2025-01-20") == [
+            {"status": "success", "batch_date": "2025-01-20", "success": True, "chunks_indexed": 2}
+        ]
+
+    with patch.object(pipeline, "ingest_batch", return_value={"success": False}):
+        assert await pipeline.ingest_prepared_batch("2025-01-20") == [
+            {"status": "error", "batch_date": "2025-01-20", "error": "Batch ingestion failed"}
+        ]
+
+
+@pytest.mark.asyncio
+async def test_index_chunks_error_path(pipeline):
+    index = AsyncMock()
+    vectorizer = AsyncMock()
+    vectorizer.aembed_many.side_effect = RuntimeError("embed failed")
+
+    with pytest.raises(RuntimeError, match="embed failed"):
+        await pipeline._index_chunks([{"id": "chunk-1", "content": "body"}], index, vectorizer)
+
+
+@pytest.mark.asyncio
+async def test_ingest_batch_error_path(pipeline, tmp_path):
+    batch_date = "2025-01-20"
+    batch_path = tmp_path / batch_date
+    (batch_path / "shared").mkdir(parents=True)
+    manifest = {"batch_date": batch_date, "documents": [{"category": "shared"}]}
+
+    with (
+        patch.object(pipeline.storage, "get_batch_manifest", return_value=manifest),
+        patch.object(pipeline, "_build_deduplicators", return_value={"knowledge": AsyncMock()}),
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
+            return_value=MagicMock(),
+        ),
+        patch.object(pipeline, "_list_tracked_source_documents", return_value={}),
+        patch.object(pipeline, "_process_category", side_effect=RuntimeError("process boom")),
+    ):
+        with pytest.raises(RuntimeError, match="process boom"):
+            await pipeline.ingest_batch(batch_date)
+
+
+def test_pipeline_module_main_executes_help():
+    original_argv = sys.argv[:]
+    sys.argv = ["redis_sre_agent.cli.pipeline", "--help"]
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            runpy.run_module("redis_sre_agent.cli.pipeline", run_name="__main__")
+        assert exc_info.value.code == 0
+    finally:
+        sys.argv = original_argv

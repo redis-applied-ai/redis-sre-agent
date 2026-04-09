@@ -9,6 +9,78 @@ import click
 from ..pipelines.orchestrator import PipelineOrchestrator
 
 
+def _parse_scraper_list(scrapers: str | None) -> list[str] | None:
+    """Split a comma-delimited scraper list into normalized names."""
+    if not scrapers:
+        return None
+    return [scraper.strip() for scraper in scrapers.split(",")]
+
+
+def _echo_scraper_results(scraper_results: dict, indent: str = "   ") -> None:
+    """Print scraper success and error summaries."""
+    for scraper_name, scraper_result in scraper_results.items():
+        if "error" in scraper_result:
+            click.echo(f"{indent}❌ {scraper_name}: {scraper_result['error']}")
+        else:
+            click.echo(
+                f"{indent}✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
+            )
+
+
+def _echo_source_document_changes(
+    source_changes: dict | None,
+    *,
+    verbose: bool,
+    indent: str = "   ",
+) -> None:
+    """Print source-document add/update/delete summaries."""
+    source_changes = source_changes or {}
+    if not any(source_changes.get(key, 0) for key in ("added", "updated", "deleted")):
+        return
+    click.echo(f"{indent}🗂️ Source document changes:")
+    click.echo(
+        f"{indent}   "
+        f"added={source_changes.get('added', 0)} "
+        f"updated={source_changes.get('updated', 0)} "
+        f"deleted={source_changes.get('deleted', 0)} "
+        f"unchanged={source_changes.get('unchanged', 0)}"
+    )
+    if verbose:
+        for change in source_changes.get("files", []):
+            click.echo(f"{indent}   • {change['action']}: {change['path']}")
+
+
+def _echo_runbook_test_result(result: dict) -> None:
+    """Print the outcome of a runbook URL extraction check."""
+    if result["success"]:
+        click.echo("   ✅ Success!")
+        click.echo(f"   📊 Content length: {result['content_length']} chars")
+        click.echo(f"   🏷️  Source type: {result['source_type']}")
+        click.echo(f"   👁️  Preview: {result['content_preview'][:200]}...")
+    else:
+        click.echo(f"   ❌ Failed: {result.get('error', 'Unknown error')}")
+
+
+def _echo_generated_runbook(document, saved_path: str | None = None) -> None:
+    """Print details for one generated runbook document."""
+    click.echo(f"   ✅ Generated runbook: {document.title}")
+    click.echo(f"   📂 Category: {document.category}")
+    click.echo(f"   🚨 Severity: {document.severity}")
+    click.echo(f"   📏 Length: {len(document.content)} characters")
+    if saved_path is not None:
+        click.echo(f"   💾 Saved to: {saved_path}")
+
+
+def _echo_runbook_job_results(results: dict) -> None:
+    """Print summary details for a full runbook generation pass."""
+    click.echo("✅ Runbook generation completed!")
+    click.echo(f"   📝 Documents generated: {results['documents_scraped']}")
+    click.echo(f"   💾 Documents saved: {results['documents_saved']}")
+    click.echo(f"   📅 Batch date: {results['batch_date']}")
+    for category, count in results["categories"].items():
+        click.echo(f"   📂 {category}: {count} runbooks")
+
+
 @click.group()
 def pipeline():
     """Data pipeline commands for scraping and ingestion."""
@@ -35,9 +107,7 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
     """Run the scraping pipeline to collect SRE documents."""
     click.echo("🔍 Starting scraping pipeline...")
 
-    scraper_list = None
-    if scrapers:
-        scraper_list = [s.strip() for s in scrapers.split(",")]
+    scraper_list = _parse_scraper_list(scrapers)
 
     async def run_scraping():
         # Configure scrapers to honor latest-only when requested
@@ -54,14 +124,7 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
             click.echo(f"   Total documents: {results['total_documents']}")
             click.echo(f"   Scrapers run: {', '.join(results['scrapers_run'])}")
 
-            # Show scraper results
-            for scraper_name, scraper_result in results["scraper_results"].items():
-                if "error" in scraper_result:
-                    click.echo(f"   ❌ {scraper_name}: {scraper_result['error']}")
-                else:
-                    click.echo(
-                        f"   ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
-                    )
+            _echo_scraper_results(results["scraper_results"])
 
             return results
 
@@ -80,7 +143,8 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
     is_flag=True,
     help="Only index latest Redis docs from the batch (skip versioned docs like 7.x)",
 )
-def ingest(batch_date: str, artifacts_path: str, latest_only: bool):
+@click.option("--verbose", "-v", is_flag=True, help="Show per-file source document changes")
+def ingest(batch_date: str, artifacts_path: str, latest_only: bool, verbose: bool):
     """Run the ingestion pipeline to process scraped documents."""
     click.echo("📥 Starting ingestion pipeline...")
 
@@ -104,6 +168,11 @@ def ingest(batch_date: str, artifacts_path: str, latest_only: bool):
                 )
                 if stats["errors"]:
                     click.echo(f"      ⚠️  {len(stats['errors'])} errors")
+
+            _echo_source_document_changes(
+                results.get("source_document_changes"),
+                verbose=verbose,
+            )
 
             return results
 
@@ -131,9 +200,7 @@ def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
     """Run the complete pipeline: scraping + ingestion."""
     click.echo("🚀 Starting full pipeline (scraping + ingestion)...")
 
-    scraper_list = None
-    if scrapers:
-        scraper_list = [s.strip() for s in scrapers.split(",")]
+    scraper_list = _parse_scraper_list(scrapers)
 
     async def run_full_pipeline():
         # Configure scrapers and ingestion to honor latest-only when requested
@@ -154,13 +221,7 @@ def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
                 scraping = results["scraping"]
                 click.echo(f"   📥 Scraping: {scraping['total_documents']} documents")
 
-                for scraper_name, scraper_result in scraping["scraper_results"].items():
-                    if "error" in scraper_result:
-                        click.echo(f"      ❌ {scraper_name}: {scraper_result['error']}")
-                    else:
-                        click.echo(
-                            f"      ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
-                        )
+                _echo_scraper_results(scraping["scraper_results"], indent="      ")
 
             # Ingestion results
             if "ingestion" in results:
@@ -325,14 +386,7 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
         if test_url:
             click.echo(f"🧪 Testing URL extraction: {test_url}")
             result = await generator.test_url_extraction(test_url)
-
-            if result["success"]:
-                click.echo("   ✅ Success!")
-                click.echo(f"   📊 Content length: {result['content_length']} chars")
-                click.echo(f"   🏷️  Source type: {result['source_type']}")
-                click.echo(f"   👁️  Preview: {result['content_preview'][:200]}...")
-            else:
-                click.echo(f"   ❌ Failed: {result.get('error', 'Unknown error')}")
+            _echo_runbook_test_result(result)
             return
 
         if url:
@@ -358,14 +412,8 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
 
             if documents:
                 doc = documents[0]
-                click.echo(f"   ✅ Generated runbook: {doc.title}")
-                click.echo(f"   📂 Category: {doc.category}")
-                click.echo(f"   🚨 Severity: {doc.severity}")
-                click.echo(f"   📏 Length: {len(doc.content)} characters")
-
-                # Save the document
                 path = temp_storage.save_document(doc)
-                click.echo(f"   💾 Saved to: {path}")
+                _echo_generated_runbook(doc, path)
             else:
                 click.echo(f"   ❌ Failed to generate runbook from {url}")
 
@@ -376,15 +424,7 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
 
         try:
             results = await generator.run_scraping_job()
-
-            click.echo("✅ Runbook generation completed!")
-            click.echo(f"   📝 Documents generated: {results['documents_scraped']}")
-            click.echo(f"   💾 Documents saved: {results['documents_saved']}")
-            click.echo(f"   📅 Batch date: {results['batch_date']}")
-
-            # Show category breakdown
-            for category, count in results["categories"].items():
-                click.echo(f"   📂 {category}: {count} runbooks")
+            _echo_runbook_job_results(results)
 
         except Exception as e:
             click.echo(f"❌ Runbook generation failed: {e}")
@@ -398,7 +438,10 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
 @click.option("--batch-date", help="Batch date (YYYY-MM-DD), defaults to today")
 @click.option("--prepare-only", is_flag=True, help="Only prepare batch artifacts, don't ingest")
 @click.option("--artifacts-path", default="./artifacts", help="Path to artifacts storage")
-def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifacts_path: str):
+@click.option("--verbose", "-v", is_flag=True, help="Show per-file source document changes")
+def prepare_sources(
+    source_dir: str, batch_date: str, prepare_only: bool, artifacts_path: str, verbose: bool
+):
     """Prepare source documents as batch artifacts, optionally ingest them."""
 
     async def run_source_preparation():
@@ -440,9 +483,7 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
             click.echo(f"❌ No markdown files found in {source_path}")
             return
 
-        click.echo(f"📋 Found {len(markdown_files)} files to prepare:")
-        for md_file in markdown_files:
-            click.echo(f"   • {md_file.relative_to(source_path)}")
+        click.echo(f"📋 Found {len(markdown_files)} files to prepare")
 
         try:
             pipeline = IngestionPipeline(storage)
@@ -468,6 +509,10 @@ def prepare_sources(source_dir: str, batch_date: str, prepare_only: bool, artifa
                 if successful:
                     total_chunks = sum(r.get("chunks_indexed", 0) for r in successful)
                     click.echo(f"   📦 Total chunks indexed: {total_chunks}")
+                    _echo_source_document_changes(
+                        successful[0].get("source_document_changes"),
+                        verbose=verbose,
+                    )
 
                 if failed:
                     click.echo(f"   ❌ Failed to ingest: {len(failed)} documents")
