@@ -487,17 +487,19 @@ async def test_prepare_source_artifacts_and_ingest_prepared_batch(pipeline, tmp_
     second.write_text("# Second", encoding="utf-8")
 
     document = _make_document()
+    created_documents = patch(
+        "redis_sre_agent.pipelines.ingestion.pipeline_workflow_mixin.create_scraped_document_from_markdown",
+        side_effect=[document, RuntimeError("bad file")],
+    )
     with (
-        patch(
-            "redis_sre_agent.pipelines.ingestion.pipeline_workflow_mixin.create_scraped_document_from_markdown",
-            side_effect=[document, RuntimeError("bad file")],
-        ),
+        created_documents as create_document,
         patch.object(pipeline.storage, "save_document") as save_document,
         patch.object(pipeline.storage, "save_batch_manifest") as save_manifest,
     ):
         prepared_count = await pipeline.prepare_source_artifacts(source_dir, "2025-01-20")
 
     assert prepared_count == 1
+    assert create_document.call_args_list == [((first, source_dir),), ((second, source_dir),)]
     save_document.assert_called_once_with(document)
     save_manifest.assert_called_once()
 

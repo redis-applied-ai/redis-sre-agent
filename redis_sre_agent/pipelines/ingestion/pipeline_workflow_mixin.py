@@ -140,7 +140,7 @@ class PipelineWorkflowMixin:
         for md_file in markdown_files:
             logger.info("Preparing artifact for: %s", md_file.name)
             try:
-                document = create_scraped_document_from_markdown(md_file)
+                document = create_scraped_document_from_markdown(md_file, source_dir)
                 self.storage.save_document(document)
                 prepared_documents.append(document)
                 prepared_count += 1
