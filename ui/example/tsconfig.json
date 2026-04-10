@@ -23,8 +23,7 @@
     // Path mapping
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@radar/ui-kit": ["../src/index.ts"]
+      "@/*": ["src/*"]
     }
   },
   "include": ["src"]

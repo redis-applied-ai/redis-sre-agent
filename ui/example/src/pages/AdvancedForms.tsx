@@ -551,8 +551,7 @@ const AdvancedForms = () => {
 
 // Dynamic Form Example Component
 const DynamicFormExample = () => {
-  const [formType] = useState<'user' | 'organization' | 'api'>('user');
-  const [conditionalFields, setConditionalFields] = useState<FormFieldConfig[]>([]);
+  const [formType, setFormType] = useState<'user' | 'organization' | 'api'>('user');
 
   const baseFields: FormFieldConfig[] = [
     {
@@ -619,22 +618,12 @@ const DynamicFormExample = () => {
     }
   ];
 
-  const handleFormTypeChange = (data: Record<string, any>) => {
-    const type = data.formType as 'user' | 'organization' | 'api';
-    setFormType(type);
-
-    switch (type) {
-      case 'user':
-        setConditionalFields(userFields);
-        break;
-      case 'organization':
-        setConditionalFields(organizationFields);
-        break;
-      case 'api':
-        setConditionalFields(apiFields);
-        break;
-    }
-  };
+  const conditionalFields =
+    formType === 'organization'
+      ? organizationFields
+      : formType === 'api'
+        ? apiFields
+        : userFields;
 
   const allFields = [...baseFields, ...conditionalFields];
 
@@ -645,6 +634,10 @@ const DynamicFormExample = () => {
         onSubmit={(data) => {
           console.log('Dynamic form submitted:', data);
           alert('Dynamic form submitted successfully!');
+        }}
+        onChange={(data) => {
+          const nextFormType = data.formType as 'user' | 'organization' | 'api' | undefined;
+          setFormType(nextFormType ?? 'user');
         }}
         submitLabel="Submit Dynamic Form"
         layout="vertical"

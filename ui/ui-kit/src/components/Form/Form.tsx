@@ -32,6 +32,8 @@ export interface FormProps {
   initialData?: Record<string, any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onSubmit: (data: Record<string, any>) => Promise<void> | void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onChange?: (data: Record<string, any>) => void;
   onCancel?: () => void;
   submitLabel?: string;
   cancelLabel?: string;
@@ -46,6 +48,7 @@ export const Form: React.FC<FormProps> = ({
   fields,
   initialData = {},
   onSubmit,
+  onChange,
   onCancel,
   submitLabel = "Submit",
   cancelLabel = "Cancel",
@@ -63,10 +66,14 @@ export const Form: React.FC<FormProps> = ({
   const handleFieldChange = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (fieldName: string, value: any) => {
-      setFormData((prev) => ({
-        ...prev,
-        [fieldName]: value,
-      }));
+      setFormData((prev) => {
+        const nextFormData = {
+          ...prev,
+          [fieldName]: value,
+        };
+        onChange?.(nextFormData);
+        return nextFormData;
+      });
 
       // Clear field error when user starts typing
       if (errors[fieldName]) {
@@ -77,7 +84,7 @@ export const Form: React.FC<FormProps> = ({
         });
       }
     },
-    [errors],
+    [errors, onChange],
   );
 
   const validateForm = () => {
