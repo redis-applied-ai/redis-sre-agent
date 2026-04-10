@@ -642,8 +642,11 @@ class IngestionPipeline:
                         stats["source_document_changes"].append(result["source_document_change"])
                     if result.get("source_document_path"):
                         stats["source_document_paths"].append(result["source_document_path"])
-                    if result.get("source_document_scope") is not None:
                         stats["source_document_scopes"].append(result["source_document_scope"])
+                    elif result.get("source_document_scope") is not None:
+                        logger.debug(
+                            "Ignoring source scope without source path for processed document result"
+                        )
                 else:
                     stats["errors"].append(result["error"])
 

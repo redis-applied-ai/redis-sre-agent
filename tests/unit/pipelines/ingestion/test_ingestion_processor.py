@@ -868,6 +868,62 @@ class TestIngestionPipeline:
         mock_ingest.assert_called_once_with(batch_date)
 
     @pytest.mark.asyncio
+    async def test_ingest_batch_ignores_empty_scope_from_non_source_documents(
+        self, pipeline, tmp_path
+    ):
+        """Non-source docs must not widen stale-source cleanup scope."""
+        batch_date = "2025-01-20"
+        batch_path = tmp_path / batch_date
+        shared_path = batch_path / "shared"
+        shared_path.mkdir(parents=True)
+
+        doc_data = {
+            "title": "Regular Batch Document",
+            "content": "Regular content. " * 20,
+            "source_url": "https://example.com/regular-doc",
+            "category": "shared",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {},
+        }
+        with open(shared_path / "regular.json", "w") as f:
+            json.dump(doc_data, f)
+
+        manifest = {"batch_date": batch_date, "documents": [{"category": "shared"}]}
+        knowledge_deduplicator = AsyncMock()
+        knowledge_deduplicator.replace_document_chunks.return_value = 1
+
+        with patch.object(pipeline.storage, "get_batch_manifest", return_value=manifest):
+            with patch.object(
+                pipeline, "_build_deduplicators", return_value={"knowledge": knowledge_deduplicator}
+            ):
+                with patch(
+                    "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer",
+                    return_value=MagicMock(),
+                ):
+                    with patch.object(
+                        pipeline,
+                        "_list_tracked_source_documents",
+                        return_value={
+                            "shared/tracked.md": [
+                                {
+                                    "deduplicator_key": "knowledge",
+                                    "document_hash": "tracked-hash",
+                                    "title": "Tracked Doc",
+                                    "doc_type": "knowledge",
+                                }
+                            ]
+                        },
+                    ):
+                        with patch.object(pipeline, "_save_ingestion_manifest") as mock_save:
+                            result = await pipeline.ingest_batch(batch_date)
+
+        knowledge_deduplicator.delete_tracked_source_document.assert_not_awaited()
+        assert result["source_document_changes"]["deleted"] == 0
+        assert result["categories_processed"]["shared"]["source_document_scopes"] == []
+        mock_save.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_ingest_batch_reports_deleted_source_documents(self, pipeline, tmp_path):
         """Prepared source batches should report files removed from the current scope."""
         batch_date = "2025-01-20"
@@ -881,46 +937,50 @@ class TestIngestionPipeline:
             with patch.object(
                 pipeline, "_build_deduplicators", return_value={"knowledge": knowledge_deduplicator}
             ):
-                with patch.object(
-                    pipeline,
-                    "_list_tracked_source_documents",
-                    return_value={
-                        "shared/current.md": [
-                            {"deduplicator_key": "knowledge", "document_hash": "current-hash"}
-                        ],
-                        "shared/deleted.md": [
-                            {
-                                "deduplicator_key": "knowledge",
-                                "document_hash": "deleted-hash",
-                                "title": "Deleted Doc",
-                                "doc_type": "knowledge",
-                            }
-                        ],
-                    },
+                with patch(
+                    "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer",
+                    return_value=MagicMock(),
                 ):
                     with patch.object(
                         pipeline,
-                        "_process_category",
+                        "_list_tracked_source_documents",
                         return_value={
-                            "category": "shared",
-                            "documents_processed": 1,
-                            "chunks_created": 2,
-                            "chunks_indexed": 2,
-                            "source_document_changes": [
+                            "shared/current.md": [
+                                {"deduplicator_key": "knowledge", "document_hash": "current-hash"}
+                            ],
+                            "shared/deleted.md": [
                                 {
-                                    "path": "shared/current.md",
-                                    "action": "update",
-                                    "title": "Current Doc",
+                                    "deduplicator_key": "knowledge",
+                                    "document_hash": "deleted-hash",
+                                    "title": "Deleted Doc",
                                     "doc_type": "knowledge",
                                 }
                             ],
-                            "source_document_paths": ["shared/current.md"],
-                            "source_document_scopes": [""],
-                            "errors": [],
                         },
                     ):
-                        with patch.object(pipeline, "_save_ingestion_manifest") as mock_save:
-                            result = await pipeline.ingest_batch(batch_date)
+                        with patch.object(
+                            pipeline,
+                            "_process_category",
+                            return_value={
+                                "category": "shared",
+                                "documents_processed": 1,
+                                "chunks_created": 2,
+                                "chunks_indexed": 2,
+                                "source_document_changes": [
+                                    {
+                                        "path": "shared/current.md",
+                                        "action": "update",
+                                        "title": "Current Doc",
+                                        "doc_type": "knowledge",
+                                    }
+                                ],
+                                "source_document_paths": ["shared/current.md"],
+                                "source_document_scopes": [""],
+                                "errors": [],
+                            },
+                        ):
+                            with patch.object(pipeline, "_save_ingestion_manifest") as mock_save:
+                                result = await pipeline.ingest_batch(batch_date)
 
         knowledge_deduplicator.delete_tracked_source_document.assert_awaited_once_with(
             "deleted-hash", "shared/deleted.md"
