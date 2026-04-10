@@ -548,10 +548,17 @@ class IngestionPipeline:
         # Process documents in parallel batches
         async def process_document(json_file: Path) -> Dict[str, Any]:
             """Process a single document and return stats."""
+            source_document_path = ""
+            source_document_scope = None
             try:
                 # Load document
                 with open(json_file, "r", encoding="utf-8") as f:
                     doc_data = json.load(f)
+
+                metadata = doc_data.get("metadata", {})
+                if isinstance(metadata, dict):
+                    source_document_path = str(metadata.get("source_document_path") or "").strip()
+                    source_document_scope = str(metadata.get("source_document_scope") or "").strip()
 
                 document = ScrapedDocument.from_dict(doc_data)
 
@@ -561,10 +568,10 @@ class IngestionPipeline:
                 doc_type_key = str(document.doc_type.value).strip().lower() or "knowledge"
                 deduplicator = deduplicators.get(doc_type_key) or deduplicators["knowledge"]
                 source_document_path = str(
-                    document.metadata.get("source_document_path") or ""
+                    document.metadata.get("source_document_path") or source_document_path
                 ).strip()
                 source_document_scope = str(
-                    document.metadata.get("source_document_scope") or ""
+                    document.metadata.get("source_document_scope") or source_document_scope or ""
                 ).strip()
                 tracked_entries = []
                 if tracked_source_documents and source_document_path:
@@ -619,6 +626,8 @@ class IngestionPipeline:
                 return {
                     "success": False,
                     "error": error_msg,
+                    "source_document_path": source_document_path,
+                    "source_document_scope": source_document_scope,
                 }
 
         # Process documents in parallel batches (e.g., 10 at a time)
@@ -634,19 +643,22 @@ class IngestionPipeline:
 
             # Aggregate stats
             for result in results:
+                if result.get("source_document_path"):
+                    stats["source_document_paths"].append(result["source_document_path"])
+                    stats["source_document_scopes"].append(
+                        str(result.get("source_document_scope") or "")
+                    )
+                elif result.get("source_document_scope") is not None:
+                    logger.debug(
+                        "Ignoring source scope without source path for processed document result"
+                    )
+
                 if result["success"]:
                     stats["documents_processed"] += 1
                     stats["chunks_created"] += result["chunks_created"]
                     stats["chunks_indexed"] += result["chunks_indexed"]
                     if result.get("source_document_change"):
                         stats["source_document_changes"].append(result["source_document_change"])
-                    if result.get("source_document_path"):
-                        stats["source_document_paths"].append(result["source_document_path"])
-                        stats["source_document_scopes"].append(result["source_document_scope"])
-                    elif result.get("source_document_scope") is not None:
-                        logger.debug(
-                            "Ignoring source scope without source path for processed document result"
-                        )
                 else:
                     stats["errors"].append(result["error"])
 
@@ -923,6 +935,12 @@ class IngestionPipeline:
 
         for md_file in markdown_files:
             logger.info(f"Processing: {md_file.name}")
+            source_document_path, source_document_scope = self._resolve_source_document_identity(
+                md_file, source_dir
+            )
+            if source_document_path:
+                current_source_paths.add(source_document_path)
+            scope_prefixes.add(source_document_scope)
 
             try:
                 # Convert markdown to ScrapedDocument
@@ -955,10 +973,6 @@ class IngestionPipeline:
                 action = replacement.get("action", "unchanged")
                 if existed_before and action == "add":
                     action = "update"
-
-                if source_document_path:
-                    current_source_paths.add(source_document_path)
-                scope_prefixes.add(source_document_scope)
 
                 result = {
                     "file": source_document_path or md_file.name,

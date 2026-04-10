@@ -924,6 +924,106 @@ class TestIngestionPipeline:
         mock_save.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_ingest_batch_keeps_failed_source_documents_out_of_stale_deletes(
+        self, pipeline, tmp_path
+    ):
+        """Failed source-doc artifacts should not be deleted as if they were removed."""
+        batch_date = "2025-01-20"
+        batch_path = tmp_path / batch_date
+        shared_path = batch_path / "shared"
+        shared_path.mkdir(parents=True)
+
+        current_doc = {
+            "title": "Current Source Document",
+            "content": "Current content. " * 20,
+            "source_url": "file:///tmp/source_documents/shared/current.md",
+            "category": "shared",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {
+                "source_document_path": "shared/current.md",
+                "source_document_scope": "",
+            },
+        }
+        failed_doc = {
+            "title": "Failed Source Document",
+            "content": "Failed content. " * 20,
+            "source_url": "file:///tmp/source_documents/shared/failed.md",
+            "category": "shared",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {
+                "source_document_path": "shared/failed.md",
+                "source_document_scope": "",
+            },
+        }
+
+        with open(shared_path / "current.json", "w") as f:
+            json.dump(current_doc, f)
+        with open(shared_path / "failed.json", "w") as f:
+            json.dump(failed_doc, f)
+
+        manifest = {"batch_date": batch_date, "documents": [{"category": "shared"}]}
+        knowledge_deduplicator = AsyncMock()
+        knowledge_deduplicator.replace_source_document_chunks.return_value = {
+            "action": "update",
+            "indexed_count": 1,
+        }
+
+        original_chunk_document = pipeline.processor.chunk_document
+
+        def chunk_or_fail(document):
+            if document.title == "Failed Source Document":
+                raise RuntimeError("simulated failure")
+            return original_chunk_document(document)
+
+        with patch.object(pipeline.storage, "get_batch_manifest", return_value=manifest):
+            with patch.object(
+                pipeline, "_build_deduplicators", return_value={"knowledge": knowledge_deduplicator}
+            ):
+                with patch(
+                    "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer",
+                    return_value=MagicMock(),
+                ):
+                    with patch.object(
+                        pipeline,
+                        "_list_tracked_source_documents",
+                        return_value={
+                            "shared/current.md": [
+                                {
+                                    "deduplicator_key": "knowledge",
+                                    "document_hash": "current-hash",
+                                    "title": "Current Source Document",
+                                    "doc_type": "knowledge",
+                                }
+                            ],
+                            "shared/failed.md": [
+                                {
+                                    "deduplicator_key": "knowledge",
+                                    "document_hash": "failed-hash",
+                                    "title": "Failed Source Document",
+                                    "doc_type": "knowledge",
+                                }
+                            ],
+                        },
+                    ):
+                        with patch.object(
+                            pipeline.processor,
+                            "chunk_document",
+                            side_effect=chunk_or_fail,
+                        ):
+                            with patch.object(pipeline, "_save_ingestion_manifest") as mock_save:
+                                result = await pipeline.ingest_batch(batch_date)
+
+        knowledge_deduplicator.delete_tracked_source_document.assert_not_awaited()
+        assert result["source_document_changes"]["deleted"] == 0
+        assert any("failed.json" in error for error in result["errors"])
+        assert {change["path"] for change in result["source_document_changes"]["files"]} == {
+            "shared/current.md"
+        }
+        mock_save.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_ingest_batch_reports_deleted_source_documents(self, pipeline, tmp_path):
         """Prepared source batches should report files removed from the current scope."""
         batch_date = "2025-01-20"
@@ -992,3 +1092,72 @@ class TestIngestionPipeline:
             "shared/deleted.md",
         }
         mock_save.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ingest_source_documents_keeps_failed_files_out_of_stale_deletes(
+        self, pipeline, tmp_path
+    ):
+        """A failed source markdown should not be treated as deleted from the source tree."""
+        source_root = tmp_path / "source_documents"
+        current_md = source_root / "shared" / "current.md"
+        failed_md = source_root / "shared" / "failed.md"
+        current_md.parent.mkdir(parents=True)
+        current_md.write_text("# Current\n\nCurrent content.\n", encoding="utf-8")
+        failed_md.write_text("# Failed\n\nFailed content.\n", encoding="utf-8")
+
+        knowledge_deduplicator = AsyncMock()
+        knowledge_deduplicator.replace_source_document_chunks.return_value = {
+            "action": "update",
+            "indexed_count": 1,
+        }
+
+        original_chunk_document = pipeline.processor.chunk_document
+
+        def chunk_or_fail(document):
+            if document.title == "Failed":
+                raise RuntimeError("simulated failure")
+            return original_chunk_document(document)
+
+        with patch.object(
+            pipeline, "_build_deduplicators", return_value={"knowledge": knowledge_deduplicator}
+        ):
+            with patch(
+                "redis_sre_agent.pipelines.ingestion.processor.get_vectorizer",
+                return_value=MagicMock(),
+            ):
+                with patch.object(
+                    pipeline,
+                    "_list_tracked_source_documents",
+                    return_value={
+                        "shared/current.md": [
+                            {
+                                "deduplicator_key": "knowledge",
+                                "document_hash": "current-hash",
+                                "title": "Current",
+                                "doc_type": "knowledge",
+                            }
+                        ],
+                        "shared/failed.md": [
+                            {
+                                "deduplicator_key": "knowledge",
+                                "document_hash": "failed-hash",
+                                "title": "Failed",
+                                "doc_type": "knowledge",
+                            }
+                        ],
+                    },
+                ):
+                    with patch.object(
+                        pipeline.processor,
+                        "chunk_document",
+                        side_effect=chunk_or_fail,
+                    ):
+                        results = await pipeline.ingest_source_documents(source_root)
+
+        knowledge_deduplicator.delete_tracked_source_document.assert_not_awaited()
+        actions = {result["file"]: result["status"] for result in results}
+        assert actions["shared/current.md"] == "success"
+        assert actions["failed.md"] == "error"
+        assert "shared/failed.md" not in {
+            result["file"] for result in results if result.get("action") == "delete"
+        }
