@@ -994,7 +994,11 @@ class IngestionPipeline:
                 error_msg = str(e)
                 logger.error(f"❌ Failed to process {md_file.name}: {error_msg}")
 
-                result = {"file": md_file.name, "status": "error", "error": error_msg}
+                result = {
+                    "file": source_document_path or md_file.name,
+                    "status": "error",
+                    "error": error_msg,
+                }
                 results.append(result)
 
         stale_source_documents = await self._delete_stale_source_documents(

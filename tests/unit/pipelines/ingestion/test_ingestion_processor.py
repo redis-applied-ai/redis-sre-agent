@@ -1157,7 +1157,7 @@ class TestIngestionPipeline:
         knowledge_deduplicator.delete_tracked_source_document.assert_not_awaited()
         actions = {result["file"]: result["status"] for result in results}
         assert actions["shared/current.md"] == "success"
-        assert actions["failed.md"] == "error"
+        assert actions["shared/failed.md"] == "error"
         assert "shared/failed.md" not in {
             result["file"] for result in results if result.get("action") == "delete"
         }
