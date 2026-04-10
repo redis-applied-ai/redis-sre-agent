@@ -1025,7 +1025,7 @@ class IngestionPipeline:
 
             try:
                 # Convert markdown to ScrapedDocument
-                document = self._create_scraped_document_from_markdown(md_file)
+                document = self._create_scraped_document_from_markdown(md_file, source_dir)
 
                 # Save as artifact using storage
                 self.storage.save_document(document)

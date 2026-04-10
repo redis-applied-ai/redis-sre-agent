@@ -352,6 +352,37 @@ class TestIngestionPipeline:
         assert document.metadata["source_document_path"] == "shared/nested/tracked.md"
         assert document.metadata["source_document_scope"] == "shared/"
 
+    @pytest.mark.asyncio
+    async def test_prepare_source_artifacts_preserves_source_document_identity(
+        self, pipeline, tmp_path
+    ):
+        """Prepared artifacts should keep the stable source path metadata."""
+        source_root = tmp_path / "source_documents"
+        md_file = source_root / "shared" / "nested" / "tracked.md"
+        md_file.parent.mkdir(parents=True)
+        md_file.write_text("# Tracked\n\nSome content.\n", encoding="utf-8")
+
+        saved_documents = []
+
+        with (
+            patch.object(
+                pipeline.storage,
+                "save_document",
+                side_effect=lambda document: saved_documents.append(document),
+            ),
+            patch.object(pipeline.storage, "save_batch_manifest") as mock_save_manifest,
+        ):
+            prepared_count = await pipeline.prepare_source_artifacts(
+                source_root,
+                "2025-01-20",
+            )
+
+        assert prepared_count == 1
+        assert len(saved_documents) == 1
+        assert saved_documents[0].metadata["source_document_path"] == "shared/nested/tracked.md"
+        assert saved_documents[0].metadata["source_document_scope"] == ""
+        mock_save_manifest.assert_called_once_with(saved_documents)
+
     def test_create_scraped_document_from_markdown_parses_adr_frontmatter_fields(
         self, pipeline, tmp_path
     ):
