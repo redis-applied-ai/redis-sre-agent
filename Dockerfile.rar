@@ -6,11 +6,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /workspace
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml uv.lock README.md LICENSE.txt /workspace/
 
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . /workspace
+
+RUN if [ -f /workspace/vendor/re-analyzer-mcp/package.json ]; then \
+      npm ci --prefix /workspace/vendor/re-analyzer-mcp; \
+    fi
 
 RUN uv sync --frozen --no-dev
 
@@ -69,6 +82,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/workspace/.venv/bin:$PATH"
 
 WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace /workspace
 

@@ -56,6 +56,10 @@ def _runtime_state_dir() -> Path:
     return state_dir
 
 
+def _runtime_config_path() -> Path:
+    return Path(__file__).resolve().with_name("config.runtime.yaml")
+
+
 def _conversation_dir() -> Path:
     path = _runtime_state_dir() / "conversations"
     path.mkdir(parents=True, exist_ok=True)
@@ -130,12 +134,20 @@ def _append_conversation_history(context_id: str, *messages: Mapping[str, str]) 
 
 
 def _bootstrap_runtime_environment() -> None:
+    if not os.environ.get("SRE_AGENT_CONFIG"):
+        runtime_config = _runtime_config_path()
+        if runtime_config.is_file():
+            os.environ["SRE_AGENT_CONFIG"] = str(runtime_config)
+
     if not os.environ.get("REDIS_URL"):
         for key in ("RAR_RUNTIME_REDIS_URL", "TARGET_REDIS_URL"):
             candidate = os.environ.get(key, "").strip()
             if candidate:
                 os.environ["REDIS_URL"] = candidate
                 break
+
+
+_bootstrap_runtime_environment()
 
 
 async def _ensure_runtime_redis_ready() -> None:
@@ -462,6 +474,59 @@ def _load_mcp_tool_registry() -> dict[str, Any]:
     return registry
 
 
+def _load_configured_external_mcp_tools() -> dict[str, dict[str, str]]:
+    from redis_sre_agent.core.config import MCPServerConfig, settings
+
+    tools: dict[str, dict[str, str]] = {}
+    for server_name, server_config in settings.mcp_servers.items():
+        if isinstance(server_config, dict):
+            server_config = MCPServerConfig.model_validate(server_config)
+        if not server_config.tools:
+            continue
+        for tool_name, tool_config in server_config.tools.items():
+            description = getattr(tool_config, "description", None) or (
+                f"Configured external MCP tool '{tool_name}' from '{server_name}'."
+            )
+            tools.setdefault(
+                tool_name,
+                {
+                    "server_name": server_name,
+                    "description": description,
+                },
+            )
+    return tools
+
+
+async def _invoke_configured_external_mcp_tool(
+    tool_name: str,
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    from redis_sre_agent.core.config import MCPServerConfig, settings
+    from redis_sre_agent.tools.mcp.provider import MCPToolProvider
+
+    external_tools = _load_configured_external_mcp_tools()
+    tool_spec = external_tools.get(tool_name)
+    if tool_spec is None:
+        raise RuntimeError(f"Unsupported configured external MCP tool '{tool_name}'")
+
+    server_name = tool_spec["server_name"]
+    server_config = settings.mcp_servers.get(server_name)
+    if server_config is None:
+        raise RuntimeError(
+            f"Configured external MCP tool '{tool_name}' references unknown server '{server_name}'"
+        )
+    if isinstance(server_config, dict):
+        server_config = MCPServerConfig.model_validate(server_config)
+
+    provider = MCPToolProvider(
+        server_name=server_name,
+        server_config=server_config,
+        use_pool=False,
+    )
+    async with provider:
+        return await provider._call_mcp_tool(tool_name, dict(arguments))
+
+
 async def _dispatch_mcp_tool(task_input: Mapping[str, Any]) -> dict[str, Any]:
     tool_name_raw = task_input.get("tool")
     if not isinstance(tool_name_raw, str) or not tool_name_raw.strip():
@@ -473,8 +538,19 @@ async def _dispatch_mcp_tool(task_input: Mapping[str, Any]) -> dict[str, Any]:
 
     registry = _load_mcp_tool_registry()
     tool = registry.get(tool_name)
+    if tool is None and tool_name in _load_configured_external_mcp_tools():
+        result = await _invoke_configured_external_mcp_tool(tool_name, arguments)
+        return {
+            "ok": True,
+            "mode": "mcp",
+            "tool": tool_name,
+            "result": result,
+        }
+
     if tool is None:
-        supported = ", ".join(sorted(registry))
+        supported = ", ".join(
+            sorted(set(registry) | set(_load_configured_external_mcp_tools()))
+        )
         raise RuntimeError(f"Unsupported MCP tool '{tool_name}'. Supported tools: {supported}")
 
     from redis_sre_agent.mcp_server.task_contract import runtime_task_execution_context
@@ -503,6 +579,19 @@ def _build_mcp_capabilities() -> dict[str, list[dict[str, Any]]]:
                 "name": name,
                 "description": description,
                 "executionContract": tool_execution_contract(name),
+            }
+        )
+    for name, tool_spec in sorted(_load_configured_external_mcp_tools().items()):
+        if any(existing["name"] == name for existing in tools):
+            continue
+        tools.append(
+            {
+                "name": name,
+                "description": tool_spec["description"],
+                "executionContract": {
+                    "nativeMode": "inline",
+                    "runtimeMode": "inline",
+                },
             }
         )
     return {"tools": tools, "resources": [], "prompts": []}
