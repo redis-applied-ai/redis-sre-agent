@@ -335,12 +335,16 @@ def _tool_output_summary(envelope: Mapping[str, Any]) -> str:
     return rendered[:500]
 
 
-async def _emit_tool_envelopes(emitter: TaskEmitter, tool_envelopes: list[Mapping[str, Any]]) -> None:
+async def _emit_tool_envelopes(
+    emitter: TaskEmitter, tool_envelopes: list[Mapping[str, Any]]
+) -> None:
     for index, envelope in enumerate(tool_envelopes, start=1):
         tool_name_raw = envelope.get("name") or envelope.get("tool_key") or f"tool_{index}"
         tool_name = str(tool_name_raw).strip() or f"tool_{index}"
         call_id = str(envelope.get("tool_key") or f"{tool_name}-{index}").strip()
-        status = "failed" if str(envelope.get("status", "")).strip().lower() == "error" else "completed"
+        status = (
+            "failed" if str(envelope.get("status", "")).strip().lower() == "error" else "completed"
+        )
         arguments = envelope.get("args")
         await emitter.emit_tool_call_async(
             tool_name,
@@ -548,9 +552,7 @@ async def _dispatch_mcp_tool(task_input: Mapping[str, Any]) -> dict[str, Any]:
         }
 
     if tool is None:
-        supported = ", ".join(
-            sorted(set(registry) | set(_load_configured_external_mcp_tools()))
-        )
+        supported = ", ".join(sorted(set(registry) | set(_load_configured_external_mcp_tools())))
         raise RuntimeError(f"Unsupported MCP tool '{tool_name}'. Supported tools: {supported}")
 
     from redis_sre_agent.mcp_server.task_contract import runtime_task_execution_context
@@ -573,7 +575,9 @@ def _build_mcp_capabilities() -> dict[str, list[dict[str, Any]]]:
 
     tools: list[dict[str, Any]] = []
     for name, tool in sorted(_load_mcp_tool_registry().items()):
-        description = (inspect.getdoc(tool) or "").strip().splitlines()[0] if inspect.getdoc(tool) else name
+        description = (
+            (inspect.getdoc(tool) or "").strip().splitlines()[0] if inspect.getdoc(tool) else name
+        )
         tools.append(
             {
                 "name": name,

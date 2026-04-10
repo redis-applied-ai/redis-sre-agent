@@ -117,7 +117,10 @@ def test_runtime_sre_agent_builds_execution_contract_metadata(
 
     assert tools["redis_sre_general_chat"]["executionContract"]["nativeMode"] == "agent_task"
     assert tools["redis_sre_general_chat"]["executionContract"]["runtimeMode"] == "inline"
-    assert tools["redis_sre_general_chat"]["executionContract"]["statusTool"] == "redis_sre_get_task_status"
+    assert (
+        tools["redis_sre_general_chat"]["executionContract"]["statusTool"]
+        == "redis_sre_get_task_status"
+    )
     assert tools["redis_sre_knowledge_search"]["executionContract"] == {
         "nativeMode": "inline",
         "runtimeMode": "inline",
@@ -266,8 +269,16 @@ async def test_runtime_sre_agent_chat_does_not_tunnel_mcp_commands(
         "redis_sre_agent.agent.chat_agent",
         type("_M", (), {"get_chat_agent": lambda *_, **__: _ChatAgent()})(),
     )
-    monkeypatch.setitem(sys.modules, "redis_sre_agent.agent.knowledge_agent", type("_M", (), {"get_knowledge_agent": lambda: _ChatAgent()})())
-    monkeypatch.setitem(sys.modules, "redis_sre_agent.agent.langgraph_agent", type("_M", (), {"get_sre_agent": lambda: _ChatAgent()})())
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.agent.knowledge_agent",
+        type("_M", (), {"get_knowledge_agent": lambda: _ChatAgent()})(),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.agent.langgraph_agent",
+        type("_M", (), {"get_sre_agent": lambda: _ChatAgent()})(),
+    )
     monkeypatch.setitem(
         sys.modules,
         "redis_sre_agent.agent.router",
@@ -346,8 +357,16 @@ async def test_runtime_sre_agent_chat_persists_context_history(
         "redis_sre_agent.agent.chat_agent",
         type("_M", (), {"get_chat_agent": lambda *_, **__: _ChatAgent()})(),
     )
-    monkeypatch.setitem(sys.modules, "redis_sre_agent.agent.knowledge_agent", type("_M", (), {"get_knowledge_agent": lambda: _ChatAgent()})())
-    monkeypatch.setitem(sys.modules, "redis_sre_agent.agent.langgraph_agent", type("_M", (), {"get_sre_agent": lambda: _ChatAgent()})())
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.agent.knowledge_agent",
+        type("_M", (), {"get_knowledge_agent": lambda: _ChatAgent()})(),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.agent.langgraph_agent",
+        type("_M", (), {"get_sre_agent": lambda: _ChatAgent()})(),
+    )
     monkeypatch.setitem(
         sys.modules,
         "redis_sre_agent.agent.router",
@@ -381,7 +400,9 @@ async def _fake_resolve_agent_context(task_input: dict[str, Any]):
     return {}, None, None
 
 
-async def _fake_emit_tool_envelopes(emitter: _FakeTaskEmitter, tool_envelopes: list[dict[str, Any]]) -> None:
+async def _fake_emit_tool_envelopes(
+    emitter: _FakeTaskEmitter, tool_envelopes: list[dict[str, Any]]
+) -> None:
     for index, envelope in enumerate(tool_envelopes, start=1):
         await emitter.emit_tool_call_async(
             str(envelope["name"]),
@@ -392,7 +413,9 @@ async def _fake_emit_tool_envelopes(emitter: _FakeTaskEmitter, tool_envelopes: l
         )
 
 
-def test_bootstrap_runtime_environment_prefers_runtime_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_runtime_environment_prefers_runtime_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _load_module()
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.setenv("RAR_RUNTIME_REDIS_URL", "redis://runtime/0")
@@ -475,7 +498,11 @@ def test_conversation_history_helpers_handle_invalid_and_mixed_payloads(
         encoding="utf-8",
     )
     history = module._load_conversation_history("ctx")
-    assert [type(item).__name__ for item in history] == ["AIMessage", "HumanMessage", "HumanMessage"]
+    assert [type(item).__name__ for item in history] == [
+        "AIMessage",
+        "HumanMessage",
+        "HumanMessage",
+    ]
     assert [item.content for item in history] == ["first", "second", "third"]
 
     module._append_conversation_history(
@@ -499,7 +526,10 @@ def test_append_conversation_history_truncates_and_recovers_from_bad_json(
     module._append_conversation_history("ctx-truncate", {"role": "user", "content": "one"})
     assert json.loads(path.read_text(encoding="utf-8")) == [{"role": "user", "content": "one"}]
 
-    many_messages = [{"role": "assistant", "content": f"m-{index}"} for index in range(module.MAX_HISTORY_MESSAGES + 5)]
+    many_messages = [
+        {"role": "assistant", "content": f"m-{index}"}
+        for index in range(module.MAX_HISTORY_MESSAGES + 5)
+    ]
     module._append_conversation_history("ctx-truncate", *many_messages)
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert len(saved) == module.MAX_HISTORY_MESSAGES
@@ -560,10 +590,14 @@ async def test_ensure_runtime_redis_ready_returns_if_completed_inside_lock(
             return None
 
     async def _unexpected_create_indices() -> bool:
-        raise AssertionError("create_indices should not be called when bootstrap completes inside the lock")
+        raise AssertionError(
+            "create_indices should not be called when bootstrap completes inside the lock"
+        )
 
     module._REDIS_BOOTSTRAP_LOCK = _CompletingLock()
-    _set_fake_module(monkeypatch, "redis_sre_agent.core.redis", create_indices=_unexpected_create_indices)
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.core.redis", create_indices=_unexpected_create_indices
+    )
 
     await module._ensure_runtime_redis_ready()
 
@@ -585,13 +619,22 @@ async def test_pipeline_status_and_batch_helpers(
     init_args: list[tuple[Any, ...]] = []
 
     class _FakeOrchestrator:
-        def __init__(self, artifacts_path: str, config: dict[str, Any] | None = None, scrapers: list[str] | None = None) -> None:
+        def __init__(
+            self,
+            artifacts_path: str,
+            config: dict[str, Any] | None = None,
+            scrapers: list[str] | None = None,
+        ) -> None:
             init_args.append((artifacts_path, config, scrapers))
 
         async def get_pipeline_status(self) -> dict[str, Any]:
             return {"state": "ready"}
 
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.orchestrator", PipelineOrchestrator=_FakeOrchestrator)
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.pipelines.orchestrator",
+        PipelineOrchestrator=_FakeOrchestrator,
+    )
     status = await module.redis_sre_get_pipeline_status(str(tmp_path / "artifacts"))
     assert status == {"state": "ready"}
     assert init_args == [(str(tmp_path / "artifacts"), None, None)]
@@ -603,7 +646,9 @@ async def test_pipeline_status_and_batch_helpers(
         def get_batch_manifest(self, batch_date: str) -> None:
             return None
 
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_MissingStorage)
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_MissingStorage
+    )
     missing = await module.redis_sre_get_pipeline_batch("2026-04-10", str(tmp_path / "artifacts"))
     assert missing["error"] == "Batch 2026-04-10 not found"
 
@@ -616,8 +661,12 @@ async def test_pipeline_status_and_batch_helpers(
 
     batch_dir = tmp_path / "artifacts" / "2026-04-10"
     batch_dir.mkdir(parents=True)
-    (batch_dir / "ingestion_manifest.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_PresentStorage)
+    (batch_dir / "ingestion_manifest.json").write_text(
+        json.dumps({"status": "ok"}), encoding="utf-8"
+    )
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_PresentStorage
+    )
     present = await module.redis_sre_get_pipeline_batch("2026-04-10", str(tmp_path / "artifacts"))
     assert present["total_documents"] == 2
     assert present["ingestion"] == {"status": "ok"}
@@ -630,7 +679,9 @@ async def test_prepare_source_documents_handles_validation_and_ingestion(
 ) -> None:
     module = _load_module()
 
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.ingestion.processor", IngestionPipeline=object)
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.pipelines.ingestion.processor", IngestionPipeline=object
+    )
     _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=object)
     with pytest.raises(RuntimeError, match="Source directory does not exist"):
         await module.redis_sre_prepare_source_documents(source_dir=str(tmp_path / "missing"))
@@ -659,8 +710,14 @@ async def test_prepare_source_documents_handles_validation_and_ingestion(
             pipeline_calls.append(("ingest", batch_date))
             return [{"status": "success"}, {"status": "error"}, {"status": "success"}]
 
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.ingestion.processor", IngestionPipeline=_FakePipeline)
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_FakeStorage)
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.pipelines.ingestion.processor",
+        IngestionPipeline=_FakePipeline,
+    )
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_FakeStorage
+    )
 
     with pytest.raises(RuntimeError, match="Invalid batch date format"):
         await module.redis_sre_prepare_source_documents(
@@ -702,7 +759,9 @@ async def test_run_pipeline_wrappers(
     calls: list[tuple[str, Any]] = []
 
     class _FakeOrchestrator:
-        def __init__(self, artifacts_path: str, config: dict[str, Any], scrapers: list[str] | None = None) -> None:
+        def __init__(
+            self, artifacts_path: str, config: dict[str, Any], scrapers: list[str] | None = None
+        ) -> None:
             calls.append(("init", artifacts_path, config, scrapers))
 
         async def run_full_pipeline(self, scrapers: list[str] | None) -> dict[str, Any]:
@@ -713,7 +772,11 @@ async def test_run_pipeline_wrappers(
             calls.append(("ingest", batch_date))
             return {"mode": "ingest"}
 
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.orchestrator", PipelineOrchestrator=_FakeOrchestrator)
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.pipelines.orchestrator",
+        PipelineOrchestrator=_FakeOrchestrator,
+    )
 
     full = await module.redis_sre_run_pipeline_full(
         artifacts_path=str(tmp_path / "artifacts"),
@@ -781,7 +844,13 @@ async def test_runtime_progress_and_tool_envelope_helpers() -> None:
     await module._emit_tool_envelopes(
         emitter,
         [
-            {"name": "search", "tool_key": "search-1", "status": "success", "args": {"query": "redis"}, "data": {"hits": 2}},
+            {
+                "name": "search",
+                "tool_key": "search-1",
+                "status": "success",
+                "args": {"query": "redis"},
+                "data": {"hits": 2},
+            },
             {"status": "error", "data": {"reason": "bad"}},
         ],
     )
@@ -800,15 +869,21 @@ async def test_resolve_agent_context_handles_success_and_errors(
     _set_fake_module(
         monkeypatch,
         "redis_sre_agent.core.instances",
-        get_instance_by_id=lambda instance_id: asyncio.sleep(0, result={"id": instance_id}) if instance_id == "inst-1" else asyncio.sleep(0, result=None),
+        get_instance_by_id=lambda instance_id: asyncio.sleep(0, result={"id": instance_id})
+        if instance_id == "inst-1"
+        else asyncio.sleep(0, result=None),
     )
     _set_fake_module(
         monkeypatch,
         "redis_sre_agent.core.clusters",
-        get_cluster_by_id=lambda cluster_id: asyncio.sleep(0, result={"id": cluster_id}) if cluster_id == "cluster-1" else asyncio.sleep(0, result=None),
+        get_cluster_by_id=lambda cluster_id: asyncio.sleep(0, result={"id": cluster_id})
+        if cluster_id == "cluster-1"
+        else asyncio.sleep(0, result=None),
     )
 
-    context, instance, cluster = await module._resolve_agent_context({"instance_id": " inst-1 ", "user_id": " user-1 "})
+    context, instance, cluster = await module._resolve_agent_context(
+        {"instance_id": " inst-1 ", "user_id": " user-1 "}
+    )
     assert context == {"instance_id": "inst-1", "user_id": "user-1"}
     assert instance == {"id": "inst-1"}
     assert cluster is None
@@ -883,9 +958,24 @@ async def test_dispatch_chat_query_selects_requested_agents(
 
     monkeypatch.setattr(module, "_resolve_agent_context", _fake_resolve_agent_context)
     monkeypatch.setattr(module, "_emit_tool_envelopes", _fake_emit)
-    _set_fake_module(monkeypatch, "redis_sre_agent.agent.chat_agent", get_chat_agent=lambda redis_instance=None, redis_cluster=None: captured_chat_args.append((redis_instance, redis_cluster)) or _NamedAgent("chat"))
-    _set_fake_module(monkeypatch, "redis_sre_agent.agent.knowledge_agent", get_knowledge_agent=lambda: _NamedAgent("knowledge"))
-    _set_fake_module(monkeypatch, "redis_sre_agent.agent.langgraph_agent", get_sre_agent=lambda: _NamedAgent("triage"))
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.agent.chat_agent",
+        get_chat_agent=lambda redis_instance=None, redis_cluster=None: captured_chat_args.append(
+            (redis_instance, redis_cluster)
+        )
+        or _NamedAgent("chat"),
+    )
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.agent.knowledge_agent",
+        get_knowledge_agent=lambda: _NamedAgent("knowledge"),
+    )
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.agent.langgraph_agent",
+        get_sre_agent=lambda: _NamedAgent("triage"),
+    )
     _set_fake_module(
         monkeypatch,
         "redis_sre_agent.agent.router",
@@ -908,7 +998,9 @@ async def test_dispatch_chat_query_selects_requested_agents(
         assert captured_chat_args == [({"id": "instance"}, {"id": "cluster"})]
 
 
-def test_load_configured_external_mcp_tools_maps_descriptions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_configured_external_mcp_tools_maps_descriptions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _load_module()
 
     class _ToolConfig:
@@ -930,7 +1022,9 @@ def test_load_configured_external_mcp_tools_maps_descriptions(monkeypatch: pytes
             "empty": _ServerConfig(),
         }
     )
-    _set_fake_module(monkeypatch, "redis_sre_agent.core.config", MCPServerConfig=_ServerConfig, settings=settings)
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.core.config", MCPServerConfig=_ServerConfig, settings=settings
+    )
 
     tools = module._load_configured_external_mcp_tools()
 
@@ -964,11 +1058,15 @@ async def test_invoke_configured_external_mcp_tool_handles_errors_and_success(
             return cls(tools=payload.get("tools"))
 
     settings = types.SimpleNamespace(mcp_servers={})
-    _set_fake_module(monkeypatch, "redis_sre_agent.core.config", MCPServerConfig=_ServerConfig, settings=settings)
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.core.config", MCPServerConfig=_ServerConfig, settings=settings
+    )
     monkeypatch.setattr(
         module,
         "_load_configured_external_mcp_tools",
-        lambda: {"analyzer_list_accounts": {"server_name": "re_analyzer", "description": "Analyzer"}},
+        lambda: {
+            "analyzer_list_accounts": {"server_name": "re_analyzer", "description": "Analyzer"}
+        },
     )
 
     with pytest.raises(RuntimeError, match="references unknown server 're_analyzer'"):
@@ -990,9 +1088,13 @@ async def test_invoke_configured_external_mcp_tool_handles_errors_and_success(
             return {"tool": tool_name, "arguments": arguments}
 
     settings.mcp_servers["re_analyzer"] = {"tools": {"analyzer_list_accounts": object()}}
-    _set_fake_module(monkeypatch, "redis_sre_agent.tools.mcp.provider", MCPToolProvider=_FakeProvider)
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.tools.mcp.provider", MCPToolProvider=_FakeProvider
+    )
 
-    result = await module._invoke_configured_external_mcp_tool("analyzer_list_accounts", {"limit": 1})
+    result = await module._invoke_configured_external_mcp_tool(
+        "analyzer_list_accounts", {"limit": 1}
+    )
     assert result == {"tool": "analyzer_list_accounts", "arguments": {"limit": 1}}
     assert provider_calls[0][0] == "re_analyzer"
     assert provider_calls[0][2] is False
@@ -1010,9 +1112,21 @@ async def test_dispatch_mcp_tool_validation_and_supported_list(
     with pytest.raises(RuntimeError, match="mcp arguments must be an object"):
         await module._dispatch_mcp_tool({"tool": "redis_sre_knowledge_search", "arguments": "bad"})
 
-    monkeypatch.setattr(module, "_load_mcp_tool_registry", lambda: {"redis_sre_knowledge_search": lambda **kwargs: kwargs})
-    monkeypatch.setattr(module, "_load_configured_external_mcp_tools", lambda: {"analyzer_list_accounts": {"server_name": "re_analyzer", "description": "Analyzer"}})
-    with pytest.raises(RuntimeError, match="Supported tools: analyzer_list_accounts, redis_sre_knowledge_search"):
+    monkeypatch.setattr(
+        module,
+        "_load_mcp_tool_registry",
+        lambda: {"redis_sre_knowledge_search": lambda **kwargs: kwargs},
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_configured_external_mcp_tools",
+        lambda: {
+            "analyzer_list_accounts": {"server_name": "re_analyzer", "description": "Analyzer"}
+        },
+    )
+    with pytest.raises(
+        RuntimeError, match="Supported tools: analyzer_list_accounts, redis_sre_knowledge_search"
+    ):
         await module._dispatch_mcp_tool({"tool": "missing", "arguments": {}})
 
 
@@ -1034,7 +1148,9 @@ async def test_dispatch_mcp_tool_executes_sync_builtin_with_runtime_context(
             return None
 
     monkeypatch.setenv("RAR_TASK_RUN_ID", "task-123")
-    monkeypatch.setattr(module, "_load_mcp_tool_registry", lambda: {"sync_tool": lambda **kwargs: {"echo": kwargs}})
+    monkeypatch.setattr(
+        module, "_load_mcp_tool_registry", lambda: {"sync_tool": lambda **kwargs: {"echo": kwargs}}
+    )
     monkeypatch.setattr(module, "_load_configured_external_mcp_tools", lambda: {})
     _set_fake_module(
         monkeypatch,
