@@ -195,7 +195,10 @@ Treat ingestion as an explicit maintenance step, not an automatic background syn
 
 - When you add, edit, or remove files under `source_documents/`, rerun `pipeline prepare-sources` so the Redis index reflects those changes.
 - After upgrading to a release that changes indexed metadata or search schema, rerun the same prepare-and-ingest flow to refresh the stored documents.
-- Re-ingestion is incremental: unchanged chunks reuse existing embeddings, changed chunks are regenerated, and deleted chunks are removed from the index.
+- Each file under `source_documents/` is identified by its path relative to the `source_documents/` root. Editing `shared/foo.md` replaces the previously indexed `shared/foo.md` document instead of creating a second logical copy.
+- Removing a file from the active `source_documents/` scope deletes the previously indexed document during ingestion.
+- Re-ingestion is incremental: unchanged files are skipped, changed files are replaced with a new `document_hash`, and deleted files are removed from the index.
+- `pipeline ingest` and `pipeline prepare-sources` report source-document adds, updates, and deletes as counts. Add `--verbose` to print the per-file action list.
 
 Recommended command after source-document changes or schema-affecting upgrades:
 
@@ -314,6 +317,7 @@ uv run redis-sre-agent pipeline prepare-sources \
 - `--batch-date`: Batch date for artifacts (default: today)
 - `--prepare-only`: Only create artifacts, don't ingest
 - `--artifacts-path`: Where to save artifacts (default: `./artifacts`)
+- `--verbose` / `-v`: When ingestion runs, print per-file add/update/delete actions for source documents
 
 ### `status` - Show Pipeline Status
 

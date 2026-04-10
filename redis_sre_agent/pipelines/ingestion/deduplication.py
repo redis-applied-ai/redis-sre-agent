@@ -17,6 +17,7 @@ class DocumentDeduplicator:
         self.index = index
         self.key_prefix = key_prefix
         self.meta_prefix = f"{key_prefix}_meta"
+        self.source_meta_prefix = f"{self.meta_prefix}:source"
 
     def generate_deterministic_chunk_key(self, document_hash: str, chunk_index: int) -> str:
         """Generate deterministic key for a document chunk."""
@@ -25,6 +26,21 @@ class DocumentDeduplicator:
     def generate_document_tracking_key(self, document_hash: str) -> str:
         """Generate key for tracking document metadata."""
         return f"{self.meta_prefix}:{document_hash}"
+
+    def generate_source_tracking_key(self, source_document_path: str) -> str:
+        """Generate key for tracking source documents by stable path."""
+        path_hash = hashlib.sha256(source_document_path.encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_meta_prefix}:{path_hash}"
+
+    @staticmethod
+    def _decode_mapping(mapping: Dict[Any, Any]) -> Dict[str, Any]:
+        """Normalize Redis hash keys/values into strings."""
+        return {
+            k.decode("utf-8") if isinstance(k, bytes) else str(k): (
+                v.decode("utf-8") if isinstance(v, bytes) else v
+            )
+            for k, v in mapping.items()
+        }
 
     async def find_existing_chunks(self, document_hash: str) -> List[str]:
         """Find all existing chunk keys for a document.
@@ -101,18 +117,106 @@ class DocumentDeduplicator:
             metadata = await redis_client.hgetall(tracking_key)
 
             if metadata:
-                # Convert bytes keys/values to strings
-                return {
-                    k.decode("utf-8") if isinstance(k, bytes) else k: (
-                        v.decode("utf-8") if isinstance(v, bytes) else v
-                    )
-                    for k, v in metadata.items()
-                }
+                return self._decode_mapping(metadata)
             return None
 
         except Exception as e:
             logger.error(f"Failed to get document metadata for {document_hash}: {e}")
             return None
+
+    async def delete_document_metadata(self, document_hash: str) -> int:
+        """Delete document-level tracking metadata."""
+        try:
+            redis_client = self.index.client
+            tracking_key = self.generate_document_tracking_key(document_hash)
+            deleted_count = await redis_client.delete(tracking_key)
+            return int(deleted_count)
+        except Exception as e:
+            logger.error(f"Failed to delete document metadata for {document_hash}: {e}")
+            return 0
+
+    async def update_source_document_tracking(
+        self, source_document_path: str, metadata: Dict[str, Any]
+    ) -> None:
+        """Update source-document tracking by stable path."""
+        try:
+            redis_client = self.index.client
+            tracking_key = self.generate_source_tracking_key(source_document_path)
+            metadata_with_timestamp = {
+                **metadata,
+                "source_document_path": source_document_path,
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+            await redis_client.hset(tracking_key, mapping=metadata_with_timestamp)
+        except Exception as e:
+            logger.error("Failed to update source tracking for %s: %s", source_document_path, e)
+
+    async def get_source_document_tracking(
+        self, source_document_path: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get source-document tracking metadata for a path."""
+        try:
+            redis_client = self.index.client
+            tracking_key = self.generate_source_tracking_key(source_document_path)
+            metadata = await redis_client.hgetall(tracking_key)
+            if metadata:
+                return self._decode_mapping(metadata)
+            return None
+        except Exception as e:
+            logger.error("Failed to get source tracking for %s: %s", source_document_path, e)
+            return None
+
+    async def list_tracked_source_documents(
+        self, scope_prefix: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """List tracked source documents for this index."""
+        try:
+            redis_client = self.index.client
+            tracked: Dict[str, Dict[str, Any]] = {}
+            async for key in redis_client.scan_iter(match=f"{self.source_meta_prefix}:*"):
+                metadata = await redis_client.hgetall(key)
+                if not metadata:
+                    continue
+                decoded = self._decode_mapping(metadata)
+                source_document_path = str(decoded.get("source_document_path") or "").strip()
+                if not source_document_path:
+                    continue
+                if scope_prefix and not source_document_path.startswith(scope_prefix):
+                    continue
+                tracked[source_document_path] = decoded
+            return tracked
+        except Exception as e:
+            logger.error("Failed to list tracked source documents for %s: %s", self.key_prefix, e)
+            return {}
+
+    async def delete_tracked_source_document(
+        self,
+        document_hash: str,
+        source_document_path: Optional[str] = None,
+        *,
+        remove_source_tracking: bool = True,
+    ) -> Dict[str, int]:
+        """Delete chunks plus metadata for a tracked source document."""
+        deleted_chunks = await self.delete_existing_chunks(document_hash)
+        deleted_metadata = await self.delete_document_metadata(document_hash)
+        deleted_source_tracking = 0
+
+        if remove_source_tracking and source_document_path:
+            try:
+                redis_client = self.index.client
+                deleted_source_tracking = int(
+                    await redis_client.delete(
+                        self.generate_source_tracking_key(source_document_path)
+                    )
+                )
+            except Exception as e:
+                logger.error("Failed to delete source tracking for %s: %s", source_document_path, e)
+
+        return {
+            "chunks_deleted": deleted_chunks,
+            "metadata_deleted": deleted_metadata,
+            "source_tracking_deleted": deleted_source_tracking,
+        }
 
     async def get_existing_chunks_with_hashes(
         self, document_hash: str
@@ -340,6 +444,8 @@ class DocumentDeduplicator:
                     "summary": chunks[0].get("summary", ""),
                     "priority": chunks[0].get("priority", "normal"),
                     "pinned": chunks[0].get("pinned", "false"),
+                    "source_document_path": chunks[0].get("source_document_path", ""),
+                    "source_document_scope": chunks[0].get("source_document_scope", ""),
                     "chunk_count": len(chunks),
                     "total_content_length": sum(len(chunk.get("content", "")) for chunk in chunks),
                 },
@@ -354,3 +460,59 @@ class DocumentDeduplicator:
         except Exception as e:
             logger.error(f"Failed to replace chunks for document {document_hash}: {e}")
             raise
+
+    async def replace_source_document_chunks(
+        self, chunks: List[Dict[str, Any]], vectorizer: Any
+    ) -> Dict[str, Any]:
+        """Replace a source document using its stable path as the logical identifier."""
+        if not chunks:
+            return {"action": "unchanged", "indexed_count": 0}
+
+        source_document_path = str(chunks[0].get("source_document_path") or "").strip()
+        if not source_document_path:
+            indexed_count = await self.replace_document_chunks(chunks, vectorizer)
+            return {"action": "add", "indexed_count": indexed_count}
+
+        document_hash = chunks[0]["document_hash"]
+        tracked = await self.get_source_document_tracking(source_document_path)
+        previous_document_hash = str(tracked.get("document_hash") or "").strip() if tracked else ""
+
+        if previous_document_hash == document_hash:
+            logger.info("Skipping source document %s - no changes detected", source_document_path)
+            return {
+                "action": "unchanged",
+                "indexed_count": 0,
+                "document_hash": document_hash,
+                "previous_document_hash": previous_document_hash,
+                "source_document_path": source_document_path,
+            }
+
+        if previous_document_hash:
+            await self.delete_tracked_source_document(
+                previous_document_hash,
+                source_document_path,
+                remove_source_tracking=False,
+            )
+
+        indexed_count = await self.replace_document_chunks(chunks, vectorizer)
+        await self.update_source_document_tracking(
+            source_document_path,
+            {
+                "document_hash": document_hash,
+                "title": chunks[0].get("title", ""),
+                "source": chunks[0].get("source", ""),
+                "category": chunks[0].get("category", ""),
+                "severity": chunks[0].get("severity", ""),
+                "doc_type": chunks[0].get("doc_type", "knowledge"),
+                "source_document_scope": chunks[0].get("source_document_scope", ""),
+                "pinned": chunks[0].get("pinned", "false"),
+            },
+        )
+
+        return {
+            "action": "update" if previous_document_hash else "add",
+            "indexed_count": indexed_count,
+            "document_hash": document_hash,
+            "previous_document_hash": previous_document_hash or None,
+            "source_document_path": source_document_path,
+        }
