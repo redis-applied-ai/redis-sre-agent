@@ -1,5 +1,7 @@
 """Unit tests for MCP CLI commands."""
 
+import logging
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,6 +38,27 @@ class TestMCPServeCLI:
 
             # stdio mode doesn't print anything
             mock_run.assert_called_once()
+
+    def test_serve_stdio_routes_logs_to_stderr(self, cli_runner):
+        """Test that stdio mode reserves stdout for JSON-RPC traffic."""
+        root_logger = logging.getLogger()
+        original_handlers = root_logger.handlers[:]
+        original_level = root_logger.level
+        try:
+            root_logger.handlers.clear()
+            root_logger.setLevel(logging.WARNING)
+
+            with patch("redis_sre_agent.mcp_server.server.run_stdio") as mock_run:
+                result = cli_runner.invoke(mcp, ["serve"])
+
+            assert result.exit_code == 0
+            mock_run.assert_called_once()
+            assert root_logger.handlers
+            assert root_logger.handlers[0].stream is not sys.stdout
+            assert getattr(root_logger.handlers[0].stream, "name", "") == "<stderr>"
+        finally:
+            root_logger.handlers = original_handlers
+            root_logger.setLevel(original_level)
 
     def test_serve_http_mode(self, cli_runner):
         """Test serve in HTTP mode."""

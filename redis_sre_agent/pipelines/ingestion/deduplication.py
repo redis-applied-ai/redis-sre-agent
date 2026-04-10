@@ -502,6 +502,7 @@ class DocumentDeduplicator:
                 "title": chunks[0].get("title", ""),
                 "source": chunks[0].get("source", ""),
                 "category": chunks[0].get("category", ""),
+                "severity": chunks[0].get("severity", ""),
                 "doc_type": chunks[0].get("doc_type", "knowledge"),
                 "source_document_scope": chunks[0].get("source_document_scope", ""),
                 "pinned": chunks[0].get("pinned", "false"),

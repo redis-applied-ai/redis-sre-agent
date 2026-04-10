@@ -9,6 +9,102 @@ import click
 from ..pipelines.orchestrator import PipelineOrchestrator
 
 
+def _parse_scraper_list(scrapers: str | None) -> list[str] | None:
+    """Split a comma-delimited scraper list into normalized names."""
+    if not scrapers:
+        return None
+    return [scraper.strip() for scraper in scrapers.split(",")]
+
+
+def _echo_scraper_results(scraper_results: dict, indent: str = "   ") -> None:
+    """Print scraper success and error summaries."""
+    for scraper_name, scraper_result in scraper_results.items():
+        if "error" in scraper_result:
+            click.echo(f"{indent}❌ {scraper_name}: {scraper_result['error']}")
+        else:
+            click.echo(
+                f"{indent}✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
+            )
+
+
+def _echo_source_document_changes(
+    source_changes: dict | None,
+    *,
+    verbose: bool,
+    indent: str = "   ",
+) -> None:
+    """Print source-document add/update/delete summaries."""
+    source_changes = source_changes or {}
+    if not any(source_changes.get(key, 0) for key in ("added", "updated", "deleted")):
+        return
+    click.echo(f"{indent}🗂️ Source document changes:")
+    click.echo(
+        f"{indent}   "
+        f"added={source_changes.get('added', 0)} "
+        f"updated={source_changes.get('updated', 0)} "
+        f"deleted={source_changes.get('deleted', 0)} "
+        f"unchanged={source_changes.get('unchanged', 0)}"
+    )
+    if verbose:
+        for change in source_changes.get("files", []):
+            click.echo(f"{indent}   • {change['action']}: {change['path']}")
+
+
+def _merge_source_document_changes(source_changes_list: list[dict | None]) -> dict | None:
+    """Aggregate source-document change summaries across multiple results."""
+    merged = {
+        "added": 0,
+        "updated": 0,
+        "deleted": 0,
+        "unchanged": 0,
+        "files": [],
+        "scope_prefixes": [],
+    }
+    saw_changes = False
+    for source_changes in source_changes_list:
+        if not source_changes:
+            continue
+        saw_changes = True
+        for key in ("added", "updated", "deleted", "unchanged"):
+            merged[key] += int(source_changes.get(key, 0) or 0)
+        merged["files"].extend(source_changes.get("files", []))
+        for scope_prefix in source_changes.get("scope_prefixes", []):
+            if scope_prefix not in merged["scope_prefixes"]:
+                merged["scope_prefixes"].append(scope_prefix)
+    return merged if saw_changes else None
+
+
+def _echo_runbook_test_result(result: dict) -> None:
+    """Print the outcome of a runbook URL extraction check."""
+    if result["success"]:
+        click.echo("   ✅ Success!")
+        click.echo(f"   📊 Content length: {result['content_length']} chars")
+        click.echo(f"   🏷️  Source type: {result['source_type']}")
+        click.echo(f"   👁️  Preview: {result['content_preview'][:200]}...")
+    else:
+        click.echo(f"   ❌ Failed: {result.get('error', 'Unknown error')}")
+
+
+def _echo_generated_runbook(document, saved_path: str | None = None) -> None:
+    """Print details for one generated runbook document."""
+    click.echo(f"   ✅ Generated runbook: {document.title}")
+    click.echo(f"   📂 Category: {document.category}")
+    click.echo(f"   🚨 Severity: {document.severity}")
+    click.echo(f"   📏 Length: {len(document.content)} characters")
+    if saved_path is not None:
+        click.echo(f"   💾 Saved to: {saved_path}")
+
+
+def _echo_runbook_job_results(results: dict) -> None:
+    """Print summary details for a full runbook generation pass."""
+    click.echo("✅ Runbook generation completed!")
+    click.echo(f"   📝 Documents generated: {results['documents_scraped']}")
+    click.echo(f"   💾 Documents saved: {results['documents_saved']}")
+    click.echo(f"   📅 Batch date: {results['batch_date']}")
+    for category, count in results["categories"].items():
+        click.echo(f"   📂 {category}: {count} runbooks")
+
+
 @click.group()
 def pipeline():
     """Data pipeline commands for scraping and ingestion."""
@@ -35,9 +131,7 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
     """Run the scraping pipeline to collect SRE documents."""
     click.echo("🔍 Starting scraping pipeline...")
 
-    scraper_list = None
-    if scrapers:
-        scraper_list = [s.strip() for s in scrapers.split(",")]
+    scraper_list = _parse_scraper_list(scrapers)
 
     async def run_scraping():
         # Configure scrapers to honor latest-only when requested
@@ -54,14 +148,7 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
             click.echo(f"   Total documents: {results['total_documents']}")
             click.echo(f"   Scrapers run: {', '.join(results['scrapers_run'])}")
 
-            # Show scraper results
-            for scraper_name, scraper_result in results["scraper_results"].items():
-                if "error" in scraper_result:
-                    click.echo(f"   ❌ {scraper_name}: {scraper_result['error']}")
-                else:
-                    click.echo(
-                        f"   ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
-                    )
+            _echo_scraper_results(results["scraper_results"])
 
             return results
 
@@ -106,19 +193,10 @@ def ingest(batch_date: str, artifacts_path: str, latest_only: bool, verbose: boo
                 if stats["errors"]:
                     click.echo(f"      ⚠️  {len(stats['errors'])} errors")
 
-            source_changes = results.get("source_document_changes") or {}
-            if any(source_changes.get(key, 0) for key in ("added", "updated", "deleted")):
-                click.echo("   🗂️ Source document changes:")
-                click.echo(
-                    "      "
-                    f"added={source_changes.get('added', 0)} "
-                    f"updated={source_changes.get('updated', 0)} "
-                    f"deleted={source_changes.get('deleted', 0)} "
-                    f"unchanged={source_changes.get('unchanged', 0)}"
-                )
-                if verbose:
-                    for change in source_changes.get("files", []):
-                        click.echo(f"      • {change['action']}: {change['path']}")
+            _echo_source_document_changes(
+                results.get("source_document_changes"),
+                verbose=verbose,
+            )
 
             return results
 
@@ -146,9 +224,7 @@ def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
     """Run the complete pipeline: scraping + ingestion."""
     click.echo("🚀 Starting full pipeline (scraping + ingestion)...")
 
-    scraper_list = None
-    if scrapers:
-        scraper_list = [s.strip() for s in scrapers.split(",")]
+    scraper_list = _parse_scraper_list(scrapers)
 
     async def run_full_pipeline():
         # Configure scrapers and ingestion to honor latest-only when requested
@@ -169,13 +245,7 @@ def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
                 scraping = results["scraping"]
                 click.echo(f"   📥 Scraping: {scraping['total_documents']} documents")
 
-                for scraper_name, scraper_result in scraping["scraper_results"].items():
-                    if "error" in scraper_result:
-                        click.echo(f"      ❌ {scraper_name}: {scraper_result['error']}")
-                    else:
-                        click.echo(
-                            f"      ✅ {scraper_name}: {scraper_result['documents_scraped']} documents"
-                        )
+                _echo_scraper_results(scraping["scraper_results"], indent="      ")
 
             # Ingestion results
             if "ingestion" in results:
@@ -340,14 +410,7 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
         if test_url:
             click.echo(f"🧪 Testing URL extraction: {test_url}")
             result = await generator.test_url_extraction(test_url)
-
-            if result["success"]:
-                click.echo("   ✅ Success!")
-                click.echo(f"   📊 Content length: {result['content_length']} chars")
-                click.echo(f"   🏷️  Source type: {result['source_type']}")
-                click.echo(f"   👁️  Preview: {result['content_preview'][:200]}...")
-            else:
-                click.echo(f"   ❌ Failed: {result.get('error', 'Unknown error')}")
+            _echo_runbook_test_result(result)
             return
 
         if url:
@@ -373,14 +436,8 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
 
             if documents:
                 doc = documents[0]
-                click.echo(f"   ✅ Generated runbook: {doc.title}")
-                click.echo(f"   📂 Category: {doc.category}")
-                click.echo(f"   🚨 Severity: {doc.severity}")
-                click.echo(f"   📏 Length: {len(doc.content)} characters")
-
-                # Save the document
                 path = temp_storage.save_document(doc)
-                click.echo(f"   💾 Saved to: {path}")
+                _echo_generated_runbook(doc, path)
             else:
                 click.echo(f"   ❌ Failed to generate runbook from {url}")
 
@@ -391,15 +448,7 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
 
         try:
             results = await generator.run_scraping_job()
-
-            click.echo("✅ Runbook generation completed!")
-            click.echo(f"   📝 Documents generated: {results['documents_scraped']}")
-            click.echo(f"   💾 Documents saved: {results['documents_saved']}")
-            click.echo(f"   📅 Batch date: {results['batch_date']}")
-
-            # Show category breakdown
-            for category, count in results["categories"].items():
-                click.echo(f"   📂 {category}: {count} runbooks")
+            _echo_runbook_job_results(results)
 
         except Exception as e:
             click.echo(f"❌ Runbook generation failed: {e}")
@@ -484,17 +533,12 @@ def prepare_sources(
                 if successful:
                     total_chunks = sum(r.get("chunks_indexed", 0) for r in successful)
                     click.echo(f"   📦 Total chunks indexed: {total_chunks}")
-                    source_changes = successful[0].get("source_document_changes") or {}
-                    click.echo(
-                        "   🗂️ Source document changes: "
-                        f"added={source_changes.get('added', 0)} "
-                        f"updated={source_changes.get('updated', 0)} "
-                        f"deleted={source_changes.get('deleted', 0)} "
-                        f"unchanged={source_changes.get('unchanged', 0)}"
+                    _echo_source_document_changes(
+                        _merge_source_document_changes(
+                            [r.get("source_document_changes") for r in successful]
+                        ),
+                        verbose=verbose,
                     )
-                    if verbose:
-                        for change in source_changes.get("files", []):
-                            click.echo(f"      • {change['action']}: {change['path']}")
 
                 if failed:
                     click.echo(f"   ❌ Failed to ingest: {len(failed)} documents")
