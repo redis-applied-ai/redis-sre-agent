@@ -95,6 +95,10 @@ class TestClustersAPI:
         with (
             patch("redis_sre_agent.core.clusters.get_clusters") as mock_get,
             patch("redis_sre_agent.core.clusters.save_clusters") as mock_save,
+            patch(
+                "redis_sre_agent.api.clusters.ULID",
+                return_value="01HXTESTCLUSTERID1234567890",
+            ),
         ):
             mock_get.return_value = []
             mock_save.return_value = True
@@ -104,6 +108,7 @@ class TestClustersAPI:
             assert response.status_code == 201
             data = response.json()
             assert data["name"] == "New Enterprise Cluster"
+            assert data["id"] == "cluster-development-01HXTESTCLUSTERID1234567890"
             assert data["admin_password"] == "***"
 
     def test_create_cluster_success_with_env_defaults(self, client):

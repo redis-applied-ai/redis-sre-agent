@@ -13,6 +13,7 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
+from ulid import ULID
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.cluster_admin_defaults import (
@@ -287,7 +288,7 @@ async def create_cluster(request: CreateClusterRequest):
                 ),
             )
 
-        cluster_id = f"cluster-{request.environment}-{int(datetime.now().timestamp())}"
+        cluster_id = f"cluster-{request.environment}-{ULID()}"
         new_cluster = core_clusters.RedisCluster(
             id=cluster_id,
             name=request.name,

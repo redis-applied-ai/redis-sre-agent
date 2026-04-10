@@ -111,7 +111,13 @@ class PipelineWorkflowMixin:
                 )
             except Exception as e:
                 logger.error("Failed to process %s: %s", md_file.name, e)
-                results.append({"file": md_file.name, "status": "error", "error": str(e)})
+                results.append(
+                    {
+                        "file": source_document_path or md_file.name,
+                        "status": "error",
+                        "error": str(e),
+                    }
+                )
 
         stale_source_documents = await self._delete_stale_source_documents(
             deduplicators,

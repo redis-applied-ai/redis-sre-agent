@@ -15,6 +15,7 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
+from ulid import ULID
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core import instances as core_instances
@@ -481,7 +482,7 @@ async def create_instance(request: CreateInstanceRequest):
             )
 
         # Create new instance
-        instance_id = f"redis-{request.environment}-{int(datetime.now().timestamp())}"
+        instance_id = f"redis-{request.environment}-{ULID()}"
         new_instance = core_instances.RedisInstance(
             id=instance_id,
             name=request.name,

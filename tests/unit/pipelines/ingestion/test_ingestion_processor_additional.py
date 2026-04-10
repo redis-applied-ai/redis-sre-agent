@@ -620,7 +620,9 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
         ).items()
         if key in {"category", "severity"}
     } == {"category": "shared", "severity": "high"}
-    assert any(result["status"] == "error" and result["file"] == "broken.md" for result in results)
+    assert any(
+        result["status"] == "error" and result["file"] == "shared/broken.md" for result in results
+    )
 
 
 @pytest.mark.asyncio
