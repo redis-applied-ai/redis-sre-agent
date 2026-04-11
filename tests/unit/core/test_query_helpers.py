@@ -242,7 +242,7 @@ class TestQueueQueryTaskHelper:
         assert context["cluster_id"] == "cluster-1"
         assert context["resolution_policy"] == "require_target"
         assert context["target_bindings"][0]["target_kind"] == "cluster"
-        assert context["target_bindings"][0]["target_kind"] == "cluster"
+        assert context["target_bindings"][0]["target_handle"]
         assert context["target_bindings"][0]["resource_id"] == "cluster-1"
         assert context["turn_scope"]["seed_hints"] == {"cluster_id": "cluster-1"}
 
