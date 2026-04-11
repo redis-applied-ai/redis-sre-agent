@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from redis_sre_agent.core.docket_tasks import process_agent_turn
+from redis_sre_agent.core.docket_tasks import (
+    _ensure_handle_backed_turn_scope,
+    process_agent_turn,
+)
 from redis_sre_agent.core.targets import MaterializedTargetScope, TargetBinding
 from redis_sre_agent.core.threads import (
     Message,
@@ -14,6 +17,7 @@ from redis_sre_agent.core.threads import (
     ThreadManager,
     ThreadMetadata,
 )
+from redis_sre_agent.core.turn_scope import TurnScope
 
 
 class TestThreadManager:
@@ -192,6 +196,68 @@ class TestProcessAgentTurn:
 
             # Verify thread manager saved state
             mock_manager._save_thread_state.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_ensure_handle_backed_turn_scope_ignores_conflicting_legacy_ids_when_bindings_exist(
+        self,
+    ):
+        binding = TargetBinding(
+            target_handle="tgt_bound_01",
+            target_kind="instance",
+            resource_id="redis-bound-instance",
+            display_name="bound-instance",
+            capabilities=["redis"],
+        )
+        turn_scope = TurnScope(
+            thread_id="thread-1",
+            session_id="session-1",
+            scope_kind="target_bindings",
+            attached_target_handles=[binding.target_handle],
+            bindings=[binding],
+        )
+        materialized_scope = MaterializedTargetScope(
+            selected_bindings=[binding],
+            attached_bindings=[binding],
+            target_toolset_generation=3,
+            context_updates={
+                "attached_target_handles": [binding.target_handle],
+                "target_bindings": [binding.public_dump()],
+                "target_toolset_generation": 3,
+            },
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.targets.build_seed_hint_candidates",
+                new_callable=AsyncMock,
+                return_value=[MagicMock(name="candidate")],
+            ) as mock_build_candidates,
+            patch(
+                "redis_sre_agent.core.targets.materialize_bound_target_scope",
+                new_callable=AsyncMock,
+                return_value=materialized_scope,
+            ),
+            patch(
+                "redis_sre_agent.targets.get_target_handle_store",
+                return_value=SimpleNamespace(get_records=AsyncMock(return_value={})),
+            ),
+        ):
+            result = await _ensure_handle_backed_turn_scope(
+                turn_scope=turn_scope,
+                routing_context={},
+                thread_context={},
+                thread_id="thread-1",
+                task_id="task-1",
+                legacy_instance_id="redis-stale-instance",
+                legacy_cluster_id="cluster-stale",
+            )
+
+        assert result.scope_kind == "target_bindings"
+        mock_build_candidates.assert_awaited_once_with(
+            bindings=[binding],
+            instance_id=None,
+            cluster_id=None,
+        )
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_materializes_handle_scope_from_legacy_instance_hint(self):
