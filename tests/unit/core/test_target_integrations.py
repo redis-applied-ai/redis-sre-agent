@@ -13,7 +13,7 @@ from redis_sre_agent.core.config import (
     TargetIntegrationsConfig,
     settings,
 )
-from redis_sre_agent.core.targets import build_seed_hint_candidates
+from redis_sre_agent.core.targets import build_public_match_from_doc, build_seed_hint_candidates
 from redis_sre_agent.targets.contracts import (
     BindingRequest,
     DiscoveryCandidate,
@@ -118,11 +118,50 @@ class FakePipeline:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    def set(self, key: str, value: str, ex: int) -> None:
+    def set(self, key: str, value: str, ex: int):
         self.calls.append((key, value, ex))
+        return self
 
     async def execute(self) -> None:
         self.executed = True
+
+
+def test_public_target_match_serialization_strips_duplicate_metadata_fields():
+    doc = SimpleNamespace(
+        target_kind="instance",
+        display_name="checkout-cache-prod",
+        environment="production",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        usage="cache",
+        status="healthy",
+        resource_id="redis-prod-checkout-cache",
+    )
+
+    public_match = build_public_match_from_doc(doc)
+    payload = public_match.public_dump()
+
+    assert payload["environment"] == "production"
+    assert payload["target_type"] == "oss_single"
+    assert payload["public_metadata"] == {"usage": "cache", "status": "healthy"}
+
+    binding = TargetBindingService.build_public_binding(
+        DiscoveryCandidate.from_public_match(
+            public_match,
+            binding_strategy="redis_default",
+            binding_subject="redis-prod-checkout-cache",
+            discovery_backend="redis_catalog",
+        ),
+        thread_id="thread-1",
+        task_id="task-1",
+    )
+
+    assert binding.public_metadata == {
+        "environment": "production",
+        "target_type": "oss_single",
+        "usage": "cache",
+        "status": "healthy",
+    }
 
 
 @pytest.mark.asyncio
@@ -225,7 +264,12 @@ async def test_build_seed_hint_candidates_maps_legacy_instance_ids_to_private_ca
     assert candidate.binding_subject == "redis-prod-checkout-cache"
     assert candidate.private_binding_ref["seed_hint"] is True
     assert candidate.public_match.display_name == "checkout-cache-prod"
-    assert candidate.public_match.public_metadata["environment"] == "production"
+    assert candidate.public_match.environment == "production"
+    assert candidate.public_match.target_type == "oss_single"
+    assert candidate.public_match.public_metadata == {
+        "usage": "cache",
+        "status": "healthy",
+    }
 
 
 @pytest.mark.asyncio

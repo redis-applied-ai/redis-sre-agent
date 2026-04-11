@@ -977,8 +977,6 @@ def build_public_match_from_doc(
         public_metadata={
             key: value
             for key, value in {
-                "environment": doc.environment,
-                "target_type": doc.target_type,
                 "usage": doc.usage,
                 "status": doc.status,
             }.items()

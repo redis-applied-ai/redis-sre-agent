@@ -22,6 +22,19 @@ class PublicTargetMatch(BaseModel):
     resource_id: Optional[str] = Field(default=None, exclude=True)
     score: float = Field(default=0.0, exclude=True)
 
+    @staticmethod
+    def _strip_duplicate_public_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = dict(payload.get("public_metadata") or {})
+        for key in ("environment", "target_type"):
+            if metadata.get(key) == payload.get(key):
+                metadata.pop(key, None)
+        payload["public_metadata"] = metadata
+        return payload
+
+    def public_dump(self) -> Dict[str, Any]:
+        """Return the model-facing payload without duplicated metadata keys."""
+        return self._strip_duplicate_public_metadata(self.model_dump(mode="json"))
+
 
 class PublicTargetBinding(BaseModel):
     """Public binding summary stored in thread context and shown to the model."""
@@ -151,6 +164,12 @@ class DiscoveryResponse(BaseModel):
     attached_target_handles: List[str] = Field(default_factory=list)
     toolset_generation: int = 0
     selected_matches: List[DiscoveryCandidate] = Field(default_factory=list, exclude=True)
+
+    def public_dump(self) -> Dict[str, Any]:
+        """Return the model-facing discovery payload."""
+        payload = self.model_dump(mode="json")
+        payload["matches"] = [match.public_dump() for match in self.matches]
+        return payload
 
     @field_validator("selected_matches", mode="before")
     @classmethod

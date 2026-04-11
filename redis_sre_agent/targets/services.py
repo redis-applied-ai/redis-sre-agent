@@ -63,12 +63,19 @@ class TargetBindingService:
     ) -> PublicTargetBinding:
         normalized_candidate = cls._normalize_candidate(candidate)
         public_match = normalized_candidate.public_match
+        public_metadata = dict(public_match.public_metadata or {})
+        for key, value in (
+            ("environment", public_match.environment),
+            ("target_type", public_match.target_type),
+        ):
+            if value not in (None, ""):
+                public_metadata.setdefault(key, value)
         return PublicTargetBinding(
             target_handle=existing_handle or f"tgt_{ULID()}",
             target_kind=public_match.target_kind,
             display_name=public_match.display_name,
             capabilities=list(public_match.capabilities or []),
-            public_metadata=dict(public_match.public_metadata or {}),
+            public_metadata=public_metadata,
             thread_id=thread_id,
             task_id=task_id,
             resource_id=public_match.resource_id,
