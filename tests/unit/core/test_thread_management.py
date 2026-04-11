@@ -260,6 +260,36 @@ class TestProcessAgentTurn:
         )
 
     @pytest.mark.asyncio
+    async def test_ensure_handle_backed_turn_scope_drops_ambiguous_legacy_ids_without_bindings(
+        self,
+    ):
+        turn_scope = TurnScope(
+            thread_id="thread-1",
+            session_id="session-1",
+            scope_kind="zero_scope",
+        )
+
+        with patch(
+            "redis_sre_agent.core.targets.build_seed_hint_candidates",
+            new_callable=AsyncMock,
+        ) as mock_build_candidates:
+            result = await _ensure_handle_backed_turn_scope(
+                turn_scope=turn_scope,
+                routing_context={
+                    "instance_id": "redis-stale-instance",
+                    "cluster_id": "cluster-stale",
+                },
+                thread_context={},
+                thread_id="thread-1",
+                task_id="task-1",
+                legacy_instance_id="redis-stale-instance",
+                legacy_cluster_id="cluster-stale",
+            )
+
+        assert result == turn_scope
+        mock_build_candidates.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_process_agent_turn_materializes_handle_scope_from_legacy_instance_hint(self):
         """Legacy instance hints should be normalized into handle-backed bindings before chat."""
         with (

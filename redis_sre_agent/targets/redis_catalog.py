@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .contracts import DiscoveryCandidate, DiscoveryRequest, DiscoveryResponse, PublicTargetMatch
+from .contracts import DiscoveryCandidate, DiscoveryRequest, DiscoveryResponse
 
 
 class RedisCatalogDiscoveryBackend:
@@ -14,6 +14,7 @@ class RedisCatalogDiscoveryBackend:
 
     async def resolve(self, request: DiscoveryRequest) -> DiscoveryResponse:
         from redis_sre_agent.core.targets import (
+            _build_public_match_from_doc,
             _confidence_from_score,
             _parse_query_hints,
             _score_target_doc,
@@ -35,25 +36,10 @@ class RedisCatalogDiscoveryBackend:
             )
             if score < 2.5:
                 continue
-            public_match = PublicTargetMatch(
-                target_kind=doc.target_kind,
-                display_name=doc.display_name,
-                environment=doc.environment,
-                target_type=doc.target_type,
-                capabilities=doc.capabilities,
+            public_match = _build_public_match_from_doc(
+                doc,
                 confidence=_confidence_from_score(score),
                 match_reasons=reasons,
-                public_metadata={
-                    key: value
-                    for key, value in {
-                        "environment": doc.environment,
-                        "target_type": doc.target_type,
-                        "usage": doc.usage,
-                        "status": doc.status,
-                    }.items()
-                    if value not in (None, "")
-                },
-                resource_id=doc.resource_id,
                 score=score,
             )
             ranked.append(

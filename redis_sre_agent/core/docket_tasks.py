@@ -78,11 +78,24 @@ async def _ensure_handle_backed_turn_scope(
     normalized_instance_id = str(legacy_instance_id or "").strip() or None
     normalized_cluster_id = str(legacy_cluster_id or "").strip() or None
 
-    if turn_scope.bindings and normalized_instance_id and normalized_cluster_id:
-        # Attached bindings already define the target set. Ignore conflicting
-        # legacy single-target hints so the seed-hint resolver does not raise.
-        normalized_instance_id = None
-        normalized_cluster_id = None
+    if normalized_instance_id and normalized_cluster_id:
+        routing_instance_id = str(routing_context.get("instance_id") or "").strip() or None
+        routing_cluster_id = str(routing_context.get("cluster_id") or "").strip() or None
+
+        if turn_scope.bindings:
+            # Attached bindings already define the target set. Ignore conflicting
+            # legacy single-target hints so the seed-hint resolver does not raise.
+            normalized_instance_id = None
+            normalized_cluster_id = None
+        elif routing_instance_id and not routing_cluster_id:
+            normalized_cluster_id = None
+        elif routing_cluster_id and not routing_instance_id:
+            normalized_instance_id = None
+        else:
+            # Conflicting legacy single-target hints are ambiguous. Drop both
+            # rather than raising while rebuilding handle-backed scope.
+            normalized_instance_id = None
+            normalized_cluster_id = None
 
     needs_materialization = False
     if turn_scope.scope_kind != "target_bindings":

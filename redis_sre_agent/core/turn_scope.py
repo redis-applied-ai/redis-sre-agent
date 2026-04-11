@@ -140,9 +140,7 @@ class TurnScope(BaseModel):
             context["attached_target_handles"] = [
                 binding.target_handle for binding in self.bindings
             ]
-            context["target_bindings"] = [
-                binding.model_dump(mode="json") for binding in self.bindings
-            ]
+            context["target_bindings"] = [binding.public_dump() for binding in self.bindings]
         context.update(self.support_package_context)
         return context
 
