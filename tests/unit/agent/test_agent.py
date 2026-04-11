@@ -1111,7 +1111,8 @@ class TestSRELangGraphAgent:
         human_message = captured["initial_state"]["messages"][-1].content
         assert "ATTACHED TARGET SCOPE" in human_message
         assert "Prod Cache" in human_message
-        assert "resource_id=redis-prod-1" in human_message
+        assert "handle=tgt_01" in human_message
+        assert "resource_id=redis-prod-1" not in human_message
         assert human_message.index("ATTACHED TARGET SCOPE") < human_message.index(
             "User Query: Inspect the attached target"
         )
