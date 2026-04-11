@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from threading import Lock
 from typing import Any, Dict, Optional
 
 from redis_sre_agent.core.config import settings
@@ -15,6 +16,7 @@ from .contracts import (
 )
 
 _DEFAULT_REGISTRY: "TargetIntegrationRegistry | None" = None
+_DEFAULT_REGISTRY_LOCK = Lock()
 
 
 def _load_object(class_path: str) -> Any:
@@ -105,11 +107,14 @@ def get_target_integration_registry() -> TargetIntegrationRegistry:
     """Return the default target integration registry."""
     global _DEFAULT_REGISTRY
     if _DEFAULT_REGISTRY is None:
-        _DEFAULT_REGISTRY = TargetIntegrationRegistry.from_settings()
+        with _DEFAULT_REGISTRY_LOCK:
+            if _DEFAULT_REGISTRY is None:
+                _DEFAULT_REGISTRY = TargetIntegrationRegistry.from_settings()
     return _DEFAULT_REGISTRY
 
 
 def reset_target_integration_registry() -> None:
     """Clear the cached target integration registry singleton."""
     global _DEFAULT_REGISTRY
-    _DEFAULT_REGISTRY = None
+    with _DEFAULT_REGISTRY_LOCK:
+        _DEFAULT_REGISTRY = None

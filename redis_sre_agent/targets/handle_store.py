@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Dict, Iterable, Optional
 
 from redis_sre_agent.core.redis import get_redis_client
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 _TARGET_HANDLE_STORE_PREFIX = "sre_target_handles"
 _DEFAULT_TTL_SECONDS = 24 * 60 * 60
 _DEFAULT_STORE: "RedisTargetHandleStore | None" = None
+_DEFAULT_STORE_LOCK = Lock()
 
 
 class RedisTargetHandleStore:
@@ -129,11 +131,14 @@ def get_target_handle_store() -> RedisTargetHandleStore:
     """Return the default target handle store."""
     global _DEFAULT_STORE
     if _DEFAULT_STORE is None:
-        _DEFAULT_STORE = RedisTargetHandleStore()
+        with _DEFAULT_STORE_LOCK:
+            if _DEFAULT_STORE is None:
+                _DEFAULT_STORE = RedisTargetHandleStore()
     return _DEFAULT_STORE
 
 
 def reset_target_handle_store() -> None:
     """Clear the cached target handle store singleton."""
     global _DEFAULT_STORE
-    _DEFAULT_STORE = None
+    with _DEFAULT_STORE_LOCK:
+        _DEFAULT_STORE = None

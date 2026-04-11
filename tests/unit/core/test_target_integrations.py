@@ -1,6 +1,8 @@
 """Unit tests for target integration registry, services, bindings, and handle storage."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from time import sleep
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -718,6 +720,31 @@ def test_reset_target_integration_registry_clears_cached_singleton():
     reset_target_integration_registry()
 
 
+def test_target_integration_registry_singleton_initializes_once_under_concurrency():
+    reset_target_integration_registry()
+    created: list[TargetIntegrationRegistry] = []
+
+    def _build_registry() -> TargetIntegrationRegistry:
+        sleep(0.01)
+        registry = TargetIntegrationRegistry(
+            default_discovery_backend="redis_catalog",
+            default_binding_strategy="redis_default",
+        )
+        created.append(registry)
+        return registry
+
+    with patch(
+        "redis_sre_agent.targets.registry.TargetIntegrationRegistry.from_settings",
+        side_effect=_build_registry,
+    ):
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(executor.map(lambda _: get_target_integration_registry(), range(4)))
+
+    assert len(created) == 1
+    assert len({id(result) for result in results}) == 1
+    reset_target_integration_registry()
+
+
 def test_reset_target_handle_store_clears_cached_singleton():
     reset_target_handle_store()
     first = get_target_handle_store()
@@ -729,4 +756,26 @@ def test_reset_target_handle_store_clears_cached_singleton():
     third = get_target_handle_store()
 
     assert third is not first
+    reset_target_handle_store()
+
+
+def test_target_handle_store_singleton_initializes_once_under_concurrency():
+    reset_target_handle_store()
+    created: list[RedisTargetHandleStore] = []
+
+    def _build_store() -> RedisTargetHandleStore:
+        sleep(0.01)
+        store = RedisTargetHandleStore()
+        created.append(store)
+        return store
+
+    with patch(
+        "redis_sre_agent.targets.handle_store.RedisTargetHandleStore",
+        side_effect=_build_store,
+    ):
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(executor.map(lambda _: get_target_handle_store(), range(4)))
+
+    assert len(created) == 1
+    assert len({id(result) for result in results}) == 1
     reset_target_handle_store()
