@@ -14,10 +14,10 @@ class RedisCatalogDiscoveryBackend:
 
     async def resolve(self, request: DiscoveryRequest) -> DiscoveryResponse:
         from redis_sre_agent.core.targets import (
-            _build_public_match_from_doc,
             _confidence_from_score,
             _parse_query_hints,
             _score_target_doc,
+            build_public_match_from_doc,
             get_target_catalog,
         )
 
@@ -36,7 +36,7 @@ class RedisCatalogDiscoveryBackend:
             )
             if score < 2.5:
                 continue
-            public_match = _build_public_match_from_doc(
+            public_match = build_public_match_from_doc(
                 doc,
                 confidence=_confidence_from_score(score),
                 match_reasons=reasons,

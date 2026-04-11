@@ -958,7 +958,7 @@ async def resolve_target_query(
     )
 
 
-def _build_public_match_from_doc(
+def build_public_match_from_doc(
     doc: TargetCatalogDoc,
     *,
     match_reasons: Optional[Sequence[str]] = None,
@@ -1030,7 +1030,7 @@ async def build_seed_hint_candidates(
                 doc = build_target_doc_from_cluster(cluster)
 
         if doc is not None:
-            public_match = _build_public_match_from_doc(
+            public_match = build_public_match_from_doc(
                 doc,
                 match_reasons=[f"matched {kind}_id"],
             )

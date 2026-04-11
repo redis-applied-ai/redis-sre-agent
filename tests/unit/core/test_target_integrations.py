@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -103,6 +103,24 @@ class MockBindingStrategy:
 
     async def bind(self, request):  # pragma: no cover - registry lookup only
         raise AssertionError("bind() should not be called in this test")
+
+
+class FakePipeline:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+        self.executed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def set(self, key: str, value: str, ex: int) -> None:
+        self.calls.append((key, value, ex))
+
+    async def execute(self) -> None:
+        self.executed = True
 
 
 @pytest.mark.asyncio
@@ -472,6 +490,97 @@ async def test_redis_target_handle_store_logs_save_failures_at_warning_level():
     assert "saving %s" in mock_warning.call_args.args[0]
     assert mock_warning.call_args.args[1] == "tgt_01"
     assert mock_warning.call_args.kwargs["exc_info"] is True
+
+
+@pytest.mark.asyncio
+async def test_redis_target_handle_store_batches_save_records_with_pipeline():
+    fake_pipeline = FakePipeline()
+    fake_client = AsyncMock()
+    fake_client.pipeline = MagicMock(return_value=fake_pipeline)
+    store = RedisTargetHandleStore()
+    records = [
+        TargetHandleRecord(
+            target_handle="tgt_01",
+            discovery_backend="redis_catalog",
+            binding_strategy="redis_default",
+            binding_subject="redis-prod-checkout-cache",
+            public_summary=PublicTargetBinding(
+                target_handle="tgt_01",
+                target_kind="instance",
+                display_name="checkout-cache-prod",
+                capabilities=["redis"],
+            ),
+        ),
+        TargetHandleRecord(
+            target_handle="tgt_02",
+            discovery_backend="redis_catalog",
+            binding_strategy="redis_default",
+            binding_subject="redis-prod-session-cache",
+            public_summary=PublicTargetBinding(
+                target_handle="tgt_02",
+                target_kind="instance",
+                display_name="session-cache-prod",
+                capabilities=["redis"],
+            ),
+        ),
+    ]
+
+    with patch("redis_sre_agent.targets.handle_store.get_redis_client", return_value=fake_client):
+        await store.save_records(records)
+
+    fake_client.pipeline.assert_called_once_with(transaction=True)
+    assert fake_pipeline.executed is True
+    assert [call[0] for call in fake_pipeline.calls] == [
+        "sre_target_handles:tgt_01",
+        "sre_target_handles:tgt_02",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_redis_target_handle_store_batches_get_records_with_mget():
+    fake_client = AsyncMock()
+    store = RedisTargetHandleStore()
+    record_one = TargetHandleRecord(
+        target_handle="tgt_01",
+        discovery_backend="redis_catalog",
+        binding_strategy="redis_default",
+        binding_subject="redis-prod-checkout-cache",
+        public_summary=PublicTargetBinding(
+            target_handle="tgt_01",
+            target_kind="instance",
+            display_name="checkout-cache-prod",
+            capabilities=["redis"],
+        ),
+    )
+    record_two = TargetHandleRecord(
+        target_handle="tgt_02",
+        discovery_backend="redis_catalog",
+        binding_strategy="redis_default",
+        binding_subject="redis-prod-session-cache",
+        public_summary=PublicTargetBinding(
+            target_handle="tgt_02",
+            target_kind="instance",
+            display_name="session-cache-prod",
+            capabilities=["redis"],
+        ),
+    )
+    fake_client.mget.return_value = [
+        record_one.model_dump_json(),
+        None,
+        record_two.model_dump_json(),
+    ]
+
+    with patch("redis_sre_agent.targets.handle_store.get_redis_client", return_value=fake_client):
+        records = await store.get_records(["tgt_01", "missing", "tgt_02"])
+
+    fake_client.mget.assert_awaited_once_with(
+        "sre_target_handles:tgt_01",
+        "sre_target_handles:missing",
+        "sre_target_handles:tgt_02",
+    )
+    assert set(records) == {"tgt_01", "tgt_02"}
+    assert records["tgt_01"].binding_subject == "redis-prod-checkout-cache"
+    assert records["tgt_02"].binding_subject == "redis-prod-session-cache"
 
 
 @pytest.mark.asyncio

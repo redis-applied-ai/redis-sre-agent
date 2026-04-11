@@ -59,8 +59,26 @@ class RedisTargetHandleStore:
             )
 
     async def save_records(self, records: Iterable[TargetHandleRecord]) -> None:
-        for record in records:
-            await self.save_record(record)
+        record_list = list(records)
+        if not record_list:
+            return
+
+        client = get_redis_client()
+        try:
+            async with client.pipeline(transaction=True) as pipe:
+                for record in record_list:
+                    pipe.set(
+                        self._key(record.target_handle),
+                        record.model_dump_json(),
+                        ex=self._ttl_seconds(record),
+                    )
+                await pipe.execute()
+        except Exception:
+            logger.warning(
+                "Target handle store unavailable while saving %s records",
+                len(record_list),
+                exc_info=True,
+            )
 
     async def get_record(self, target_handle: str) -> Optional[TargetHandleRecord]:
         client = get_redis_client()
@@ -80,11 +98,30 @@ class RedisTargetHandleStore:
             return None
 
     async def get_records(self, target_handles: Iterable[str]) -> Dict[str, TargetHandleRecord]:
+        handle_list = list(target_handles)
+        if not handle_list:
+            return {}
+
+        client = get_redis_client()
+        keys = [self._key(target_handle) for target_handle in handle_list]
         records: Dict[str, TargetHandleRecord] = {}
-        for target_handle in target_handles:
-            record = await self.get_record(target_handle)
-            if record is not None:
-                records[target_handle] = record
+        try:
+            raw_values = await client.mget(*keys)
+        except Exception:
+            logger.debug("Target handle store unavailable while loading records")
+            return {}
+
+        for target_handle, raw in zip(handle_list, raw_values or []):
+            if not raw:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            try:
+                record = TargetHandleRecord.model_validate_json(raw)
+            except Exception:
+                logger.warning("Invalid target handle record for %s", target_handle)
+                continue
+            records[target_handle] = record
         return records
 
 
