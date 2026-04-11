@@ -107,3 +107,9 @@ def get_target_integration_registry() -> TargetIntegrationRegistry:
     if _DEFAULT_REGISTRY is None:
         _DEFAULT_REGISTRY = TargetIntegrationRegistry.from_settings()
     return _DEFAULT_REGISTRY
+
+
+def reset_target_integration_registry() -> None:
+    """Clear the cached target integration registry singleton."""
+    global _DEFAULT_REGISTRY
+    _DEFAULT_REGISTRY = None

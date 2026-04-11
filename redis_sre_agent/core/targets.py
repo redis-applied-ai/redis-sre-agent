@@ -1117,9 +1117,8 @@ async def attach_target_matches(
     current_state = await get_thread_target_state(thread_id)
     binding_service = TargetBindingService()
     handle_store = get_target_handle_store()
-    existing_records = await handle_store.get_records(
-        binding.target_handle for binding in current_state.target_bindings
-    )
+    current_handles = [binding.target_handle for binding in current_state.target_bindings]
+    existing_records = await handle_store.get_records(current_handles)
     existing_by_subject: Dict[tuple[str, str], TargetBinding] = {}
     for binding in current_state.target_bindings:
         record = existing_records.get(binding.target_handle)

@@ -21,9 +21,17 @@ from redis_sre_agent.targets.contracts import (
     PublicTargetMatch,
     TargetHandleRecord,
 )
-from redis_sre_agent.targets.handle_store import RedisTargetHandleStore
+from redis_sre_agent.targets.handle_store import (
+    RedisTargetHandleStore,
+    get_target_handle_store,
+    reset_target_handle_store,
+)
 from redis_sre_agent.targets.redis_binding import RedisDataClientFactory, RedisTargetBindingStrategy
-from redis_sre_agent.targets.registry import TargetIntegrationRegistry
+from redis_sre_agent.targets.registry import (
+    TargetIntegrationRegistry,
+    get_target_integration_registry,
+    reset_target_integration_registry,
+)
 from redis_sre_agent.targets.services import TargetBindingService, TargetDiscoveryService
 
 
@@ -333,8 +341,6 @@ async def test_redis_target_handle_store_sets_ttl_and_round_trips_records():
 
 @pytest.mark.asyncio
 async def test_registry_from_settings_loads_fake_target_components(monkeypatch):
-    from redis_sre_agent.targets import registry as registry_module
-
     fake_integrations = TargetIntegrationsConfig(
         default_discovery_backend="fake_demo",
         default_binding_strategy="fake_authenticated",
@@ -367,7 +373,7 @@ async def test_registry_from_settings_loads_fake_target_components(monkeypatch):
         },
     )
     monkeypatch.setattr(settings, "target_integrations", fake_integrations)
-    monkeypatch.setattr(registry_module, "_DEFAULT_REGISTRY", None)
+    reset_target_integration_registry()
 
     registry = TargetIntegrationRegistry.from_settings()
     response = await registry.get_discovery_backend().resolve(DiscoveryRequest(query="demo cache"))
@@ -391,3 +397,31 @@ async def test_registry_from_settings_loads_fake_target_components(monkeypatch):
     fake_client = binding_result.client_refs["fake.auth"]
     assert fake_client.id == bindings[0].target_handle
     assert fake_client.extension_data["fake_target.username"] == "demo-user"
+
+
+def test_reset_target_integration_registry_clears_cached_singleton():
+    reset_target_integration_registry()
+    first = get_target_integration_registry()
+    second = get_target_integration_registry()
+
+    assert first is second
+
+    reset_target_integration_registry()
+    third = get_target_integration_registry()
+
+    assert third is not first
+    reset_target_integration_registry()
+
+
+def test_reset_target_handle_store_clears_cached_singleton():
+    reset_target_handle_store()
+    first = get_target_handle_store()
+    second = get_target_handle_store()
+
+    assert first is second
+
+    reset_target_handle_store()
+    third = get_target_handle_store()
+
+    assert third is not first
+    reset_target_handle_store()

@@ -90,3 +90,9 @@ def get_target_handle_store() -> RedisTargetHandleStore:
     if _DEFAULT_STORE is None:
         _DEFAULT_STORE = RedisTargetHandleStore()
     return _DEFAULT_STORE
+
+
+def reset_target_handle_store() -> None:
+    """Clear the cached target handle store singleton."""
+    global _DEFAULT_STORE
+    _DEFAULT_STORE = None

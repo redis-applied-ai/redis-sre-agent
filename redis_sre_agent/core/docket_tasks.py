@@ -101,9 +101,8 @@ async def _ensure_handle_backed_turn_scope(
     if turn_scope.scope_kind != "target_bindings":
         needs_materialization = bool(normalized_instance_id or normalized_cluster_id)
     elif turn_scope.bindings:
-        handle_records = await get_target_handle_store().get_records(
-            binding.target_handle for binding in turn_scope.bindings
-        )
+        bound_handles = [binding.target_handle for binding in turn_scope.bindings]
+        handle_records = await get_target_handle_store().get_records(bound_handles)
         needs_materialization = any(
             binding.target_handle not in handle_records for binding in turn_scope.bindings
         )
