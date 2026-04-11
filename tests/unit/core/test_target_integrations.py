@@ -209,6 +209,26 @@ async def test_build_seed_hint_candidates_maps_legacy_instance_ids_to_private_ca
 
 
 @pytest.mark.asyncio
+async def test_build_seed_hint_candidates_uses_configured_registry_defaults():
+    fake_registry = SimpleNamespace(
+        default_binding_strategy="fake_strategy",
+        default_discovery_backend="fake_backend",
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_integration_registry",
+        return_value=fake_registry,
+    ):
+        candidates = await build_seed_hint_candidates(instance_id="redis-prod-checkout-cache")
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.binding_strategy == "fake_strategy"
+    assert candidate.discovery_backend == "fake_backend"
+    assert candidate.binding_subject == "redis-prod-checkout-cache"
+
+
+@pytest.mark.asyncio
 async def test_redis_data_client_factory_builds_handle_scoped_instance():
     from redis_sre_agent.core.instances import RedisInstance
 

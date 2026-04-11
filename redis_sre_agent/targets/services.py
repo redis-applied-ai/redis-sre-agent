@@ -50,15 +50,7 @@ class TargetBindingService:
     ) -> DiscoveryCandidate:
         if isinstance(candidate, DiscoveryCandidate):
             return candidate
-        return DiscoveryCandidate(
-            public_match=candidate,
-            binding_strategy="redis_default",
-            binding_subject=candidate.resource_id or "",
-            private_binding_ref={"target_kind": candidate.target_kind},
-            discovery_backend="redis_catalog",
-            score=candidate.score,
-            confidence=candidate.confidence,
-        )
+        return DiscoveryCandidate.from_public_match(candidate)
 
     @classmethod
     def build_public_binding(

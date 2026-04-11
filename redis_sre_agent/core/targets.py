@@ -21,6 +21,7 @@ from redis_sre_agent.targets import (
     TargetBindingService,
     TargetDiscoveryService,
     get_target_handle_store,
+    get_target_integration_registry,
 )
 from redis_sre_agent.targets.contracts import (
     DiscoveryCandidate,
@@ -998,6 +999,7 @@ async def build_seed_hint_candidates(
     if instance_id and cluster_id:
         raise ValueError("Please provide only one of instance_id or cluster_id")
 
+    registry = get_target_integration_registry()
     candidates: List[DiscoveryCandidate] = []
     seen: set[tuple[str, str]] = set()
 
@@ -1045,14 +1047,12 @@ async def build_seed_hint_candidates(
             )
 
         candidates.append(
-            DiscoveryCandidate(
-                public_match=public_match,
-                binding_strategy="redis_default",
+            DiscoveryCandidate.from_public_match(
+                public_match,
+                binding_strategy=registry.default_binding_strategy,
                 binding_subject=subject,
                 private_binding_ref={"target_kind": kind, "seed_hint": True},
-                discovery_backend="redis_catalog",
-                score=public_match.score,
-                confidence=public_match.confidence,
+                discovery_backend=registry.default_discovery_backend,
             )
         )
 

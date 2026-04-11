@@ -14,11 +14,6 @@ from .contracts import (
     TargetDiscoveryBackend,
     TargetHandleRecord,
 )
-from .fake_integration import (
-    FakeAuthenticatedClientFactory,
-    FakeTargetBindingStrategy,
-    FakeTargetDiscoveryBackend,
-)
 from .handle_store import RedisTargetHandleStore, get_target_handle_store
 from .registry import TargetIntegrationRegistry, get_target_integration_registry
 from .services import TargetBindingService, TargetDiscoveryService
@@ -30,9 +25,6 @@ __all__ = [
     "DiscoveryCandidate",
     "DiscoveryRequest",
     "DiscoveryResponse",
-    "FakeAuthenticatedClientFactory",
-    "FakeTargetBindingStrategy",
-    "FakeTargetDiscoveryBackend",
     "ProviderLoadRequest",
     "PublicTargetBinding",
     "PublicTargetMatch",
