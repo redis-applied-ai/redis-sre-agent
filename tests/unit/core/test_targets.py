@@ -16,7 +16,6 @@ from redis_sre_agent.core.targets import (
     build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
     build_bound_target_scope_context,
-    build_ephemeral_target_bindings,
     build_target_doc_from_cluster,
     build_target_doc_from_instance,
     get_attached_target_handles_from_context,
@@ -26,6 +25,7 @@ from redis_sre_agent.core.targets import (
     sync_target_catalog,
 )
 from redis_sre_agent.core.threads import Thread, ThreadMetadata
+from redis_sre_agent.targets.services import TargetBindingService
 
 
 def test_build_target_doc_from_instance_excludes_secrets_and_includes_aliases():
@@ -875,7 +875,7 @@ async def test_build_attached_target_prompt_loader_uses_callable_context_per_att
     }
 
 
-def test_build_ephemeral_target_bindings_generates_opaque_handles():
+def test_target_binding_service_build_public_binding_generates_opaque_handles():
     matches = [
         ResolvedTargetMatch(
             target_kind="cluster",
@@ -889,7 +889,14 @@ def test_build_ephemeral_target_bindings_generates_opaque_handles():
         )
     ]
 
-    bindings = build_ephemeral_target_bindings(matches, thread_id="thread-1", task_id="task-1")
+    bindings = [
+        TargetBindingService.build_public_binding(
+            match,
+            thread_id="thread-1",
+            task_id="task-1",
+        )
+        for match in matches
+    ]
 
     assert len(bindings) == 1
     assert bindings[0].target_handle.startswith("tgt_")

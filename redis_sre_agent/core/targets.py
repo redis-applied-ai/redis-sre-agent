@@ -90,17 +90,22 @@ ResolvedTargetMatch = PublicTargetMatch
 TargetResolutionResult = DiscoveryResponse
 
 
-def build_single_attached_binding_prompt(binding: TargetBinding) -> str:
-    """Build minimal scope context when richer attached-target prompt loading fails."""
-    capability_text = ", ".join(binding.capabilities or []) or "unspecified"
-    metadata_text = (
+def _format_public_metadata_text(public_metadata: Optional[dict[str, Any]]) -> str:
+    """Render public binding metadata consistently in prompt text."""
+    return (
         ", ".join(
             f"{key}={value}"
-            for key, value in (binding.public_metadata or {}).items()
+            for key, value in (public_metadata or {}).items()
             if value not in (None, "")
         )
         or "none"
     )
+
+
+def build_single_attached_binding_prompt(binding: TargetBinding) -> str:
+    """Build minimal scope context when richer attached-target prompt loading fails."""
+    capability_text = ", ".join(binding.capabilities or []) or "unspecified"
+    metadata_text = _format_public_metadata_text(binding.public_metadata)
     return (
         "ATTACHED TARGET SCOPE: This conversation has 1 attached Redis target.\n"
         "Attached target:\n"
@@ -141,14 +146,7 @@ def build_attached_target_prompt_fallback(
                 continue
 
             capability_text = ", ".join(binding.capabilities or []) or "unspecified"
-            metadata_text = (
-                ", ".join(
-                    f"{key}={value}"
-                    for key, value in (binding.public_metadata or {}).items()
-                    if value not in (None, "")
-                )
-                or "none"
-            )
+            metadata_text = _format_public_metadata_text(binding.public_metadata)
             prompt_lines.append(
                 "- "
                 f"{binding.display_name} [handle={binding.target_handle}, "
@@ -322,14 +320,7 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
                     f"type={instance.instance_type}, capabilities={capability_text}]"
                 )
             else:
-                metadata_text = (
-                    ", ".join(
-                        f"{key}={value}"
-                        for key, value in (binding_summary.public_metadata or {}).items()
-                        if value not in (None, "")
-                    )
-                    or "none"
-                )
+                metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
                 target_lines.append(
                     "- "
                     f"{binding_summary.display_name} [handle={handle}, kind=instance, "
@@ -350,28 +341,14 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
                     f"capabilities={capability_text}]"
                 )
             else:
-                metadata_text = (
-                    ", ".join(
-                        f"{key}={value}"
-                        for key, value in (binding_summary.public_metadata or {}).items()
-                        if value not in (None, "")
-                    )
-                    or "none"
-                )
+                metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
                 target_lines.append(
                     "- "
                     f"{binding_summary.display_name} [handle={handle}, kind=cluster, "
                     f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
                 )
         else:
-            metadata_text = (
-                ", ".join(
-                    f"{key}={value}"
-                    for key, value in (binding_summary.public_metadata or {}).items()
-                    if value not in (None, "")
-                )
-                or "none"
-            )
+            metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
             target_lines.append(
                 "- "
                 f"{binding_summary.display_name} [handle={handle}, kind={binding_summary.target_kind}, "
@@ -1092,20 +1069,6 @@ async def build_seed_hint_candidates(
         await _append_candidate(target_kind="cluster", binding_subject=cluster_id)
 
     return candidates
-
-
-def build_ephemeral_target_bindings(
-    matches: Sequence[DiscoveryCandidate],
-    *,
-    thread_id: Optional[str] = None,
-    task_id: Optional[str] = None,
-) -> List[TargetBinding]:
-    """Build opaque target handles without persisting them."""
-    service = TargetBindingService()
-    return [
-        service.build_public_binding(match, thread_id=thread_id, task_id=task_id)
-        for match in matches
-    ]
 
 
 async def get_thread_target_state(thread_id: str) -> ThreadTargetState:
