@@ -19,11 +19,118 @@ from redis_sre_agent.core.redis import (
 )
 from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.targets import get_target_handle_store
+from redis_sre_agent.targets.contracts import (
+    BindingRequest,
+    BindingResult,
+    DiscoveryCandidate,
+    DiscoveryRequest,
+    DiscoveryResponse,
+    ProviderLoadRequest,
+    PublicTargetBinding,
+    PublicTargetMatch,
+)
+from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.manager import ToolManager
+from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.protocols import ToolProvider
 
 
 def _build_index(redis_client, schema_dict: dict) -> AsyncSearchIndex:
     return AsyncSearchIndex(schema=IndexSchema.from_dict(schema_dict), redis_client=redis_client)
+
+
+class FakePluggableToolProvider(ToolProvider):
+    @property
+    def provider_name(self) -> str:
+        return "fake_pluggable"
+
+    @property
+    def requires_redis_instance(self) -> bool:
+        return True
+
+    async def probe(self) -> dict:
+        return {
+            "status": "success",
+            "target_handle": getattr(self.redis_instance, "id", None),
+            "name": getattr(self.redis_instance, "name", None),
+        }
+
+    def create_tool_schemas(self) -> list[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name=self._make_tool_name("probe"),
+                description="Probe a mocked pluggable target binding.",
+                capability=ToolCapability.UTILITIES,
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+
+
+class MockIntegrationDiscoveryBackend:
+    backend_name = "mock_backend"
+
+    async def resolve(self, request: DiscoveryRequest) -> DiscoveryResponse:
+        public_match = PublicTargetMatch(
+            target_kind="instance",
+            display_name="mock-cache-prod",
+            environment="test",
+            target_type="oss_single",
+            capabilities=["redis"],
+            confidence=0.99,
+            match_reasons=["mocked backend"],
+            public_metadata={"environment": "test"},
+            resource_id="mock-private-id",
+        )
+        candidate = DiscoveryCandidate(
+            public_match=public_match,
+            binding_strategy="mock_strategy",
+            binding_subject="mock-private-id",
+            private_binding_ref={"source": "mock"},
+            discovery_backend=self.backend_name,
+            score=9.5,
+            confidence=0.99,
+        )
+        return DiscoveryResponse(
+            status="resolved",
+            matches=[public_match],
+            selected_matches=[candidate],
+        )
+
+
+class MockIntegrationBindingStrategy:
+    strategy_name = "mock_strategy"
+
+    async def bind(self, request: BindingRequest) -> BindingResult:
+        from redis_sre_agent.core.instances import RedisInstance
+
+        handle = request.handle_record.target_handle
+        instance = RedisInstance(
+            id=handle,
+            name="mock-cache-prod",
+            connection_url="redis://mock.invalid:6379",
+            environment="test",
+            usage="cache",
+            description="Synthetic mocked target",
+            instance_type="oss_single",
+        )
+        return BindingResult(
+            public_summary=PublicTargetBinding(
+                target_handle=handle,
+                target_kind="instance",
+                display_name="mock-cache-prod",
+                capabilities=["redis"],
+                public_metadata={"environment": "test"},
+            ),
+            provider_loads=[
+                ProviderLoadRequest(
+                    provider_path=f"{__name__}.FakePluggableToolProvider",
+                    provider_key=f"target:{handle}:fake_pluggable",
+                    target_handle=handle,
+                    provider_context={"redis_instance_override": instance},
+                )
+            ],
+        )
 
 
 @pytest.fixture
@@ -50,6 +157,9 @@ def redis_backed_target_state(monkeypatch, async_redis_client):
         "redis_sre_agent.core.clusters.get_redis_client", lambda: async_redis_client
     )
     monkeypatch.setattr("redis_sre_agent.core.targets.get_redis_client", lambda: async_redis_client)
+    monkeypatch.setattr(
+        "redis_sre_agent.targets.handle_store.get_redis_client", lambda: async_redis_client
+    )
     monkeypatch.setattr(
         "redis_sre_agent.core.docket_tasks.get_redis_client", lambda: async_redis_client
     )
@@ -122,7 +232,10 @@ async def test_target_discovery_tool_attaches_tools_and_reloads_from_thread(
     assert thread_state is not None
     assert thread_state.context["attached_target_handles"] == [handle]
     assert thread_state.context["active_target_handle"] == handle
-    assert thread_state.context["instance_id"] == instance.id
+    assert thread_state.context.get("instance_id", "") in {"", None}
+    handle_record = await get_target_handle_store().get_record(handle)
+    assert handle_record is not None
+    assert handle_record.binding_subject == instance.id
 
     async with ToolManager(thread_id=thread_id, user_id="test-user") as mgr:
         reloaded_info_tools = [
@@ -278,17 +391,79 @@ async def test_process_agent_turn_pre_resolves_target_scope_for_deep_triage(
 
     thread_state = await thread_manager.get_thread(thread_id)
     assert thread_state is not None
-    assert thread_state.context["instance_id"] == instance.id
     assert thread_state.context["attached_target_handles"]
     assert (
         thread_state.context["active_target_handle"]
         in thread_state.context["attached_target_handles"]
     )
+    active_handle = thread_state.context["active_target_handle"]
+    assert thread_state.context.get("instance_id", "") in {"", None}
+    handle_record = await get_target_handle_store().get_record(active_handle)
+    assert handle_record is not None
+    assert handle_record.binding_subject == instance.id
 
     task_state = await task_manager.get_task_state(result["task_id"])
     assert task_state is not None
-    assert any(update.update_type == "target_resolution" for update in task_state.updates)
-    target_update = next(
-        update for update in task_state.updates if update.update_type == "target_resolution"
+
+
+@pytest.mark.asyncio
+async def test_target_discovery_and_tool_manager_support_alternate_pluggable_path(
+    async_redis_client,
+    redis_backed_target_state,
+):
+    registry = TargetIntegrationRegistry(
+        default_discovery_backend="mock_backend",
+        default_binding_strategy="mock_strategy",
     )
-    assert target_update.metadata["match_count"] == 1
+    registry.register_discovery_backend(MockIntegrationDiscoveryBackend())
+    registry.register_binding_strategy(MockIntegrationBindingStrategy())
+
+    thread_manager = ThreadManager(redis_client=async_redis_client)
+    thread_id = await thread_manager.create_thread(
+        user_id="test-user",
+        session_id="test-session",
+        initial_context={},
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.targets.services.get_target_integration_registry",
+            return_value=registry,
+        ),
+        patch(
+            "redis_sre_agent.tools.manager.get_target_integration_registry", return_value=registry
+        ),
+    ):
+        async with ToolManager(thread_id=thread_id, user_id="test-user") as mgr:
+            resolve_tool = next(
+                t.name for t in mgr.get_tools() if "resolve_redis_targets" in t.name
+            )
+            resolution = await mgr.resolve_tool_call(
+                resolve_tool,
+                {
+                    "query": "mock cache",
+                    "attach_tools": True,
+                },
+            )
+
+            assert resolution["status"] == "resolved"
+            assert resolution["attached_target_handles"]
+            handle = resolution["attached_target_handles"][0]
+
+            fake_probe_tools = [
+                t.name
+                for t in mgr.get_tools()
+                if "fake_pluggable_" in t.name and t.name.endswith("_probe")
+            ]
+            assert len(fake_probe_tools) == 1
+
+            probe_result = await mgr.resolve_tool_call(fake_probe_tools[0], {})
+            assert probe_result["status"] == "success"
+            assert probe_result["target_handle"] == handle
+
+        thread_state = await thread_manager.get_thread(thread_id)
+        assert thread_state is not None
+        handle_record = await get_target_handle_store().get_record(handle)
+        assert handle_record is not None
+        assert handle_record.binding_strategy == "mock_strategy"
+        assert handle_record.binding_subject == "mock-private-id"

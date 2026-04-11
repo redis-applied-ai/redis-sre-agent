@@ -505,7 +505,7 @@ async def test_bind_target_matches_with_thread_returns_materialized_attached_sco
 
     with (
         patch("redis_sre_agent.core.targets.ThreadManager", return_value=mock_thread_manager),
-        patch("redis_sre_agent.core.targets.ULID", return_value="new"),
+        patch("redis_sre_agent.targets.services.ULID", return_value="new"),
     ):
         scope = await bind_target_matches(
             matches=[new_match],
@@ -794,8 +794,8 @@ async def test_build_attached_target_scope_prompt_handles_binding_edge_cases():
     assert prompt is not None
     assert "handle=tgt_meta_only [metadata unavailable]" in prompt
     assert "missing-instance" in prompt and "state=missing" in prompt
-    assert "prod-cluster" in prompt and "cluster_id=cluster-prod-1" in prompt
-    assert "missing-cluster" in prompt and "cluster_id=cluster-missing" in prompt
+    assert "prod-cluster" in prompt and "kind=cluster" in prompt
+    assert "missing-cluster" in prompt and "state=missing" in prompt
     assert "custom-target" in prompt and "kind=custom" in prompt
     assert "extra-instance" in prompt
 

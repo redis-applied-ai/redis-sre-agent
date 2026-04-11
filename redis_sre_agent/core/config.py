@@ -109,6 +109,47 @@ class MCPServerConfig(BaseModel):
     )
 
 
+class TargetIntegrationComponentConfig(BaseModel):
+    """Config for a discovery backend, binding strategy, or client factory."""
+
+    class_path: str
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TargetIntegrationsConfig(BaseModel):
+    """Configuration for pluggable Redis target discovery and binding."""
+
+    default_discovery_backend: str = "redis_catalog"
+    default_binding_strategy: str = "redis_default"
+    discovery_backends: Dict[str, TargetIntegrationComponentConfig] = Field(
+        default_factory=lambda: {
+            "redis_catalog": TargetIntegrationComponentConfig(
+                class_path="redis_sre_agent.targets.redis_catalog.RedisCatalogDiscoveryBackend"
+            )
+        }
+    )
+    binding_strategies: Dict[str, TargetIntegrationComponentConfig] = Field(
+        default_factory=lambda: {
+            "redis_default": TargetIntegrationComponentConfig(
+                class_path="redis_sre_agent.targets.redis_binding.RedisTargetBindingStrategy"
+            )
+        }
+    )
+    client_factories: Dict[str, TargetIntegrationComponentConfig] = Field(
+        default_factory=lambda: {
+            "redis.data": TargetIntegrationComponentConfig(
+                class_path="redis_sre_agent.targets.redis_binding.RedisDataClientFactory"
+            ),
+            "redis.enterprise_admin": TargetIntegrationComponentConfig(
+                class_path="redis_sre_agent.targets.redis_binding.RedisEnterpriseAdminClientFactory"
+            ),
+            "redis.cloud": TargetIntegrationComponentConfig(
+                class_path="redis_sre_agent.targets.redis_binding.RedisCloudClientFactory"
+            ),
+        }
+    )
+
+
 # Load environment variables from .env file if it exists
 # In Docker/production, environment variables are set directly
 ENV_FILE_OPT: str | None = None
@@ -461,6 +502,11 @@ class Settings(BaseSettings):
         "Each key is the server name, and the value is the server configuration. "
         "Example: {'memory': {'command': 'npx', 'args': ['-y', '@modelcontextprotocol/server-memory'], "
         "'tools': {'search_memories': {'capability': 'logs'}}}}",
+    )
+
+    target_integrations: TargetIntegrationsConfig = Field(
+        default_factory=TargetIntegrationsConfig,
+        description="Target discovery/binding integrations used to resolve and attach Redis targets.",
     )
 
     @classmethod

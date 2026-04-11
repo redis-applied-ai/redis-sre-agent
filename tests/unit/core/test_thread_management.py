@@ -1,11 +1,13 @@
 """Tests for thread management and async task execution."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from redis_sre_agent.core.docket_tasks import process_agent_turn
+from redis_sre_agent.core.targets import MaterializedTargetScope, TargetBinding
 from redis_sre_agent.core.threads import (
     Message,
     Thread,
@@ -190,6 +192,101 @@ class TestProcessAgentTurn:
 
             # Verify thread manager saved state
             mock_manager._save_thread_state.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_materializes_handle_scope_from_legacy_instance_hint(self):
+        """Legacy instance hints should be normalized into handle-backed bindings before chat."""
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.TaskManager") as mock_task_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.route_to_appropriate_agent") as mock_route,
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent") as mock_get_chat_agent,
+            patch(
+                "redis_sre_agent.core.targets.build_seed_hint_candidates",
+                new_callable=AsyncMock,
+                return_value=[MagicMock(name="candidate")],
+            ) as mock_build_candidates,
+            patch(
+                "redis_sre_agent.core.targets.materialize_bound_target_scope",
+                new_callable=AsyncMock,
+            ) as mock_materialize_scope,
+        ):
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
+            thread = Thread(
+                thread_id="test_thread",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(user_id="user-1", session_id="session-1"),
+            )
+            mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
+            mock_manager.get_thread.return_value = thread
+            mock_manager.append_messages.return_value = True
+            mock_manager._save_thread_state.return_value = True
+
+            mock_task_manager = AsyncMock()
+            mock_task_manager.create_task.return_value = "task-1"
+            mock_task_manager.update_task_status.return_value = True
+            mock_task_manager.add_task_update.return_value = True
+            mock_task_manager.get_task_state.return_value = None
+            mock_task_manager.set_task_result.return_value = True
+            mock_task_manager._publish_stream_update.return_value = True
+            mock_task_manager.set_task_error.return_value = True
+            mock_task_manager_class.return_value = mock_task_manager
+
+            from redis_sre_agent.agent.router import AgentType
+
+            mock_route.side_effect = AsyncMock(return_value=AgentType.REDIS_CHAT)
+
+            binding = TargetBinding(
+                target_handle="tgt_legacy_01",
+                target_kind="instance",
+                display_name="checkout-cache-prod",
+                capabilities=["redis", "diagnostics"],
+                public_metadata={"environment": "production"},
+            )
+            mock_materialize_scope.return_value = MaterializedTargetScope(
+                selected_bindings=[binding],
+                attached_bindings=[binding],
+                target_toolset_generation=1,
+                context_updates={
+                    "attached_target_handles": ["tgt_legacy_01"],
+                    "active_target_handle": "tgt_legacy_01",
+                    "target_toolset_generation": 1,
+                    "target_bindings": [binding.public_dump()],
+                    "instance_id": "",
+                    "cluster_id": "",
+                },
+            )
+
+            mock_chat_agent = AsyncMock()
+            mock_chat_agent.process_query.return_value = SimpleNamespace(
+                response="Test response from agent",
+                search_results=[],
+                tool_envelopes=[],
+            )
+            mock_get_chat_agent.return_value = mock_chat_agent
+
+            await process_agent_turn(
+                thread_id="test_thread",
+                message="Investigate checkout cache",
+                context={"instance_id": "redis-prod-checkout-cache"},
+            )
+
+        mock_build_candidates.assert_awaited_once()
+        assert mock_build_candidates.await_args.kwargs["instance_id"] == "redis-prod-checkout-cache"
+        mock_materialize_scope.assert_awaited_once()
+        assert mock_chat_agent.process_query.await_args.kwargs["context"][
+            "attached_target_handles"
+        ] == ["tgt_legacy_01"]
+        assert mock_chat_agent.process_query.await_args.kwargs["context"]["target_bindings"] == [
+            binding.public_dump()
+        ]
+        assert thread.context["attached_target_handles"] == ["tgt_legacy_01"]
+        assert thread.context["instance_id"] == "redis-prod-checkout-cache"
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_thread_not_found(self):

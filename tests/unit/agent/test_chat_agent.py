@@ -1507,7 +1507,8 @@ class TestChatAgentStartupContext:
         human_message = fake_app.ainvoke.await_args.args[0]["messages"][-1]
         assert "ATTACHED TARGET SCOPE" in str(human_message.content)
         assert "Prod Cache" in str(human_message.content)
-        assert "resource_id=redis-prod-1" in str(human_message.content)
+        assert "handle=tgt_01" in str(human_message.content)
+        assert "resource_id=redis-prod-1" not in str(human_message.content)
         assert mock_tool_manager_class.call_args.kwargs["redis_instance"] is None
         assert mock_tool_manager_class.call_args.kwargs["redis_cluster"] is None
 

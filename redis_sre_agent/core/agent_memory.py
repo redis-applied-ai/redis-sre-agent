@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.progress import ProgressEmitter
+from redis_sre_agent.core.targets import resolve_binding_subject
 from redis_sre_agent.core.turn_scope import TurnScope
 
 logger = logging.getLogger(__name__)
@@ -576,9 +577,9 @@ async def prepare_agent_turn_memory(
     instance_id = normalized_context.get("instance_id")
     cluster_id = normalized_context.get("cluster_id")
     if not instance_id and turn_scope.single_binding_kind == "instance":
-        instance_id = turn_scope.single_resource_id
+        instance_id = await resolve_binding_subject(turn_scope.single_binding)
     if not cluster_id and turn_scope.single_binding_kind == "cluster":
-        cluster_id = turn_scope.single_resource_id
+        cluster_id = await resolve_binding_subject(turn_scope.single_binding)
     memory_context = await memory_service.prepare_turn_context(
         query=query,
         session_id=session_id,
