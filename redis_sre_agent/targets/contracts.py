@@ -85,23 +85,34 @@ class DiscoveryCandidate(BaseModel):
     score: float
     confidence: float
 
+    @staticmethod
+    def _resolve_default_integration_names() -> tuple[str, str]:
+        """Return the configured discovery backend and binding strategy defaults."""
+        from .registry import get_target_integration_registry
+
+        registry = get_target_integration_registry()
+        return registry.default_discovery_backend, registry.default_binding_strategy
+
     @classmethod
     def from_public_match(
         cls,
         public_match: PublicTargetMatch,
         *,
-        binding_strategy: str = "redis_default",
+        binding_strategy: Optional[str] = None,
         binding_subject: Optional[str] = None,
         private_binding_ref: Optional[Dict[str, Any]] = None,
-        discovery_backend: str = "redis_catalog",
+        discovery_backend: Optional[str] = None,
     ) -> "DiscoveryCandidate":
         """Build an internal candidate from a public match payload."""
+        default_discovery_backend, default_binding_strategy = (
+            cls._resolve_default_integration_names()
+        )
         return cls(
             public_match=public_match,
-            binding_strategy=binding_strategy,
+            binding_strategy=binding_strategy or default_binding_strategy,
             binding_subject=binding_subject or public_match.resource_id or "",
             private_binding_ref=private_binding_ref or {"target_kind": public_match.target_kind},
-            discovery_backend=discovery_backend,
+            discovery_backend=discovery_backend or default_discovery_backend,
             score=public_match.score,
             confidence=public_match.confidence,
         )

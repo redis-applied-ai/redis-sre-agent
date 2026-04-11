@@ -228,6 +228,64 @@ async def test_build_seed_hint_candidates_uses_configured_registry_defaults():
     assert candidate.binding_subject == "redis-prod-checkout-cache"
 
 
+def test_discovery_candidate_from_public_match_uses_registry_defaults():
+    public_match = PublicTargetMatch(
+        target_kind="instance",
+        display_name="mock-cache",
+        capabilities=["redis"],
+        confidence=0.9,
+        resource_id="mock-private-id",
+    )
+    fake_registry = SimpleNamespace(
+        default_binding_strategy="fake_strategy",
+        default_discovery_backend="fake_backend",
+    )
+
+    with patch(
+        "redis_sre_agent.targets.registry.get_target_integration_registry",
+        return_value=fake_registry,
+    ):
+        candidate = DiscoveryCandidate.from_public_match(public_match)
+
+    assert candidate.binding_strategy == "fake_strategy"
+    assert candidate.discovery_backend == "fake_backend"
+    assert candidate.binding_subject == "mock-private-id"
+
+
+@pytest.mark.asyncio
+async def test_target_binding_service_normalizes_public_matches_with_registry_defaults():
+    handle_store = AsyncMock()
+    fake_registry = SimpleNamespace(
+        default_binding_strategy="fake_strategy",
+        default_discovery_backend="fake_backend",
+    )
+    service = TargetBindingService(registry=fake_registry, handle_store=handle_store)
+    public_match = PublicTargetMatch(
+        target_kind="instance",
+        display_name="mock-cache",
+        capabilities=["redis"],
+        confidence=0.9,
+        public_metadata={"environment": "test"},
+        resource_id="mock-private-id",
+    )
+
+    with patch(
+        "redis_sre_agent.targets.registry.get_target_integration_registry",
+        return_value=fake_registry,
+    ):
+        bindings = await service.build_and_persist_records(
+            [public_match],
+            thread_id="thread-1",
+            task_id="task-1",
+        )
+
+    saved_record = handle_store.save_records.await_args.args[0][0]
+    assert len(bindings) == 1
+    assert saved_record.binding_strategy == "fake_strategy"
+    assert saved_record.discovery_backend == "fake_backend"
+    assert saved_record.binding_subject == "mock-private-id"
+
+
 @pytest.mark.asyncio
 async def test_redis_data_client_factory_builds_handle_scoped_instance():
     from redis_sre_agent.core.instances import RedisInstance
