@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import List
 
 from .contracts import DiscoveryCandidate, DiscoveryRequest, DiscoveryResponse
+from .registry import get_target_integration_registry
 
 
 class RedisCatalogDiscoveryBackend:
@@ -25,6 +26,7 @@ class RedisCatalogDiscoveryBackend:
         if not docs:
             return DiscoveryResponse(status="no_match")
 
+        registry = get_target_integration_registry()
         hints = _parse_query_hints(request.query)
         ranked: List[DiscoveryCandidate] = []
         for doc in docs:
@@ -45,7 +47,7 @@ class RedisCatalogDiscoveryBackend:
             ranked.append(
                 DiscoveryCandidate(
                     public_match=public_match,
-                    binding_strategy="redis_default",
+                    binding_strategy=registry.default_binding_strategy,
                     binding_subject=doc.resource_id,
                     private_binding_ref={"target_kind": doc.target_kind},
                     discovery_backend=self.backend_name,

@@ -130,7 +130,7 @@ class FakeTargetDiscoveryBackend:
                 status="clarification_required",
                 clarification_required=True,
                 matches=matches,
-                selected_matches=[],
+                selected_matches=candidates[: min(3, request.max_results)],
             )
         selected = candidates if request.allow_multiple else candidates[:1]
         return DiscoveryResponse(

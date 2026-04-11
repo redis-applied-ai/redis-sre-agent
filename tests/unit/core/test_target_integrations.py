@@ -643,6 +643,67 @@ async def test_registry_from_settings_loads_fake_target_components(monkeypatch):
     assert fake_client.extension_data["fake_target.username"] == "demo-user"
 
 
+@pytest.mark.asyncio
+async def test_redis_catalog_backend_uses_registry_default_binding_strategy():
+    from redis_sre_agent.core.targets import TargetCatalogDoc
+    from redis_sre_agent.targets.redis_catalog import RedisCatalogDiscoveryBackend
+
+    registry = TargetIntegrationRegistry(
+        default_discovery_backend="redis_catalog",
+        default_binding_strategy="custom_default",
+    )
+    backend = RedisCatalogDiscoveryBackend()
+    doc = TargetCatalogDoc(
+        target_id="target-1",
+        target_kind="instance",
+        resource_id="instance-1",
+        display_name="primary cache",
+        name="primary-cache",
+        capabilities=["redis"],
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.targets.redis_catalog.get_target_integration_registry",
+            return_value=registry,
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_target_catalog",
+            new=AsyncMock(return_value=[doc]),
+        ),
+    ):
+        result = await backend.resolve(DiscoveryRequest(query="primary cache"))
+
+    assert result.selected_matches
+    assert result.selected_matches[0].binding_strategy == "custom_default"
+
+
+@pytest.mark.asyncio
+async def test_fake_backend_returns_candidates_when_clarification_is_required():
+    from redis_sre_agent.targets.fake_integration import FakeTargetDiscoveryBackend
+
+    backend = FakeTargetDiscoveryBackend(
+        targets=[
+            {
+                "display_name": "demo fake cache one",
+                "binding_subject": "fake-demo-cache-1",
+                "aliases": ["demo cache"],
+            },
+            {
+                "display_name": "demo fake cache two",
+                "binding_subject": "fake-demo-cache-2",
+                "aliases": ["demo cache"],
+            },
+        ]
+    )
+
+    result = await backend.resolve(DiscoveryRequest(query="demo cache", allow_multiple=False))
+
+    assert result.status == "clarification_required"
+    assert result.clarification_required is True
+    assert len(result.selected_matches) == 2
+
+
 def test_reset_target_integration_registry_clears_cached_singleton():
     reset_target_integration_registry()
     first = get_target_integration_registry()
