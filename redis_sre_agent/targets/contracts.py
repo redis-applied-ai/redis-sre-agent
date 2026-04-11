@@ -41,8 +41,8 @@ class PublicTargetBinding(BaseModel):
     resource_id: Optional[str] = None
 
     def public_dump(self) -> Dict[str, Any]:
-        """Return the thread-safe binding payload."""
-        return self.model_dump(mode="json", exclude={"resource_id"})
+        """Return the thread-context binding payload."""
+        return self.model_dump(mode="json")
 
 
 class TargetHandleRecord(BaseModel):

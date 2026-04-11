@@ -98,7 +98,7 @@ def test_turn_scope_to_thread_context_serializes_bindings_and_support_package():
     assert context["resolution_policy"] == "allow_multiple"
     assert context["support_package_id"] == "pkg-1"
     assert context["target_bindings"][0]["target_handle"] == "tgt_01"
-    assert "resource_id" not in context["target_bindings"][0]
+    assert context["target_bindings"][0]["resource_id"] == "redis-prod-checkout-cache"
 
 
 def test_turn_scope_to_thread_context_omits_empty_binding_fields_for_zero_scope():
@@ -175,7 +175,7 @@ def test_build_legacy_target_scope_adapter_wraps_instance_scope_in_turn_scope_co
     assert scope.bindings[0].resource_id == "redis-prod-checkout-cache"
     assert context["instance_id"] == "redis-prod-checkout-cache"
     assert context["attached_target_handles"] == [scope.bindings[0].target_handle]
-    assert "resource_id" not in context["target_bindings"][0]
+    assert context["target_bindings"][0]["resource_id"] == "redis-prod-checkout-cache"
     assert context["turn_scope"]["bindings"][0]["resource_id"] == "redis-prod-checkout-cache"
 
 

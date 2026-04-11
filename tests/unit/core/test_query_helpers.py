@@ -124,7 +124,7 @@ class TestQueueQueryTaskHelper:
         assert context["resolution_policy"] == "require_target"
         assert context["target_bindings"][0]["target_kind"] == "instance"
         assert context["target_bindings"][0]["target_handle"]
-        assert "resource_id" not in context["target_bindings"][0]
+        assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
         assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
 
         task_kwargs = task_callable.await_args.kwargs
@@ -243,7 +243,7 @@ class TestQueueQueryTaskHelper:
         assert context["resolution_policy"] == "require_target"
         assert context["target_bindings"][0]["target_kind"] == "cluster"
         assert context["target_bindings"][0]["target_kind"] == "cluster"
-        assert "resource_id" not in context["target_bindings"][0]
+        assert context["target_bindings"][0]["resource_id"] == "cluster-1"
         assert context["turn_scope"]["seed_hints"] == {"cluster_id": "cluster-1"}
 
         task_kwargs = task_callable.await_args.kwargs
@@ -302,7 +302,7 @@ class TestQueueQueryTaskHelper:
         assert context["instance_id"] == "redis-prod-1"
         assert context["requested_agent_type"] == "chat"
         assert context["target_bindings"][0]["target_kind"] == "instance"
-        assert "resource_id" not in context["target_bindings"][0]
+        assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
         assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
         assert "thread_id" not in context
         assert "session_id" not in context

@@ -52,7 +52,11 @@ class RedisTargetHandleStore:
                 ex=self._ttl_seconds(record),
             )
         except Exception:
-            logger.debug("Target handle store unavailable while saving %s", record.target_handle)
+            logger.warning(
+                "Target handle store unavailable while saving %s",
+                record.target_handle,
+                exc_info=True,
+            )
 
     async def save_records(self, records: Iterable[TargetHandleRecord]) -> None:
         for record in records:

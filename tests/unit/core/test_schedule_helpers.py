@@ -90,7 +90,7 @@ class TestScheduleContextHelpers:
         assert context["resolution_policy"] == "require_target"
         assert context["target_bindings"][0]["target_kind"] == "instance"
         assert context["target_bindings"][0]["target_kind"] == "instance"
-        assert "resource_id" not in context["target_bindings"][0]
+        assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
         assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
 
     def test_build_manual_run_context_omits_instance_when_legacy_scope_missing(self):

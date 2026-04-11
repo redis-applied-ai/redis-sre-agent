@@ -360,6 +360,36 @@ async def test_redis_target_handle_store_sets_ttl_and_round_trips_records():
 
 
 @pytest.mark.asyncio
+async def test_redis_target_handle_store_logs_save_failures_at_warning_level():
+    fake_client = AsyncMock()
+    fake_client.set.side_effect = RuntimeError("redis unavailable")
+    store = RedisTargetHandleStore()
+    record = TargetHandleRecord(
+        target_handle="tgt_01",
+        discovery_backend="redis_catalog",
+        binding_strategy="redis_default",
+        binding_subject="redis-prod-checkout-cache",
+        public_summary=PublicTargetBinding(
+            target_handle="tgt_01",
+            target_kind="instance",
+            display_name="checkout-cache-prod",
+            capabilities=["redis"],
+        ),
+    )
+
+    with (
+        patch("redis_sre_agent.targets.handle_store.get_redis_client", return_value=fake_client),
+        patch("redis_sre_agent.targets.handle_store.logger.warning") as mock_warning,
+    ):
+        await store.save_record(record)
+
+    mock_warning.assert_called_once()
+    assert "saving %s" in mock_warning.call_args.args[0]
+    assert mock_warning.call_args.args[1] == "tgt_01"
+    assert mock_warning.call_args.kwargs["exc_info"] is True
+
+
+@pytest.mark.asyncio
 async def test_registry_from_settings_loads_fake_target_components(monkeypatch):
     fake_integrations = TargetIntegrationsConfig(
         default_discovery_backend="fake_demo",
