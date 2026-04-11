@@ -104,9 +104,13 @@ class DiscoveryCandidate(BaseModel):
         discovery_backend: Optional[str] = None,
     ) -> "DiscoveryCandidate":
         """Build an internal candidate from a public match payload."""
-        default_discovery_backend, default_binding_strategy = (
-            cls._resolve_default_integration_names()
-        )
+        if binding_strategy is None or discovery_backend is None:
+            default_discovery_backend, default_binding_strategy = (
+                cls._resolve_default_integration_names()
+            )
+        else:
+            default_discovery_backend = discovery_backend
+            default_binding_strategy = binding_strategy
         return cls(
             public_match=public_match,
             binding_strategy=binding_strategy or default_binding_strategy,

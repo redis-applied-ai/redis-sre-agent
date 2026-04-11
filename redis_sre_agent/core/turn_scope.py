@@ -64,12 +64,6 @@ class TurnScope(BaseModel):
         binding = self.single_binding
         return binding.target_kind if binding else None
 
-    @property
-    def single_resource_id(self) -> Optional[str]:
-        """Return the resource id of the only bound target, if present."""
-        binding = self.single_binding
-        return binding.resource_id if binding else None
-
     @classmethod
     def from_context(
         cls,

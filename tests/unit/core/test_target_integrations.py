@@ -252,6 +252,33 @@ def test_discovery_candidate_from_public_match_uses_registry_defaults():
     assert candidate.binding_subject == "mock-private-id"
 
 
+def test_discovery_candidate_from_public_match_skips_registry_when_defaults_are_explicit():
+    public_match = PublicTargetMatch(
+        target_kind="instance",
+        display_name="mock-cache",
+        capabilities=["redis"],
+        confidence=0.9,
+        resource_id="mock-private-id",
+    )
+
+    with patch(
+        "redis_sre_agent.targets.contracts.DiscoveryCandidate._resolve_default_integration_names",
+        side_effect=AssertionError("registry defaults should not be resolved"),
+    ):
+        candidate = DiscoveryCandidate.from_public_match(
+            public_match,
+            binding_strategy="explicit_strategy",
+            binding_subject="explicit-subject",
+            private_binding_ref={"source": "explicit"},
+            discovery_backend="explicit_backend",
+        )
+
+    assert candidate.binding_strategy == "explicit_strategy"
+    assert candidate.discovery_backend == "explicit_backend"
+    assert candidate.binding_subject == "explicit-subject"
+    assert candidate.private_binding_ref == {"source": "explicit"}
+
+
 @pytest.mark.asyncio
 async def test_target_binding_service_normalizes_public_matches_with_registry_defaults():
     handle_store = AsyncMock()
