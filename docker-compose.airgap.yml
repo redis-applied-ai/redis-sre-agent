@@ -92,13 +92,16 @@ services:
         condition: service_healthy
 
   # Optional: SRE Agent UI
-  # Uncomment if you have the UI image available
-  # sre-ui:
-  #   image: ${SRE_UI_IMAGE:-redis-sre-agent-ui:airgap}
-  #   ports:
-  #     - "${UI_PORT:-3002}:80"
-  #   environment:
-  #     - VITE_API_URL=http://sre-agent:8000
-  #   depends_on:
-  #     sre-agent:
-  #       condition: service_healthy
+  # Enable with: docker compose --profile ui -f docker-compose.airgap.yml up -d
+  sre-ui:
+    image: ${SRE_UI_IMAGE:-redis-sre-agent-ui:airgap}
+    ports:
+      - "${UI_PORT:-3002}:80"
+    environment:
+      - SRE_UI_API_UPSTREAM=${SRE_UI_API_UPSTREAM:-http://sre-agent:8000}
+    depends_on:
+      sre-agent:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - ui

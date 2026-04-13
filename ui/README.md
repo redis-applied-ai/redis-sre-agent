@@ -107,9 +107,17 @@ COPY dist/ /usr/share/nginx/html/
 EXPOSE 80
 ```
 
+The production Docker image in this repo already includes nginx proxying for
+`/api/`, `/health`, and `/metrics`. Override the backend target at runtime with:
+
+```bash
+SRE_UI_API_UPSTREAM=http://sre-agent:8000
+```
+
 ### Environment Configuration
 
-The UI automatically detects the correct API endpoint, but you can override it:
+For development or custom builds, the UI automatically detects the correct API
+endpoint, but you can override it:
 
 ```bash
 # Copy the example environment file
@@ -120,6 +128,8 @@ VITE_API_BASE_URL=http://your-custom-host:8080
 ```
 
 **Note**: In most cases, you don't need to set `VITE_API_BASE_URL` as the UI will automatically use the correct host.
+For the published production container, prefer `SRE_UI_API_UPSTREAM` instead of
+`VITE_API_BASE_URL`.
 
 ## Contributing
 
