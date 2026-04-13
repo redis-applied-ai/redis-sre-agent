@@ -16,7 +16,6 @@ from redis_sre_agent.core.targets import (
     build_attached_target_prompt_loader,
     build_attached_target_scope_prompt,
     build_bound_target_scope_context,
-    build_ephemeral_target_bindings,
     build_target_doc_from_cluster,
     build_target_doc_from_instance,
     get_attached_target_handles_from_context,
@@ -26,6 +25,7 @@ from redis_sre_agent.core.targets import (
     sync_target_catalog,
 )
 from redis_sre_agent.core.threads import Thread, ThreadMetadata
+from redis_sre_agent.targets.services import TargetBindingService
 
 
 def test_build_target_doc_from_instance_excludes_secrets_and_includes_aliases():
@@ -505,7 +505,7 @@ async def test_bind_target_matches_with_thread_returns_materialized_attached_sco
 
     with (
         patch("redis_sre_agent.core.targets.ThreadManager", return_value=mock_thread_manager),
-        patch("redis_sre_agent.core.targets.ULID", return_value="new"),
+        patch("redis_sre_agent.targets.services.ULID", return_value="new"),
     ):
         scope = await bind_target_matches(
             matches=[new_match],
@@ -794,8 +794,8 @@ async def test_build_attached_target_scope_prompt_handles_binding_edge_cases():
     assert prompt is not None
     assert "handle=tgt_meta_only [metadata unavailable]" in prompt
     assert "missing-instance" in prompt and "state=missing" in prompt
-    assert "prod-cluster" in prompt and "cluster_id=cluster-prod-1" in prompt
-    assert "missing-cluster" in prompt and "cluster_id=cluster-missing" in prompt
+    assert "prod-cluster" in prompt and "kind=cluster" in prompt
+    assert "missing-cluster" in prompt and "state=missing" in prompt
     assert "custom-target" in prompt and "kind=custom" in prompt
     assert "extra-instance" in prompt
 
@@ -875,7 +875,7 @@ async def test_build_attached_target_prompt_loader_uses_callable_context_per_att
     }
 
 
-def test_build_ephemeral_target_bindings_generates_opaque_handles():
+def test_target_binding_service_build_public_binding_generates_opaque_handles():
     matches = [
         ResolvedTargetMatch(
             target_kind="cluster",
@@ -889,7 +889,14 @@ def test_build_ephemeral_target_bindings_generates_opaque_handles():
         )
     ]
 
-    bindings = build_ephemeral_target_bindings(matches, thread_id="thread-1", task_id="task-1")
+    bindings = [
+        TargetBindingService.build_public_binding(
+            match,
+            thread_id="thread-1",
+            task_id="task-1",
+        )
+        for match in matches
+    ]
 
     assert len(bindings) == 1
     assert bindings[0].target_handle.startswith("tgt_")

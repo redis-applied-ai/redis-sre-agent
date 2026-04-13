@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from redis_sre_agent.core.targets import (
-    bind_target_matches,
-    resolve_target_query,
-)
+from redis_sre_agent.core.targets import bind_target_matches, resolve_target_query
+from redis_sre_agent.targets.contracts import DiscoveryResponse
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 from redis_sre_agent.tools.protocols import ToolProvider
 
@@ -106,7 +104,9 @@ class TargetDiscoveryToolProvider(ToolProvider):
             attached_handles = scope.context_updates.get("attached_target_handles", [])
             toolset_generation = scope.toolset_generation
 
-        payload = result.model_dump()
+        payload = (
+            result.public_dump() if isinstance(result, DiscoveryResponse) else result.model_dump()
+        )
         payload["attached_target_handles"] = attached_handles
         payload["toolset_generation"] = toolset_generation
         if scope is not None:

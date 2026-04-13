@@ -6,18 +6,30 @@ import copy
 import inspect
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 from redisvl.query import CountQuery, FilterQuery
-from ulid import ULID
 
 from redis_sre_agent.core.clusters import RedisCluster, get_cluster_by_id, get_clusters
 from redis_sre_agent.core.instances import RedisInstance, get_instance_by_id, get_instances
 from redis_sre_agent.core.redis import SRE_TARGETS_INDEX, get_redis_client, get_targets_index
 from redis_sre_agent.core.threads import ThreadManager
+from redis_sre_agent.targets import (
+    TargetBindingService,
+    TargetDiscoveryService,
+    get_target_handle_store,
+    get_target_integration_registry,
+)
+from redis_sre_agent.targets.contracts import (
+    DiscoveryCandidate,
+    DiscoveryRequest,
+    DiscoveryResponse,
+    PublicTargetBinding,
+    PublicTargetMatch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,31 +86,33 @@ class TargetCatalogDoc(BaseModel):
     user_id: Optional[str] = None
 
 
-class TargetBinding(BaseModel):
-    """Opaque handle persisted in thread context for attached targets."""
+TargetBinding = PublicTargetBinding
+ResolvedTargetMatch = PublicTargetMatch
+TargetResolutionResult = DiscoveryResponse
 
-    target_handle: str
-    target_kind: str
-    resource_id: str
-    display_name: str
-    capabilities: List[str] = Field(default_factory=list)
-    thread_id: Optional[str] = None
-    task_id: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    expires_at: Optional[str] = Field(
-        default_factory=lambda: (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+
+def _format_public_metadata_text(public_metadata: Optional[dict[str, Any]]) -> str:
+    """Render public binding metadata consistently in prompt text."""
+    return (
+        ", ".join(
+            f"{key}={value}"
+            for key, value in (public_metadata or {}).items()
+            if value not in (None, "")
+        )
+        or "none"
     )
 
 
 def build_single_attached_binding_prompt(binding: TargetBinding) -> str:
     """Build minimal scope context when richer attached-target prompt loading fails."""
     capability_text = ", ".join(binding.capabilities or []) or "unspecified"
+    metadata_text = _format_public_metadata_text(binding.public_metadata)
     return (
         "ATTACHED TARGET SCOPE: This conversation has 1 attached Redis target.\n"
         "Attached target:\n"
         f"- {binding.display_name} [handle={binding.target_handle}, "
-        f"kind={binding.target_kind}, resource_id={binding.resource_id}, "
-        f"capabilities={capability_text}]"
+        f"kind={binding.target_kind}, capabilities={capability_text}, "
+        f"metadata={metadata_text}]"
     )
 
 
@@ -133,11 +147,12 @@ def build_attached_target_prompt_fallback(
                 continue
 
             capability_text = ", ".join(binding.capabilities or []) or "unspecified"
+            metadata_text = _format_public_metadata_text(binding.public_metadata)
             prompt_lines.append(
                 "- "
                 f"{binding.display_name} [handle={binding.target_handle}, "
-                f"kind={binding.target_kind}, resource_id={binding.resource_id}, "
-                f"capabilities={capability_text}]"
+                f"kind={binding.target_kind}, capabilities={capability_text}, "
+                f"metadata={metadata_text}]"
             )
     else:
         prompt_lines.append("- [metadata unavailable]")
@@ -163,31 +178,6 @@ def build_attached_target_prompt_fallback(
         )
 
     return "\n".join(prompt_lines)
-
-
-class ResolvedTargetMatch(BaseModel):
-    """A ranked candidate returned by the deterministic resolver."""
-
-    target_kind: str
-    resource_id: str
-    display_name: str
-    environment: Optional[str] = None
-    target_type: Optional[str] = None
-    capabilities: List[str] = Field(default_factory=list)
-    confidence: float
-    match_reasons: List[str] = Field(default_factory=list)
-    score: float = Field(default=0.0, exclude=True)
-
-
-class TargetResolutionResult(BaseModel):
-    """Public result shape for target resolution."""
-
-    status: str
-    clarification_required: bool = False
-    matches: List[ResolvedTargetMatch] = Field(default_factory=list)
-    attached_target_handles: List[str] = Field(default_factory=list)
-    toolset_generation: int = 0
-    selected_matches: List[ResolvedTargetMatch] = Field(default_factory=list, exclude=True)
 
 
 class ThreadTargetState(BaseModel):
@@ -251,6 +241,18 @@ def get_target_bindings_from_context(context: Optional[Dict[str, Any]]) -> List[
     return bindings
 
 
+async def resolve_binding_subject(binding: Optional[TargetBinding]) -> Optional[str]:
+    """Resolve the private binding subject for a public binding summary."""
+    if binding is None:
+        return None
+    if binding.resource_id:
+        return binding.resource_id
+    record = await get_target_handle_store().get_record(binding.target_handle)
+    if record is None:
+        return None
+    return record.binding_subject
+
+
 def build_bound_target_scope_context(
     bindings: Sequence[TargetBinding],
     *,
@@ -268,7 +270,7 @@ def build_bound_target_scope_context(
         "attached_target_handles": attached_handles,
         "active_target_handle": resolved_active_handle or "",
         "target_toolset_generation": generation,
-        "target_bindings": [binding.model_dump(mode="json") for binding in attached_bindings],
+        "target_bindings": [binding.public_dump() for binding in attached_bindings],
         "instance_id": "",
         "cluster_id": "",
     }
@@ -292,50 +294,66 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
     for binding in bindings:
         if binding.target_handle not in ordered_handles:
             ordered_handles.append(binding.target_handle)
+    handle_records = await get_target_handle_store().get_records(ordered_handles)
 
     target_lines: List[str] = []
     for handle in ordered_handles:
         binding = binding_by_handle.get(handle)
-        if binding is None:
+        handle_record = handle_records.get(handle)
+        binding_summary = binding or (handle_record.public_summary if handle_record else None)
+        if binding_summary is None:
             target_lines.append(f"- handle={handle} [metadata unavailable]")
             continue
 
-        capability_text = ", ".join(binding.capabilities or []) or "unspecified"
-        if binding.target_kind == "instance":
-            instance = await get_instance_by_id(binding.resource_id)
+        capability_text = ", ".join(binding_summary.capabilities or []) or "unspecified"
+        if binding_summary.target_kind == "instance":
+            instance_id = (
+                handle_record.binding_subject
+                if handle_record is not None
+                else getattr(binding_summary, "resource_id", None)
+            )
+            instance = await get_instance_by_id(instance_id) if instance_id else None
             if instance is not None:
                 target_lines.append(
                     "- "
-                    f"{binding.display_name} [handle={handle}, kind=instance, instance_id={instance.id}, "
+                    f"{binding_summary.display_name} [handle={handle}, kind=instance, "
                     f"environment={instance.environment}, usage={instance.usage}, "
                     f"type={instance.instance_type}, capabilities={capability_text}]"
                 )
             else:
+                metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
                 target_lines.append(
                     "- "
-                    f"{binding.display_name} [handle={handle}, kind=instance, instance_id={binding.resource_id}, "
-                    f"capabilities={capability_text}, state=missing]"
+                    f"{binding_summary.display_name} [handle={handle}, kind=instance, "
+                    f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
                 )
-        elif binding.target_kind == "cluster":
-            cluster = await get_cluster_by_id(binding.resource_id)
+        elif binding_summary.target_kind == "cluster":
+            cluster_id = (
+                handle_record.binding_subject
+                if handle_record is not None
+                else getattr(binding_summary, "resource_id", None)
+            )
+            cluster = await get_cluster_by_id(cluster_id) if cluster_id else None
             if cluster is not None:
                 target_lines.append(
                     "- "
-                    f"{binding.display_name} [handle={handle}, kind=cluster, cluster_id={cluster.id}, "
+                    f"{binding_summary.display_name} [handle={handle}, kind=cluster, "
                     f"environment={cluster.environment}, type={cluster.cluster_type}, "
                     f"capabilities={capability_text}]"
                 )
             else:
+                metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
                 target_lines.append(
                     "- "
-                    f"{binding.display_name} [handle={handle}, kind=cluster, cluster_id={binding.resource_id}, "
-                    f"capabilities={capability_text}, state=missing]"
+                    f"{binding_summary.display_name} [handle={handle}, kind=cluster, "
+                    f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
                 )
         else:
+            metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
             target_lines.append(
                 "- "
-                f"{binding.display_name} [handle={handle}, kind={binding.target_kind}, "
-                f"resource_id={binding.resource_id}, capabilities={capability_text}]"
+                f"{binding_summary.display_name} [handle={handle}, kind={binding_summary.target_kind}, "
+                f"capabilities={capability_text}, metadata={metadata_text}]"
             )
 
     prompt_lines = [
@@ -928,87 +946,127 @@ async def resolve_target_query(
     preferred_capabilities: Optional[Sequence[str]] = None,
 ) -> TargetResolutionResult:
     """Resolve natural-language query text against the safe target catalog."""
-    docs = await get_target_catalog(user_id=user_id)
-    if not docs:
-        return TargetResolutionResult(status="no_match")
-
-    hints = _parse_query_hints(query)
-    ranked: List[ResolvedTargetMatch] = []
-    for doc in docs:
-        score, reasons = _score_target_doc(
-            query,
-            doc,
-            preferred_capabilities=preferred_capabilities,
-            hints=hints,
+    service = TargetDiscoveryService()
+    return await service.resolve(
+        DiscoveryRequest(
+            query=query,
+            allow_multiple=allow_multiple,
+            max_results=max_results,
+            preferred_capabilities=list(preferred_capabilities or []),
+            user_id=user_id,
         )
-        if score < 2.5:
-            continue
-        ranked.append(
-            ResolvedTargetMatch(
-                target_kind=doc.target_kind,
-                resource_id=doc.resource_id,
-                display_name=doc.display_name,
-                environment=doc.environment,
-                target_type=doc.target_type,
-                capabilities=doc.capabilities,
-                confidence=_confidence_from_score(score),
-                match_reasons=reasons,
-                score=score,
+    )
+
+
+def build_public_match_from_doc(
+    doc: TargetCatalogDoc,
+    *,
+    match_reasons: Optional[Sequence[str]] = None,
+    score: float = 100.0,
+    confidence: float = 1.0,
+) -> PublicTargetMatch:
+    """Build a public match payload from a target catalog doc."""
+    return PublicTargetMatch(
+        target_kind=doc.target_kind,
+        display_name=doc.display_name,
+        environment=doc.environment,
+        target_type=doc.target_type,
+        capabilities=list(doc.capabilities or []),
+        confidence=confidence,
+        match_reasons=list(match_reasons or []),
+        public_metadata={
+            key: value
+            for key, value in {
+                "usage": doc.usage,
+                "status": doc.status,
+            }.items()
+            if value not in (None, "")
+        },
+        resource_id=doc.resource_id,
+        score=score,
+    )
+
+
+async def build_seed_hint_candidates(
+    *,
+    bindings: Optional[Sequence[TargetBinding]] = None,
+    instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+) -> List[DiscoveryCandidate]:
+    """Build discovery candidates from legacy single-target scope hints."""
+    if instance_id and cluster_id:
+        raise ValueError("Please provide only one of instance_id or cluster_id")
+
+    registry = get_target_integration_registry()
+    candidates: List[DiscoveryCandidate] = []
+    seen: set[tuple[str, str]] = set()
+
+    async def _append_candidate(
+        *,
+        target_kind: str,
+        binding_subject: str,
+        binding: Optional[TargetBinding] = None,
+    ) -> None:
+        subject = str(binding_subject or "").strip()
+        kind = str(target_kind or "").strip().lower()
+        if not subject or kind not in {"instance", "cluster"}:
+            return
+
+        identity = (kind, subject)
+        if identity in seen:
+            return
+        seen.add(identity)
+
+        doc: Optional[TargetCatalogDoc] = None
+        if kind == "instance":
+            instance = await get_instance_by_id(subject)
+            if instance is not None:
+                doc = build_target_doc_from_instance(instance)
+        elif kind == "cluster":
+            cluster = await get_cluster_by_id(subject)
+            if cluster is not None:
+                doc = build_target_doc_from_cluster(cluster)
+
+        if doc is not None:
+            public_match = build_public_match_from_doc(
+                doc,
+                match_reasons=[f"matched {kind}_id"],
+            )
+        else:
+            public_match = PublicTargetMatch(
+                target_kind=kind,
+                display_name=(binding.display_name if binding else None) or subject,
+                capabilities=list((binding.capabilities if binding else None) or []),
+                confidence=1.0,
+                match_reasons=[f"matched {kind}_id"],
+                public_metadata=dict((binding.public_metadata if binding else None) or {}),
+                resource_id=subject,
+                score=100.0,
+            )
+
+        candidates.append(
+            DiscoveryCandidate.from_public_match(
+                public_match,
+                binding_strategy=registry.default_binding_strategy,
+                binding_subject=subject,
+                private_binding_ref={"target_kind": kind, "seed_hint": True},
+                discovery_backend=registry.default_discovery_backend,
             )
         )
 
-    ranked.sort(key=lambda match: (match.score, match.confidence), reverse=True)
-    limited = ranked[: max(1, min(max_results, 10))]
-
-    if not limited:
-        return TargetResolutionResult(status="no_match")
-
-    top = limited[0]
-    selected: List[ResolvedTargetMatch] = []
-    clarification_required = False
-
-    if allow_multiple:
-        selected = [match for match in limited if match.score >= max(3.0, top.score - 1.5)]
-        selected = selected[: min(3, max_results)]
-    else:
-        if len(limited) > 1 and limited[1].score >= top.score - 0.75:
-            clarification_required = True
-            selected = limited[: min(3, max_results)]
-        else:
-            selected = [top]
-
-    status = (
-        "clarification_required"
-        if clarification_required
-        else ("resolved" if selected else "no_match")
-    )
-    return TargetResolutionResult(
-        status=status,
-        clarification_required=clarification_required,
-        matches=limited,
-        selected_matches=selected,
-    )
-
-
-def build_ephemeral_target_bindings(
-    matches: Sequence[ResolvedTargetMatch],
-    *,
-    thread_id: Optional[str] = None,
-    task_id: Optional[str] = None,
-) -> List[TargetBinding]:
-    """Build opaque target handles without persisting them."""
-    return [
-        TargetBinding(
-            target_handle=f"tgt_{ULID()}",
-            target_kind=match.target_kind,
-            resource_id=match.resource_id,
-            display_name=match.display_name,
-            capabilities=match.capabilities,
-            thread_id=thread_id,
-            task_id=task_id,
+    for binding in bindings or []:
+        await _append_candidate(
+            target_kind=binding.target_kind,
+            binding_subject=binding.resource_id or "",
+            binding=binding,
         )
-        for match in matches
-    ]
+
+    if instance_id:
+        await _append_candidate(target_kind="instance", binding_subject=instance_id)
+    if cluster_id:
+        await _append_candidate(target_kind="cluster", binding_subject=cluster_id)
+
+    return candidates
 
 
 async def get_thread_target_state(thread_id: str) -> ThreadTargetState:
@@ -1048,38 +1106,40 @@ async def get_thread_target_state(thread_id: str) -> ThreadTargetState:
 async def attach_target_matches(
     *,
     thread_id: str,
-    matches: Sequence[ResolvedTargetMatch],
+    matches: Sequence[DiscoveryCandidate],
     task_id: Optional[str] = None,
     replace_existing: bool = False,
 ) -> tuple[List[TargetBinding], int]:
     """Persist safe target handles on a thread and return attached bindings."""
     thread_manager = ThreadManager(redis_client=get_redis_client())
     current_state = await get_thread_target_state(thread_id)
-
-    existing_by_resource = {
-        (binding.target_kind, binding.resource_id): binding
-        for binding in current_state.target_bindings
-    }
+    binding_service = TargetBindingService()
+    handle_store = get_target_handle_store()
+    current_handles = [binding.target_handle for binding in current_state.target_bindings]
+    existing_records = await handle_store.get_records(current_handles)
+    existing_by_subject: Dict[tuple[str, str], TargetBinding] = {}
+    for binding in current_state.target_bindings:
+        record = existing_records.get(binding.target_handle)
+        subject = None
+        if record is not None:
+            subject = record.binding_subject
+        elif binding.resource_id:
+            subject = binding.resource_id
+        if subject:
+            existing_by_subject[(binding.target_kind, subject)] = binding
     attached_bindings = [] if replace_existing else list(current_state.target_bindings)
     attached_by_handle = {binding.target_handle: binding for binding in attached_bindings}
-    selected_bindings: List[TargetBinding] = []
+    selected_bindings = await binding_service.build_and_persist_records(
+        matches,
+        thread_id=thread_id,
+        task_id=task_id,
+        existing_by_subject=existing_by_subject,
+    )
 
-    for match in matches:
-        binding = existing_by_resource.get((match.target_kind, match.resource_id))
-        if binding is None:
-            binding = TargetBinding(
-                target_handle=f"tgt_{ULID()}",
-                target_kind=match.target_kind,
-                resource_id=match.resource_id,
-                display_name=match.display_name,
-                capabilities=match.capabilities,
-                thread_id=thread_id,
-                task_id=task_id,
-            )
+    for binding in selected_bindings:
         if binding.target_handle not in attached_by_handle:
             attached_bindings.append(binding)
             attached_by_handle[binding.target_handle] = binding
-        selected_bindings.append(binding)
 
     bindings_to_store = selected_bindings if replace_existing else attached_bindings
     active_handle = (
@@ -1100,7 +1160,7 @@ async def attach_target_matches(
 
 async def materialize_bound_target_scope(
     *,
-    matches: Sequence[ResolvedTargetMatch],
+    matches: Sequence[DiscoveryCandidate],
     thread_id: Optional[str] = None,
     task_id: Optional[str] = None,
     replace_existing: bool = False,
@@ -1117,7 +1177,8 @@ async def materialize_bound_target_scope(
         attached_bindings = list(state.target_bindings)
         active_handle = state.active_target_handle
     else:
-        selected_bindings = build_ephemeral_target_bindings(
+        binding_service = TargetBindingService()
+        selected_bindings = await binding_service.build_and_persist_records(
             matches,
             thread_id=thread_id,
             task_id=task_id,
@@ -1140,7 +1201,7 @@ async def materialize_bound_target_scope(
 
 async def bind_target_matches(
     *,
-    matches: Sequence[ResolvedTargetMatch],
+    matches: Sequence[DiscoveryCandidate],
     thread_id: Optional[str] = None,
     task_id: Optional[str] = None,
     replace_existing: bool = False,

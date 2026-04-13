@@ -5,6 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from redis_sre_agent.core.targets import BoundTargetScope, ResolvedTargetMatch, TargetBinding
+from redis_sre_agent.targets.contracts import (
+    DiscoveryCandidate,
+    DiscoveryRequest,
+    DiscoveryResponse,
+    PublicTargetMatch,
+)
+from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.target_discovery.provider import TargetDiscoveryToolProvider
 
 
@@ -148,3 +155,75 @@ async def test_resolve_redis_targets_without_attachment_uses_existing_toolset_ge
     mock_bind.assert_not_awaited()
     assert payload["attached_target_handles"] == []
     assert payload["toolset_generation"] == 4
+
+
+class MockDiscoveryBackend:
+    backend_name = "mock_backend"
+
+    async def resolve(self, request: DiscoveryRequest) -> DiscoveryResponse:
+        public_match = PublicTargetMatch(
+            target_kind="instance",
+            display_name="alternate cache",
+            environment="test",
+            target_type="oss_single",
+            capabilities=["redis"],
+            confidence=0.95,
+            match_reasons=["mocked"],
+            public_metadata={"environment": "test", "label": "alternate"},
+            resource_id="mock-private-id",
+        )
+        return DiscoveryResponse(
+            status="resolved",
+            matches=[public_match],
+            selected_matches=[
+                DiscoveryCandidate(
+                    public_match=public_match,
+                    binding_strategy="mock_strategy",
+                    binding_subject="mock-private-id",
+                    private_binding_ref={"source": "mock"},
+                    discovery_backend="mock_backend",
+                    score=9.5,
+                    confidence=0.95,
+                )
+            ],
+        )
+
+
+class MockBindingStrategy:
+    strategy_name = "mock_strategy"
+
+    async def bind(self, request):  # pragma: no cover - discovery-only test
+        raise AssertionError("bind() should not be called when attach_tools=False")
+
+
+@pytest.mark.asyncio
+async def test_resolve_redis_targets_can_use_alternate_registered_backend():
+    provider = TargetDiscoveryToolProvider()
+    manager = MagicMock()
+    manager.thread_id = "thread-1"
+    manager.task_id = "task-1"
+    manager.user_id = "user-1"
+    manager.get_toolset_generation.return_value = 4
+    provider._manager = manager
+
+    registry = TargetIntegrationRegistry(
+        default_discovery_backend="mock_backend",
+        default_binding_strategy="mock_strategy",
+    )
+    registry.register_discovery_backend(MockDiscoveryBackend())
+    registry.register_binding_strategy(MockBindingStrategy())
+
+    with patch(
+        "redis_sre_agent.targets.services.get_target_integration_registry",
+        return_value=registry,
+    ):
+        payload = await provider.resolve_redis_targets(
+            query="alternate cache",
+            attach_tools=False,
+        )
+
+    assert payload["status"] == "resolved"
+    assert payload["toolset_generation"] == 4
+    assert payload["matches"][0]["display_name"] == "alternate cache"
+    assert payload["matches"][0]["public_metadata"]["label"] == "alternate"
+    assert "resource_id" not in payload["matches"][0]
