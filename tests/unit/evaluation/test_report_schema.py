@@ -1,6 +1,7 @@
 from redis_sre_agent.evaluation.report_schema import (
     EvalArtifactFiles,
     EvalAssertionResult,
+    EvalBaselinePolicy,
     EvalReportBundle,
     JudgeSummary,
     RetrievedSourceEntry,
@@ -163,3 +164,41 @@ def test_eval_report_bundle_preserves_retrieved_source_provenance_metadata():
             },
         )
     ]
+
+
+def test_eval_baseline_policy_supports_trigger_and_variance_metadata():
+    policy = EvalBaselinePolicy.model_validate(
+        {
+            "mode": "scheduled_live",
+            "baseline_id": "live-smoke-v1",
+            "update_allowed": False,
+            "update_rule": "manual_review_only",
+            "judge_score_variance_band": 3.0,
+            "notes": ["review before updating"],
+            "allowed_triggers": ["schedule", "workflow_dispatch"],
+            "review_required": True,
+            "acceptable_variance": {"overall_score_max_drop": 3.0},
+        }
+    )
+
+    assert policy.update_rule == "manual_review_only"
+    assert policy.judge_score_variance_band == 3.0
+    assert policy.notes == ["review before updating"]
+    assert policy.allowed_triggers == ["schedule", "workflow_dispatch"]
+    assert policy.review_required is True
+    assert policy.acceptable_variance == {"overall_score_max_drop": 3.0}
+
+
+def test_eval_baseline_policy_normalizes_legacy_variance_keys():
+    policy = EvalBaselinePolicy.model_validate(
+        {
+            "mode": "scheduled_live",
+            "max_judge_score_drop": 2.5,
+            "acceptable_variance": {
+                "max_failed_scenarios": 1,
+            },
+        }
+    )
+
+    assert policy.judge_score_variance_band == 2.5
+    assert policy.max_failed_scenarios == 1

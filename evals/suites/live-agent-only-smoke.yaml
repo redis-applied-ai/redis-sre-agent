@@ -1,0 +1,8 @@
+suites:
+  live-agent-only-smoke:
+    description: Low-cost live-model suite for scheduled and manually triggered CI runs.
+    policy_file: ../baseline_policy.yaml
+    scenarios:
+      - ../scenarios/prompt/knowledge-agent-no-live-access/scenario.yaml
+      - ../scenarios/sources/pinned-sev1-escalation-policy/scenario.yaml
+      - ../scenarios/sources/runbook-overrides-generic-advice/scenario.yaml

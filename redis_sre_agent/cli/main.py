@@ -22,6 +22,7 @@ _COMMANDS = {
     "mcp": "redis_sre_agent.cli.mcp:mcp",
     "index": "redis_sre_agent.cli.index:index",
     "support-package": "redis_sre_agent.cli.support_package:support_package",
+    "eval": "redis_sre_agent.cli.eval:eval",
 }
 
 # Built-in commands that don't need lazy loading

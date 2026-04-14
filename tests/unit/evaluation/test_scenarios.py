@@ -219,6 +219,45 @@ knowledge:
     assert scenario.knowledge.version == "2026-04-14"
 
 
+def test_eval_tools_config_round_trips_explicit_provider_mapping():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "prompt/provider-roundtrip",
+            "name": "Provider roundtrip",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "prompt-core",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "agent_only",
+                "agent": "knowledge",
+                "query": "What should I do first?",
+            },
+            "tools": {
+                "providers": {
+                    "redis_command": {
+                        "redis_command": {
+                            "result": {"ok": True},
+                        }
+                    }
+                },
+                "mcp_servers": {
+                    "metrics_eval": {
+                        "capability": "metrics",
+                    }
+                },
+            },
+        }
+    )
+
+    round_tripped = EvalScenario.model_validate(scenario.model_dump(mode="json"))
+
+    assert round_tripped.tools.providers["redis_command"]["redis_command"].result == {"ok": True}
+    assert round_tripped.tools.mcp_servers["metrics_eval"].capability == "metrics"
+
+
 def test_eval_scenario_parses_stateful_responder_and_failure_fields(tmp_path: Path):
     scenario_path = tmp_path / "evals" / "scenarios" / "redis" / "stateful" / "scenario.yaml"
     scenario_path.parent.mkdir(parents=True)

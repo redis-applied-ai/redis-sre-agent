@@ -204,6 +204,74 @@ class EvalBaselinePolicy(BaseModel):
     mode: str | None = None
     baseline_id: str | None = None
     update_allowed: bool | None = None
+    allowed_triggers: list[str] = Field(default_factory=list)
+    update_allowed_events: list[str] = Field(default_factory=list)
+    max_failed_scenarios: int | None = Field(default=None, ge=0)
+    max_judge_score_drop: float | None = Field(default=None, ge=0)
+    review_required: bool | None = None
+    acceptable_variance: dict[str, Any] = Field(default_factory=dict)
+    update_rule: str | None = None
+    judge_score_variance_band: float | None = Field(default=None, ge=0)
+    notes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_compat_inputs(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        acceptable_variance = data.get("acceptable_variance")
+        if isinstance(acceptable_variance, dict):
+            if "max_failed_scenarios" not in data and "max_failed_scenarios" in acceptable_variance:
+                data["max_failed_scenarios"] = acceptable_variance["max_failed_scenarios"]
+            if (
+                "judge_score_variance_band" not in data
+                and "max_judge_score_drop" in acceptable_variance
+            ):
+                data["judge_score_variance_band"] = acceptable_variance["max_judge_score_drop"]
+
+        if "judge_score_variance_band" not in data and "max_judge_score_drop" in data:
+            data["judge_score_variance_band"] = data["max_judge_score_drop"]
+
+        notes = data.get("notes")
+        if isinstance(notes, str):
+            normalized_note = notes.strip()
+            data["notes"] = [normalized_note] if normalized_note else []
+
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_variance_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        acceptable_variance = data.get("acceptable_variance")
+        if isinstance(acceptable_variance, dict):
+            if (
+                data.get("max_failed_scenarios") is None
+                and acceptable_variance.get("max_failed_scenarios") is not None
+            ):
+                data["max_failed_scenarios"] = acceptable_variance["max_failed_scenarios"]
+            if (
+                data.get("max_judge_score_drop") is None
+                and acceptable_variance.get("max_judge_score_drop") is not None
+            ):
+                data["max_judge_score_drop"] = acceptable_variance["max_judge_score_drop"]
+            if (
+                data.get("max_judge_score_drop") is None
+                and acceptable_variance.get("overall_score_max_drop") is not None
+            ):
+                data["max_judge_score_drop"] = acceptable_variance["overall_score_max_drop"]
+
+        if (
+            data.get("judge_score_variance_band") is None
+            and data.get("max_judge_score_drop") is not None
+        ):
+            data["judge_score_variance_band"] = data["max_judge_score_drop"]
+        return data
 
 
 class EvalReportBundle(BaseModel):

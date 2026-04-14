@@ -19,10 +19,11 @@ from redis_sre_agent.evaluation.injection import EvalInjectionOverrides
 from redis_sre_agent.evaluation.runner import EvalRunner
 from redis_sre_agent.evaluation.runtime import (
     EvalRuntime,
+    _default_turn_processor,
     build_full_turn_context,
     run_full_turn_scenario,
 )
-from redis_sre_agent.evaluation.scenarios import EvalScenario
+from redis_sre_agent.evaluation.scenarios import EvalScenario, LLMMode
 from redis_sre_agent.targets.contracts import (
     BindingResult,
     ProviderLoadRequest,
@@ -33,6 +34,33 @@ from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 from redis_sre_agent.tools.protocols import ToolProvider
+
+
+@pytest.mark.asyncio
+async def test_default_turn_processor_forwards_explicit_redis_client():
+    redis_client = object()
+    process_agent_turn = AsyncMock(return_value={"response": "ok"})
+
+    with patch(
+        "redis_sre_agent.core.docket_tasks.process_agent_turn",
+        process_agent_turn,
+    ):
+        result = await _default_turn_processor(
+            thread_id="thread-1",
+            message="hello",
+            context={},
+            task_id="task-1",
+            redis_client=redis_client,
+        )
+
+    assert result == {"response": "ok"}
+    process_agent_turn.assert_awaited_once_with(
+        thread_id="thread-1",
+        message="hello",
+        context={},
+        task_id="task-1",
+        redis_client=redis_client,
+    )
 
 
 def _build_scenario(*, route_via_router: bool = True, agent: str | None = None) -> EvalScenario:
@@ -146,6 +174,17 @@ def _build_instance_binding(
         task_id=task_id,
         resource_id="inst-checkout-cache",
     )
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_rejects_live_llm_without_opt_in():
+    base = _build_scenario()
+    scenario = base.model_copy(
+        update={"execution": base.execution.model_copy(update={"llm_mode": LLMMode.LIVE})}
+    )
+
+    with pytest.raises(PermissionError, match="allow_live_llm=True"):
+        await run_full_turn_scenario(scenario)
 
 
 def _write_fixture_full_turn_scenario(tmp_path: Path) -> EvalScenario:

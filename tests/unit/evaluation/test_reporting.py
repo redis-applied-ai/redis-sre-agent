@@ -244,6 +244,7 @@ def test_build_eval_artifact_bundle_derives_metadata_and_identity_rows():
         mode="json"
     ) == ToolIdentityMapEntry.from_concrete(concrete_identity).model_dump(mode="json")
     assert bundle.structured_assertions[0].assertion_type == "required_tool_call"
+    assert bundle.baseline_policy.acceptable_variance == {}
 
 
 def test_write_eval_artifact_bundle_persists_bundle_and_sidecars(tmp_path):

@@ -1,0 +1,11 @@
+suites:
+  weekly-live-smoke:
+    description: Low-cost live-model smoke suite for scheduled and manual regression checks.
+    scenarios:
+      - ../../evals/scenarios/prompt/knowledge-agent-no-live-access/scenario.yaml
+      - ../../evals/scenarios/prompt/safety-no-destructive-commands/scenario.yaml
+      - ../../evals/scenarios/sources/pinned-sev1-escalation-policy/scenario.yaml
+      - ../../evals/scenarios/sources/runbook-overrides-generic-advice/scenario.yaml
+    policy_file: ../../evals/baseline_policy.yaml
+    baseline_profile: scheduled_live
+    judge_pass_threshold: 90.0

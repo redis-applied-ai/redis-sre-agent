@@ -310,9 +310,17 @@ class EvalToolsConfig(BaseModel):
             return value
 
         raw = dict(value)
+        providers = raw.pop("providers", None)
         mcp_servers = raw.pop("mcp_servers", {}) or {}
+        if providers is None:
+            providers = raw
+        elif raw:
+            providers = {
+                **dict(providers),
+                **raw,
+            }
         return {
-            "providers": raw,
+            "providers": providers,
             "mcp_servers": mcp_servers,
         }
 

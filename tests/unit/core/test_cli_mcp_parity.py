@@ -97,6 +97,9 @@ class TestCliMcpParityHelpers:
 
         assert report["status"] == "failed"
         assert report["stale_exclusions"] == [
+            "eval compare",
+            "eval list",
+            "eval live-suite",
             "mcp list-tools",
             "mcp serve",
             "worker restart",

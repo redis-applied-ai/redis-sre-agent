@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,17 +53,11 @@ EvalRunResult = EvalFullTurnResult
 
 
 async def _default_turn_processor(**kwargs: Any) -> dict[str, Any]:
-    """Call the production turn processor, optionally pinning the Redis client."""
-
-    redis_client = kwargs.pop("redis_client", None)
+    """Call the production turn processor."""
 
     from redis_sre_agent.core.docket_tasks import process_agent_turn
 
-    if redis_client is None:
-        return await process_agent_turn(**kwargs)
-
-    with patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=redis_client):
-        return await process_agent_turn(**kwargs)
+    return await process_agent_turn(**kwargs)
 
 
 def _normalize_requested_agent_type(agent_name: str | None) -> str:
@@ -193,6 +186,11 @@ def _scenario_runtime_context(scenario: EvalScenario) -> dict[str, Any]:
     }
 
 
+def _llm_mode_name(mode: Any) -> str:
+    value = getattr(mode, "value", mode)
+    return str(value)
+
+
 async def run_full_turn_scenario(
     scenario: EvalScenario,
     *,
@@ -203,11 +201,16 @@ async def run_full_turn_scenario(
     context_overrides: dict[str, Any] | None = None,
     turn_processor: Any = None,
     runtime_overrides: EvalRuntimeOverrides | None = None,
+    allow_live_llm: bool = False,
 ) -> EvalFullTurnResult:
     """Run one scenario through the real thread/task orchestration path."""
 
     if scenario.execution.lane is not ExecutionLane.FULL_TURN:
         raise ValueError("run_full_turn_scenario only supports full_turn scenarios")
+    if _llm_mode_name(scenario.execution.llm_mode) == "live" and not allow_live_llm:
+        raise PermissionError(
+            "Live-model eval scenarios require explicit opt-in via allow_live_llm=True"
+        )
     effective_overrides = runtime_overrides or EvalRuntimeOverrides()
     behavior_state = FixtureBehaviorState()
     knowledge_backend = effective_overrides.knowledge_backend or build_fixture_knowledge_backend(
@@ -303,11 +306,13 @@ class EvalRuntime:
         target_binding_service: TargetBindingService | None = None,
         session_id: str | None = None,
         runtime_overrides: EvalRuntimeOverrides | None = None,
+        allow_live_llm: bool = False,
     ) -> None:
         self._redis_client = redis_client
         self._target_binding_service = target_binding_service
         self._session_id = session_id
         self._runtime_overrides = runtime_overrides
+        self._allow_live_llm = allow_live_llm
 
     async def run(
         self,
@@ -317,21 +322,29 @@ class EvalRuntime:
         extra_context: dict[str, Any] | None = None,
         session_id: str | None = None,
         runtime_overrides: EvalRuntimeOverrides | None = None,
+        allow_live_llm: bool | None = None,
     ) -> EvalRunResult:
         """Load and execute one eval scenario through the full-turn harness."""
 
         scenario = load_eval_scenario(scenario_or_path)
         if scenario.execution.lane is not ExecutionLane.FULL_TURN:
             raise NotImplementedError("agent_only eval runs are owned by a separate Phase 1 task")
-
+        run_kwargs: dict[str, Any] = {
+            "user_id": user_id,
+            "session_id": session_id or self._session_id,
+            "redis_client": self._redis_client,
+            "target_binding_service": self._target_binding_service,
+            "context_overrides": extra_context,
+            "runtime_overrides": runtime_overrides or self._runtime_overrides,
+        }
+        effective_allow_live_llm = (
+            self._allow_live_llm if allow_live_llm is None else allow_live_llm
+        )
+        if effective_allow_live_llm:
+            run_kwargs["allow_live_llm"] = True
         return await run_full_turn_scenario(
             scenario,
-            user_id=user_id,
-            session_id=session_id or self._session_id,
-            redis_client=self._redis_client,
-            target_binding_service=self._target_binding_service,
-            context_overrides=extra_context,
-            runtime_overrides=runtime_overrides or self._runtime_overrides,
+            **run_kwargs,
         )
 
 
