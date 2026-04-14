@@ -879,6 +879,7 @@ async def process_agent_turn(
     message: str,
     context: Optional[Dict[str, Any]] = None,
     task_id: Optional[str] = None,
+    redis_client=None,
     concurrency: ConcurrencyLimit = ConcurrencyLimit(
         "thread_id", max_concurrent=1, scope="thread_turns"
     ),
@@ -896,7 +897,7 @@ async def process_agent_turn(
         context: Additional context for the turn
         retry: Retry configuration
     """
-    redis_client = get_redis_client()
+    redis_client = redis_client or get_redis_client()
     thread_manager = ThreadManager(redis_client=redis_client)
 
     # OTel: root span for the entire agent turn so Redis commands nest under it

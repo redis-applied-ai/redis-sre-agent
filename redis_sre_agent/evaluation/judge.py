@@ -3,11 +3,12 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Sequence
 
 from pydantic import BaseModel, Field
 
 from ..core.llm_helpers import create_mini_llm
+from .scenarios import EvalScenario
 
 logger = logging.getLogger(__name__)
 
@@ -50,37 +51,16 @@ class SREAgentJudge:
 
 ## Evaluation Framework
 
-You will evaluate responses across these dimensions:
+You will evaluate responses across the criteria supplied in the user prompt.
 
-### 1. Technical Accuracy (25 points)
-- Correct interpretation of Redis metrics and diagnostics
-- Accurate understanding of Redis internals (memory management, keyspace operations, etc.)
-- Proper use of Redis terminology and concepts
-- No factual errors or misconceptions
-
-### 2. Completeness & Relevance (25 points)
-- Addresses all aspects of the user's question
-- Includes all required elements specified in criteria
-- Stays focused on relevant Redis/SRE topics
-- Provides appropriate level of detail
-
-### 3. Actionability (20 points)
-- Provides clear, specific recommendations
-- Includes step-by-step procedures when appropriate
-- Suggests monitoring, prevention, and remediation strategies
-- Prioritizes actions appropriately (critical vs. nice-to-have)
-
-### 4. Evidence-Based Reasoning (20 points)
-- Uses diagnostic data to support conclusions
-- References specific metrics and values
-- Shows clear reasoning path from data to recommendations
-- Avoids unsupported assumptions
-
-### 5. Communication Quality (10 points)
-- Clear, professional language
-- Well-organized structure
-- Appropriate technical level for SRE audience
-- Includes necessary context and explanations
+Common rubric dimensions include:
+- technical accuracy
+- completeness and relevance
+- actionability
+- evidence use
+- instruction-following quality
+- citation quality
+- communication quality
 
 ## Response Format
 
@@ -90,11 +70,7 @@ Provide your evaluation as JSON:
 {
   "overall_score": <0-100>,
   "criteria_scores": {
-    "technical_accuracy": <0-25>,
-    "completeness_relevance": <0-25>,
-    "actionability": <0-20>,
-    "evidence_based": <0-20>,
-    "communication": <0-10>
+    "<criteria_name>": <numeric score>
   },
   "strengths": ["specific strength 1", "specific strength 2"],
   "weaknesses": ["specific weakness 1", "specific weakness 2"],
@@ -111,6 +87,21 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
         """Initialize the judge with LLM."""
         self.llm = create_mini_llm(model="gpt-4o-mini")
 
+    @staticmethod
+    def _serialize_for_prompt(value: Any) -> str:
+        """Render prompt context deterministically for the judge."""
+
+        if value is None:
+            return "None"
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(mode="json")
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value, indent=2, sort_keys=True)
+        except TypeError:
+            return str(value)
+
     async def evaluate_response(
         self, agent_response: str, test_case: Dict[str, Any], criteria: List[EvaluationCriteria]
     ) -> EvaluationResult:
@@ -125,7 +116,6 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
             EvaluationResult with scores and feedback
         """
         try:
-            # Prepare evaluation prompt
             criteria_details = "\n".join(
                 [
                     f"**{c.name}** (Weight: {c.weight}): {c.description}\n"
@@ -135,20 +125,79 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
                 ]
             )
 
-            evaluation_prompt = f"""
-## Test Case Context
-**User Query**: {test_case.get("query", "N/A")}
-**Diagnostic Data**: {json.dumps(test_case.get("diagnostic_data", {}), indent=2) if test_case.get("diagnostic_data") else "None provided"}
-**Expected Elements**: {test_case.get("expected_elements", "None specified")}
+            prompt_sections = [
+                "## Test Case Context",
+                f"**Scenario ID**: {test_case.get('id', 'unknown')}",
+                f"**Scenario Name**: {test_case.get('name', 'N/A')}",
+                f"**User Query**: {test_case.get('query', 'N/A')}",
+            ]
+            if test_case.get("scenario_description"):
+                prompt_sections.append(
+                    f"**Scenario Description**: {test_case.get('scenario_description')}"
+                )
+            if test_case.get("execution_lane"):
+                prompt_sections.append(f"**Execution Lane**: {test_case.get('execution_lane')}")
 
-## Evaluation Criteria
-{criteria_details}
+            prompt_sections.extend(
+                [
+                    "",
+                    "## Startup Context",
+                    self._serialize_for_prompt(test_case.get("startup_context")),
+                    "",
+                    "## Tool Trace",
+                    self._serialize_for_prompt(test_case.get("tool_trace")),
+                    "",
+                    "## Retrieved Sources",
+                    self._serialize_for_prompt(test_case.get("retrieved_sources")),
+                    "",
+                    "## Expectation Set",
+                    self._serialize_for_prompt(test_case.get("expectations")),
+                    "",
+                    "## Structured Assertions",
+                    self._serialize_for_prompt(test_case.get("structured_assertions")),
+                ]
+            )
 
-## Agent Response to Evaluate
-{agent_response}
+            if test_case.get("actual_routing_decision") is not None:
+                prompt_sections.extend(
+                    [
+                        "",
+                        "## Actual Routing Decision",
+                        self._serialize_for_prompt(test_case.get("actual_routing_decision")),
+                    ]
+                )
 
-Please evaluate this Redis SRE agent response thoroughly and provide your assessment.
-"""
+            if test_case.get("diagnostic_data") is not None:
+                prompt_sections.extend(
+                    [
+                        "",
+                        "## Diagnostic Data",
+                        self._serialize_for_prompt(test_case.get("diagnostic_data")),
+                    ]
+                )
+
+            if test_case.get("expected_elements") is not None:
+                prompt_sections.extend(
+                    [
+                        "",
+                        "## Expected Elements",
+                        self._serialize_for_prompt(test_case.get("expected_elements")),
+                    ]
+                )
+
+            prompt_sections.extend(
+                [
+                    "",
+                    "## Evaluation Criteria",
+                    criteria_details,
+                    "",
+                    "## Agent Response to Evaluate",
+                    agent_response,
+                    "",
+                    "Please evaluate this Redis SRE agent response thoroughly and provide your assessment.",
+                ]
+            )
+            evaluation_prompt = "\n".join(prompt_sections)
 
             messages = [
                 {"role": "system", "content": self.JUDGE_SYSTEM_PROMPT},
@@ -207,6 +256,127 @@ Please evaluate this Redis SRE agent response thoroughly and provide your assess
                 missing_elements=[],
                 detailed_feedback=f"Evaluation failed due to error: {str(e)}",
             )
+
+
+def build_default_eval_criteria() -> list[EvaluationCriteria]:
+    """Return the default rubric criteria for eval-scenario judging."""
+
+    return [
+        EvaluationCriteria(
+            name="technical_accuracy",
+            description="Correct Redis and SRE diagnosis with no material factual errors.",
+            weight=0.25,
+        ),
+        EvaluationCriteria(
+            name="completeness_relevance",
+            description="Coverage of the user's request and the scenario's expected findings.",
+            weight=0.2,
+        ),
+        EvaluationCriteria(
+            name="actionability",
+            description="Clear, prioritized next steps and operational guidance.",
+            weight=0.2,
+        ),
+        EvaluationCriteria(
+            name="evidence_use",
+            description="Grounding in the provided startup context, tool results, and retrieved sources.",
+            weight=0.15,
+        ),
+        EvaluationCriteria(
+            name="instruction_following",
+            description="Alignment with the scenario expectations and source-constrained instructions.",
+            weight=0.1,
+        ),
+        EvaluationCriteria(
+            name="citation_quality",
+            description="Use of specific source or tool evidence when making claims.",
+            weight=0.1,
+        ),
+    ]
+
+
+def _serialize_expectation_set(scenario: EvalScenario) -> dict[str, Any]:
+    """Build the judge-facing expectation block for one scenario."""
+
+    return scenario.expectations.model_dump(mode="json")
+
+
+def build_eval_judge_test_case(
+    scenario: EvalScenario,
+    *,
+    startup_context: Any = None,
+    tool_trace: Sequence[Any] | None = None,
+    retrieved_sources: Sequence[Any] | None = None,
+    structured_assertions: Any = None,
+    actual_routing_decision: str | None = None,
+    diagnostic_data: Any = None,
+    extra_fields: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the richer judge input payload for one eval scenario."""
+
+    expected_elements: list[str] = []
+    expected_elements.extend(scenario.expectations.required_findings)
+    expected_elements.extend(
+        f"source:{source}" for source in scenario.expectations.required_sources
+    )
+    expected_elements.extend(
+        f"tool:{tool.provider_family}/{tool.operation}"
+        for tool in scenario.expectations.required_tool_calls
+    )
+    if scenario.expectations.expected_routing_decision:
+        expected_elements.append(f"routing:{scenario.expectations.expected_routing_decision}")
+
+    payload = {
+        "id": scenario.id,
+        "name": scenario.name,
+        "query": scenario.execution.query,
+        "scenario_description": scenario.description,
+        "execution_lane": scenario.execution.lane.value,
+        "startup_context": startup_context,
+        "tool_trace": list(tool_trace or []),
+        "retrieved_sources": list(retrieved_sources or []),
+        "expectations": _serialize_expectation_set(scenario),
+        "structured_assertions": structured_assertions.model_dump(mode="json")
+        if hasattr(structured_assertions, "model_dump")
+        else structured_assertions,
+        "actual_routing_decision": actual_routing_decision,
+        "diagnostic_data": diagnostic_data,
+        "expected_elements": expected_elements,
+    }
+    if extra_fields:
+        payload.update(extra_fields)
+    return payload
+
+
+async def evaluate_eval_scenario_response(
+    *,
+    scenario: EvalScenario,
+    agent_response: str,
+    judge: SREAgentJudge | None = None,
+    criteria: Iterable[EvaluationCriteria] | None = None,
+    startup_context: Any = None,
+    tool_trace: Sequence[Any] | None = None,
+    retrieved_sources: Sequence[Any] | None = None,
+    structured_assertions: Any = None,
+    actual_routing_decision: str | None = None,
+    diagnostic_data: Any = None,
+    extra_fields: dict[str, Any] | None = None,
+) -> EvaluationResult:
+    """Evaluate one scenario response using the richer Phase 5 judge context."""
+
+    active_judge = judge or SREAgentJudge()
+    test_case = build_eval_judge_test_case(
+        scenario,
+        startup_context=startup_context,
+        tool_trace=tool_trace,
+        retrieved_sources=retrieved_sources,
+        structured_assertions=structured_assertions,
+        actual_routing_decision=actual_routing_decision,
+        diagnostic_data=diagnostic_data,
+        extra_fields=extra_fields,
+    )
+    active_criteria = list(criteria or build_default_eval_criteria())
+    return await active_judge.evaluate_response(agent_response, test_case, active_criteria)
 
 
 class EvaluationSuite:
@@ -355,3 +525,14 @@ class EvaluationSuite:
             report += "\n"
 
         return report
+
+
+__all__ = [
+    "EvaluationCriteria",
+    "EvaluationResult",
+    "EvaluationSuite",
+    "SREAgentJudge",
+    "build_default_eval_criteria",
+    "build_eval_judge_test_case",
+    "evaluate_eval_scenario_response",
+]

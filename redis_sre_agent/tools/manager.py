@@ -17,6 +17,11 @@ from opentelemetry import trace
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.evaluation.injection import (
+    dispatch_tool_runtime_override,
+    get_active_mcp_servers,
+    has_active_mcp_server_override,
+)
 from redis_sre_agent.targets import get_target_handle_store, get_target_integration_registry
 from redis_sre_agent.targets.contracts import BindingRequest, ProviderLoadRequest
 
@@ -529,7 +534,8 @@ class ToolManager:
         """
         from redis_sre_agent.core.config import MCPServerConfig, settings
 
-        if not settings.mcp_servers:
+        mcp_servers = get_active_mcp_servers(settings.mcp_servers)
+        if not mcp_servers:
             return
 
         # Build set of excluded capabilities for fast lookup
@@ -539,7 +545,9 @@ class ToolManager:
                 f"MCP tools with these categories will be excluded: {[c.value for c in excluded_caps]}"
             )
 
-        for server_name, server_config in settings.mcp_servers.items():
+        use_pool = not has_active_mcp_server_override()
+
+        for server_name, server_config in mcp_servers.items():
             try:
                 # Convert dict to MCPServerConfig if needed
                 if isinstance(server_config, dict):
@@ -567,6 +575,7 @@ class ToolManager:
                     server_name=server_name,
                     server_config=server_config,
                     redis_instance=None,  # MCP providers don't use redis_instance
+                    use_pool=use_pool,
                 )
 
                 # Enter the provider's async context
@@ -1011,28 +1020,6 @@ class ToolManager:
                 f"Available tools ({len(available_tools)}): {available_tools[:10]}..."
             )
 
-        # Stable JSON key for args
-        try:
-            import json as _json
-
-            args_key = _json.dumps(args or {}, sort_keys=True, separators=(",", ":"))
-        except Exception:
-            # Fallback to string repr
-            args_key = str(args or {})
-
-        # Check per-run in-memory cache first (fastest)
-        cache_key = f"{tool_name}|{args_key}"
-        if cache_key in self._call_cache:
-            return self._call_cache[cache_key]
-
-        # Check shared Redis cache (if enabled)
-        if self._shared_cache:
-            cached_result = await self._shared_cache.get(tool_name, args or {})
-            if cached_result is not None:
-                # Also store in per-run cache for faster subsequent lookups
-                self._call_cache[cache_key] = cached_result
-                return cached_result
-
         # OTel: per-tool resolve span
         _provider_name = provider.provider_name if provider else None
         _op = None
@@ -1048,6 +1035,37 @@ class ToolManager:
                 "tool.operation": str(_op) if _op else "",
             },
         ):
+            override_result = await dispatch_tool_runtime_override(
+                tool_name=tool_name,
+                args=args or {},
+                tool_by_name=self._tool_by_name,
+                routing_table=self._routing_table,
+            )
+            if override_result is not None:
+                return override_result.result
+
+            # Stable JSON key for args
+            try:
+                import json as _json
+
+                args_key = _json.dumps(args or {}, sort_keys=True, separators=(",", ":"))
+            except Exception:
+                # Fallback to string repr
+                args_key = str(args or {})
+
+            # Check per-run in-memory cache first (fastest)
+            cache_key = f"{tool_name}|{args_key}"
+            if cache_key in self._call_cache:
+                return self._call_cache[cache_key]
+
+            # Check shared Redis cache (if enabled)
+            if self._shared_cache:
+                cached_result = await self._shared_cache.get(tool_name, args or {})
+                if cached_result is not None:
+                    # Also store in per-run cache for faster subsequent lookups
+                    self._call_cache[cache_key] = cached_result
+                    return cached_result
+
             result = await tool.invoke(args)
 
         # Cache result in per-run cache

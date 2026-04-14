@@ -7,6 +7,10 @@ from redis_sre_agent.core.knowledge_helpers import (
     get_pinned_documents_helper,
     skills_check_helper,
 )
+from redis_sre_agent.evaluation.injection import (
+    EvalKnowledgeBackend,
+    get_active_knowledge_backend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -194,17 +198,26 @@ async def build_startup_knowledge_context(
     pinned_content_char_budget: int = 12000,
     skills_limit: int = 20,
     available_tools: Optional[List[Any]] = None,
+    knowledge_backend: Optional[EvalKnowledgeBackend] = None,
 ) -> str:
     """Build first-turn context in ADR order: pinned, skills, tools."""
     sections: List[str] = []
     internal_tool_envelopes: List[Dict[str, Any]] = []
+    effective_knowledge_backend = knowledge_backend or get_active_knowledge_backend()
 
     try:
-        pinned_result = await get_pinned_documents_helper(
-            version=version,
-            limit=pinned_limit,
-            content_char_budget=pinned_content_char_budget,
-        )
+        if effective_knowledge_backend is not None:
+            pinned_result = await effective_knowledge_backend.get_pinned_documents(
+                version=version,
+                limit=pinned_limit,
+                content_char_budget=pinned_content_char_budget,
+            )
+        else:
+            pinned_result = await get_pinned_documents_helper(
+                version=version,
+                limit=pinned_limit,
+                content_char_budget=pinned_content_char_budget,
+            )
     except Exception as exc:
         logger.warning("Failed to load pinned documents: %s", exc)
         pinned_result = {"pinned_documents": []}
@@ -236,12 +249,20 @@ async def build_startup_knowledge_context(
             internal_tool_envelopes.append(pinned_envelope)
 
     try:
-        skills_result = await skills_check_helper(
-            query=query,
-            limit=skills_limit,
-            offset=0,
-            version=version,
-        )
+        if effective_knowledge_backend is not None:
+            skills_result = await effective_knowledge_backend.skills_check(
+                query=query,
+                limit=skills_limit,
+                offset=0,
+                version=version,
+            )
+        else:
+            skills_result = await skills_check_helper(
+                query=query,
+                limit=skills_limit,
+                offset=0,
+                version=version,
+            )
     except Exception as exc:
         logger.warning("Failed to run startup skills check: %s", exc)
         skills_result = {"skills": []}

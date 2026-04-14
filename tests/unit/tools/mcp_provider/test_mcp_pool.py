@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from redis_sre_agent.core.config import MCPServerConfig
+from redis_sre_agent.evaluation.injection import eval_injection_scope
 from redis_sre_agent.tools.mcp.pool import MCPConnectionPool, PooledConnection
 
 
@@ -76,6 +78,26 @@ class TestMCPConnectionPool:
 
         assert status == {"test-server": True}
         mock_connect.assert_called_once_with("test-server", mock_config)
+
+    @pytest.mark.asyncio
+    async def test_start_prefers_eval_scoped_server_overrides(self):
+        """Eval-scoped MCP catalogs should override process-global settings."""
+        pool = MCPConnectionPool.get_instance()
+        eval_config = MCPServerConfig(url="https://eval.example/mcp")
+
+        with patch("redis_sre_agent.core.config.settings") as mock_settings:
+            mock_settings.mcp_servers = {
+                "global-server": MCPServerConfig(url="https://global.example/mcp")
+            }
+
+            with patch.object(
+                pool, "_connect_server", new=AsyncMock(return_value=True)
+            ) as mock_connect:
+                with eval_injection_scope(mcp_servers={"eval-server": eval_config}):
+                    status = await pool.start()
+
+        assert status == {"eval-server": True}
+        mock_connect.assert_awaited_once_with("eval-server", eval_config)
 
     @pytest.mark.asyncio
     async def test_get_connection_after_start(self):
