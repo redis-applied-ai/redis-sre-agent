@@ -1,0 +1,11 @@
+source_kind: synthetic
+source_pack: prompt-core
+source_pack_version: 2026-04-14
+derived_from:
+  - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+  - redis_sre_agent.agent.knowledge_agent.KNOWLEDGE_SYSTEM_PROMPT
+review_status: reviewed
+reviewed_by: sre-evals
+exemplar_sources:
+  - evals/goldens/prompt/chat-iterative-tool-use/expected.md
+  - evals/goldens/prompt/knowledge-agent-no-live-access/expected.md

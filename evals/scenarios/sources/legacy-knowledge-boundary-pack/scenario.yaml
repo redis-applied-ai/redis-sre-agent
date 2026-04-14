@@ -1,0 +1,44 @@
+id: sources/legacy-knowledge-boundary-pack
+name: Legacy prompt-core boundary retrieval
+description: Ensure retrieval-only evals can target an older source pack and preserve its provenance.
+
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-01
+  derived_from:
+    - evals/corpora/prompt-core/2026-04-01/documents/knowledge-agent-boundary.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/sources/legacy-knowledge-boundary-pack/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    Do you have live Redis instance access here, or are you answering from retrieved guidance?
+  max_tool_steps: 2
+  llm_mode: replay
+
+knowledge:
+  mode: retrieval_only
+  version: "2026-04-01"
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - no live instance access
+    - answer from retrieved guidance
+  forbidden_claims:
+    - I checked INFO
+    - I already inspected the instance
+  required_sources:
+    - knowledge-agent-boundary

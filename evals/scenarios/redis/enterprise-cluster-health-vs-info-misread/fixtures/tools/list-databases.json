@@ -1,0 +1,16 @@
+{
+  "databases": [
+    {
+      "uid": 18,
+      "name": "checkout-session-store",
+      "status": "active",
+      "replication_state": "resyncing"
+    },
+    {
+      "uid": 22,
+      "name": "checkout-cart-store",
+      "status": "active",
+      "replication_state": "ok"
+    }
+  ]
+}

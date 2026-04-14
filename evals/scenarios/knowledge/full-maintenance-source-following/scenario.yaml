@@ -1,0 +1,52 @@
+id: knowledge/full-maintenance-source-following
+name: Full knowledge mode should follow pinned, skill, and ticket evidence together
+description: Exercise full knowledge mode with pinned maintenance guidance, retrievable skills, and a support ticket so the answer follows all available evidence layers.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - redis_sre_agent.agent.knowledge_agent.KNOWLEDGE_SYSTEM_PROMPT
+    - evals/corpora/redis-docs-curated/2026-04-01/documents/maintenance-mode-overview.md
+    - evals/corpora/redis-docs-curated/2026-04-01/documents/maintenance-mode-guidance.md
+    - evals/corpora/redis-docs-curated/2026-04-01/skills/redis-enterprise-maintenance-checklist.md
+    - evals/corpora/redis-docs-curated/2026-04-01/tickets/RET-5032.yaml
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/knowledge/full-maintenance-source-following/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    I do not have live cluster access. Summarize the documented Redis Enterprise maintenance
+    workflow you would follow before changing cluster state.
+  max_tool_steps: 4
+  llm_mode: replay
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../../corpora/redis-docs-curated/2026-04-01/documents/maintenance-mode-overview.md
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_findings:
+    - maintenance mode can explain topology changes without proving a cluster failure
+    - verify replica health before changing maintenance state
+    - state clearly that current cluster state is not known without live access
+  forbidden_claims:
+    - maintenance mode is definitely enabled right now
+  required_sources:
+    - maintenance-mode-overview
+    - maintenance-mode-guidance
+    - redis-enterprise-maintenance-checklist
+    - RET-5032

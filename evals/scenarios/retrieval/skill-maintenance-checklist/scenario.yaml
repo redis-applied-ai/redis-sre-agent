@@ -1,0 +1,40 @@
+id: retrieval/skill-maintenance-checklist
+name: Retrieval-only skill query finds maintenance checklist
+description: Retrieval suite skill case should surface the Redis Enterprise maintenance checklist skill.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - redis-enterprise-maintenance-checklist
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/skill-maintenance-checklist/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: redis-enterprise-maintenance-checklist
+  max_tool_steps: 3
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_sources:
+    - redis-enterprise-maintenance-checklist

@@ -1,0 +1,7 @@
+{
+  "instantaneous_ops_per_sec": 18411,
+  "total_connections_received": 92811,
+  "rejected_connections": 0,
+  "keyspace_hits": 582114,
+  "keyspace_misses": 11422
+}

@@ -1,0 +1,13 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "exact ticket identifiers hit the intended support record first",
+    "semantic maintenance-churn queries still surface the reviewed Redis Enterprise incident"
+  ],
+  "forbidden_claims": [],
+  "required_sources": [
+    "RET-5032",
+    "RET-9001"
+  ]
+}

@@ -1,0 +1,46 @@
+id: retrieval/support-ticket-exact-match
+name: Support ticket retrieval core
+description: Measure exact and semantic support-ticket lookup across multiple fixture packs.
+
+provenance:
+  source_kind: mixed
+  source_pack: retrieval-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - evals/corpora/prompt-core/2026-04-14/manifest.yaml
+    - evals/corpora/redis-docs-curated/2026-04-01/manifest.yaml
+  synthetic:
+    is_synthetic: true
+    method: hand-authored fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/support-ticket-exact-match/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    Measure support-ticket retrieval behavior for exact IDs and semantic incident lookups.
+  max_tool_steps: 1
+  llm_mode: replay
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - exact ticket identifiers hit the intended support record first
+    - semantic maintenance-churn queries still surface the reviewed Redis Enterprise incident
+  forbidden_claims: []
+  required_sources:
+    - RET-5032
+    - RET-9001

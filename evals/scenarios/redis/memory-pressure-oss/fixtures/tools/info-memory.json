@@ -1,0 +1,8 @@
+{
+  "used_memory_human": "14.9G",
+  "maxmemory_human": "15.0G",
+  "mem_fragmentation_ratio": 1.71,
+  "evicted_keys": 12841,
+  "keyspace_hits": 4419821,
+  "keyspace_misses": 839112
+}

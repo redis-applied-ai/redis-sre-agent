@@ -1,0 +1,40 @@
+id: knowledge/disabled-no-knowledge-evidence
+name: Disabled knowledge mode should avoid source claims
+description: Exercise a knowledge-only lane where no pinned or retrieval-backed knowledge is available, so the agent must avoid implying unseen runbook or ticket evidence.
+
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.knowledge_agent.KNOWLEDGE_SYSTEM_PROMPT
+    - evals/corpora/prompt-core/2026-04-14/documents/knowledge-only-access-policy.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/knowledge/disabled-no-knowledge-evidence/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    I do not have an attached target. Can you tell me what the runbook or support ticket says
+    about checkout-cache memory pressure?
+  max_tool_steps: 4
+  llm_mode: replay
+
+knowledge:
+  mode: disabled
+  version: latest
+
+expectations:
+  required_findings:
+    - say no fixture-backed runbook or ticket evidence is available in this mode
+    - do not imply live redis access
+  forbidden_claims:
+    - I checked the runbook
+    - the support ticket says

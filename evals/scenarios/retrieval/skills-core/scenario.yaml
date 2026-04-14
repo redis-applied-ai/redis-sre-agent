@@ -1,0 +1,49 @@
+id: retrieval/skills-core
+name: Skill retrieval core
+description: Measure skill matching across prompt and Redis-doc corpora without agent reasoning.
+
+provenance:
+  source_kind: mixed
+  source_pack: retrieval-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - evals/corpora/prompt-core/2026-04-14/manifest.yaml
+    - evals/corpora/redis-docs-curated/2026-04-01/manifest.yaml
+  synthetic:
+    is_synthetic: true
+    method: hand-authored fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/skills-core/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    Measure skill retrieval behavior across prompt-derived and Redis-doc-derived skill fixtures.
+  max_tool_steps: 1
+  llm_mode: replay
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - memory-pressure queries match iterative memory skills
+    - maintenance failover queries match the Redis Enterprise checklist
+  forbidden_claims: []
+  required_sources:
+    - iterative-memory-check
+    - iterative-redis-triage
+    - evidence-first-triage
+    - failover-investigation-skill
+    - redis-enterprise-maintenance-checklist

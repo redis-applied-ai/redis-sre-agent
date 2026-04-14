@@ -1,0 +1,16 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "memory-pressure queries match iterative memory skills",
+    "maintenance failover queries match the Redis Enterprise checklist"
+  ],
+  "forbidden_claims": [],
+  "required_sources": [
+    "iterative-memory-check",
+    "iterative-redis-triage",
+    "evidence-first-triage",
+    "failover-investigation-skill",
+    "redis-enterprise-maintenance-checklist"
+  ]
+}

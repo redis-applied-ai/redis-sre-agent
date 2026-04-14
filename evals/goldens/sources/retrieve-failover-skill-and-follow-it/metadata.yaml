@@ -1,0 +1,4 @@
+scenario_id: sources/retrieve-failover-skill-and-follow-it
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored

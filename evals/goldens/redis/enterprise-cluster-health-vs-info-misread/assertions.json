@@ -1,0 +1,32 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "redis_enterprise_admin",
+      "operation": "get_cluster_info",
+      "target_handle": "tgt_cluster_checkout_global"
+    },
+    {
+      "provider_family": "redis_enterprise_admin",
+      "operation": "list_databases",
+      "target_handle": "tgt_cluster_checkout_global"
+    }
+  ],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "info"
+    }
+  ],
+  "required_findings": [
+    "use cluster-admin health evidence instead of a single database info view",
+    "one resyncing database does not necessarily mean the whole cluster is unhealthy"
+  ],
+  "forbidden_claims": [
+    "the whole cluster is down"
+  ],
+  "required_sources": [
+    "cluster-health-triage",
+    "maintenance-mode-guidance"
+  ],
+  "expected_routing_decision": "triage"
+}

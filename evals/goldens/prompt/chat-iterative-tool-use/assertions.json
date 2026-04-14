@@ -1,0 +1,32 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "info",
+      "target_handle": "tgt_cache_checkout"
+    },
+    {
+      "provider_family": "redis_command",
+      "operation": "memory_stats",
+      "target_handle": "tgt_cache_checkout"
+    }
+  ],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "keys",
+      "target_handle": "tgt_cache_checkout"
+    }
+  ],
+  "required_findings": [
+    "memory pressure is driving the evictions",
+    "start with a couple of targeted checks before widening the search"
+  ],
+  "forbidden_claims": [
+    "dump every metric at once"
+  ],
+  "required_sources": [
+    "iterative-tool-use-policy"
+  ],
+  "expected_routing_decision": "chat"
+}

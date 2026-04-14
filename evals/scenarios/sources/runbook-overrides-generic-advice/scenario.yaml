@@ -1,0 +1,46 @@
+id: sources/runbook-overrides-generic-advice
+name: Retrieved runbook should override generic advice
+description: Ensure full knowledge mode prefers explicit runbook guidance over a generic quick fix.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - evals/corpora/redis-docs-curated/2026-04-01/documents/runbook-overrides-generic-advice.md
+    - evals/corpora/redis-docs-curated/2026-04-01/documents/memory-pressure-runbook.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/sources/runbook-overrides-generic-advice/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    The cache is evicting. Should I just change the maxmemory policy right now, or is there a
+    better runbook-driven sequence?
+  max_tool_steps: 4
+  llm_mode: replay
+
+knowledge:
+  mode: full
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - use the runbook and evidence steps before configuration changes
+    - explain why generic tuning advice should wait
+  forbidden_claims:
+    - change maxmemory-policy immediately
+  required_sources:
+    - runbook-overrides-generic-advice
+    - memory-pressure-runbook

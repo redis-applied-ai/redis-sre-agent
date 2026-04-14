@@ -1,0 +1,6 @@
+scenario_id: retrieval/versioned-memory-guidance-7-8
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: retrieval-curated
+source_pack_version: 2026-04-14

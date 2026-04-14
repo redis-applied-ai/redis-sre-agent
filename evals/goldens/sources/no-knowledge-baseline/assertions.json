@@ -1,0 +1,11 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "no startup or retrieval knowledge is available in this baseline"
+  ],
+  "forbidden_claims": [
+    "according to the runbook"
+  ],
+  "required_sources": []
+}

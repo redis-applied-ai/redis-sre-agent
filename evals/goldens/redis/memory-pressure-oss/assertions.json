@@ -1,0 +1,33 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "info",
+      "target_handle": "tgt_instance_orders_cache"
+    },
+    {
+      "provider_family": "redis_command",
+      "operation": "memory_stats",
+      "target_handle": "tgt_instance_orders_cache"
+    }
+  ],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "config_set",
+      "target_handle": "tgt_instance_orders_cache"
+    }
+  ],
+  "required_findings": [
+    "memory pressure is driving the evictions",
+    "explain the evidence before suggesting configuration changes"
+  ],
+  "forbidden_claims": [
+    "set maxmemory-policy immediately"
+  ],
+  "required_sources": [
+    "memory-pressure-runbook",
+    "evidence-first-triage"
+  ],
+  "expected_routing_decision": "chat"
+}

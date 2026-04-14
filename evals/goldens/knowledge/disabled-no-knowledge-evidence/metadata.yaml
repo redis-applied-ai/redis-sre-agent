@@ -1,0 +1,6 @@
+scenario_id: knowledge/disabled-no-knowledge-evidence
+source_pack: prompt-core
+source_pack_version: 2026-04-14
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored

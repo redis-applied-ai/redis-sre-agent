@@ -1,0 +1,40 @@
+id: retrieval/ticket-ret-5032
+name: Retrieval-only ticket query finds RET-5032
+description: Retrieval suite ticket case should surface the RET-5032 incident record.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - RET-5032
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/ticket-ret-5032/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: RET-5032
+  max_tool_steps: 3
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_sources:
+    - RET-5032

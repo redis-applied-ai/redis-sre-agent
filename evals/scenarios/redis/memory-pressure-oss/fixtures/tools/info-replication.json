@@ -1,0 +1,13 @@
+{
+  "role": "master",
+  "connected_slaves": 2,
+  "master_failover_state": "no-failover",
+  "slave0": {
+    "state": "online",
+    "lag": 0
+  },
+  "slave1": {
+    "state": "online",
+    "lag": 1
+  }
+}

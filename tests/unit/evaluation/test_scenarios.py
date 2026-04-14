@@ -1,12 +1,22 @@
+import json
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
+from redis_sre_agent.evaluation.fixture_layout import (
+    CORPORA_ROOT,
+    golden_assertions_path,
+    golden_expected_response_path,
+    golden_metadata_path,
+    scenario_manifest_path,
+)
 from redis_sre_agent.evaluation.scenarios import (
     EvalExecutionConfig,
     EvalScenario,
     ExecutionLane,
+    KnowledgeMode,
 )
 
 
@@ -180,6 +190,35 @@ expectations:
     )
 
 
+def test_eval_scenario_coerces_iso_date_knowledge_versions_from_yaml(tmp_path: Path):
+    scenario_path = tmp_path / "evals" / "scenarios" / "prompt" / "date-version" / "scenario.yaml"
+    scenario_path.parent.mkdir(parents=True)
+    scenario_path.write_text(
+        """
+id: prompt/date-version
+name: Date version coercion
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  golden:
+    expectation_basis: human_authored
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: What should I do first?
+knowledge:
+  mode: startup_only
+  version: 2026-04-14
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    scenario = EvalScenario.from_file(scenario_path)
+
+    assert scenario.knowledge.version == "2026-04-14"
+
+
 def test_eval_scenario_parses_stateful_responder_and_failure_fields(tmp_path: Path):
     scenario_path = tmp_path / "evals" / "scenarios" / "redis" / "stateful" / "scenario.yaml"
     scenario_path.parent.mkdir(parents=True)
@@ -286,3 +325,103 @@ def test_eval_scenario_rejects_bound_targets_missing_from_catalog():
                 },
             }
         )
+
+
+@pytest.mark.parametrize(
+    (
+        "scenario_id",
+        "expected_lane",
+        "expected_agent",
+        "expected_mode",
+        "expected_source_pack",
+    ),
+    [
+        (
+            "chat-iterative-tool-use",
+            ExecutionLane.FULL_TURN,
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "knowledge-agent-no-live-access",
+            ExecutionLane.AGENT_ONLY,
+            "knowledge_only",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "safety-no-destructive-commands",
+            ExecutionLane.AGENT_ONLY,
+            "chat",
+            KnowledgeMode.STARTUP_ONLY,
+            "prompt-core",
+        ),
+        (
+            "sev1-escalation-policy",
+            ExecutionLane.AGENT_ONLY,
+            "knowledge_only",
+            KnowledgeMode.STARTUP_ONLY,
+            "prompt-policy-curated",
+        ),
+    ],
+)
+def test_committed_prompt_eval_scenarios_load_from_eval_tree(
+    scenario_id: str,
+    expected_lane: ExecutionLane,
+    expected_agent: str,
+    expected_mode: KnowledgeMode,
+    expected_source_pack: str,
+):
+    scenario = EvalScenario.from_file(scenario_manifest_path("prompt", scenario_id))
+
+    assert scenario.id == f"prompt/{scenario_id}"
+    assert scenario.execution.lane is expected_lane
+    assert scenario.execution.agent == expected_agent
+    assert scenario.knowledge.mode is expected_mode
+    assert scenario.provenance.source_pack == expected_source_pack
+    assert scenario.provenance.source_pack_version == "2026-04-14"
+
+
+def test_committed_prompt_eval_goldens_and_corpora_exist():
+    expected_metadata = {
+        "chat-iterative-tool-use": ("prompt-core", "reviewed"),
+        "knowledge-agent-no-live-access": ("prompt-core", "reviewed"),
+        "safety-no-destructive-commands": ("prompt-core", "approved"),
+        "sev1-escalation-policy": ("prompt-policy-curated", "draft"),
+    }
+
+    for scenario_id, (source_pack, review_status) in expected_metadata.items():
+        scenario = EvalScenario.from_file(scenario_manifest_path("prompt", scenario_id))
+        metadata = yaml.safe_load(
+            golden_metadata_path("prompt", scenario_id).read_text(encoding="utf-8")
+        )
+        assertions = json.loads(
+            golden_assertions_path("prompt", scenario_id).read_text(encoding="utf-8")
+        )
+        expected = golden_expected_response_path("prompt", scenario_id).read_text(encoding="utf-8")
+
+        assert metadata["scenario_id"] == scenario.id
+        assert metadata["source_pack"] == source_pack
+        assert str(metadata["source_pack_version"]) == "2026-04-14"
+        assert metadata["review_status"] == review_status
+        assert assertions
+        assert expected.strip()
+
+    prompt_core_root = CORPORA_ROOT / "prompt-core" / "2026-04-14"
+    prompt_policy_root = CORPORA_ROOT / "prompt-policy-curated" / "2026-04-14"
+
+    prompt_core_manifest = yaml.safe_load((prompt_core_root / "manifest.yaml").read_text("utf-8"))
+    prompt_policy_manifest = yaml.safe_load(
+        (prompt_policy_root / "manifest.yaml").read_text("utf-8")
+    )
+
+    assert prompt_core_manifest["source_pack"] == "prompt-core"
+    assert str(prompt_core_manifest["source_pack_version"]) == "2026-04-14"
+    assert (prompt_core_root / "documents" / "iterative-diagnostics-runbook.md").exists()
+    assert (prompt_core_root / "skills" / "no-live-access-response.md").exists()
+    assert (prompt_core_root / "tickets" / "RET-9001.yaml").exists()
+
+    assert prompt_policy_manifest["provenance"]["source_pack"] == "prompt-policy-curated"
+    assert str(prompt_policy_manifest["provenance"]["source_pack_version"]) == "2026-04-14"
+    assert (prompt_policy_root / "documents" / "sev1-escalation-policy.md").exists()

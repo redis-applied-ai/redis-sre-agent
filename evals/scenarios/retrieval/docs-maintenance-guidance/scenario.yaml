@@ -1,0 +1,40 @@
+id: retrieval/docs-maintenance-guidance
+name: Retrieval-only doc query finds maintenance guidance
+description: Retrieval suite doc case should surface the Redis Enterprise maintenance guidance document.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - maintenance-mode-guidance
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/docs-maintenance-guidance/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: Redis Enterprise maintenance mode guidance
+  max_tool_steps: 3
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_sources:
+    - maintenance-mode-guidance

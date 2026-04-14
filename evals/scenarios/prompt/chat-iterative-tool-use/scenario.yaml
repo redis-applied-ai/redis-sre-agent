@@ -1,0 +1,90 @@
+id: prompt/chat-iterative-tool-use
+name: Chat iterative tool use
+description: Exercise the production full_turn chat lane and keep the agent on an iterative, targeted investigation path.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - redis_sre_agent.agent.knowledge_context.build_startup_knowledge_context
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/chat-iterative-tool-use/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+execution:
+  lane: full_turn
+  agent: redis_chat
+  route_via_router: false
+  query: >
+    The attached checkout cache is showing evictions and latency spikes. Walk me
+    through what you would check first, and keep the investigation iterative
+    instead of dumping every metric at once.
+  max_tool_steps: 4
+  llm_mode: replay
+scope:
+  turn_scope:
+    resolution_policy: require_target
+    automation_mode: interactive
+  target_catalog:
+    - handle: tgt_cache_checkout
+      kind: instance
+      display_name: prod checkout cache
+      resource_id: redis-prod-checkout
+      capabilities:
+        - diagnostics
+        - knowledge
+        - tickets
+      public_metadata:
+        environment: production
+        deployment: oss
+  bound_targets:
+    - tgt_cache_checkout
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../_shared/startup/policies/iterative-tool-use.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+tools:
+  redis_command:
+    info:
+      description: Fetch Redis INFO sections for the attached instance.
+      input_schema:
+        type: object
+        properties:
+          section:
+            type: string
+      responders:
+        - when:
+            args_contains:
+              section: memory
+          result: fixtures/tools/info-memory.json
+    memory_stats:
+      description: Fetch MEMORY STATS output for the attached instance.
+      result: fixtures/tools/memory-stats.json
+expectations:
+  required_tool_calls:
+    - provider_family: redis_command
+      operation: info
+      target_handle: tgt_cache_checkout
+    - provider_family: redis_command
+      operation: memory_stats
+      target_handle: tgt_cache_checkout
+  forbidden_tool_calls:
+    - provider_family: redis_command
+      operation: keys
+      target_handle: tgt_cache_checkout
+  required_findings:
+    - memory pressure is driving the evictions
+    - start with a couple of targeted checks before widening the search
+  forbidden_claims:
+    - dump every metric at once
+  required_sources:
+    - iterative-tool-use-policy
+  expected_routing_decision: chat

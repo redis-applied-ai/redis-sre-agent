@@ -1,0 +1,1 @@
+Follow the failover investigation checklist before touching maintenance state again. The retrieved guidance says to check cluster-admin health first, verify replica sync and failover posture, and use the prior maintenance-window incident as a warning not to skip replica verification.

@@ -1,0 +1,6 @@
+scenario_id: retrieval/cross-pack-live-access
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: cross-pack-retrieval
+source_pack_version: 2026-04-14

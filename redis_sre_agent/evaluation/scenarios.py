@@ -191,6 +191,17 @@ class EvalKnowledgeConfig(BaseModel):
     pinned_documents: list[str] = Field(default_factory=list)
     corpus: list[str] = Field(default_factory=list)
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def _coerce_version(cls, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        return value
+
 
 class EvalLogicalToolRef(BaseModel):
     """Scenario-facing reference to a logical tool identity."""

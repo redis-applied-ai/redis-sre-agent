@@ -1,0 +1,10 @@
+{
+  "required_findings": [
+    "say no fixture-backed runbook or ticket evidence is available in this mode",
+    "do not imply live redis access"
+  ],
+  "forbidden_claims": [
+    "I checked the runbook",
+    "the support ticket says"
+  ]
+}
