@@ -13,7 +13,7 @@ UI_DIST ?= $(UI_DIR)/dist
 REDIS_DOCS_REPO_URL ?= https://github.com/redis/docs.git
 REDIS_DOCS_BRANCH ?= main
 
-.PHONY: help venv sync hooks-install lint docs-build docs-serve local-services local-services-down local-services-logs quick-demo test test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
+.PHONY: help venv sync hooks-install lint docs-build docs-serve local-services local-services-down local-services-logs quick-demo test test-eval-pr test-integration test-all ui-kit-install ui-kit-build ui-kit-dev ui-install ui-dev ui-build redis-docs-sync redis-docs-index
 
 help: ## Show this help and available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9][^:]*:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -95,6 +95,32 @@ local-services-enterprise: ## Start local services with Redis Enterprise cluster
 
 test: sync ## Run tests excluding integration tests
 	$(UV) run pytest -m "not integration"
+
+test-eval-pr: sync ## Run the deterministic eval subset used in PR CI
+	$(UV) run pytest \
+		tests/unit/evaluation/test_agent_only_runtime.py \
+		tests/unit/evaluation/test_assertions.py \
+		tests/unit/evaluation/test_fixture_layout.py \
+		tests/unit/evaluation/test_injection.py \
+		tests/unit/evaluation/test_judge.py \
+		tests/unit/evaluation/test_knowledge_backend.py \
+		tests/unit/evaluation/test_knowledge_scenarios.py \
+		tests/unit/evaluation/test_prompt_scenarios.py \
+		tests/unit/evaluation/test_redis_scenarios.py \
+		tests/unit/evaluation/test_report_schema.py \
+		tests/unit/evaluation/test_reporting.py \
+		tests/unit/evaluation/test_retrieval_matrix.py \
+		tests/unit/evaluation/test_retrieval_scenarios.py \
+		tests/unit/evaluation/test_runner.py \
+		tests/unit/evaluation/test_runtime.py \
+		tests/unit/evaluation/test_scenario_corpus.py \
+		tests/unit/evaluation/test_scenarios.py \
+		tests/unit/evaluation/test_source_scenarios.py \
+		tests/unit/evaluation/test_tool_identity.py \
+		tests/unit/evaluation/test_tool_runtime.py \
+		tests/unit/tools/mcp_provider/test_mcp_provider.py \
+		tests/unit/tools/test_manager.py \
+		-q
 
 test-integration: sync ## Run integration tests only
 	$(UV) run pytest -m integration
