@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Form, type FormFieldConfig } from "./Form";
 
 describe("Form", () => {
@@ -32,5 +32,36 @@ describe("Form", () => {
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith({ formType: "organization" });
+  });
+
+  it("preserves queued field changes in the emitted form state", () => {
+    const onChange = vi.fn();
+    const fields: FormFieldConfig[] = [
+      { name: "firstName", label: "First Name", type: "text" },
+      { name: "lastName", label: "Last Name", type: "text" },
+    ];
+
+    render(
+      <Form
+        fields={fields}
+        initialData={{ firstName: "", lastName: "" }}
+        onChange={onChange}
+        onSubmit={() => {}}
+      />,
+    );
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText("First Name"), {
+        target: { value: "Ada" },
+      });
+      fireEvent.change(screen.getByLabelText("Last Name"), {
+        target: { value: "Lovelace" },
+      });
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
   });
 });

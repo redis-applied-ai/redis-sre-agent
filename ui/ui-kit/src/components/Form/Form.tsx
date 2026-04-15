@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../Button/Button";
 import { ErrorMessage } from "../ErrorMessage/ErrorMessage";
 import { FormField, type Option } from "./FormField";
@@ -60,16 +60,23 @@ export const Form: React.FC<FormProps> = ({
 }) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [formData, setFormData] = useState<Record<string, any>>(initialData);
+  // Keep a synchronous snapshot so consecutive field updates don't clobber each other.
+  const formDataRef = useRef<Record<string, any>>(initialData);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string>("");
+
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
 
   const handleFieldChange = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (fieldName: string, value: any) => {
       const nextFormData = {
-        ...formData,
+        ...formDataRef.current,
         [fieldName]: value,
       };
+      formDataRef.current = nextFormData;
       setFormData(nextFormData);
       onChange?.(nextFormData);
 
@@ -82,7 +89,7 @@ export const Form: React.FC<FormProps> = ({
         });
       }
     },
-    [errors, formData, onChange],
+    [errors, onChange],
   );
 
   const validateForm = () => {
