@@ -122,6 +122,51 @@ def test_score_structured_assertions_marks_missing_and_forbidden_evidence_failed
     assert results.all_passed is False
 
 
+def test_score_structured_assertions_normalizes_expected_logical_tool_refs():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "assertion-normalization",
+            "name": "Assertion normalization",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "List clusters.",
+            },
+            "expectations": {
+                "required_tool_calls": [
+                    {
+                        "provider_family": "RE-Admin",
+                        "operation": "List-Clusters",
+                    }
+                ],
+            },
+        }
+    )
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[
+            {
+                "concrete_name": "redis_enterprise_admin_deadbeef_list_clusters",
+                "logical": {
+                    "provider_family": "redis_enterprise_admin",
+                    "operation": "list_clusters",
+                },
+                "status": "success",
+                "args": {},
+            }
+        ],
+    )
+
+    assert results.required_tool_calls[0].status.value == "passed"
+    assert results.all_passed is True
+
+
 def test_flatten_structured_assertions_preserves_group_results():
     results = score_structured_assertions(
         _scenario(),

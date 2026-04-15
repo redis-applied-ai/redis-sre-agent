@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from redis_sre_agent.evaluation.report_schema import (
     AssertionStatus,
@@ -21,14 +21,34 @@ def _normalize_text(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
-def _match_logical_identity(expected: LogicalToolIdentity, actual: LogicalToolIdentity) -> bool:
-    if expected.provider_family != actual.provider_family:
+def _normalize_logical_identity(
+    identity: LogicalToolIdentity | Mapping[str, Any] | Any,
+) -> LogicalToolIdentity:
+    return (
+        identity
+        if isinstance(identity, LogicalToolIdentity)
+        else LogicalToolIdentity.model_validate(identity)
+    )
+
+
+def _match_logical_identity(
+    expected: LogicalToolIdentity | Mapping[str, Any] | Any,
+    actual: LogicalToolIdentity,
+) -> bool:
+    normalized_expected = _normalize_logical_identity(expected)
+    if normalized_expected.provider_family != actual.provider_family:
         return False
-    if expected.operation != actual.operation:
+    if normalized_expected.operation != actual.operation:
         return False
-    if expected.server_name is not None and expected.server_name != actual.server_name:
+    if (
+        normalized_expected.server_name is not None
+        and normalized_expected.server_name != actual.server_name
+    ):
         return False
-    if expected.target_handle is not None and expected.target_handle != actual.target_handle:
+    if (
+        normalized_expected.target_handle is not None
+        and normalized_expected.target_handle != actual.target_handle
+    ):
         return False
     return True
 
@@ -131,11 +151,12 @@ def score_structured_assertions(
 
     required_tool_calls: list[EvalAssertionResult] = []
     for expected in scenario.expectations.required_tool_calls:
+        normalized_expected = _normalize_logical_identity(expected)
         match = next(
             (
                 trace
                 for logical, trace in trace_by_logical
-                if _match_logical_identity(expected, logical)
+                if _match_logical_identity(normalized_expected, logical)
             ),
             None,
         )
@@ -158,11 +179,12 @@ def score_structured_assertions(
 
     forbidden_tool_calls: list[EvalAssertionResult] = []
     for expected in scenario.expectations.forbidden_tool_calls:
+        normalized_expected = _normalize_logical_identity(expected)
         match = next(
             (
                 trace
                 for logical, trace in trace_by_logical
-                if _match_logical_identity(expected, logical)
+                if _match_logical_identity(normalized_expected, logical)
             ),
             None,
         )
