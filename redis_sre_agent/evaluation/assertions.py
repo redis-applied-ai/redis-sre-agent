@@ -31,24 +31,23 @@ def _normalize_logical_identity(
     )
 
 
+def _normalize_expected_tool_ref(expected: Any) -> LogicalToolIdentity:
+    if hasattr(expected, "model_dump"):
+        return _normalize_logical_identity(expected.model_dump())
+    return _normalize_logical_identity(expected)
+
+
 def _match_logical_identity(
-    expected: LogicalToolIdentity | Mapping[str, Any] | Any,
+    expected: LogicalToolIdentity,
     actual: LogicalToolIdentity,
 ) -> bool:
-    normalized_expected = _normalize_logical_identity(expected)
-    if normalized_expected.provider_family != actual.provider_family:
+    if expected.provider_family != actual.provider_family:
         return False
-    if normalized_expected.operation != actual.operation:
+    if expected.operation != actual.operation:
         return False
-    if (
-        normalized_expected.server_name is not None
-        and normalized_expected.server_name != actual.server_name
-    ):
+    if expected.server_name is not None and expected.server_name != actual.server_name:
         return False
-    if (
-        normalized_expected.target_handle is not None
-        and normalized_expected.target_handle != actual.target_handle
-    ):
+    if expected.target_handle is not None and expected.target_handle != actual.target_handle:
         return False
     return True
 
@@ -148,10 +147,21 @@ def score_structured_assertions(
         (entry.logical, entry) for entry in normalized_trace if entry.logical is not None
     ]
     source_candidates = [(_source_candidates(entry), entry) for entry in normalized_sources]
+    required_tool_refs = [
+        _normalize_expected_tool_ref(expected)
+        for expected in scenario.expectations.required_tool_calls
+    ]
+    forbidden_tool_refs = [
+        _normalize_expected_tool_ref(expected)
+        for expected in scenario.expectations.forbidden_tool_calls
+    ]
 
     required_tool_calls: list[EvalAssertionResult] = []
-    for expected in scenario.expectations.required_tool_calls:
-        normalized_expected = _normalize_logical_identity(expected)
+    for expected, normalized_expected in zip(
+        scenario.expectations.required_tool_calls,
+        required_tool_refs,
+        strict=False,
+    ):
         match = next(
             (
                 trace
@@ -178,8 +188,11 @@ def score_structured_assertions(
             )
 
     forbidden_tool_calls: list[EvalAssertionResult] = []
-    for expected in scenario.expectations.forbidden_tool_calls:
-        normalized_expected = _normalize_logical_identity(expected)
+    for expected, normalized_expected in zip(
+        scenario.expectations.forbidden_tool_calls,
+        forbidden_tool_refs,
+        strict=False,
+    ):
         match = next(
             (
                 trace

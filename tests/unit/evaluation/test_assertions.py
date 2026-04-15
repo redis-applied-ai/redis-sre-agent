@@ -1,8 +1,9 @@
 from redis_sre_agent.evaluation.assertions import (
+    _normalize_expected_tool_ref,
     flatten_structured_assertions,
     score_structured_assertions,
 )
-from redis_sre_agent.evaluation.scenarios import EvalScenario
+from redis_sre_agent.evaluation.scenarios import EvalLogicalToolRef, EvalScenario
 from redis_sre_agent.evaluation.tool_identity import LogicalToolIdentity
 
 
@@ -164,6 +165,80 @@ def test_score_structured_assertions_normalizes_expected_logical_tool_refs():
     )
 
     assert results.required_tool_calls[0].status.value == "passed"
+    assert results.all_passed is True
+
+
+def test_normalize_expected_tool_ref_canonicalizes_scenario_refs():
+    normalized = _normalize_expected_tool_ref(
+        EvalLogicalToolRef(
+            provider_family="RE-Admin",
+            operation="List-Clusters",
+        )
+    )
+
+    assert normalized == LogicalToolIdentity(
+        provider_family="redis_enterprise_admin",
+        operation="list_clusters",
+    )
+
+
+def test_score_structured_assertions_normalizes_expected_refs_with_identity_map():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "assertion-normalization-identity-map",
+            "name": "Assertion normalization identity map",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "List clusters.",
+            },
+            "expectations": {
+                "required_tool_calls": [
+                    {
+                        "provider_family": "RE-Admin",
+                        "operation": "List-Clusters",
+                    }
+                ],
+                "forbidden_tool_calls": [
+                    {
+                        "provider_family": "RE-Admin",
+                        "operation": "Flush-All",
+                    }
+                ],
+            },
+        }
+    )
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[
+            {
+                "concrete_name": "redis_enterprise_admin_deadbeef_list_clusters",
+                "status": "success",
+                "args": {},
+            }
+        ],
+        tool_identity_map=[
+            {
+                "logical": {
+                    "provider_family": "redis_enterprise_admin",
+                    "operation": "list_clusters",
+                },
+                "concrete_name": "redis_enterprise_admin_deadbeef_list_clusters",
+                "provider_name": "redis_enterprise_admin",
+                "capability": "admin",
+                "requires_instance": False,
+            }
+        ],
+    )
+
+    assert results.required_tool_calls[0].status.value == "passed"
+    assert results.forbidden_tool_calls[0].status.value == "passed"
     assert results.all_passed is True
 
 
