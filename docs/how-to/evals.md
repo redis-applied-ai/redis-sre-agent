@@ -8,13 +8,22 @@ It has two main entry points:
 
 The CLI currently exposes scenario listing, live-suite execution, and baseline comparison. Mocked one-off runs are currently easiest to drive through `pytest` or the Python entrypoints.
 
+### Terms Used In This Guide
+
+This page uses `policy` in two different ways:
+
+- A `policy document` is just a written rule or instruction that the agent can read during a scenario, such as "do not run destructive commands" or "escalate Sev 1 incidents immediately."
+- The `baseline policy` in `evals/baseline_policy.yaml` is configuration for live eval suites. It says when a suite is allowed to run, when it is allowed to update a stored baseline, and how much score drift is acceptable when comparing a new run against that baseline.
+
+When this guide says `policy file`, it means the live-suite baseline policy. When it says a scenario includes a `policy`, it means a document in the scenario's knowledge inputs.
+
 ### What Lives Where
 
 - `evals/scenarios/`: scenario manifests grouped by lane or topic.
 - `evals/corpora/`: versioned docs, skills, and ticket packs used by scenarios.
 - `evals/goldens/`: expected answers and assertion metadata.
 - `evals/suites/`: repo-local live-suite manifests.
-- `evals/baseline_policy.yaml`: variance and trigger policy for live comparisons.
+- `evals/baseline_policy.yaml`: live-suite baseline rules such as allowed triggers, baseline updates, and acceptable score drift.
 - `redis_sre_agent/evaluation/`: loaders, mocked runtimes, scoring, and report writers.
 
 Example scenario files:
@@ -140,7 +149,7 @@ Most scenarios are built from the same parts:
 The `prompt/chat-iterative-tool-use` scenario is a good compact example because it includes:
 
 - a real target binding handle,
-- pinned startup policy,
+- a pinned startup policy document,
 - fixture-backed Redis tool payloads,
 - structured assertions in the same manifest.
 
@@ -163,7 +172,7 @@ uv run redis-sre-agent eval live-suite \
   --trigger workflow_dispatch
 ```
 
-Important: the suite policy in `evals/baseline_policy.yaml` does not allow the CLI default `--trigger manual` for the `scheduled_live` profile. For the example suite above, use `--trigger workflow_dispatch` for manual runs.
+Important: the baseline policy in `evals/baseline_policy.yaml` does not allow the CLI default `--trigger manual` for the `scheduled_live` profile. For the example suite above, use `--trigger workflow_dispatch` for manual runs.
 To request a reviewed baseline refresh:
 
 ```bash
@@ -196,7 +205,7 @@ uv run python scripts/run_live_eval_suite.py \
 
 ### Comparing Candidate Results Against a Baseline
 
-Each live run writes one suite directory. Compare two suite outputs with the same policy file used by the suite:
+Each live run writes one suite directory. Compare two suite outputs with the same baseline-policy file used by the suite:
 
 ```bash
 uv run redis-sre-agent eval compare \
