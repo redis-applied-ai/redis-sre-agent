@@ -1,5 +1,5 @@
 /* UI Kit styles */
-@import '../../src/styles/index.css';
+@import '../../ui-kit/src/styles/index.css';
 
 /* Custom application styles */
 body {
