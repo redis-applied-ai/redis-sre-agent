@@ -11,7 +11,7 @@ The air-gapped deployment uses:
 - **Pre-bundled embedding models** - HuggingFace sentence-transformers included in image
 - **External Redis** - Customer provides Redis with RediSearch module
 - **Internal LLM proxy** - Customer provides OpenAI-compatible API endpoint
-- **No runtime downloads** - Everything needed is in the Docker image
+- **No runtime downloads** - Everything needed is in the published Docker images
 
 ## Prerequisites
 
@@ -29,37 +29,49 @@ The air-gapped deployment uses:
 | Prometheus | Metrics server | For `prometheus_query_metrics` tool |
 | Loki | Log aggregation | For `loki_query_logs` tool |
 
-## Getting the Air-Gap Image
+## Getting the Air-Gap Images
 
 ### Option 1: Mirror from Docker Hub (Recommended)
 
-The air-gap image is published to Docker Hub. Mirror it to your internal
+The air-gap images are published to Docker Hub. Mirror them to your internal
 registry (Artifactory, Harbor, etc.):
 
 ```bash
 # On a machine with internet access
 docker pull redislabs/redis-sre-agent:airgap
+docker pull redislabs/redis-sre-agent-ui:airgap
 
 # Tag for your internal registry
 docker tag redislabs/redis-sre-agent:airgap your-artifactory.internal.com/redis-sre-agent:airgap
+docker tag redislabs/redis-sre-agent-ui:airgap your-artifactory.internal.com/redis-sre-agent-ui:airgap
 
 # Push to internal registry
 docker push your-artifactory.internal.com/redis-sre-agent:airgap
+docker push your-artifactory.internal.com/redis-sre-agent-ui:airgap
 ```
 
 Then in your air-gapped environment, pull from your internal registry:
 
 ```bash
 docker pull your-artifactory.internal.com/redis-sre-agent:airgap
+docker pull your-artifactory.internal.com/redis-sre-agent-ui:airgap
 ```
 
-**Available tags:**
+**Available agent tags:**
 
 | Tag | Description |
 |-----|-------------|
 | `airgap` | Latest air-gap image with bundled HuggingFace models |
 | `v1.0.0-airgap` | Versioned air-gap image (example) |
 | `latest` | Standard image (requires internet for model downloads) |
+
+**Available UI tags:**
+
+| Tag | Description |
+|-----|-------------|
+| `airgap` | Latest UI image for no-internet deployments |
+| `v1.0.0-airgap` | Versioned air-gap UI image (example) |
+| `latest` | Latest standard UI image |
 
 ### Option 2: Build from Source
 
@@ -70,19 +82,21 @@ If you cannot use the published image, build it yourself:
 git clone https://github.com/redis-applied-ai/redis-sre-agent.git
 cd redis-sre-agent
 
-# Build the air-gap bundle (builds Docker image + creates bundle)
+# Build the air-gap bundle (builds Docker images + creates bundle)
 ./scripts/build-airgap.sh --output ./airgap-bundle
 ```
 
 The build script:
 
-1. **Builds the Docker image** from `Dockerfile.airgap` with pre-bundled HuggingFace models
-2. **Exports the image** to a portable tarball
-3. **Creates a complete bundle** with configuration files
+1. **Builds the agent Docker image** from `Dockerfile.airgap` with pre-bundled HuggingFace models
+2. **Builds the UI Docker image** from `ui/Dockerfile` using the production nginx target
+3. **Exports the images** to portable tarballs
+4. **Creates a complete bundle** with configuration files
 
 Bundle contents:
 
 - `redis-sre-agent-airgap.tar.gz` (Docker image ~4GB with models and KB artifacts)
+- `redis-sre-agent-ui-airgap.tar.gz` (optional UI image served by nginx)
 - `docker-compose.airgap.yml`
 - `.env.example`
 - `config.yaml`
@@ -99,8 +113,14 @@ Bundle contents:
 # Custom image tag
 ./scripts/build-airgap.sh --tag myregistry/sre-agent:v1.0
 
+# Custom UI image tag
+./scripts/build-airgap.sh --ui-tag myregistry/sre-agent-ui:v1.0-airgap
+
 # Skip knowledge base artifacts
 ./scripts/build-airgap.sh --skip-artifacts
+
+# Skip building the UI image
+./scripts/build-airgap.sh --skip-ui-image
 
 # Push to internal registry
 ./scripts/build-airgap.sh --push myregistry.internal.com
@@ -108,16 +128,18 @@ Bundle contents:
 
 ## Deployment
 
-### 1. Get the Image
+### 1. Get the Images
 
 **If using mirrored image (Option 1):**
 
 ```bash
 # Pull from your internal registry
 docker pull your-artifactory.internal.com/redis-sre-agent:airgap
+docker pull your-artifactory.internal.com/redis-sre-agent-ui:airgap
 
 # Or for Podman
 podman pull your-artifactory.internal.com/redis-sre-agent:airgap
+podman pull your-artifactory.internal.com/redis-sre-agent-ui:airgap
 ```
 
 **If using build bundle (Option 2):**
@@ -125,6 +147,7 @@ podman pull your-artifactory.internal.com/redis-sre-agent:airgap
 ```bash
 # Transfer airgap-bundle/ to air-gapped environment, then:
 docker load < redis-sre-agent-airgap.tar.gz
+docker load < redis-sre-agent-ui-airgap.tar.gz
 
 # Verify
 docker images | grep redis-sre-agent
@@ -171,9 +194,15 @@ VECTOR_DIM=384
 # Optional: Monitoring
 TOOLS_PROMETHEUS_URL=http://your-prometheus:9090
 TOOLS_LOKI_URL=http://your-loki:3100
+
+# Optional: Published UI image and backend upstream
+SRE_UI_IMAGE=your-artifactory.internal.com/redis-sre-agent-ui:airgap
+SRE_UI_API_UPSTREAM=http://sre-agent:8000
 ```
 
 ### 4. Start Services
+
+Start the API and worker:
 
 ```bash
 docker compose -f docker-compose.airgap.yml up -d
@@ -182,6 +211,17 @@ docker compose -f docker-compose.airgap.yml up -d
 For Podman:
 ```bash
 podman-compose -f docker-compose.airgap.yml up -d
+```
+
+To include the UI image, enable the `ui` profile:
+
+```bash
+docker compose --profile ui -f docker-compose.airgap.yml up -d
+```
+
+For Podman:
+```bash
+podman-compose --profile ui -f docker-compose.airgap.yml up -d
 ```
 
 ### 5. Initialize Knowledge Base
