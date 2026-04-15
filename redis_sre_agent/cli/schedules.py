@@ -7,13 +7,12 @@ import json as _json
 from datetime import datetime
 
 import click
-from docket import Docket
 from rich.console import Console
 from rich.table import Table
 
-from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.schedule_helpers import run_schedule_now_helper
 from redis_sre_agent.core.schedules import get_schedule
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.threads import ThreadManager
@@ -485,79 +484,22 @@ def schedules_run_now(schedule_id: str, as_json: bool):
 
     async def _run():
         import json as _json
-        from datetime import datetime, timezone
-
-        from redis_sre_agent.core.schedules import get_schedule
 
         try:
-            schedule = await get_schedule(schedule_id)
-            if not schedule:
+            payload = await run_schedule_now_helper(schedule_id)
+            if payload.get("error") == "Schedule not found":
                 msg = {"error": "Schedule not found", "id": schedule_id}
                 if as_json:
                     print(_json.dumps(msg))
                 else:
                     click.echo("❌ Schedule not found")
                 return
-
-            # Prepare run context (mirror API behavior)
-            current_time = datetime.now(timezone.utc)
-            run_context = {
-                "schedule_id": schedule_id,
-                "schedule_name": schedule.get("name"),
-                "automated": True,
-                "manual_trigger": True,
-                "original_query": schedule.get("instructions"),
-                "scheduled_at": current_time.isoformat(),
-            }
-            if schedule.get("redis_instance_id"):
-                run_context["instance_id"] = schedule.get("redis_instance_id")
-
-            # Create a thread for this run
-            redis_client = get_redis_client()
-            thread_manager = ThreadManager(redis_client=redis_client)
-            thread_id = await thread_manager.create_thread(
-                user_id="scheduler",
-                session_id=f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}",
-                initial_context=run_context,
-                tags=["automated", "scheduled", "manual_trigger"],
-            )
-            # Set subject to schedule name (fallback to first line of instructions)
-            try:
-                subj = (schedule.get("name") or "").strip()
-                if not subj:
-                    instr = (schedule.get("instructions") or "").strip()
-                    subj = instr.splitlines()[0][:80] if instr else "Scheduled Run"
-                await thread_manager.set_thread_subject(thread_id, subj)
-            except Exception:
-                pass
-
-            docket_task_id = None
-            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-                key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
-                try:
-                    task_func = docket.add(process_agent_turn, key=key)
-                    docket_task_id = await task_func(
-                        thread_id=thread_id,
-                        message=schedule.get("instructions") or "",
-                        context=run_context,
-                    )
-                except Exception as e:
-                    if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                        docket_task_id = "already_running"
-                    else:
-                        raise
-
-            payload = {
-                "schedule_id": schedule_id,
-                "status": "pending",
-                "scheduled_at": current_time.isoformat(),
-                "thread_id": thread_id,
-                "docket_task_id": str(docket_task_id) if docket_task_id is not None else None,
-            }
             if as_json:
                 print(_json.dumps(payload))
             else:
-                click.echo(f"✅ Triggered schedule {schedule_id} (thread {thread_id})")
+                click.echo(
+                    f"✅ Triggered schedule {schedule_id} (thread {payload.get('thread_id')})"
+                )
         except Exception as e:
             if as_json:
                 print(_json.dumps({"error": str(e), "id": schedule_id}))

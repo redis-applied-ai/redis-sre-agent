@@ -10,6 +10,7 @@ from redis_sre_agent.core.pipeline_execution_helpers import (
     queue_pipeline_operation_task,
     run_pipeline_operation_helper,
 )
+from redis_sre_agent.mcp_server.task_contract import runtime_task_execution_context
 
 
 class TestRunPipelineOperationHelper:
@@ -413,7 +414,7 @@ class TestQueuePipelineOperationTask:
 
     @pytest.mark.asyncio
     async def test_queue_pipeline_operation_task(self):
-        """Queue helper should create a task and enqueue the Docket job."""
+        """Queue helper should create a task and submit the background job."""
         mock_client = AsyncMock()
         mock_result = {
             "thread_id": "thread-123",
@@ -432,19 +433,12 @@ class TestQueuePipelineOperationTask:
                 new_callable=AsyncMock,
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.pipeline_execution_helpers.get_redis_url",
+                "redis_sre_agent.core.pipeline_execution_helpers.submit_background_task_call",
                 new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch("redis_sre_agent.core.pipeline_execution_helpers.Docket") as mock_docket,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             mock_create_task.return_value = mock_result
-            docket_instance = AsyncMock()
-            docket_instance.__aenter__.return_value = docket_instance
-            docket_instance.__aexit__.return_value = False
-            queued = AsyncMock()
-            docket_instance.add.return_value = queued
-            mock_docket.return_value = docket_instance
 
             result = await queue_pipeline_operation_task(
                 operation="scrape",
@@ -470,14 +464,14 @@ class TestQueuePipelineOperationTask:
             },
             redis_client=mock_client,
         )
-        queued.assert_awaited_once_with(
-            operation="scrape",
-            task_id="task-456",
-            thread_id="thread-123",
-            artifacts_path="/tmp/artifacts",
-            scrapers=["redis_docs"],
-            latest_only=True,
-        )
+        assert mock_submit.await_args.kwargs["processor_kwargs"] == {
+            "operation": "scrape",
+            "task_id": "task-456",
+            "thread_id": "thread-123",
+            "artifacts_path": "/tmp/artifacts",
+            "scrapers": ["redis_docs"],
+            "latest_only": True,
+        }
 
     @pytest.mark.asyncio
     async def test_queue_pipeline_operation_task_formats_messages(self):
@@ -499,18 +493,12 @@ class TestQueuePipelineOperationTask:
                 new_callable=AsyncMock,
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.pipeline_execution_helpers.get_redis_url",
+                "redis_sre_agent.core.pipeline_execution_helpers.submit_background_task_call",
                 new_callable=AsyncMock,
-                return_value="redis://test",
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
             ),
-            patch("redis_sre_agent.core.pipeline_execution_helpers.Docket") as mock_docket,
         ):
             mock_create_task.return_value = mock_result
-            docket_instance = AsyncMock()
-            docket_instance.__aenter__.return_value = docket_instance
-            docket_instance.__aexit__.return_value = False
-            docket_instance.add.return_value = AsyncMock()
-            mock_docket.return_value = docket_instance
 
             await queue_pipeline_operation_task(
                 operation="cleanup",
@@ -542,19 +530,12 @@ class TestQueuePipelineOperationTask:
                 new_callable=AsyncMock,
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.pipeline_execution_helpers.get_redis_url",
+                "redis_sre_agent.core.pipeline_execution_helpers.submit_background_task_call",
                 new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch("redis_sre_agent.core.pipeline_execution_helpers.Docket") as mock_docket,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             mock_create_task.return_value = mock_result
-            docket_instance = AsyncMock()
-            docket_instance.__aenter__.return_value = docket_instance
-            docket_instance.__aexit__.return_value = False
-            queued = AsyncMock()
-            docket_instance.add.return_value = queued
-            mock_docket.return_value = docket_instance
 
             await queue_pipeline_operation_task(
                 operation="scrape",
@@ -564,13 +545,59 @@ class TestQueuePipelineOperationTask:
                 batch_date=None,
             )
 
-        queued.assert_awaited_once_with(
-            operation="scrape",
+        assert mock_submit.await_args.kwargs["processor_kwargs"] == {
+            "operation": "scrape",
+            "task_id": "task-456",
+            "thread_id": "thread-123",
+            "latest_only": False,
+            "keep_days": 0,
+            "docs_path": "",
+        }
+
+    @pytest.mark.asyncio
+    async def test_queue_pipeline_operation_task_processes_inline_in_runtime(self):
+        mock_client = AsyncMock()
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "queued",
+        }
+        mock_processor = AsyncMock(return_value={"chunks_indexed": 12})
+
+        with (
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.get_redis_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "redis_sre_agent.core.pipeline_execution_helpers._get_pipeline_task_callable",
+                return_value=mock_processor,
+            ),
+        ):
+            with runtime_task_execution_context({"outerTaskId": "runtime-task-1"}):
+                result = await queue_pipeline_operation_task(
+                    operation="ingest",
+                    batch_date="2026-03-25",
+                )
+
+        assert result == {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "done",
+            "message": "Pipeline ingest processed inline during runtime execution",
+            "operation": "ingest",
+            "result": {"chunks_indexed": 12},
+        }
+        mock_processor.assert_awaited_once_with(
+            operation="ingest",
             task_id="task-456",
             thread_id="thread-123",
-            latest_only=False,
-            keep_days=0,
-            docs_path="",
+            batch_date="2026-03-25",
         )
 
 

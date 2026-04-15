@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import inspect
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-from docket import Docket
 
 from redis_sre_agent.core.helper_utils import emit_progress as _emit_progress
 from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import create_task
+from redis_sre_agent.mcp_server.task_contract import submit_background_task_call
 from redis_sre_agent.pipelines.ingestion.processor import IngestionPipeline
 from redis_sre_agent.pipelines.orchestrator import PipelineOrchestrator
 from redis_sre_agent.pipelines.scraper.base import ArtifactStorage
@@ -302,23 +300,38 @@ async def queue_pipeline_operation_task(
     )
 
     task_kwargs = {key: value for key, value in kwargs.items() if value is not None}
-    async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-        task_func = docket.add(_get_pipeline_task_callable(), key=result["task_id"])
-        if inspect.isawaitable(task_func):
-            task_func = await task_func
-        await task_func(
-            operation=operation,
-            task_id=result["task_id"],
-            thread_id=result["thread_id"],
+    execution = await submit_background_task_call(
+        processor=_get_pipeline_task_callable(),
+        key=str(result["task_id"]),
+        processor_kwargs={
+            "operation": operation,
+            "task_id": result["task_id"],
+            "thread_id": result["thread_id"],
             **task_kwargs,
-        )
+        },
+    )
 
-    return {
+    response = {
         "thread_id": result["thread_id"],
         "task_id": result["task_id"],
-        "status": result["status"].value
-        if hasattr(result["status"], "value")
-        else str(result["status"]),
-        "message": f"Pipeline {operation} task queued for processing",
         "operation": operation,
     }
+    if execution["mode"] == "inline":
+        response.update(
+            {
+                "status": "done",
+                "message": f"Pipeline {operation} processed inline during runtime execution",
+                "result": execution["result"],
+            }
+        )
+        return response
+
+    response.update(
+        {
+            "status": result["status"].value
+            if hasattr(result["status"], "value")
+            else str(result["status"]),
+            "message": f"Pipeline {operation} task queued for processing",
+        }
+    )
+    return response

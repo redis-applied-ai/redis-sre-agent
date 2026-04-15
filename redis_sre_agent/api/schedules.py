@@ -4,13 +4,12 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from docket import Docket
 from fastapi import APIRouter, HTTPException, status
 
-from ..core.docket_tasks import get_redis_url, process_agent_turn, scheduler_task
+from ..core.docket_tasks import scheduler_task
 from ..core.keys import RedisKeys
 from ..core.redis import get_redis_client
-from ..core.schedule_helpers import _build_manual_run_context
+from ..core.schedule_helpers import run_schedule_now_helper
 from ..core.schedules import (
     Schedule,
     store_schedule,
@@ -26,6 +25,7 @@ from ..core.schedules import (
 )
 from ..core.tasks import TaskManager
 from ..core.threads import ThreadManager
+from ..mcp_server.task_contract import submit_background_task_call
 from .schemas import (
     CreateScheduleRequest,
     ScheduledRun,
@@ -309,75 +309,17 @@ async def list_schedule_runs(schedule_id: str):
 async def trigger_schedule_now(schedule_id: str):
     """Manually trigger a schedule to run immediately."""
     try:
-        # Check if schedule exists in Redis
-        schedule_data = await _get_schedule(schedule_id)
-        if not schedule_data:
+        result = await run_schedule_now_helper(schedule_id)
+        if result.get("error") == "Schedule not found":
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Schedule {schedule_id} not found"
             )
-
-        # For manual triggers, directly create and submit the agent task
-        # This preserves the original schedule timing and avoids scheduler interference
-        current_time = datetime.now(timezone.utc)
-
-        logger.info(f"Manually triggering schedule {schedule_id} to run immediately")
-
-        redis_client = get_redis_client()
-        thread_manager = ThreadManager(redis_client=redis_client)
-
-        # Prepare context for the manual run
-        run_context = _build_manual_run_context(schedule_id, schedule_data, current_time)
-
-        # Create thread for the manual run
-        thread_id = await thread_manager.create_thread(
-            user_id="scheduler",
-            session_id=f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}",
-            initial_context=run_context,
-            tags=["automated", "scheduled", "manual_trigger"],
-        )
-        # Set subject for the manual run to the schedule name for clarity
-        try:
-            subj = (schedule_data.get("name") or "").strip()
-            if not subj:
-                # Fallback to first line of instructions
-                instr = (schedule_data.get("instructions") or "").strip()
-                subj = instr.splitlines()[0][:80] if instr else "Scheduled Run"
-            await thread_manager.set_thread_subject(thread_id, subj)
-        except Exception:
-            pass
-
-        # Submit the agent task directly
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            # Use a deduplication key for the manual trigger
-            task_key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
-
-            try:
-                # Submit task to run immediately (no 'when' parameter)
-                task_func = docket.add(process_agent_turn, key=task_key)
-                agent_task_id = await task_func(
-                    thread_id=thread_id, message=schedule_data["instructions"], context=run_context
-                )
-                logger.info(
-                    f"Submitted manual agent task {agent_task_id} for schedule {schedule_id} with key {task_key}"
-                )
-            except Exception as e:
-                # If the task was already triggered (duplicate key), this is expected
-                if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                    logger.info(
-                        f"Manual agent task for schedule {schedule_id} already submitted with key {task_key}"
-                    )
-                    agent_task_id = "already_running"
-                else:
-                    logger.error(f"Failed to submit manual agent task: {e}")
-                    raise e
-
-        # Create a synthetic run record for the response (thread_id known; task_id will be created by worker)
         run = ScheduledRun(
             schedule_id=schedule_id,
-            scheduled_at=current_time.isoformat(),
-            status="pending",
-            thread_id=thread_id,
-            task_id=None,
+            scheduled_at=result["scheduled_at"],
+            status=result["status"],
+            thread_id=result.get("thread_id"),
+            task_id=result.get("task_id"),
         )
 
         logger.info(f"Manually triggered schedule {schedule_id}")
@@ -395,36 +337,46 @@ async def trigger_schedule_now(schedule_id: str):
 async def trigger_scheduler():
     """Manually trigger the scheduler task for testing."""
     try:
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            # Use a deduplication key based on current time to prevent multiple manual triggers
-            current_time = datetime.now(timezone.utc)
-            scheduler_key = f"scheduler_task_manual_{current_time.strftime('%Y%m%d_%H%M%S')}"
+        current_time = datetime.now(timezone.utc)
+        scheduler_key = f"scheduler_task_manual_{current_time.strftime('%Y%m%d_%H%M%S')}"
 
-            try:
-                task_func = docket.add(scheduler_task, key=scheduler_key)
-                task_id = await task_func()
-                logger.info(
-                    f"Manually triggered scheduler task with ID: {task_id} and key: {scheduler_key}"
-                )
-
+        try:
+            execution = await submit_background_task_call(
+                processor=scheduler_task,
+                key=scheduler_key,
+                processor_kwargs={},
+            )
+        except Exception as e:
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
                 return {
                     "status": "success",
-                    "message": "Scheduler task triggered successfully",
-                    "task_id": str(task_id),
+                    "message": "Scheduler task already running - no duplicate created",
                     "scheduler_key": scheduler_key,
                     "timestamp": current_time.isoformat(),
                 }
-            except Exception as e:
-                # If the task was already triggered (duplicate key), return success but note it
-                if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                    return {
-                        "status": "success",
-                        "message": "Scheduler task already running - no duplicate created",
-                        "scheduler_key": scheduler_key,
-                        "timestamp": current_time.isoformat(),
-                    }
-                else:
-                    raise e
+            raise e
+
+        payload = {
+            "status": "success",
+            "scheduler_key": scheduler_key,
+            "timestamp": current_time.isoformat(),
+        }
+        if execution["mode"] == "inline":
+            payload.update(
+                {
+                    "message": "Scheduler task executed inline during runtime execution",
+                    "result": execution["result"],
+                }
+            )
+            return payload
+
+        payload.update(
+            {
+                "message": "Scheduler task triggered successfully",
+                "task_id": str(execution["result"]),
+            }
+        )
+        return payload
 
     except Exception as e:
         logger.error(f"Failed to trigger scheduler task: {e}")

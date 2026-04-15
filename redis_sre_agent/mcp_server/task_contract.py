@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Any, Awaitable, Callable, Dict, Mapping
@@ -109,6 +110,77 @@ def _build_task_response(
     return response
 
 
+def in_runtime_task_execution() -> bool:
+    return _RUNTIME_EXECUTION_CONTEXT.get() is not None
+
+
+async def submit_background_task_call(
+    *,
+    processor: Callable[..., Awaitable[Any]],
+    processor_kwargs: Mapping[str, Any] | None = None,
+    key: str | None = None,
+    when: Any | None = None,
+    docket_name: str = "sre_docket",
+) -> Dict[str, Any]:
+    from docket import Docket
+
+    from redis_sre_agent.core.docket_tasks import get_redis_url
+
+    payload = dict(processor_kwargs or {})
+    if in_runtime_task_execution():
+        return {
+            "mode": "inline",
+            "task_system": "runtime",
+            "result": await processor(**payload),
+        }
+
+    add_kwargs: Dict[str, Any] = {}
+    if key is not None:
+        add_kwargs["key"] = key
+    if when is not None:
+        add_kwargs["when"] = when
+
+    async with Docket(url=await get_redis_url(), name=docket_name) as docket:
+        task_func = docket.add(processor, **add_kwargs)
+        if inspect.isawaitable(task_func):
+            task_func = await task_func
+        result = await task_func(**payload)
+
+    return {
+        "mode": "agent_task",
+        "task_system": "sre",
+        "result": result,
+    }
+
+
+async def cancel_background_task(
+    *,
+    task_id: str,
+    docket_name: str = "sre_docket",
+) -> Dict[str, Any]:
+    from docket import Docket
+
+    from redis_sre_agent.core.docket_tasks import get_redis_url
+
+    if in_runtime_task_execution():
+        return {
+            "mode": "inline",
+            "task_system": "runtime",
+            "cancelled": False,
+            "message": "Runtime execution has no nested Docket task to cancel",
+        }
+
+    async with Docket(url=await get_redis_url(), name=docket_name) as docket:
+        await docket.cancel(task_id)
+
+    return {
+        "mode": "agent_task",
+        "task_system": "sre",
+        "cancelled": True,
+        "message": f"Cancelled Docket task {task_id}",
+    }
+
+
 async def submit_async_tool_task(
     *,
     tool_name: str,
@@ -119,9 +191,6 @@ async def submit_async_tool_task(
     native_message: str,
     runtime_message: str,
 ) -> Dict[str, Any]:
-    from docket import Docket
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.tasks import create_task
 
@@ -136,23 +205,22 @@ async def submit_async_tool_task(
     payload = dict(processor_kwargs or {})
     payload.update({"task_id": task_id, "thread_id": thread_id})
 
-    runtime_context = _RUNTIME_EXECUTION_CONTEXT.get()
-    if runtime_context is not None:
-        result = await processor(**payload)
+    execution = await submit_background_task_call(
+        processor=processor,
+        processor_kwargs=payload,
+        key=task_id,
+    )
+    if execution["mode"] == "inline":
         return _build_task_response(
             task_record=task_record,
             status="done",
             message=runtime_message,
             tool_name=tool_name,
             mode="inline",
-            task_system="runtime",
+            task_system=str(execution["task_system"]),
             final=True,
-            result=result,
+            result=execution["result"],
         )
-
-    async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-        task_func = docket.add(processor, key=task_id)
-        await task_func(**payload)
 
     return _build_task_response(
         task_record=task_record,

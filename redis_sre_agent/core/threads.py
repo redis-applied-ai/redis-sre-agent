@@ -824,10 +824,8 @@ async def create_thread(
 
         redis_client = _get()
 
-    # Local imports to avoid import cycles
-    from docket import Docket  # type: ignore
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
+    from redis_sre_agent.core.docket_tasks import process_agent_turn
+    from redis_sre_agent.mcp_server.task_contract import submit_background_task_call
 
     thread_manager = ThreadManager(redis_client=redis_client)
 
@@ -844,16 +842,35 @@ async def create_thread(
 
     await thread_manager.update_thread_subject(thread_id, query)
 
-    async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-        task_func = docket.add(process_agent_turn)
-        await task_func(thread_id=thread_id, message=query, context=initial_context)
+    execution = await submit_background_task_call(
+        processor=process_agent_turn,
+        processor_kwargs={
+            "thread_id": thread_id,
+            "message": query,
+            "context": initial_context,
+        },
+    )
 
-    return {
+    response = {
         "thread_id": thread_id,
-        "message": "Thread created and queued for analysis",
-        "estimated_completion": "2-5 minutes",
         "context": initial_context,
     }
+    if execution["mode"] == "inline":
+        response.update(
+            {
+                "message": "Thread created and processed inline during runtime execution",
+                "result": execution["result"],
+            }
+        )
+        return response
+
+    response.update(
+        {
+            "message": "Thread created and queued for analysis",
+            "estimated_completion": "2-5 minutes",
+        }
+    )
+    return response
 
 
 async def continue_thread(
@@ -865,9 +882,8 @@ async def continue_thread(
 
         redis_client = _get()
 
-    from docket import Docket  # type: ignore
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
+    from redis_sre_agent.core.docket_tasks import process_agent_turn
+    from redis_sre_agent.mcp_server.task_contract import submit_background_task_call
 
     thread_manager = ThreadManager(redis_client=redis_client)
 
@@ -875,15 +891,34 @@ async def continue_thread(
     if not thread_state:
         raise ValueError(f"Thread {thread_id} not found")
 
-    async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-        task_func = docket.add(process_agent_turn)
-        await task_func(thread_id=thread_id, message=query, context=context)
+    execution = await submit_background_task_call(
+        processor=process_agent_turn,
+        processor_kwargs={
+            "thread_id": thread_id,
+            "message": query,
+            "context": context,
+        },
+    )
 
-    return {
+    response = {
         "thread_id": thread_id,
-        "message": "Continuation queued for processing",
-        "estimated_completion": "2-5 minutes",
     }
+    if execution["mode"] == "inline":
+        response.update(
+            {
+                "message": "Continuation processed inline during runtime execution",
+                "result": execution["result"],
+            }
+        )
+        return response
+
+    response.update(
+        {
+            "message": "Continuation queued for processing",
+            "estimated_completion": "2-5 minutes",
+        }
+    )
+    return response
 
 
 async def cancel_thread(*, thread_id: str, redis_client=None) -> Dict[str, Any]:

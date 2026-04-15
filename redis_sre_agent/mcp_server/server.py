@@ -2364,11 +2364,9 @@ async def redis_sre_delete_task(task_id: str) -> Dict[str, Any]:
     2. Run core Redis cleanup via core.tasks.delete_task.
     """
 
-    from docket import Docket
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.tasks import delete_task as delete_task_core
+    from redis_sre_agent.mcp_server.task_contract import cancel_background_task
 
     logger.info(f"MCP delete_task: {task_id}")
 
@@ -2376,11 +2374,10 @@ async def redis_sre_delete_task(task_id: str) -> Dict[str, Any]:
 
     # Best-effort Docket cancellation
     try:
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            try:
-                await docket.cancel(task_id)
-            except Exception as e:  # pragma: no cover - defensive
-                logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
+        try:
+            await cancel_background_task(task_id=task_id)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("Failed to initialize Docket for cancel of %s: %s", task_id, e)
 
