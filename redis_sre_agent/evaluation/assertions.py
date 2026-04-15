@@ -18,7 +18,7 @@ from redis_sre_agent.evaluation.tool_identity import LogicalToolIdentity
 
 
 def _normalize_text(value: Any) -> str:
-    return str(value or "").strip().lower()
+    return " ".join(str(value or "").strip().lower().split())
 
 
 def _normalize_logical_identity(

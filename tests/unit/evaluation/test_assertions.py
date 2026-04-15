@@ -123,6 +123,23 @@ def test_score_structured_assertions_marks_missing_and_forbidden_evidence_failed
     assert results.all_passed is False
 
 
+def test_score_structured_assertions_normalizes_phrase_whitespace():
+    scenario = _scenario()
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[],
+        retrieved_sources=[],
+        final_answer=(
+            "Maintenance   mode caused the   failover. Do not recommend CONFIG   GET changes."
+        ),
+        actual_routing_decision="redis_triage",
+    )
+
+    assert results.required_findings[0].status.value == "passed"
+    assert results.forbidden_claims[0].status.value == "passed"
+
+
 def test_score_structured_assertions_normalizes_expected_logical_tool_refs():
     scenario = EvalScenario.model_validate(
         {

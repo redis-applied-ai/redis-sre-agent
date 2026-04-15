@@ -117,6 +117,7 @@ async def test_full_source_scenario_prefers_runbook_over_generic_advice():
     )
     backend = build_fixture_knowledge_backend(scenario)
 
+    pinned = await backend.get_pinned_documents(version=scenario.knowledge.version)
     docs = await backend.search_knowledge_base(
         query="quick fix maxmemory policy evidence steps",
         version=scenario.knowledge.version,
@@ -125,6 +126,9 @@ async def test_full_source_scenario_prefers_runbook_over_generic_advice():
     assert docs["results"][0]["document_hash"] == "runbook-overrides-generic-advice"
     assert docs["results"][0]["source_pack"] == "redis-docs-curated"
     assert docs["results"][0]["source_pack_version"] == "2026-04-01"
+    assert {document["document_hash"] for document in pinned["pinned_documents"]} >= {
+        "memory-pressure-runbook"
+    }
 
 
 @pytest.mark.asyncio

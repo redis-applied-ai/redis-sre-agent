@@ -30,6 +30,8 @@ execution:
 knowledge:
   mode: full
   version: latest
+  pinned_documents:
+    - ../../../corpora/redis-docs-curated/2026-04-01/documents/memory-pressure-runbook.md
   corpus:
     - ../../../corpora/redis-docs-curated/2026-04-01
 
