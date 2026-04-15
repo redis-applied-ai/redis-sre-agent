@@ -17,7 +17,7 @@ from opentelemetry import trace
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.instances import RedisInstance
-from redis_sre_agent.evaluation.injection import (
+from redis_sre_agent.core.runtime_overrides import (
     dispatch_tool_runtime_override,
     get_active_mcp_servers,
     has_active_mcp_server_override,

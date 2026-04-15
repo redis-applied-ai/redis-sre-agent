@@ -48,6 +48,26 @@ def _summary_json(summary: object) -> str:
     return json.dumps(summary, indent=2)
 
 
+def _summary_text(summary: object) -> str:
+    if not hasattr(summary, "suite_name"):
+        return _summary_json(summary)
+
+    lines = [
+        f"Suite: {getattr(summary, 'suite_name', '')}",
+        f"Trigger: {getattr(summary, 'trigger', '')}",
+        f"Git SHA: {getattr(summary, 'git_sha', '')}",
+        f"Output dir: {getattr(summary, 'output_dir', '')}",
+        (
+            "Scenarios: "
+            f"{getattr(summary, 'total_scenarios', 0)} total, "
+            f"{getattr(summary, 'failed_scenarios', 0)} failed "
+            f"(allowed {getattr(summary, 'allowed_failed_scenarios', 0)})"
+        ),
+        f"Overall pass: {'yes' if bool(getattr(summary, 'overall_pass', False)) else 'no'}",
+    ]
+    return "\n".join(lines)
+
+
 @click.group()
 def eval() -> None:
     """Run eval scenario utilities and live suites."""
@@ -91,7 +111,7 @@ def live_suite(
         update_baseline=update_baseline,
         session_id_prefix=session_id_prefix,
     )
-    click.echo(_summary_json(summary) if as_json else _summary_json(summary))
+    click.echo(_summary_json(summary) if as_json else _summary_text(summary))
     if not bool(getattr(summary, "overall_pass", True)):
         raise SystemExit(1)
 

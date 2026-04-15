@@ -25,7 +25,7 @@ from redis_sre_agent.core.redis import (
     get_support_tickets_index,
     get_vectorizer,
 )
-from redis_sre_agent.evaluation.injection import dispatch_knowledge_backend_override
+from redis_sre_agent.core.runtime_overrides import dispatch_knowledge_backend_override
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -678,7 +678,6 @@ async def skills_check_helper(
         offset=offset,
         version=version,
         distance_threshold=distance_threshold,
-        config=config,
     )
     if override_result is not None:
         return override_result
@@ -830,7 +829,6 @@ async def get_skill_helper(
         "get_skill",
         skill_name=skill_name,
         version=version,
-        config=config,
     )
     if override_result is not None:
         return override_result
@@ -975,7 +973,6 @@ async def search_support_tickets_helper(
         distance_threshold=distance_threshold,
         hybrid_search=hybrid_search,
         version=version,
-        config=config,
     )
     if override_result is not None:
         return override_result
@@ -1082,7 +1079,6 @@ async def get_support_ticket_helper(
     override_result = await _maybe_call_knowledge_backend(
         "get_support_ticket",
         ticket_id=ticket_id,
-        config=config,
     )
     if override_result is not None:
         return override_result
@@ -1154,7 +1150,6 @@ async def get_pinned_documents_helper(
         version=version,
         limit=limit,
         content_char_budget=content_char_budget,
-        config=config,
     )
     if override_result is not None:
         return override_result
@@ -1355,7 +1350,6 @@ async def search_knowledge_base_helper(
         distance_threshold=distance_threshold,
         hybrid_search=hybrid_search,
         version=version,
-        config=config,
         index_type=index_type,
         include_special_document_types=include_special_document_types,
     )
@@ -1773,7 +1767,6 @@ async def get_all_document_fragments(
         include_metadata=include_metadata,
         index_type=index_type,
         version=version,
-        config=config,
     )
     if override_result is not None:
         return override_result
@@ -1919,7 +1912,7 @@ async def get_related_document_fragments(
         document_hash=document_hash,
         current_chunk_index=current_chunk_index,
         context_window=context_window,
-        config=config,
+        index_type="knowledge",
     )
     if override_result is not None:
         return override_result

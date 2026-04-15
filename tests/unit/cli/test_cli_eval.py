@@ -32,6 +32,13 @@ def test_eval_live_suite_command_delegates_to_runner(tmp_path, monkeypatch):
     config_path.write_text("suites: {}\n", encoding="utf-8")
 
     class Summary:
+        suite_name = "weekly-live-smoke"
+        trigger = "manual"
+        git_sha = "deadbeef"
+        output_dir = str(tmp_path / "artifacts")
+        total_scenarios = 1
+        failed_scenarios = 0
+        allowed_failed_scenarios = 0
         overall_pass = True
 
         @staticmethod
@@ -89,6 +96,43 @@ def test_eval_live_suite_command_delegates_to_runner(tmp_path, monkeypatch):
         "update_baseline": False,
         "session_id_prefix": "gha-live",
     }
+    assert "Suite: weekly-live-smoke" in result.output
+    assert "Overall pass: yes" in result.output
+    assert '"suite_name"' not in result.output
+
+
+def test_eval_live_suite_command_outputs_json_when_requested(tmp_path, monkeypatch):
+    runner = CliRunner()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("suites: {}\n", encoding="utf-8")
+
+    class Summary:
+        overall_pass = True
+
+        @staticmethod
+        def model_dump_json(*, indent: int) -> str:
+            return '{"suite_name":"weekly-live-smoke"}'
+
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.run_live_eval_suite_sync",
+        lambda *args, **kwargs: Summary(),
+    )
+
+    result = runner.invoke(
+        eval,
+        [
+            "live-suite",
+            "weekly-live-smoke",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(tmp_path / "artifacts"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == '{"suite_name":"weekly-live-smoke"}'
 
 
 def test_eval_live_suite_command_returns_nonzero_when_suite_fails(tmp_path, monkeypatch):

@@ -7,6 +7,7 @@ from redis_sre_agent.agent.knowledge_context import build_startup_knowledge_cont
 from redis_sre_agent.core.config import MCPServerConfig
 from redis_sre_agent.core.knowledge_helpers import (
     get_pinned_documents_helper,
+    get_related_document_fragments,
     search_knowledge_base_helper,
 )
 from redis_sre_agent.evaluation.injection import (
@@ -152,6 +153,42 @@ async def test_startup_context_uses_eval_knowledge_backend():
     assert "Check maintenance mode first." in context
     assert "Skills you know:" in context
     assert "maintenance-mode-skill" in context
+
+
+@pytest.mark.asyncio
+async def test_related_fragments_dispatch_uses_helper_parameter_names():
+    class StrictKnowledgeBackend(_FakeKnowledgeBackend):
+        async def get_related_document_fragments(
+            self,
+            *,
+            document_hash: str,
+            current_chunk_index: int | None = None,
+            context_window: int = 2,
+            version: str | None = "latest",
+            index_type: str = "knowledge",
+        ):
+            return {
+                "document_hash": document_hash,
+                "current_chunk_index": current_chunk_index,
+                "context_window": context_window,
+                "version": version,
+                "index_type": index_type,
+            }
+
+    with eval_injection_scope(knowledge_backend=StrictKnowledgeBackend()):
+        result = await get_related_document_fragments(
+            document_hash="fixture-doc",
+            current_chunk_index=4,
+            context_window=3,
+        )
+
+    assert result == {
+        "document_hash": "fixture-doc",
+        "current_chunk_index": 4,
+        "context_window": 3,
+        "version": "latest",
+        "index_type": "knowledge",
+    }
 
 
 @pytest.mark.asyncio

@@ -147,7 +147,6 @@ class TestSearchKnowledgeBaseHelper:
                     "distance_threshold": 0.8,
                     "hybrid_search": False,
                     "version": "latest",
-                    "config": None,
                     "index_type": "knowledge",
                     "include_special_document_types": False,
                 },

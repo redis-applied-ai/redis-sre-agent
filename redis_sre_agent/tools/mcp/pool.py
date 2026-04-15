@@ -19,7 +19,7 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
-from redis_sre_agent.evaluation.injection import get_active_mcp_servers
+from redis_sre_agent.core.runtime_overrides import get_active_mcp_servers
 
 if TYPE_CHECKING:
     from redis_sre_agent.core.config import MCPServerConfig

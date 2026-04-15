@@ -7,7 +7,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     get_pinned_documents_helper,
     skills_check_helper,
 )
-from redis_sre_agent.evaluation.injection import (
+from redis_sre_agent.core.runtime_overrides import (
     EvalKnowledgeBackend,
     get_active_knowledge_backend,
 )
