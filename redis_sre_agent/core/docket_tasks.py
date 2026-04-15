@@ -879,7 +879,6 @@ async def _process_agent_turn_impl(
     context: Optional[Dict[str, Any]] = None,
     task_id: Optional[str] = None,
     redis_client=None,
-    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """
     Process a single agent conversation turn.
@@ -891,7 +890,6 @@ async def _process_agent_turn_impl(
         thread_id: Thread/conversation identifier
         message: User message for this turn
         context: Additional context for the turn
-        retry: Retry configuration
     """
     redis_client = redis_client or get_redis_client()
     thread_manager = ThreadManager(redis_client=redis_client)
@@ -1519,9 +1517,7 @@ async def _process_agent_turn_impl(
 
     except Exception as e:
         error_message = f"Agent turn failed: {str(e)}"
-        logger.error(
-            f"Turn processing failed for thread {thread_id} (attempt {retry.attempt}): {e}"
-        )
+        logger.error(f"Turn processing failed for thread {thread_id}: {e}")
         # Record exception on root span if available
         try:
             if _root_span is not None:
@@ -1572,7 +1568,6 @@ async def process_agent_turn(
         message=message,
         context=context,
         task_id=task_id,
-        retry=retry,
     )
 
 
