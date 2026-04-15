@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from click.testing import CliRunner
 
 from redis_sre_agent.agent.models import AgentResponse
@@ -198,7 +200,7 @@ def test_run_mocked_eval_scenario_sync_runs_agent_only(monkeypatch):
     )()
     seen: dict[str, object] = {}
 
-    async def fake_run_agent_only_scenario(
+    async def fake_run_agent_only_scenario_with_eval_overrides(
         incoming,
         *,
         session_id,
@@ -219,8 +221,8 @@ def test_run_mocked_eval_scenario_sync_runs_agent_only(monkeypatch):
 
     monkeypatch.setattr("redis_sre_agent.cli.eval.load_eval_scenario", lambda path: scenario)
     monkeypatch.setattr(
-        "redis_sre_agent.cli.eval.run_agent_only_scenario",
-        fake_run_agent_only_scenario,
+        "redis_sre_agent.cli.eval._run_agent_only_scenario_with_eval_overrides",
+        fake_run_agent_only_scenario_with_eval_overrides,
     )
 
     from redis_sre_agent.cli.eval import run_mocked_eval_scenario_sync
@@ -232,6 +234,132 @@ def test_run_mocked_eval_scenario_sync_runs_agent_only(monkeypatch):
     assert seen["user_id"] == "local-eval"
     assert payload["agent_name"] == "knowledge_only"
     assert payload["response"] == "agent-only ok"
+
+
+def test_run_mocked_eval_scenario_sync_preserves_plain_string_agent_only_response(monkeypatch):
+    scenario = type(
+        "Scenario",
+        (),
+        {
+            "id": "prompt/sample",
+            "name": "Sample",
+            "execution": type(
+                "Execution",
+                (),
+                {"lane": ExecutionLane.AGENT_ONLY, "llm_mode": "replay"},
+            )(),
+        },
+    )()
+
+    async def fake_run_agent_only_scenario_with_eval_overrides(
+        incoming,
+        *,
+        session_id,
+        user_id,
+    ):
+        assert incoming is scenario
+        assert session_id == "eval::prompt::sample"
+        assert user_id == "local-eval"
+        return AgentOnlyHarnessResult(
+            agent_name="knowledge_only",
+            session_id=session_id,
+            response="plain-string response",
+        )
+
+    monkeypatch.setattr("redis_sre_agent.cli.eval.load_eval_scenario", lambda path: scenario)
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval._run_agent_only_scenario_with_eval_overrides",
+        fake_run_agent_only_scenario_with_eval_overrides,
+    )
+
+    from redis_sre_agent.cli.eval import run_mocked_eval_scenario_sync
+
+    payload = run_mocked_eval_scenario_sync("scenario.yaml", user_id="local-eval")
+
+    assert payload["response"] == "plain-string response"
+
+
+def test_run_agent_only_scenario_with_eval_overrides_installs_fixture_backends(monkeypatch):
+    scenario = type(
+        "Scenario",
+        (),
+        {
+            "id": "prompt/sample",
+            "name": "Sample",
+            "execution": type(
+                "Execution",
+                (),
+                {"lane": ExecutionLane.AGENT_ONLY, "llm_mode": "replay"},
+            )(),
+            "tools": type("Tools", (), {"mcp_servers": {}})(),
+        },
+    )()
+    knowledge_backend = object()
+    tool_runtime = object()
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.build_fixture_knowledge_backend",
+        lambda incoming: knowledge_backend if incoming is scenario else None,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.build_fixture_mcp_runtime",
+        lambda incoming, *, state: None if incoming is scenario else state,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.build_fixture_tool_runtime",
+        lambda incoming, *, state: tool_runtime if incoming is scenario else state,
+    )
+
+    async def fake_run_agent_only_scenario(
+        incoming,
+        *,
+        session_id,
+        user_id,
+    ):
+        from redis_sre_agent.evaluation.injection import (
+            get_active_knowledge_backend,
+            get_active_tool_runtime,
+        )
+
+        seen.update(
+            {
+                "scenario": incoming,
+                "session_id": session_id,
+                "user_id": user_id,
+                "knowledge_backend": get_active_knowledge_backend(),
+                "tool_runtime": get_active_tool_runtime(),
+            }
+        )
+        return AgentOnlyHarnessResult(
+            agent_name="knowledge_only",
+            session_id=session_id,
+            response=AgentResponse(response="agent-only ok"),
+        )
+
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.run_agent_only_scenario",
+        fake_run_agent_only_scenario,
+    )
+
+    from redis_sre_agent.cli.eval import _run_agent_only_scenario_with_eval_overrides
+
+    payload = asyncio.run(
+        _run_agent_only_scenario_with_eval_overrides(
+            scenario,
+            session_id="eval::prompt::sample",
+            user_id="local-eval",
+        )
+    )
+
+    assert payload.agent_name == "knowledge_only"
+    assert seen == {
+        "scenario": scenario,
+        "session_id": "eval::prompt::sample",
+        "user_id": "local-eval",
+        "knowledge_backend": knowledge_backend,
+        "tool_runtime": tool_runtime,
+    }
 
 
 def test_run_mocked_eval_scenario_sync_rejects_live_llm_without_opt_in(monkeypatch):

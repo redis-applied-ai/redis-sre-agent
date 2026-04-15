@@ -10,6 +10,12 @@ from typing import Any
 import click
 
 from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
+from redis_sre_agent.evaluation.fake_mcp import build_fixture_mcp_runtime
+from redis_sre_agent.evaluation.injection import (
+    eval_injection_scope,
+    get_active_eval_injection_overrides,
+)
+from redis_sre_agent.evaluation.knowledge_backend import build_fixture_knowledge_backend
 from redis_sre_agent.evaluation.live_suite import (
     compare_live_eval_reports,
     load_baseline_policy,
@@ -17,6 +23,7 @@ from redis_sre_agent.evaluation.live_suite import (
 )
 from redis_sre_agent.evaluation.runtime import load_eval_scenario, run_full_turn_scenario
 from redis_sre_agent.evaluation.scenarios import ExecutionLane
+from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorState, build_fixture_tool_runtime
 
 
 def run_live_eval_suite_sync(
@@ -94,11 +101,53 @@ def _json_compatible(value: Any) -> Any:
 
 
 def _extract_response_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
     if isinstance(value, dict):
         response = value.get("response")
         return response if isinstance(response, str) else None
     response = getattr(value, "response", None)
     return response if isinstance(response, str) else None
+
+
+async def _run_agent_only_scenario_with_eval_overrides(
+    scenario: Any,
+    *,
+    session_id: str,
+    user_id: str | None,
+) -> Any:
+    inherited_overrides = get_active_eval_injection_overrides()
+    behavior_state = FixtureBehaviorState()
+    knowledge_backend = (
+        inherited_overrides.knowledge_backend
+        if inherited_overrides and inherited_overrides.knowledge_backend is not None
+        else build_fixture_knowledge_backend(scenario)
+    )
+    mcp_runtime = (
+        inherited_overrides.mcp_runtime
+        if inherited_overrides and inherited_overrides.mcp_runtime is not None
+        else build_fixture_mcp_runtime(scenario, state=behavior_state)
+    )
+    tool_runtime = (
+        inherited_overrides.tool_runtime
+        if inherited_overrides and inherited_overrides.tool_runtime is not None
+        else build_fixture_tool_runtime(scenario, state=behavior_state)
+    )
+    mcp_servers = inherited_overrides.mcp_servers if inherited_overrides else None
+    if mcp_servers is None and mcp_runtime is not None:
+        mcp_servers = mcp_runtime.get_server_configs()
+
+    with eval_injection_scope(
+        knowledge_backend=knowledge_backend,
+        mcp_servers=mcp_servers,
+        mcp_runtime=mcp_runtime,
+        tool_runtime=tool_runtime,
+    ):
+        return await run_agent_only_scenario(
+            scenario,
+            session_id=session_id,
+            user_id=user_id,
+        )
 
 
 def run_mocked_eval_scenario_sync(
@@ -140,7 +189,7 @@ def run_mocked_eval_scenario_sync(
         }
 
     result = asyncio.run(
-        run_agent_only_scenario(
+        _run_agent_only_scenario_with_eval_overrides(
             scenario,
             session_id=effective_session_id,
             user_id=user_id,

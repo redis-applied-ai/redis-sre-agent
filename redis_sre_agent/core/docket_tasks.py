@@ -873,16 +873,12 @@ async def register_sre_tasks() -> None:
         raise
 
 
-@sre_task
-async def process_agent_turn(
+async def _process_agent_turn_impl(
     thread_id: str,
     message: str,
     context: Optional[Dict[str, Any]] = None,
     task_id: Optional[str] = None,
     redis_client=None,
-    concurrency: ConcurrencyLimit = ConcurrencyLimit(
-        "thread_id", max_concurrent=1, scope="thread_turns"
-    ),
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """
@@ -1556,6 +1552,28 @@ async def process_agent_turn(
             pass
 
         raise
+
+
+@sre_task
+async def process_agent_turn(
+    thread_id: str,
+    message: str,
+    context: Optional[Dict[str, Any]] = None,
+    task_id: Optional[str] = None,
+    concurrency: ConcurrencyLimit = ConcurrencyLimit(
+        "thread_id", max_concurrent=1, scope="thread_turns"
+    ),
+    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
+) -> Dict[str, Any]:
+    """Docket-managed wrapper around the in-process agent turn implementation."""
+
+    return await _process_agent_turn_impl(
+        thread_id=thread_id,
+        message=message,
+        context=context,
+        task_id=task_id,
+        retry=retry,
+    )
 
 
 async def run_agent_with_progress(

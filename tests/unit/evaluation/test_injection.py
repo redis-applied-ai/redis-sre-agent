@@ -180,13 +180,14 @@ async def test_related_fragments_dispatch_uses_helper_parameter_names():
             document_hash="fixture-doc",
             current_chunk_index=4,
             context_window=3,
+            version="7.8",
         )
 
     assert result == {
         "document_hash": "fixture-doc",
         "current_chunk_index": 4,
         "context_window": 3,
-        "version": "latest",
+        "version": "7.8",
         "index_type": "knowledge",
     }
 

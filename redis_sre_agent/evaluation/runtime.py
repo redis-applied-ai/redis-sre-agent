@@ -55,9 +55,9 @@ EvalRunResult = EvalFullTurnResult
 async def _default_turn_processor(**kwargs: Any) -> dict[str, Any]:
     """Call the production turn processor."""
 
-    from redis_sre_agent.core.docket_tasks import process_agent_turn
+    from redis_sre_agent.core.docket_tasks import _process_agent_turn_impl
 
-    return await process_agent_turn(**kwargs)
+    return await _process_agent_turn_impl(**kwargs)
 
 
 def _normalize_requested_agent_type(agent_name: str | None) -> str:

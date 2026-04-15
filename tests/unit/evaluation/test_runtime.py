@@ -42,7 +42,7 @@ async def test_default_turn_processor_forwards_explicit_redis_client():
     process_agent_turn = AsyncMock(return_value={"response": "ok"})
 
     with patch(
-        "redis_sre_agent.core.docket_tasks.process_agent_turn",
+        "redis_sre_agent.core.docket_tasks._process_agent_turn_impl",
         process_agent_turn,
     ):
         result = await _default_turn_processor(
