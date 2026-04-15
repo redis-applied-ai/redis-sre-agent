@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
+import redis_sre_agent.evaluation.live_suite as live_suite_module
+from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.evaluation.live_suite import (
     LiveEvalScenarioResult,
     compare_live_eval_reports,
@@ -276,6 +280,87 @@ async def test_run_live_eval_suite_rejects_disallowed_trigger(tmp_path):
             output_dir=tmp_path / "artifacts",
             event_name="pull_request",
         )
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_live_allows_agent_only_scenarios_without_mcp_servers(
+    tmp_path,
+    monkeypatch,
+):
+    scenario_path = tmp_path / "scenario.yaml"
+    scenario_path.write_text(
+        """
+id: prompt/no-mcp
+name: No MCP
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-15
+  golden:
+    expectation_basis: human_authored
+    review_status: reviewed
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: hi
+knowledge:
+  mode: startup_only
+  version: latest
+""".strip(),
+        encoding="utf-8",
+    )
+    scenario = live_suite_module._coerce_live_scenario(
+        live_suite_module.load_eval_scenario(scenario_path)
+    )
+    seen: dict[str, object] = {}
+
+    @contextmanager
+    def fake_eval_injection_scope(**kwargs):
+        seen["mcp_runtime"] = kwargs["mcp_runtime"]
+        seen["mcp_servers"] = kwargs["mcp_servers"]
+        yield
+
+    async def fake_run_agent_only_scenario(*_args, **_kwargs):
+        return SimpleNamespace(
+            context={"scope": "ok"},
+            response=AgentResponse(response="all good"),
+            agent_name="knowledge_only",
+        )
+
+    monkeypatch.setattr(live_suite_module, "eval_injection_scope", fake_eval_injection_scope)
+    monkeypatch.setattr(live_suite_module, "run_agent_only_scenario", fake_run_agent_only_scenario)
+    monkeypatch.setattr(
+        live_suite_module,
+        "build_eval_artifact_bundle",
+        lambda *args, **kwargs: SimpleNamespace(overall_pass=True),
+    )
+    monkeypatch.setattr(
+        live_suite_module,
+        "write_eval_artifact_bundle",
+        lambda bundle, output_dir: {
+            "report_json": output_dir / "report.json",
+            "report_markdown": output_dir / "report.md",
+        },
+    )
+
+    result = await live_suite_module._run_scenario_live(
+        scenario,
+        user_id="ci-user",
+        session_id_prefix="gha-live",
+        output_dir=tmp_path / "artifacts",
+        git_sha="deadbeef",
+        baseline_policy=EvalBaselinePolicy(mode="scheduled_live"),
+    )
+
+    assert scenario.tools.mcp_servers == {}
+    assert seen == {"mcp_runtime": None, "mcp_servers": None}
+    assert result == LiveEvalScenarioResult(
+        scenario_id="prompt/no-mcp",
+        execution_lane=ExecutionLane.AGENT_ONLY,
+        overall_pass=True,
+        report_json=str(tmp_path / "artifacts" / "report.json"),
+        report_markdown=str(tmp_path / "artifacts" / "report.md"),
+    )
 
 
 def test_compare_live_eval_reports_flags_score_drop_and_missing_candidate(tmp_path):

@@ -398,7 +398,7 @@ async def _run_scenario_live(
     knowledge_backend = build_fixture_knowledge_backend(scenario)
     mcp_runtime = build_fixture_mcp_runtime(scenario, state=behavior_state)
     tool_runtime = build_fixture_tool_runtime(scenario, state=behavior_state)
-    mcp_servers = mcp_runtime.get_server_configs()
+    mcp_servers = mcp_runtime.get_server_configs() if mcp_runtime is not None else None
 
     with eval_injection_scope(
         knowledge_backend=knowledge_backend,
