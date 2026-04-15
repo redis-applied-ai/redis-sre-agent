@@ -130,6 +130,17 @@ cp .env.airgap.example "$OUTPUT_DIR/.env.example"
 cp config.airgap.yaml "$OUTPUT_DIR/config.yaml"
 success "Configuration templates copied"
 
+CONFIGURE_STEP_NUMBER=2
+START_CORE_STEP_NUMBER=3
+START_UI_STEP_NUMBER=4
+
+if [ "$SKIP_UI_IMAGE" = false ]; then
+    LOAD_UI_STEP_NUMBER=2
+    CONFIGURE_STEP_NUMBER=3
+    START_CORE_STEP_NUMBER=4
+    START_UI_STEP_NUMBER=5
+fi
+
 cat > "$OUTPUT_DIR/README.md" <<EOF
 # Redis SRE Agent - Air-Gapped Deployment Bundle
 
@@ -162,32 +173,39 @@ cat >> "$OUTPUT_DIR/README.md" <<'EOF'
 EOF
 
 if [ "$SKIP_UI_IMAGE" = false ]; then
+    printf '\n%s\n' "${LOAD_UI_STEP_NUMBER}. Load the UI image (optional):" >> "$OUTPUT_DIR/README.md"
     cat >> "$OUTPUT_DIR/README.md" <<'EOF'
-
-2. Load the UI image (optional):
    ```bash
    docker load < redis-sre-agent-ui-airgap.tar.gz
    ```
 EOF
 fi
 
+printf '\n%s\n' "${CONFIGURE_STEP_NUMBER}. Configure environment:" >> "$OUTPUT_DIR/README.md"
 cat >> "$OUTPUT_DIR/README.md" <<'EOF'
-
-3. Configure environment:
    ```bash
    cp .env.example .env
    # Edit .env with your internal URLs
    ```
+EOF
 
-4. Start core services:
+printf '\n%s\n' "${START_CORE_STEP_NUMBER}. Start core services:" >> "$OUTPUT_DIR/README.md"
+cat >> "$OUTPUT_DIR/README.md" <<'EOF'
    ```bash
    docker compose -f docker-compose.airgap.yml up -d
    ```
+EOF
 
-5. Start with the published UI image:
+if [ "$SKIP_UI_IMAGE" = false ]; then
+    printf '\n%s\n' "${START_UI_STEP_NUMBER}. Start with the published UI image:" >> "$OUTPUT_DIR/README.md"
+    cat >> "$OUTPUT_DIR/README.md" <<'EOF'
    ```bash
    docker compose --profile ui -f docker-compose.airgap.yml up -d
    ```
+EOF
+fi
+
+cat >> "$OUTPUT_DIR/README.md" <<'EOF'
 
 ## Requirements
 
@@ -202,8 +220,16 @@ See `.env.example` for all configuration options.
 Key settings:
 - `REDIS_URL` - Your internal Redis instance
 - `OPENAI_BASE_URL` - Your internal LLM proxy
+EOF
+
+if [ "$SKIP_UI_IMAGE" = false ]; then
+    cat >> "$OUTPUT_DIR/README.md" <<'EOF'
 - `SRE_UI_IMAGE` - Published UI image tag to mirror internally
 - `SRE_UI_API_UPSTREAM` - Backend URL proxied by the UI container
+EOF
+fi
+
+cat >> "$OUTPUT_DIR/README.md" <<'EOF'
 - `EMBEDDING_PROVIDER=local` - Uses bundled embedding model
 EOF
 

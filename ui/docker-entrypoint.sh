@@ -5,7 +5,7 @@ set -eu
 export SRE_UI_API_UPSTREAM
 
 envsubst '$SRE_UI_API_UPSTREAM' \
-  < /etc/nginx/templates/default.conf.template \
+  < /etc/nginx/sre/default.conf.template \
   > /etc/nginx/conf.d/default.conf
 
 exec /docker-entrypoint.sh "$@"

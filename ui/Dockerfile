@@ -54,10 +54,9 @@ FROM nginx:alpine AS production
 # Copy built assets from build stage
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration template. The nginx base image will render this
-# with a constrained envsubst invocation so air-gapped deployments can
-# override the backend upstream without rebuilding the image.
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+# Copy the nginx configuration template outside the base image's default
+# envsubst scan path so our custom entrypoint is the only renderer.
+COPY nginx.conf /etc/nginx/sre/default.conf.template
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
