@@ -414,7 +414,7 @@ async def process_knowledge_query(
         # Run chat agent without explicit target scope. This preserves the
         # legacy entrypoint while keeping runtime behavior on the two-agent model.
         agent = get_chat_agent()
-        chat_max_iterations = min(int(settings.max_iterations or 15), 10)
+        chat_max_iterations = int(settings.max_iterations or 15)
         response = await agent.process_query(
             query=query,
             session_id=thread_id,
@@ -1199,7 +1199,7 @@ async def process_agent_turn(
                 if not isinstance(max_iterations, int) or max_iterations <= 0:
                     max_iterations = min(int(settings.max_iterations or 10), 8)
             else:
-                max_iterations = min(int(settings.max_iterations or 15), 10)
+                max_iterations = int(settings.max_iterations or 15)
 
             chat_agent_response = await agent.process_query(
                 query=message,

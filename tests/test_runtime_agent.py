@@ -117,13 +117,23 @@ def test_runtime_sre_agent_builds_execution_contract_metadata(
 
     assert tools["redis_sre_general_chat"]["executionContract"]["nativeMode"] == "agent_task"
     assert tools["redis_sre_general_chat"]["executionContract"]["runtimeMode"] == "inline"
+    assert tools["redis_sre_general_chat"]["executionContract"]["nativeResultKind"] == "task_receipt"
+    assert tools["redis_sre_general_chat"]["executionContract"]["runtimeResultKind"] == "final_result"
     assert (
         tools["redis_sre_general_chat"]["executionContract"]["statusTool"]
         == "redis_sre_get_task_status"
     )
+    assert tools["redis_sre_general_chat"]["executionContract"]["taskReceipt"] == {
+        "taskIdField": "task_id",
+        "threadIdField": "thread_id",
+        "statusField": "status",
+        "messageField": "message",
+    }
     assert tools["redis_sre_knowledge_search"]["executionContract"] == {
         "nativeMode": "inline",
         "runtimeMode": "inline",
+        "nativeResultKind": "final_result",
+        "runtimeResultKind": "final_result",
     }
 
 
@@ -187,6 +197,8 @@ def test_build_mcp_capabilities_includes_configured_external_mcp_tools(
     assert tools["analyzer_list_accounts"]["executionContract"] == {
         "nativeMode": "inline",
         "runtimeMode": "inline",
+        "nativeResultKind": "final_result",
+        "runtimeResultKind": "final_result",
     }
 
 

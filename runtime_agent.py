@@ -595,6 +595,8 @@ def _build_mcp_capabilities() -> dict[str, list[dict[str, Any]]]:
                 "executionContract": {
                     "nativeMode": "inline",
                     "runtimeMode": "inline",
+                    "nativeResultKind": "final_result",
+                    "runtimeResultKind": "final_result",
                 },
             }
         )

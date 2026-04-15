@@ -2,6 +2,8 @@
 # This file is intended for runtime deployments where the agent is packaged
 # with vendored MCP servers under /workspace/vendor.
 
+max_iterations: 50
+
 mcp_servers:
   re_analyzer:
     command: node
@@ -9,7 +11,7 @@ mcp_servers:
       - vendor/re-analyzer-mcp/dist/src/index.js
     env:
       ANALYZER_BASE_URL: https://analyzerqa.cs.redislabs.com
-      ANALYZER_API_TOKEN: fake-auth-key
+      ANALYZER_API_TOKEN: xAwPdOqvsl+nhqBuhOpEM9+Y4a83rpm2XKPpZ+sjuvs=
     tools:
       analyzer_list_accounts: {}
       analyzer_search_accounts: {}

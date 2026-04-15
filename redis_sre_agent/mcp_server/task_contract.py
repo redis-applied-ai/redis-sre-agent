@@ -24,17 +24,26 @@ _CANCEL_TOOL = "redis_sre_delete_task"
 
 
 def tool_execution_contract(tool_name: str) -> dict[str, object]:
-    native_mode = "agent_task" if tool_name in _ASYNC_TOOL_NAMES else "inline"
+    is_async_tool = tool_name in _ASYNC_TOOL_NAMES
+    native_mode = "agent_task" if is_async_tool else "inline"
     contract: dict[str, object] = {
         "nativeMode": native_mode,
         "runtimeMode": "inline",
+        "nativeResultKind": "task_receipt" if is_async_tool else "final_result",
+        "runtimeResultKind": "final_result",
     }
-    if tool_name in _ASYNC_TOOL_NAMES:
+    if is_async_tool:
         contract.update(
             {
                 "statusTool": _STATUS_TOOL,
                 "resultTool": _RESULT_TOOL,
                 "cancelTool": _CANCEL_TOOL,
+                "taskReceipt": {
+                    "taskIdField": "task_id",
+                    "threadIdField": "thread_id",
+                    "statusField": "status",
+                    "messageField": "message",
+                },
             }
         )
     return contract
