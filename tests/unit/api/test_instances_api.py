@@ -209,6 +209,10 @@ class TestInstancesAPI:
         with (
             patch("redis_sre_agent.core.instances.get_instances") as mock_get,
             patch("redis_sre_agent.core.instances.save_instances") as mock_save,
+            patch(
+                "redis_sre_agent.api.instances.ULID",
+                return_value="01HXTESTINSTANCEID123456789",
+            ),
         ):
             mock_get.return_value = []  # No existing instances
             mock_save.return_value = True
@@ -218,6 +222,7 @@ class TestInstancesAPI:
             assert response.status_code == 201
             data = response.json()
             assert data["name"] == "New Redis Instance"
+            assert data["id"] == "redis-development-01HXTESTINSTANCEID123456789"
 
     def test_create_instance_missing_fields(self, client):
         """Test instance creation with missing required fields."""

@@ -13,6 +13,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
+from ulid import ULID
 
 from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
 from redis_sre_agent.mcp_server.task_contract import submit_async_tool_task
@@ -2559,8 +2560,6 @@ async def redis_sre_create_instance(
     Returns:
         Dictionary with the created instance ID and status
     """
-    from datetime import datetime
-
     from redis_sre_agent.core.instances import (
         RedisInstance,
         get_instances,
@@ -2592,7 +2591,7 @@ async def redis_sre_create_instance(
                 "status": "failed",
             }
 
-        instance_id = f"redis-{environment.lower()}-{int(datetime.now().timestamp())}"
+        instance_id = f"redis-{environment.lower()}-{ULID()}"
         new_instance = RedisInstance(
             id=instance_id,
             name=name,

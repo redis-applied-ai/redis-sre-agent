@@ -9,8 +9,53 @@ from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
 from redis_sre_agent.core.config import MCPServerConfig
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.targets import TargetBinding
+from redis_sre_agent.targets.contracts import BindingResult, ProviderLoadRequest, TargetHandleRecord
+from redis_sre_agent.targets.fake_integration import (
+    FakeAuthenticatedClientFactory,
+    FakeTargetBindingStrategy,
+)
+from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.manager import ToolManager, _command_is_available
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.protocols import ToolProvider
+
+
+class FakeTargetToolProvider(ToolProvider):
+    """Minimal provider used to verify alternate binding strategies can attach tools."""
+
+    @property
+    def provider_name(self) -> str:
+        return "fake_target"
+
+    def create_tool_schemas(self):
+        return [
+            ToolDefinition(
+                name=self._make_tool_name("inspect"),
+                description="Inspect a mock target",
+                capability=ToolCapability.UTILITIES,
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+
+    async def inspect(self):
+        return {"status": "ok"}
+
+
+class MockBindingStrategy:
+    strategy_name = "mock_strategy"
+
+    async def bind(self, request):
+        return BindingResult(
+            public_summary=request.handle_record.public_summary,
+            provider_loads=[
+                ProviderLoadRequest(
+                    provider_path="tests.unit.tools.test_manager.FakeTargetToolProvider",
+                    provider_key=f"target:{request.handle_record.target_handle}:fake_target",
+                    target_handle=request.handle_record.target_handle,
+                    provider_context={"always_on": True},
+                )
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -103,6 +148,116 @@ async def test_attach_bound_targets_scopes_instance_tools_to_opaque_handle():
     assert scoped_instance.id == "tgt_opaque_1"
     assert scoped_instance.name == "checkout-cache-prod"
     assert mgr.get_toolset_generation() == 2
+
+
+@pytest.mark.asyncio
+async def test_attach_bound_targets_uses_registered_strategy_and_private_handle_record():
+    """Alternate binding strategies should attach tools without target_kind branching."""
+    binding = TargetBinding(
+        target_handle="tgt_alt_1",
+        target_kind="custom",
+        display_name="alternate target",
+        capabilities=["custom"],
+        public_metadata={"environment": "test"},
+    )
+    record = TargetHandleRecord(
+        target_handle="tgt_alt_1",
+        discovery_backend="mock_backend",
+        binding_strategy="mock_strategy",
+        binding_subject="private-subject-1",
+        public_summary=binding,
+    )
+    registry = TargetIntegrationRegistry(
+        default_discovery_backend="mock_backend",
+        default_binding_strategy="mock_strategy",
+    )
+    registry.register_binding_strategy(MockBindingStrategy())
+    mock_store = AsyncMock()
+    mock_store.get_records.return_value = {"tgt_alt_1": record}
+
+    async with ToolManager() as mgr:
+        with (
+            patch("redis_sre_agent.tools.manager.get_target_handle_store", return_value=mock_store),
+            patch(
+                "redis_sre_agent.tools.manager.get_target_integration_registry",
+                return_value=registry,
+            ),
+        ):
+            attached = await mgr.attach_bound_targets([binding])
+
+        assert attached == [binding]
+        assert any("fake_target_" in tool.name for tool in mgr.get_tools())
+        assert mgr.get_attached_target_bindings() == [binding]
+
+
+@pytest.mark.asyncio
+async def test_attach_bound_targets_supports_repo_fake_authenticated_integration():
+    """The repo-backed fake integration should load a live provider through ToolManager."""
+
+    binding = TargetBinding(
+        target_handle="tgt_fake_auth_1",
+        target_kind="instance",
+        display_name="demo fake cache",
+        capabilities=["fake", "auth"],
+        public_metadata={"environment": "test"},
+    )
+    record = TargetHandleRecord(
+        target_handle="tgt_fake_auth_1",
+        discovery_backend="fake_demo",
+        binding_strategy="fake_authenticated",
+        binding_subject="fake-demo-cache",
+        private_binding_ref={
+            "username": "demo-user",
+            "token": "demo-token",
+            "audience": "fake-control-plane",
+        },
+        public_summary=binding,
+    )
+    registry = TargetIntegrationRegistry(
+        default_discovery_backend="fake_demo",
+        default_binding_strategy="fake_authenticated",
+    )
+    registry.register_binding_strategy(FakeTargetBindingStrategy())
+    registry.register_client_factory(FakeAuthenticatedClientFactory())
+    mock_store = AsyncMock()
+    mock_store.get_records.return_value = {"tgt_fake_auth_1": record}
+
+    mgr = ToolManager()
+    mgr._stack = AsyncExitStack()
+    await mgr._stack.__aenter__()
+    try:
+        with (
+            patch("redis_sre_agent.tools.manager.get_target_handle_store", return_value=mock_store),
+            patch(
+                "redis_sre_agent.tools.manager.get_target_integration_registry",
+                return_value=registry,
+            ),
+            patch(
+                "redis_sre_agent.targets.registry.get_target_integration_registry",
+                return_value=registry,
+            ),
+        ):
+            attached = await mgr.attach_bound_targets([binding])
+
+            assert attached == [binding]
+
+            auth_tools = [
+                tool.name
+                for tool in mgr.get_tools()
+                if "fake_target_" in tool.name and tool.name.endswith("_auth_status")
+            ]
+            assert len(auth_tools) == 1
+
+            auth_result = await mgr.resolve_tool_call(auth_tools[0], {})
+    finally:
+        await mgr._stack.__aexit__(None, None, None)
+
+    assert auth_result["status"] == "success"
+    assert auth_result["authenticated"] is True
+    assert auth_result["target_handle"] == "tgt_fake_auth_1"
+    assert auth_result["username"] == "demo-user"
+    assert auth_result["audience"] == "fake-control-plane"
+    assert auth_result["token_suffix"] == "oken"
 
 
 @pytest.mark.asyncio

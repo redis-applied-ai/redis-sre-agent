@@ -683,7 +683,7 @@ class ChatAgent:
         normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
         attached_target_count = max(len(raw_attached_target_handles), turn_scope.target_count)
         _get_attached_target_prompt = build_attached_target_prompt_loader(
-            normalized_context,
+            lambda: normalized_context,
             attached_target_count,
             build_attached_target_scope_prompt,
         )

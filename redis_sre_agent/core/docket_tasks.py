@@ -58,6 +58,95 @@ def _thread_messages_to_conversation_history(thread_messages: List[Message]) -> 
     return history
 
 
+async def _ensure_handle_backed_turn_scope(
+    *,
+    turn_scope: TurnScope,
+    routing_context: Dict[str, Any],
+    thread_context: Dict[str, Any],
+    thread_id: str,
+    task_id: str,
+    legacy_instance_id: Optional[str] = None,
+    legacy_cluster_id: Optional[str] = None,
+) -> TurnScope:
+    """Materialize legacy seed-hint scope through private handle records when needed."""
+    from redis_sre_agent.core.targets import (
+        build_seed_hint_candidates,
+        materialize_bound_target_scope,
+    )
+    from redis_sre_agent.targets import get_target_handle_store
+
+    normalized_instance_id = str(legacy_instance_id or "").strip() or None
+    normalized_cluster_id = str(legacy_cluster_id or "").strip() or None
+
+    if normalized_instance_id and normalized_cluster_id:
+        routing_instance_id = str(routing_context.get("instance_id") or "").strip() or None
+        routing_cluster_id = str(routing_context.get("cluster_id") or "").strip() or None
+
+        if turn_scope.bindings:
+            # Attached bindings already define the target set. Ignore conflicting
+            # legacy single-target hints so the seed-hint resolver does not raise.
+            normalized_instance_id = None
+            normalized_cluster_id = None
+        elif routing_instance_id and not routing_cluster_id:
+            normalized_cluster_id = None
+        elif routing_cluster_id and not routing_instance_id:
+            normalized_instance_id = None
+        else:
+            # Conflicting legacy single-target hints are ambiguous. Drop both
+            # rather than raising while rebuilding handle-backed scope.
+            normalized_instance_id = None
+            normalized_cluster_id = None
+
+    needs_materialization = False
+    if turn_scope.scope_kind != "target_bindings":
+        needs_materialization = bool(normalized_instance_id or normalized_cluster_id)
+    elif turn_scope.bindings:
+        bound_handles = [binding.target_handle for binding in turn_scope.bindings]
+        handle_records = await get_target_handle_store().get_records(bound_handles)
+        needs_materialization = any(
+            binding.target_handle not in handle_records for binding in turn_scope.bindings
+        )
+
+    if not needs_materialization:
+        return turn_scope
+
+    candidates = await build_seed_hint_candidates(
+        bindings=turn_scope.bindings,
+        instance_id=normalized_instance_id,
+        cluster_id=normalized_cluster_id,
+    )
+    if not candidates:
+        return turn_scope
+
+    materialized_scope = await materialize_bound_target_scope(
+        matches=candidates,
+        thread_id=thread_id,
+        task_id=task_id,
+        replace_existing=bool(turn_scope.bindings),
+    )
+    scope_updates = dict(materialized_scope.context_updates)
+    if normalized_instance_id:
+        scope_updates["instance_id"] = normalized_instance_id
+        scope_updates["cluster_id"] = ""
+    elif normalized_cluster_id:
+        scope_updates["cluster_id"] = normalized_cluster_id
+        scope_updates["instance_id"] = ""
+
+    routing_context.update(scope_updates)
+    thread_context.update(scope_updates)
+
+    return TurnScope.from_context(
+        routing_context,
+        thread_id=thread_id,
+        session_id=turn_scope.session_id,
+        seed_hints={
+            key: routing_context[key]
+            for key in ("instance_id", "cluster_id")
+            if routing_context.get(key)
+        },
+    )
+
+
 # NOTE: analyze_system_metrics was removed as it was never actually provided
 # as a tool to the LLM. Metrics/diagnostics will be implemented via the
 # ToolProvider system in a future PR.
@@ -1037,6 +1126,20 @@ async def process_agent_turn(
             routing_context.pop("instance_id", None)
 
         current_scope = _materialize_turn_scope(routing_context)
+        current_scope = await _ensure_handle_backed_turn_scope(
+            turn_scope=current_scope,
+            routing_context=routing_context,
+            thread_context=thread.context,
+            thread_id=thread_id,
+            task_id=task_id,
+            legacy_instance_id=(
+                routing_context.get("instance_id") or current_scope.seed_hints.get("instance_id")
+            ),
+            legacy_cluster_id=(
+                routing_context.get("cluster_id") or current_scope.seed_hints.get("cluster_id")
+            ),
+        )
+        routing_context["turn_scope"] = current_scope.model_dump(mode="json")
 
         requested_agent_type = (context or {}).get("requested_agent_type")
         if requested_agent_type == "triage":

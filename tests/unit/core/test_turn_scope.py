@@ -97,6 +97,7 @@ def test_turn_scope_to_thread_context_serializes_bindings_and_support_package():
     assert context["automated"] is True
     assert context["resolution_policy"] == "allow_multiple"
     assert context["support_package_id"] == "pkg-1"
+    assert context["target_bindings"][0]["target_handle"] == "tgt_01"
     assert context["target_bindings"][0]["resource_id"] == "redis-prod-checkout-cache"
 
 

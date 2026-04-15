@@ -11,6 +11,7 @@ import click
 from pydantic import SecretStr
 from rich.console import Console
 from rich.table import Table
+from ulid import ULID
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core import instances as core_instances
@@ -302,7 +303,7 @@ def instances_create(
             )
             _warn_deprecated_admin_fields_if_used(admin_url, admin_username, admin_password)
 
-            instance_id = f"redis-{environment}-{int(datetime.now().timestamp())}"
+            instance_id = f"redis-{environment}-{ULID()}"
             new_inst = core_instances.RedisInstance(
                 id=instance_id,
                 name=name,
