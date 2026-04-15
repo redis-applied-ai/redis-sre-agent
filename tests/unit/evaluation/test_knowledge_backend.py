@@ -260,3 +260,78 @@ async def test_fixture_knowledge_backend_applies_version_filters_and_pinned_budg
     )
     assert missing_skill["error"] == "Skill not found"
     assert missing_skill["available_skills"] == ["maintenance-mode-skill"]
+
+
+@pytest.mark.asyncio
+async def test_fixture_knowledge_backend_keeps_corpus_frontmatter_pinned_docs_searchable(
+    tmp_path: Path,
+):
+    corpus_root = tmp_path / "fixtures" / "corpora" / "redis-docs-curated" / "2026-04-13"
+    docs_dir = corpus_root / "documents"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "corpus-frontmatter-pinned.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "document_hash: corpus-frontmatter-pinned",
+                "name: corpus-frontmatter-pinned",
+                "title: Corpus Frontmatter Pinned",
+                "doc_type: knowledge",
+                "category: incident",
+                "priority: critical",
+                "pinned: true",
+                "summary: Corpus-only document with frontmatter pinning.",
+                "source: fixture://docs/corpus-frontmatter-pinned.md",
+                "---",
+                "Whitespace sentinel for corpus retrieval behavior.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    scenario_path = tmp_path / "corpus-only.yaml"
+    scenario_path.write_text(
+        yaml.safe_dump(
+            {
+                "id": "fixture-corpus-frontmatter-pinned",
+                "name": "Fixture corpus frontmatter pinned",
+                "provenance": {
+                    "source_kind": "synthetic",
+                    "source_pack": "fixture-pack",
+                    "source_pack_version": "2026-04-13",
+                    "golden": {
+                        "expectation_basis": "human_authored",
+                    },
+                },
+                "execution": {
+                    "lane": "full_turn",
+                    "query": "Find the whitespace sentinel document.",
+                },
+                "knowledge": {
+                    "mode": "retrieval_only",
+                    "version": "latest",
+                    "corpus": [
+                        "fixtures/corpora/redis-docs-curated/2026-04-13",
+                    ],
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    scenario = EvalScenario.from_file(scenario_path)
+    backend = build_fixture_knowledge_backend(scenario)
+
+    search = await backend.search_knowledge_base(
+        query='"whitespace sentinel"',
+        version="latest",
+    )
+    pinned = await backend.get_pinned_documents(version="latest", limit=10, content_char_budget=200)
+
+    corpus_result = next(
+        result
+        for result in search["results"]
+        if result["document_hash"] == "corpus-frontmatter-pinned"
+    )
+    assert corpus_result["pinned"] is False
+    assert pinned["results_count"] == 0

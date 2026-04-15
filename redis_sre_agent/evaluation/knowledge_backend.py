@@ -304,6 +304,7 @@ class FixtureKnowledgeDocument:
     summary: str
     priority: str
     pinned: bool
+    frontmatter_pinned: bool
     version: str
     product_labels: list[str]
     index_type: str
@@ -443,13 +444,15 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 exact_rank = 3
 
             haystack = f"{name} {title} {summary} {content} {source}"
-            token_hits = sum(1 for token in query_tokens if token in haystack)
-            return (
-                exact_rank,
-                -token_hits,
-                _PRIORITY_ORDER.get(document.priority, _PRIORITY_ORDER["normal"]),
-                document.name.lower(),
-            )
+        token_hits = sum(1 for token in query_tokens if token in haystack)
+        frontmatter_penalty = 1 if document.frontmatter_pinned and not document.pinned else 0
+        return (
+            exact_rank,
+            -token_hits,
+            frontmatter_penalty,
+            _PRIORITY_ORDER.get(document.priority, _PRIORITY_ORDER["normal"]),
+            document.name.lower(),
+        )
 
         return sorted(documents, key=_rank)
 
@@ -848,6 +851,7 @@ def _load_fixture_document(
         summary=summary,
         priority=priority,
         pinned=bool(metadata.get("pinned", pinned) or pinned),
+        frontmatter_pinned=bool(metadata.get("pinned", False)),
         version=version,
         product_labels=product_labels,
         index_type=_infer_index_type(doc_type),
