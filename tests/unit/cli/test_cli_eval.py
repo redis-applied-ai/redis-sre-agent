@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
+from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.cli.eval import eval
 from redis_sre_agent.cli.main import main
+from redis_sre_agent.evaluation.agent_only import AgentOnlyHarnessResult
+from redis_sre_agent.evaluation.runtime import EvalFullTurnResult
+from redis_sre_agent.evaluation.scenarios import ExecutionLane
 
 
 def test_eval_cli_help_lists_live_suite_command():
@@ -13,6 +17,7 @@ def test_eval_cli_help_lists_live_suite_command():
 
     assert result.exit_code == 0
     assert "compare" in result.output
+    assert "run" in result.output
     assert "live-suite" in result.output
     assert "list" in result.output
 
@@ -23,7 +28,237 @@ def test_eval_command_is_registered_in_main_cli():
     result = runner.invoke(main, ["eval", "--help"])
 
     assert result.exit_code == 0
+    assert "run" in result.output
     assert "live-suite" in result.output
+
+
+def test_eval_run_command_delegates_to_runner(tmp_path, monkeypatch):
+    runner = CliRunner()
+    scenario_path = tmp_path / "scenario.yaml"
+    scenario_path.write_text("id: prompt/sample\nname: Sample\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_run_mocked_eval_scenario_sync(
+        path,
+        *,
+        user_id,
+        session_id,
+        allow_live_llm,
+    ) -> dict[str, object]:
+        seen.update(
+            {
+                "path": str(path),
+                "user_id": user_id,
+                "session_id": session_id,
+                "allow_live_llm": allow_live_llm,
+            }
+        )
+        return {
+            "scenario_id": "prompt/sample",
+            "execution_lane": "agent_only",
+            "session_id": "eval::prompt::sample",
+            "agent_name": "knowledge_only",
+            "response": "ok",
+            "result": {"response": "ok"},
+        }
+
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.run_mocked_eval_scenario_sync",
+        fake_run_mocked_eval_scenario_sync,
+    )
+
+    result = runner.invoke(
+        eval,
+        [
+            "run",
+            str(scenario_path),
+            "--user-id",
+            "local-eval",
+            "--session-id",
+            "session-123",
+            "--allow-live-llm",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == {
+        "path": str(scenario_path),
+        "user_id": "local-eval",
+        "session_id": "session-123",
+        "allow_live_llm": True,
+    }
+    assert "Scenario: prompt/sample" in result.output
+    assert "Response:" in result.output
+    assert "ok" in result.output
+
+
+def test_eval_run_command_outputs_json_when_requested(tmp_path, monkeypatch):
+    runner = CliRunner()
+    scenario_path = tmp_path / "scenario.yaml"
+    scenario_path.write_text("id: prompt/sample\nname: Sample\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.run_mocked_eval_scenario_sync",
+        lambda *args, **kwargs: {
+            "scenario_id": "prompt/sample",
+            "execution_lane": "full_turn",
+            "session_id": "eval::prompt::sample",
+            "response": "ok",
+            "result": {"response": "ok"},
+        },
+    )
+
+    result = runner.invoke(
+        eval,
+        [
+            "run",
+            str(scenario_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"scenario_id": "prompt/sample"' in result.output
+    assert '"execution_lane": "full_turn"' in result.output
+
+
+def test_run_mocked_eval_scenario_sync_runs_full_turn(monkeypatch):
+    scenario = type(
+        "Scenario",
+        (),
+        {
+            "id": "prompt/sample",
+            "name": "Sample",
+            "execution": type(
+                "Execution",
+                (),
+                {"lane": ExecutionLane.FULL_TURN, "llm_mode": "replay"},
+            )(),
+        },
+    )()
+    seen: dict[str, object] = {}
+
+    async def fake_run_full_turn_scenario(
+        incoming,
+        *,
+        user_id,
+        session_id,
+        allow_live_llm,
+    ):
+        seen.update(
+            {
+                "scenario": incoming,
+                "user_id": user_id,
+                "session_id": session_id,
+                "allow_live_llm": allow_live_llm,
+            }
+        )
+        return EvalFullTurnResult(
+            scenario_id="prompt/sample",
+            scenario_name="Sample",
+            execution_lane=ExecutionLane.FULL_TURN,
+            thread_id="thread-123",
+            task_id="task-123",
+            task_status="completed",
+            turn_result={"response": "full-turn ok"},
+        )
+
+    monkeypatch.setattr("redis_sre_agent.cli.eval.load_eval_scenario", lambda path: scenario)
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.run_full_turn_scenario",
+        fake_run_full_turn_scenario,
+    )
+
+    from redis_sre_agent.cli.eval import run_mocked_eval_scenario_sync
+
+    payload = run_mocked_eval_scenario_sync("scenario.yaml", user_id="local-eval")
+
+    assert seen["scenario"] is scenario
+    assert seen["user_id"] == "local-eval"
+    assert seen["session_id"] == "eval::prompt::sample"
+    assert seen["allow_live_llm"] is False
+    assert payload["thread_id"] == "thread-123"
+    assert payload["task_id"] == "task-123"
+    assert payload["response"] == "full-turn ok"
+
+
+def test_run_mocked_eval_scenario_sync_runs_agent_only(monkeypatch):
+    scenario = type(
+        "Scenario",
+        (),
+        {
+            "id": "prompt/sample",
+            "name": "Sample",
+            "execution": type(
+                "Execution",
+                (),
+                {"lane": ExecutionLane.AGENT_ONLY, "llm_mode": "replay"},
+            )(),
+        },
+    )()
+    seen: dict[str, object] = {}
+
+    async def fake_run_agent_only_scenario(
+        incoming,
+        *,
+        session_id,
+        user_id,
+    ):
+        seen.update(
+            {
+                "scenario": incoming,
+                "session_id": session_id,
+                "user_id": user_id,
+            }
+        )
+        return AgentOnlyHarnessResult(
+            agent_name="knowledge_only",
+            session_id=session_id,
+            response=AgentResponse(response="agent-only ok"),
+        )
+
+    monkeypatch.setattr("redis_sre_agent.cli.eval.load_eval_scenario", lambda path: scenario)
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.run_agent_only_scenario",
+        fake_run_agent_only_scenario,
+    )
+
+    from redis_sre_agent.cli.eval import run_mocked_eval_scenario_sync
+
+    payload = run_mocked_eval_scenario_sync("scenario.yaml", user_id="local-eval")
+
+    assert seen["scenario"] is scenario
+    assert seen["session_id"] == "eval::prompt::sample"
+    assert seen["user_id"] == "local-eval"
+    assert payload["agent_name"] == "knowledge_only"
+    assert payload["response"] == "agent-only ok"
+
+
+def test_run_mocked_eval_scenario_sync_rejects_live_llm_without_opt_in(monkeypatch):
+    scenario = type(
+        "Scenario",
+        (),
+        {
+            "id": "prompt/sample",
+            "name": "Sample",
+            "execution": type(
+                "Execution",
+                (),
+                {"lane": ExecutionLane.AGENT_ONLY, "llm_mode": "live"},
+            )(),
+        },
+    )()
+
+    monkeypatch.setattr("redis_sre_agent.cli.eval.load_eval_scenario", lambda path: scenario)
+
+    from redis_sre_agent.cli.eval import run_mocked_eval_scenario_sync
+
+    try:
+        run_mocked_eval_scenario_sync("scenario.yaml")
+    except PermissionError as exc:
+        assert "--allow-live-llm" in str(exc)
+    else:
+        raise AssertionError("expected PermissionError")
 
 
 def test_eval_live_suite_command_delegates_to_runner(tmp_path, monkeypatch):

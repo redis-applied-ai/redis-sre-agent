@@ -1,12 +1,12 @@
 ## Eval System
 
-This branch ships a scenario-driven eval system under `evals/` and `redis_sre_agent/evaluation/`.
-It has two practical entry points:
+Redis SRE Agent includes a scenario-driven eval system under `evals/` and `redis_sre_agent/evaluation/`.
+It has two main entry points:
 
 1. Deterministic mocked evals for development and regression testing.
 2. Live-model suite runs for manual or scheduled baseline checks.
 
-The mocked system is the main architecture on this branch. The current CLI exposes scenario listing, live-suite execution, and baseline comparison. Mocked one-off runs are currently easier to drive through `pytest` or the Python entrypoints.
+The CLI currently exposes scenario listing, live-suite execution, and baseline comparison. Mocked one-off runs are currently easiest to drive through `pytest` or the Python entrypoints.
 
 ### What Lives Where
 
@@ -17,7 +17,7 @@ The mocked system is the main architecture on this branch. The current CLI expos
 - `evals/baseline_policy.yaml`: variance and trigger policy for live comparisons.
 - `redis_sre_agent/evaluation/`: loaders, mocked runtimes, scoring, and report writers.
 
-Example scenario files on this branch:
+Example scenario files:
 
 - `evals/scenarios/prompt/chat-iterative-tool-use/scenario.yaml`
 - `evals/scenarios/redis/memory-pressure-oss/scenario.yaml`
@@ -53,9 +53,32 @@ uv run pytest tests/unit/evaluation/test_live_suite.py
 
 When you are editing one scenario family, run the narrow test module that covers it instead of the whole tree.
 
-### Running One Mocked Scenario from Python
+### Running One Mocked Scenario
 
-There is not yet a first-class CLI command for running a single mocked scenario. The supported branch-local API lives in `redis_sre_agent.evaluation`.
+Use the CLI when you want to execute a single mocked scenario directly:
+
+```bash
+uv run redis-sre-agent eval run \
+  evals/scenarios/prompt/chat-iterative-tool-use/scenario.yaml
+```
+
+For machine-readable output:
+
+```bash
+uv run redis-sre-agent eval run \
+  evals/scenarios/prompt/chat-iterative-tool-use/scenario.yaml \
+  --json
+```
+
+Useful options:
+
+- `--session-id`: supply your own eval session id instead of using the default derived from the scenario id.
+- `--user-id`: associate the run with a specific user id.
+- `--allow-live-llm`: explicitly opt into scenarios configured with `llm_mode: live`.
+
+### Running from Python
+
+The Python API remains useful for custom harnesses and debugging.
 
 Run a full-turn scenario:
 
@@ -125,7 +148,7 @@ The `prompt/chat-iterative-tool-use` scenario is a good compact example because 
 
 Use live suites when you want the current model to run against the scenario corpus and emit comparable artifact bundles.
 
-The repo-local suite on this branch is:
+This repository includes a live-suite manifest:
 
 - manifest: `evals/suites/live-agent-only-smoke.yaml`
 - suite name: `live-agent-only-smoke`
@@ -140,8 +163,7 @@ uv run redis-sre-agent eval live-suite \
   --trigger workflow_dispatch
 ```
 
-Important: the suite policy in `evals/baseline_policy.yaml` does not allow the CLI default `--trigger manual` for the `scheduled_live` profile. For the checked-in suite on this branch, use `--trigger workflow_dispatch` for manual runs.
-
+Important: the suite policy in `evals/baseline_policy.yaml` does not allow the CLI default `--trigger manual` for the `scheduled_live` profile. For the example suite above, use `--trigger workflow_dispatch` for manual runs.
 To request a reviewed baseline refresh:
 
 ```bash
@@ -232,8 +254,8 @@ Use live suites when:
 - you want a regression signal against a reviewed baseline,
 - you are preparing a scheduled or manual live-model check.
 
-### Practical Branch Notes
+### Current Behavior
 
-- The checked-in scenario corpus mixes `full_turn`, `agent_only`, `prompt`, `redis`, `knowledge`, `retrieval`, and `sources` lanes under one tree.
+- The scenario corpus mixes `full_turn`, `agent_only`, `prompt`, `redis`, `knowledge`, `retrieval`, and `sources` lanes under one tree.
 - Live suites coerce loaded scenarios to live LLM mode before execution, even when the source manifest is authored for replay mode.
-- The current CLI does not yet expose a dedicated `run scenario` command for mocked evals, so `pytest` and the Python entrypoints are the intended developer workflow on this branch.
+- The current CLI does not yet expose a dedicated `run scenario` command for mocked evals, so `pytest` and the Python entrypoints are the intended developer workflow.

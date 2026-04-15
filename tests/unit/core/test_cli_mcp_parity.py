@@ -100,6 +100,7 @@ class TestCliMcpParityHelpers:
             "eval compare",
             "eval list",
             "eval live-suite",
+            "eval run",
             "mcp list-tools",
             "mcp serve",
             "worker restart",

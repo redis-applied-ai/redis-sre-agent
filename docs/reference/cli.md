@@ -88,6 +88,7 @@ Generated from the Click command tree.
 - eval compare — Compare one live eval artifact directory against a baseline.
 - eval list — List known eval scenario ids.
 - eval live-suite — Run one configured live-model eval suite.
+- eval run — Run one mocked eval scenario.
 - version — Show the Redis SRE Agent version.
 
 See How-to guides for examples.

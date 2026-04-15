@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 
+from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
 from redis_sre_agent.evaluation.live_suite import (
     compare_live_eval_reports,
     load_baseline_policy,
     run_live_eval_suite,
 )
-from redis_sre_agent.evaluation.runtime import load_eval_scenario
+from redis_sre_agent.evaluation.runtime import load_eval_scenario, run_full_turn_scenario
+from redis_sre_agent.evaluation.scenarios import ExecutionLane
 
 
 def run_live_eval_suite_sync(
@@ -72,9 +75,150 @@ def _summary_text(summary: object) -> str:
     return "\n".join(lines)
 
 
+def _default_eval_session_id(scenario_id: str) -> str:
+    return f"eval::{scenario_id.replace('/', '::')}"
+
+
+def _json_compatible(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(key): _json_compatible(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _extract_response_text(value: Any) -> str | None:
+    if isinstance(value, dict):
+        response = value.get("response")
+        return response if isinstance(response, str) else None
+    response = getattr(value, "response", None)
+    return response if isinstance(response, str) else None
+
+
+def run_mocked_eval_scenario_sync(
+    scenario_path: str | Path,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    allow_live_llm: bool = False,
+) -> dict[str, Any]:
+    """Run one mocked eval scenario and return a normalized payload."""
+
+    scenario = load_eval_scenario(scenario_path)
+    effective_session_id = session_id or _default_eval_session_id(scenario.id)
+    llm_mode = getattr(getattr(scenario, "execution", None), "llm_mode", None)
+    llm_mode_name = getattr(llm_mode, "value", llm_mode)
+    if llm_mode_name == "live" and not allow_live_llm:
+        raise PermissionError("Live-model eval scenarios require --allow-live-llm")
+
+    if scenario.execution.lane is ExecutionLane.FULL_TURN:
+        result = asyncio.run(
+            run_full_turn_scenario(
+                scenario,
+                user_id=user_id,
+                session_id=effective_session_id,
+                allow_live_llm=allow_live_llm,
+            )
+        )
+        return {
+            "scenario_id": scenario.id,
+            "scenario_name": scenario.name,
+            "execution_lane": scenario.execution.lane.value,
+            "session_id": effective_session_id,
+            "user_id": user_id,
+            "thread_id": result.thread_id,
+            "task_id": result.task_id,
+            "task_status": result.task_status,
+            "response": _extract_response_text(result.turn_result),
+            "result": _json_compatible(result),
+        }
+
+    result = asyncio.run(
+        run_agent_only_scenario(
+            scenario,
+            session_id=effective_session_id,
+            user_id=user_id,
+        )
+    )
+    return {
+        "scenario_id": scenario.id,
+        "scenario_name": scenario.name,
+        "execution_lane": scenario.execution.lane.value,
+        "session_id": effective_session_id,
+        "user_id": user_id,
+        "agent_name": result.agent_name,
+        "response": _extract_response_text(result.response),
+        "result": _json_compatible(result),
+    }
+
+
+def _scenario_run_text(payload: dict[str, Any]) -> str:
+    lines = [
+        f"Scenario: {payload.get('scenario_id', '')}",
+        f"Lane: {payload.get('execution_lane', '')}",
+        f"Session ID: {payload.get('session_id', '')}",
+    ]
+    if payload.get("thread_id"):
+        lines.append(f"Thread ID: {payload['thread_id']}")
+    if payload.get("task_id"):
+        lines.append(f"Task ID: {payload['task_id']}")
+    if payload.get("task_status"):
+        lines.append(f"Task status: {payload['task_status']}")
+    if payload.get("agent_name"):
+        lines.append(f"Agent: {payload['agent_name']}")
+    response = payload.get("response")
+    if response:
+        lines.extend(["", "Response:", str(response)])
+    else:
+        lines.extend(["", "Result:", json.dumps(payload.get("result", {}), indent=2)])
+    return "\n".join(lines)
+
+
 @click.group()
 def eval() -> None:
     """Run eval scenario utilities and live suites."""
+
+
+@eval.command("run")
+@click.argument(
+    "scenario_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option("--user-id", type=str, default=None, help="Optional user id for the eval run.")
+@click.option(
+    "--session-id",
+    type=str,
+    default=None,
+    help="Optional session id. Defaults to one derived from the scenario id.",
+)
+@click.option(
+    "--allow-live-llm",
+    is_flag=True,
+    help="Explicitly allow scenarios configured with llm_mode=live.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output JSON")
+def run_scenario(
+    scenario_path: Path,
+    user_id: str | None,
+    session_id: str | None,
+    allow_live_llm: bool,
+    as_json: bool,
+) -> None:
+    """Run one mocked eval scenario."""
+
+    payload = run_mocked_eval_scenario_sync(
+        scenario_path,
+        user_id=user_id,
+        session_id=session_id,
+        allow_live_llm=allow_live_llm,
+    )
+    click.echo(json.dumps(payload, indent=2) if as_json else _scenario_run_text(payload))
 
 
 @eval.command("live-suite")
@@ -180,4 +324,12 @@ def list_scenarios(as_json: bool, root: Path) -> None:
         click.echo(scenario_id)
 
 
-__all__ = ["compare", "eval", "list_scenarios", "live_suite", "run_live_eval_suite_sync"]
+__all__ = [
+    "compare",
+    "eval",
+    "list_scenarios",
+    "live_suite",
+    "run_live_eval_suite_sync",
+    "run_mocked_eval_scenario_sync",
+    "run_scenario",
+]
