@@ -21,7 +21,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . /workspace
 
-RUN if [ -f /workspace/vendor/re-analyzer-mcp/package.json ]; then \
+RUN if [ -f /workspace/vendor/re-analyzer-mcp/package.json ] && [ ! -d /workspace/vendor/re-analyzer-mcp/node_modules ]; then \
       npm ci --prefix /workspace/vendor/re-analyzer-mcp; \
     fi
 

@@ -27,27 +27,6 @@ MAX_HISTORY_MESSAGES = 20
 DEFAULT_USER_ID = "runtime-user"
 _REDIS_BOOTSTRAP_LOCK = asyncio.Lock()
 _REDIS_BOOTSTRAP_COMPLETE = False
-MCP_TOOL_NAMES = (
-    "redis_sre_create_instance",
-    "redis_sre_database_chat",
-    "redis_sre_deep_triage",
-    "redis_sre_delete_task",
-    "redis_sre_general_chat",
-    "redis_sre_get_pipeline_batch",
-    "redis_sre_get_pipeline_status",
-    "redis_sre_get_support_ticket",
-    "redis_sre_get_task_citations",
-    "redis_sre_get_task_status",
-    "redis_sre_get_thread",
-    "redis_sre_knowledge_query",
-    "redis_sre_knowledge_search",
-    "redis_sre_list_instances",
-    "redis_sre_list_threads",
-    "redis_sre_prepare_source_documents",
-    "redis_sre_run_pipeline_full",
-    "redis_sre_run_pipeline_ingest",
-    "redis_sre_search_support_tickets",
-)
 
 
 def _runtime_state_dir() -> Path:
@@ -165,136 +144,6 @@ async def _ensure_runtime_redis_ready() -> None:
         if not await create_indices():
             raise RuntimeError("Failed to initialize runtime Redis indices")
         _REDIS_BOOTSTRAP_COMPLETE = True
-
-
-def _parse_scraper_names(scrapers: str | None) -> list[str] | None:
-    if not isinstance(scrapers, str) or not scrapers.strip():
-        return None
-    parsed = [item.strip() for item in scrapers.split(",") if item.strip()]
-    return parsed or None
-
-
-async def redis_sre_get_pipeline_status(artifacts_path: str = "./artifacts") -> dict[str, Any]:
-    """Get pipeline status and available batches."""
-    from redis_sre_agent.pipelines.orchestrator import PipelineOrchestrator
-
-    orchestrator = PipelineOrchestrator(artifacts_path)
-    return await orchestrator.get_pipeline_status()
-
-
-async def redis_sre_get_pipeline_batch(
-    batch_date: str,
-    artifacts_path: str = "./artifacts",
-) -> dict[str, Any]:
-    """Get detailed information for a specific pipeline batch."""
-    from redis_sre_agent.pipelines.scraper.base import ArtifactStorage
-
-    storage = ArtifactStorage(artifacts_path)
-    manifest = storage.get_batch_manifest(batch_date)
-    if not manifest:
-        return {
-            "batch_date": batch_date,
-            "artifacts_path": str(Path(artifacts_path)),
-            "error": f"Batch {batch_date} not found",
-        }
-
-    batch_path = Path(artifacts_path) / batch_date
-    ingestion_manifest_path = batch_path / "ingestion_manifest.json"
-    ingestion: dict[str, Any] | None = None
-    if ingestion_manifest_path.is_file():
-        ingestion = json.loads(ingestion_manifest_path.read_text(encoding="utf-8"))
-
-    return {
-        "batch_date": batch_date,
-        "artifacts_path": str(Path(artifacts_path)),
-        "total_documents": manifest.get("total_documents", 0),
-        "categories": manifest.get("categories", {}),
-        "document_types": manifest.get("document_types", {}),
-        "ingestion": ingestion,
-    }
-
-
-async def redis_sre_prepare_source_documents(
-    source_dir: str = "source_documents",
-    batch_date: str | None = None,
-    prepare_only: bool = False,
-    artifacts_path: str = "./artifacts",
-) -> dict[str, Any]:
-    """Prepare source documents as pipeline artifacts."""
-    from datetime import datetime
-
-    from redis_sre_agent.pipelines.ingestion.processor import IngestionPipeline
-    from redis_sre_agent.pipelines.scraper.base import ArtifactStorage
-
-    source_path = Path(source_dir)
-    if not source_path.exists():
-        raise RuntimeError(f"Source directory does not exist: {source_path}")
-
-    storage = ArtifactStorage(artifacts_path)
-    if batch_date:
-        try:
-            datetime.strptime(batch_date, "%Y-%m-%d")
-        except ValueError as exc:  # pragma: no cover - defensive validation
-            raise RuntimeError(f"Invalid batch date format: {batch_date}. Use YYYY-MM-DD") from exc
-        storage.current_date = batch_date
-        storage.current_batch_path = storage.base_path / batch_date
-        storage._dirs_created = False  # noqa: SLF001 - mirror existing CLI behavior
-
-    effective_batch_date = batch_date or storage.current_date
-    pipeline = IngestionPipeline(storage)
-    prepared_count = await pipeline.prepare_source_artifacts(source_path, effective_batch_date)
-
-    response: dict[str, Any] = {
-        "artifacts_path": str(storage.base_path),
-        "batch_date": effective_batch_date,
-        "source_dir": str(source_path),
-        "prepared_count": prepared_count,
-        "prepare_only": prepare_only,
-    }
-    if not prepare_only:
-        ingest_results = await pipeline.ingest_prepared_batch(effective_batch_date)
-        response["ingestion"] = {
-            "results": ingest_results,
-            "successful_documents": sum(
-                1 for item in ingest_results if str(item.get("status", "")).lower() == "success"
-            ),
-            "failed_documents": sum(
-                1 for item in ingest_results if str(item.get("status", "")).lower() == "error"
-            ),
-        }
-    return response
-
-
-async def redis_sre_run_pipeline_full(
-    artifacts_path: str = "./artifacts",
-    docs_path: str = "./redis-docs",
-    latest_only: bool = False,
-    scrapers: str | None = None,
-) -> dict[str, Any]:
-    """Run the full scraping plus ingestion pipeline."""
-    from redis_sre_agent.pipelines.orchestrator import PipelineOrchestrator
-
-    scraper_list = _parse_scraper_names(scrapers)
-    config = {
-        "redis_docs": {"latest_only": latest_only},
-        "redis_docs_local": {"latest_only": latest_only, "docs_repo_path": docs_path},
-        "ingestion": {"latest_only": latest_only},
-    }
-    orchestrator = PipelineOrchestrator(artifacts_path, config, scrapers=scraper_list)
-    return await orchestrator.run_full_pipeline(scraper_list)
-
-
-async def redis_sre_run_pipeline_ingest(
-    artifacts_path: str = "./artifacts",
-    batch_date: str | None = None,
-    latest_only: bool = False,
-) -> dict[str, Any]:
-    """Run pipeline ingestion for a batch."""
-    from redis_sre_agent.pipelines.orchestrator import PipelineOrchestrator
-
-    config = {"ingestion": {"latest_only": latest_only}}
-    orchestrator = PipelineOrchestrator(artifacts_path, config)
-    return await orchestrator.run_ingestion_pipeline(batch_date)
 
 
 class RuntimeProgressEmitter:
@@ -464,17 +313,18 @@ async def _dispatch_chat_query(
 
 def _load_mcp_tool_registry() -> dict[str, Any]:
     module = importlib.import_module("redis_sre_agent.mcp_server.server")
-    registry: dict[str, Any] = {
-        "redis_sre_get_pipeline_batch": redis_sre_get_pipeline_batch,
-        "redis_sre_get_pipeline_status": redis_sre_get_pipeline_status,
-        "redis_sre_prepare_source_documents": redis_sre_prepare_source_documents,
-        "redis_sre_run_pipeline_full": redis_sre_run_pipeline_full,
-        "redis_sre_run_pipeline_ingest": redis_sre_run_pipeline_ingest,
-    }
-    for name in MCP_TOOL_NAMES:
-        tool = getattr(module, name, None)
-        if callable(tool):
-            registry[name] = tool
+    mcp_server = getattr(module, "mcp", None)
+    tool_manager = getattr(mcp_server, "_tool_manager", None)
+    registered_tools = getattr(tool_manager, "_tools", {})
+
+    registry: dict[str, Any] = {}
+    for name, tool in registered_tools.items():
+        tool_fn = getattr(tool, "fn", None)
+        if not callable(tool_fn):
+            continue
+        if getattr(tool, "context_kwarg", None):
+            continue
+        registry[str(name)] = tool_fn
     return registry
 
 

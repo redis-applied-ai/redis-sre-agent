@@ -143,13 +143,23 @@ def test_load_mcp_tool_registry_includes_pipeline_tools(monkeypatch: pytest.Monk
     async def _fake_tool(**_: Any) -> dict[str, Any]:
         return {"ok": True}
 
-    fake_server = type(
-        "_Server",
-        (),
-        {
-            "redis_sre_list_instances": _fake_tool,
-        },
-    )()
+    def _tool(fn: Any, *, context_kwarg: str | None = None) -> types.SimpleNamespace:
+        return types.SimpleNamespace(fn=fn, context_kwarg=context_kwarg)
+
+    fake_server = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(
+            _tool_manager=types.SimpleNamespace(
+                _tools={
+                    "redis_sre_get_pipeline_status": _tool(_fake_tool),
+                    "redis_sre_get_pipeline_batch": _tool(_fake_tool),
+                    "redis_sre_prepare_source_documents": _tool(_fake_tool),
+                    "redis_sre_run_pipeline_full": _tool(_fake_tool),
+                    "redis_sre_run_pipeline_ingest": _tool(_fake_tool),
+                    "ctx_only": _tool(_fake_tool, context_kwarg="ctx"),
+                }
+            )
+        )
+    )
     monkeypatch.setattr(module.importlib, "import_module", lambda name: fake_server)
 
     registry = module._load_mcp_tool_registry()
@@ -159,6 +169,7 @@ def test_load_mcp_tool_registry_includes_pipeline_tools(monkeypatch: pytest.Monk
     assert "redis_sre_prepare_source_documents" in registry
     assert "redis_sre_run_pipeline_full" in registry
     assert "redis_sre_run_pipeline_ingest" in registry
+    assert "ctx_only" not in registry
 
 
 def test_entrypoint_metadata_exports_pipeline_tools() -> None:
@@ -612,216 +623,6 @@ async def test_ensure_runtime_redis_ready_returns_if_completed_inside_lock(
     )
 
     await module._ensure_runtime_redis_ready()
-
-
-def test_parse_scraper_names() -> None:
-    module = _load_module()
-
-    assert module._parse_scraper_names(None) is None
-    assert module._parse_scraper_names("  ") is None
-    assert module._parse_scraper_names("docs, kb , , cloud") == ["docs", "kb", "cloud"]
-
-
-@pytest.mark.asyncio
-async def test_pipeline_status_and_batch_helpers(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    module = _load_module()
-    init_args: list[tuple[Any, ...]] = []
-
-    class _FakeOrchestrator:
-        def __init__(
-            self,
-            artifacts_path: str,
-            config: dict[str, Any] | None = None,
-            scrapers: list[str] | None = None,
-        ) -> None:
-            init_args.append((artifacts_path, config, scrapers))
-
-        async def get_pipeline_status(self) -> dict[str, Any]:
-            return {"state": "ready"}
-
-    _set_fake_module(
-        monkeypatch,
-        "redis_sre_agent.pipelines.orchestrator",
-        PipelineOrchestrator=_FakeOrchestrator,
-    )
-    status = await module.redis_sre_get_pipeline_status(str(tmp_path / "artifacts"))
-    assert status == {"state": "ready"}
-    assert init_args == [(str(tmp_path / "artifacts"), None, None)]
-
-    class _MissingStorage:
-        def __init__(self, artifacts_path: str) -> None:
-            self.base_path = Path(artifacts_path)
-
-        def get_batch_manifest(self, batch_date: str) -> None:
-            return None
-
-    _set_fake_module(
-        monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_MissingStorage
-    )
-    missing = await module.redis_sre_get_pipeline_batch("2026-04-10", str(tmp_path / "artifacts"))
-    assert missing["error"] == "Batch 2026-04-10 not found"
-
-    class _PresentStorage:
-        def __init__(self, artifacts_path: str) -> None:
-            self.base_path = Path(artifacts_path)
-
-        def get_batch_manifest(self, batch_date: str) -> dict[str, Any]:
-            return {"total_documents": 2, "categories": {"runbook": 1}, "document_types": {"md": 2}}
-
-    batch_dir = tmp_path / "artifacts" / "2026-04-10"
-    batch_dir.mkdir(parents=True)
-    (batch_dir / "ingestion_manifest.json").write_text(
-        json.dumps({"status": "ok"}), encoding="utf-8"
-    )
-    _set_fake_module(
-        monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_PresentStorage
-    )
-    present = await module.redis_sre_get_pipeline_batch("2026-04-10", str(tmp_path / "artifacts"))
-    assert present["total_documents"] == 2
-    assert present["ingestion"] == {"status": "ok"}
-
-
-@pytest.mark.asyncio
-async def test_prepare_source_documents_handles_validation_and_ingestion(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    module = _load_module()
-
-    _set_fake_module(
-        monkeypatch, "redis_sre_agent.pipelines.ingestion.processor", IngestionPipeline=object
-    )
-    _set_fake_module(monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=object)
-    with pytest.raises(RuntimeError, match="Source directory does not exist"):
-        await module.redis_sre_prepare_source_documents(source_dir=str(tmp_path / "missing"))
-
-    source_dir = tmp_path / "source_documents"
-    source_dir.mkdir()
-
-    class _FakeStorage:
-        def __init__(self, artifacts_path: str) -> None:
-            self.base_path = Path(artifacts_path)
-            self.current_date = "2026-04-09"
-            self.current_batch_path = self.base_path / self.current_date
-            self._dirs_created = True
-
-    pipeline_calls: list[tuple[str, Any]] = []
-
-    class _FakePipeline:
-        def __init__(self, storage: _FakeStorage) -> None:
-            self.storage = storage
-
-        async def prepare_source_artifacts(self, source_path: Path, batch_date: str) -> int:
-            pipeline_calls.append(("prepare", str(source_path), batch_date))
-            return 3
-
-        async def ingest_prepared_batch(self, batch_date: str) -> list[dict[str, Any]]:
-            pipeline_calls.append(("ingest", batch_date))
-            return [{"status": "success"}, {"status": "error"}, {"status": "success"}]
-
-    _set_fake_module(
-        monkeypatch,
-        "redis_sre_agent.pipelines.ingestion.processor",
-        IngestionPipeline=_FakePipeline,
-    )
-    _set_fake_module(
-        monkeypatch, "redis_sre_agent.pipelines.scraper.base", ArtifactStorage=_FakeStorage
-    )
-
-    with pytest.raises(RuntimeError, match="Invalid batch date format"):
-        await module.redis_sre_prepare_source_documents(
-            source_dir=str(source_dir),
-            batch_date="2026/04/09",
-            artifacts_path=str(tmp_path / "artifacts"),
-        )
-
-    result = await module.redis_sre_prepare_source_documents(
-        source_dir=str(source_dir),
-        batch_date="2026-04-10",
-        artifacts_path=str(tmp_path / "artifacts"),
-    )
-    assert result["prepared_count"] == 3
-    assert result["ingestion"]["successful_documents"] == 2
-    assert result["ingestion"]["failed_documents"] == 1
-    assert pipeline_calls == [
-        ("prepare", str(source_dir), "2026-04-10"),
-        ("ingest", "2026-04-10"),
-    ]
-
-    pipeline_calls.clear()
-    prepare_only = await module.redis_sre_prepare_source_documents(
-        source_dir=str(source_dir),
-        prepare_only=True,
-        artifacts_path=str(tmp_path / "artifacts"),
-    )
-    assert prepare_only["prepare_only"] is True
-    assert "ingestion" not in prepare_only
-    assert pipeline_calls == [("prepare", str(source_dir), "2026-04-09")]
-
-
-@pytest.mark.asyncio
-async def test_run_pipeline_wrappers(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    module = _load_module()
-    calls: list[tuple[str, Any]] = []
-
-    class _FakeOrchestrator:
-        def __init__(
-            self, artifacts_path: str, config: dict[str, Any], scrapers: list[str] | None = None
-        ) -> None:
-            calls.append(("init", artifacts_path, config, scrapers))
-
-        async def run_full_pipeline(self, scrapers: list[str] | None) -> dict[str, Any]:
-            calls.append(("full", scrapers))
-            return {"mode": "full"}
-
-        async def run_ingestion_pipeline(self, batch_date: str | None) -> dict[str, Any]:
-            calls.append(("ingest", batch_date))
-            return {"mode": "ingest"}
-
-    _set_fake_module(
-        monkeypatch,
-        "redis_sre_agent.pipelines.orchestrator",
-        PipelineOrchestrator=_FakeOrchestrator,
-    )
-
-    full = await module.redis_sre_run_pipeline_full(
-        artifacts_path=str(tmp_path / "artifacts"),
-        docs_path=str(tmp_path / "docs"),
-        latest_only=True,
-        scrapers="docs,cloud",
-    )
-    ingest = await module.redis_sre_run_pipeline_ingest(
-        artifacts_path=str(tmp_path / "artifacts"),
-        batch_date="2026-04-10",
-        latest_only=True,
-    )
-
-    assert full == {"mode": "full"}
-    assert ingest == {"mode": "ingest"}
-    assert calls[0] == (
-        "init",
-        str(tmp_path / "artifacts"),
-        {
-            "redis_docs": {"latest_only": True},
-            "redis_docs_local": {"latest_only": True, "docs_repo_path": str(tmp_path / "docs")},
-            "ingestion": {"latest_only": True},
-        },
-        ["docs", "cloud"],
-    )
-    assert ("full", ["docs", "cloud"]) in calls
-    assert (
-        "init",
-        str(tmp_path / "artifacts"),
-        {"ingestion": {"latest_only": True}},
-        None,
-    ) in calls
-    assert ("ingest", "2026-04-10") in calls
 
 
 @pytest.mark.asyncio
