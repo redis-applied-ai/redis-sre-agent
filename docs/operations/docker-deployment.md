@@ -194,12 +194,16 @@ For production deployments:
 
 Pre-built images are available on Docker Hub:
 
-| Tag | Description |
+| Image | Description |
 |-----|-------------|
-| `redislabs/redis-sre-agent:latest` | Latest standard image |
-| `redislabs/redis-sre-agent:airgap` | Air-gap image with bundled models |
-| `redislabs/redis-sre-agent:v1.0.0` | Versioned release (example) |
-| `redislabs/redis-sre-agent:v1.0.0-airgap` | Versioned air-gap release |
+| `redislabs/redis-sre-agent:latest` | Latest standard API/worker image |
+| `redislabs/redis-sre-agent:airgap` | Air-gap API/worker image with bundled models |
+| `redislabs/redis-sre-agent:v1.0.0` | Versioned API/worker release (example) |
+| `redislabs/redis-sre-agent:v1.0.0-airgap` | Versioned air-gap API/worker release |
+| `redislabs/redis-sre-agent-ui:latest` | Latest production UI image |
+| `redislabs/redis-sre-agent-ui:airgap` | Air-gap-compatible production UI image |
+| `redislabs/redis-sre-agent-ui:v1.0.0` | Versioned UI release (example) |
+| `redislabs/redis-sre-agent-ui:v1.0.0-airgap` | Versioned air-gap UI release |
 
 Example production overrides:
 

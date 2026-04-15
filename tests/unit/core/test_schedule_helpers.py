@@ -89,6 +89,7 @@ class TestScheduleContextHelpers:
         assert context["instance_id"] == "redis-prod-1"
         assert context["resolution_policy"] == "require_target"
         assert context["target_bindings"][0]["target_kind"] == "instance"
+        assert context["target_bindings"][0]["target_handle"]
         assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
         assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
 

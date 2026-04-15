@@ -66,14 +66,12 @@ export const Form: React.FC<FormProps> = ({
   const handleFieldChange = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (fieldName: string, value: any) => {
-      setFormData((prev) => {
-        const nextFormData = {
-          ...prev,
-          [fieldName]: value,
-        };
-        onChange?.(nextFormData);
-        return nextFormData;
-      });
+      const nextFormData = {
+        ...formData,
+        [fieldName]: value,
+      };
+      setFormData(nextFormData);
+      onChange?.(nextFormData);
 
       // Clear field error when user starts typing
       if (errors[fieldName]) {
@@ -84,7 +82,7 @@ export const Form: React.FC<FormProps> = ({
         });
       }
     },
-    [errors, onChange],
+    [errors, formData, onChange],
   );
 
   const validateForm = () => {

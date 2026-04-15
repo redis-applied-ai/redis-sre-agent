@@ -17,6 +17,8 @@ from opentelemetry import trace
 
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.targets import get_target_handle_store, get_target_integration_registry
+from redis_sre_agent.targets.contracts import BindingRequest, ProviderLoadRequest
 
 from .models import Tool, ToolCapability, ToolDefinition
 from .protocols import ToolProvider
@@ -508,6 +510,16 @@ class ToolManager:
             logger.exception(f"Failed to load provider {provider_path}")
             # Don't fail entire manager if one provider fails
 
+    async def _load_provider_request(self, request: ProviderLoadRequest) -> None:
+        """Load one provider from a strategy-produced load request."""
+        provider_context = request.provider_context or {}
+        await self._load_provider(
+            request.provider_path,
+            always_on=bool(provider_context.get("always_on", False)),
+            redis_instance_override=provider_context.get("redis_instance_override"),
+            load_key=request.provider_key,
+        )
+
     async def _load_mcp_providers(self) -> None:
         """Load MCP tool providers based on configured mcp_servers.
 
@@ -690,17 +702,57 @@ class ToolManager:
 
         new_attachment = False
         attached: List[Any] = []
+        handle_store = get_target_handle_store()
+        registry = get_target_integration_registry()
+        requested_handles = [
+            getattr(binding, "target_handle", None)
+            for binding in bindings or []
+            if getattr(binding, "target_handle", None)
+        ]
+        handle_records = await handle_store.get_records(requested_handles)
 
         for binding in bindings or []:
             target_handle = getattr(binding, "target_handle", None)
             target_kind = getattr(binding, "target_kind", None)
             resource_id = getattr(binding, "resource_id", None)
-            if not target_handle or not target_kind or not resource_id:
+            if not target_handle or not target_kind:
                 continue
 
             existing = self._attached_target_bindings.get(target_handle)
             if existing is not None:
                 attached.append(existing)
+                continue
+
+            handle_record = handle_records.get(target_handle)
+            if handle_record is not None:
+                binding_result = await registry.get_binding_strategy(
+                    handle_record.binding_strategy
+                ).bind(
+                    BindingRequest(
+                        handle_record=handle_record,
+                        thread_id=self.thread_id,
+                        task_id=self.task_id,
+                    )
+                )
+                if not binding_result.provider_loads:
+                    logger.warning(
+                        "Unable to attach target handle %s: strategy %s produced no provider loads",
+                        target_handle,
+                        handle_record.binding_strategy,
+                    )
+                    continue
+                for provider_load in binding_result.provider_loads:
+                    await self._load_provider_request(provider_load)
+                self._attached_target_bindings[target_handle] = binding_result.public_summary
+                attached.append(binding_result.public_summary)
+                new_attachment = True
+                continue
+
+            if not resource_id:
+                logger.warning(
+                    "Unable to attach target handle %s: no private handle record or legacy resource_id",
+                    target_handle,
+                )
                 continue
 
             if target_kind == "instance":
