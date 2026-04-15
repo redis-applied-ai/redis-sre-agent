@@ -202,3 +202,21 @@ def test_eval_baseline_policy_normalizes_legacy_variance_keys():
 
     assert policy.judge_score_variance_band == 2.5
     assert policy.max_failed_scenarios == 1
+
+
+def test_eval_baseline_policy_normalizes_variance_from_acceptable_variance_once():
+    policy = EvalBaselinePolicy.model_validate(
+        {
+            "mode": "scheduled_live",
+            "notes": " review before updating ",
+            "acceptable_variance": {
+                "max_failed_scenarios": 1,
+                "max_judge_score_drop": 2.5,
+            },
+        }
+    )
+
+    assert policy.max_failed_scenarios == 1
+    assert policy.max_judge_score_drop == 2.5
+    assert policy.judge_score_variance_band == 2.5
+    assert policy.notes == ["review before updating"]

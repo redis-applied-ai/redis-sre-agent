@@ -223,33 +223,6 @@ class EvalBaselinePolicy(BaseModel):
         data = dict(value)
         acceptable_variance = data.get("acceptable_variance")
         if isinstance(acceptable_variance, dict):
-            if "max_failed_scenarios" not in data and "max_failed_scenarios" in acceptable_variance:
-                data["max_failed_scenarios"] = acceptable_variance["max_failed_scenarios"]
-            if (
-                "judge_score_variance_band" not in data
-                and "max_judge_score_drop" in acceptable_variance
-            ):
-                data["judge_score_variance_band"] = acceptable_variance["max_judge_score_drop"]
-
-        if "judge_score_variance_band" not in data and "max_judge_score_drop" in data:
-            data["judge_score_variance_band"] = data["max_judge_score_drop"]
-
-        notes = data.get("notes")
-        if isinstance(notes, str):
-            normalized_note = notes.strip()
-            data["notes"] = [normalized_note] if normalized_note else []
-
-        return data
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_variance_fields(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-
-        data = dict(value)
-        acceptable_variance = data.get("acceptable_variance")
-        if isinstance(acceptable_variance, dict):
             if (
                 data.get("max_failed_scenarios") is None
                 and acceptable_variance.get("max_failed_scenarios") is not None
@@ -271,6 +244,12 @@ class EvalBaselinePolicy(BaseModel):
             and data.get("max_judge_score_drop") is not None
         ):
             data["judge_score_variance_band"] = data["max_judge_score_drop"]
+
+        notes = data.get("notes")
+        if isinstance(notes, str):
+            normalized_note = notes.strip()
+            data["notes"] = [normalized_note] if normalized_note else []
+
         return data
 
 
