@@ -48,6 +48,10 @@ def _summary_json(summary: object) -> str:
     return json.dumps(summary, indent=2)
 
 
+def _summary_overall_pass(summary: object) -> bool:
+    return bool(getattr(summary, "overall_pass", False))
+
+
 def _summary_text(summary: object) -> str:
     if not hasattr(summary, "suite_name"):
         return _summary_json(summary)
@@ -63,7 +67,7 @@ def _summary_text(summary: object) -> str:
             f"{getattr(summary, 'failed_scenarios', 0)} failed "
             f"(allowed {getattr(summary, 'allowed_failed_scenarios', 0)})"
         ),
-        f"Overall pass: {'yes' if bool(getattr(summary, 'overall_pass', False)) else 'no'}",
+        f"Overall pass: {'yes' if _summary_overall_pass(summary) else 'no'}",
     ]
     return "\n".join(lines)
 
@@ -112,7 +116,7 @@ def live_suite(
         session_id_prefix=session_id_prefix,
     )
     click.echo(_summary_json(summary) if as_json else _summary_text(summary))
-    if not bool(getattr(summary, "overall_pass", True)):
+    if not _summary_overall_pass(summary):
         raise SystemExit(1)
 
 

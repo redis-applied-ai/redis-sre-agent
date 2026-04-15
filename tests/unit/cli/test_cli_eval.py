@@ -167,6 +167,41 @@ def test_eval_live_suite_command_returns_nonzero_when_suite_fails(tmp_path, monk
     assert result.exit_code == 1
 
 
+def test_eval_live_suite_command_defaults_missing_overall_pass_to_failure(tmp_path, monkeypatch):
+    runner = CliRunner()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("suites: {}\n", encoding="utf-8")
+
+    class Summary:
+        suite_name = "weekly-live-smoke"
+        trigger = "manual"
+        git_sha = "deadbeef"
+        output_dir = str(tmp_path / "artifacts")
+        total_scenarios = 1
+        failed_scenarios = 1
+        allowed_failed_scenarios = 0
+
+    monkeypatch.setattr(
+        "redis_sre_agent.cli.eval.run_live_eval_suite_sync",
+        lambda *args, **kwargs: Summary(),
+    )
+
+    result = runner.invoke(
+        eval,
+        [
+            "live-suite",
+            "weekly-live-smoke",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(tmp_path / "artifacts"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Overall pass: no" in result.output
+
+
 def test_eval_list_json_includes_known_scenario():
     runner = CliRunner()
 

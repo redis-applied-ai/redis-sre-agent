@@ -304,7 +304,6 @@ class FixtureKnowledgeDocument:
     summary: str
     priority: str
     pinned: bool
-    frontmatter_pinned: bool
     version: str
     product_labels: list[str]
     index_type: str
@@ -849,7 +848,6 @@ def _load_fixture_document(
         summary=summary,
         priority=priority,
         pinned=bool(pinned),
-        frontmatter_pinned=bool(metadata.get("pinned", False)),
         version=version,
         product_labels=product_labels,
         index_type=_infer_index_type(doc_type),
