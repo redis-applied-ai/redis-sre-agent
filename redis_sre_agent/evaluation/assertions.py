@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Sequence
 
 from redis_sre_agent.evaluation.report_schema import (
@@ -16,9 +17,45 @@ from redis_sre_agent.evaluation.report_schema import (
 from redis_sre_agent.evaluation.scenarios import EvalScenario
 from redis_sre_agent.evaluation.tool_identity import LogicalToolIdentity
 
+_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[-'][a-z0-9]+)*")
+_NEGATION_PREFIXES: tuple[tuple[str, ...], ...] = (
+    ("do", "not"),
+    ("did", "not"),
+    ("does", "not"),
+    ("is", "not"),
+    ("are", "not"),
+    ("was", "not"),
+    ("were", "not"),
+    ("have", "not"),
+    ("has", "not"),
+    ("had", "not"),
+    ("can", "not"),
+    ("cannot",),
+    ("can't",),
+    ("don't",),
+    ("doesn't",),
+    ("didn't",),
+    ("never",),
+    ("no",),
+    ("without",),
+    ("avoid",),
+)
+
 
 def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
+
+
+def _tokenize_text(value: Any) -> list[str]:
+    return _TOKEN_RE.findall(_normalize_text(value))
+
+
+def _has_negation_prefix(tokens: Sequence[str], start_index: int) -> bool:
+    prefix = tuple(tokens[max(0, start_index - 3) : start_index])
+    return any(
+        len(prefix) >= len(pattern) and prefix[-len(pattern) :] == pattern
+        for pattern in _NEGATION_PREFIXES
+    )
 
 
 def _normalize_logical_identity(
@@ -105,9 +142,19 @@ def _source_candidates(entry: RetrievedSourceEntry) -> set[str]:
 
 
 def _contains_phrase(text: str, phrase: str) -> bool:
-    normalized_text = _normalize_text(text)
-    normalized_phrase = _normalize_text(phrase)
-    return bool(normalized_phrase) and normalized_phrase in normalized_text
+    text_tokens = _tokenize_text(text)
+    phrase_tokens = _tokenize_text(phrase)
+    if not phrase_tokens or len(text_tokens) < len(phrase_tokens):
+        return False
+
+    last_start = len(text_tokens) - len(phrase_tokens) + 1
+    for start_index in range(last_start):
+        if text_tokens[start_index : start_index + len(phrase_tokens)] != phrase_tokens:
+            continue
+        if _has_negation_prefix(text_tokens, start_index):
+            continue
+        return True
+    return False
 
 
 def _pass(message: str, *, expected: Any = None, actual: Any = None) -> EvalAssertionResult:

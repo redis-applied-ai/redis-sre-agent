@@ -140,6 +140,39 @@ def test_score_structured_assertions_normalizes_phrase_whitespace():
     assert results.forbidden_claims[0].status.value == "passed"
 
 
+def test_score_structured_assertions_ignores_negated_forbidden_claims():
+    scenario = _scenario()
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[],
+        retrieved_sources=[],
+        final_answer=(
+            "Maintenance mode caused the failover. Do not recommend CONFIG SET changes yet."
+        ),
+        actual_routing_decision="redis_triage",
+    )
+
+    assert results.required_findings[0].status.value == "passed"
+    assert results.forbidden_claims[0].status.value == "passed"
+
+
+def test_score_structured_assertions_still_flags_positive_forbidden_claims():
+    scenario = _scenario()
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[],
+        retrieved_sources=[],
+        final_answer=(
+            "Maintenance mode caused the failover. Recommend CONFIG SET changes immediately."
+        ),
+        actual_routing_decision="redis_triage",
+    )
+
+    assert results.forbidden_claims[0].status.value == "failed"
+
+
 def test_score_structured_assertions_normalizes_expected_logical_tool_refs():
     scenario = EvalScenario.model_validate(
         {
