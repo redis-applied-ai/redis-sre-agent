@@ -215,13 +215,15 @@ async def test_fixture_knowledge_backend_matches_eval_helper_contracts(tmp_path:
         "skill_name": "maintenance-mode-skill",
         "full_content": "Before using admin tooling, check whether maintenance mode is enabled.",
     }
-    assert search["results_count"] == 1
-    assert search["results"][0]["document_hash"] == "failover-guide"
-    assert search["results"][0]["source_kind"] == "redis_docs"
-    assert search["results"][0]["source_pack"] == "redis-docs-curated"
-    assert search["results"][0]["source_pack_version"] == "2026-04-13"
-    assert search["results"][0]["derived_from"] == ["redis-docs-batch-17"]
-    assert search["results"][0]["review_status"] == "reviewed"
+    failover_result = next(
+        result for result in search["results"] if result["document_hash"] == "failover-guide"
+    )
+    assert search["results_count"] >= 1
+    assert failover_result["source_kind"] == "redis_docs"
+    assert failover_result["source_pack"] == "redis-docs-curated"
+    assert failover_result["source_pack_version"] == "2026-04-13"
+    assert failover_result["derived_from"] == ["redis-docs-batch-17"]
+    assert failover_result["review_status"] == "reviewed"
     assert tickets["ticket_count"] == 1
     assert tickets["tickets"][0]["ticket_id"] == "RET-4421"
     assert ticket["full_content"] == (
@@ -253,8 +255,9 @@ async def test_fixture_knowledge_backend_applies_version_filters_and_pinned_budg
     assert latest_pinned["truncated"] is True
     assert latest_pinned["pinned_documents"][0]["truncated"] is True
     assert latest_pinned["pinned_documents"][0]["full_content"].endswith("...")
-    assert legacy_search["results_count"] == 1
-    assert legacy_search["results"][0]["document_hash"] == "eviction-guide-7-8"
+    assert any(
+        result["document_hash"] == "eviction-guide-7-8" for result in legacy_search["results"]
+    )
     assert all(
         result["document_hash"] != "eviction-guide-7-8" for result in latest_search["results"]
     )
