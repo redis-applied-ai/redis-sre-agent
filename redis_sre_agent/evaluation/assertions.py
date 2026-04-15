@@ -111,7 +111,14 @@ def _normalize_tool_trace(
     identity_by_concrete = _identity_map_by_concrete(tool_identity_map)
     normalized: list[ToolTraceEntry] = []
     for entry in tool_trace or []:
-        trace = entry if isinstance(entry, ToolTraceEntry) else ToolTraceEntry.model_validate(entry)
+        if isinstance(entry, dict) and "concrete_name" not in entry and "tool_key" in entry:
+            trace = ToolTraceEntry.from_result_envelope(entry)
+        elif hasattr(entry, "tool_key") and not isinstance(entry, ToolTraceEntry):
+            trace = ToolTraceEntry.from_result_envelope(entry)
+        else:
+            trace = (
+                entry if isinstance(entry, ToolTraceEntry) else ToolTraceEntry.model_validate(entry)
+            )
         if trace.logical is None and trace.concrete_name in identity_by_concrete:
             trace = trace.model_copy(update={"logical": identity_by_concrete[trace.concrete_name]})
         normalized.append(trace)

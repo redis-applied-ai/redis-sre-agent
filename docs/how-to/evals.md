@@ -54,6 +54,7 @@ The fast path for the mocked harness is the evaluation test suite. This uses the
 Useful commands:
 
 ```bash
+make test-eval-pr
 uv run pytest tests/unit/evaluation
 uv run pytest tests/unit/cli/test_cli_eval.py
 uv run pytest tests/unit/evaluation/test_prompt_scenarios.py -k iterative
@@ -61,6 +62,10 @@ uv run pytest tests/unit/evaluation/test_live_suite.py
 ```
 
 When you are editing one scenario family, run the narrow test module that covers it instead of the whole tree.
+
+`make test-eval-pr` is the supported mocked-eval gate for this repository. It runs the deterministic subset used in pull-request CI.
+
+Do not treat `evals/scenarios/` as a single live-model suite. Most of those scenario files are validated through the deterministic pytest modules above, while live-model execution is reserved for the curated manifests under `evals/suites/`.
 
 ### Running One Mocked Scenario
 

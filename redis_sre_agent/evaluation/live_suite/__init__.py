@@ -380,6 +380,25 @@ def _coerce_live_scenario(scenario: EvalScenario) -> EvalScenario:
     return scenario.model_copy(update={"execution": execution})
 
 
+def _mechanical_assertion_scenario(scenario: EvalScenario) -> EvalScenario:
+    """Drop free-form text assertions for live suites.
+
+    Live-model evals should use hard assertions only for mechanical outputs
+    such as tool calls and routing. Text quality, semantic correctness, and
+    retrieval/source selection belong in the judge path because they depend on
+    live-model wording and query formulation.
+    """
+
+    expectations = scenario.expectations.model_copy(
+        update={
+            "required_sources": [],
+            "required_findings": [],
+            "forbidden_claims": [],
+        }
+    )
+    return scenario.model_copy(update={"expectations": expectations})
+
+
 async def _run_scenario_live(
     scenario: EvalScenario,
     *,
@@ -445,20 +464,16 @@ async def _run_scenario_live(
 
     tool_trace = _normalize_tool_trace(tool_envelopes)
     retrieved_sources = _normalize_retrieved_sources(search_results)
+    assertion_scenario = _mechanical_assertion_scenario(scenario)
     assertion_results = score_structured_assertions(
-        scenario,
+        assertion_scenario,
         tool_trace=tool_trace,
         retrieved_sources=retrieved_sources,
         final_answer=response_text,
         actual_routing_decision=actual_agent or scenario.execution.agent,
     )
 
-    should_judge = (
-        scenario.execution.lane is ExecutionLane.FULL_TURN
-        or judge is not None
-        or judge_criteria is not None
-        or judge_pass_threshold is not None
-    )
+    should_judge = True
     judge_result = None
     if should_judge:
         active_criteria = list(judge_criteria or build_default_eval_criteria())

@@ -92,6 +92,51 @@ def test_score_structured_assertions_uses_identity_map_and_output_evidence():
     assert results.all_passed is True
 
 
+def test_score_structured_assertions_accepts_raw_tool_envelopes():
+    scenario = _scenario()
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[
+            {
+                "tool_key": "mcp_metrics_eval_1113d2_query_metrics",
+                "status": "success",
+                "args": {"query": "maintenance"},
+                "summary": "Queried maintenance metrics.",
+                "data": {"series": []},
+            }
+        ],
+        tool_identity_map=[
+            {
+                "logical": {
+                    "provider_family": "mcp",
+                    "server_name": "metrics_eval",
+                    "operation": "query_metrics",
+                },
+                "concrete_name": "mcp_metrics_eval_1113d2_query_metrics",
+                "provider_name": "mcp_metrics_eval",
+                "capability": "metrics",
+                "requires_instance": False,
+            }
+        ],
+        retrieved_sources=[
+            {
+                "source_id": "doc-1",
+                "source_kind": "document",
+                "title": "Maintenance Runbook",
+                "metadata": {"name": "maintenance-runbook"},
+            }
+        ],
+        final_answer="Maintenance mode caused the failover.",
+        actual_routing_decision="redis_triage",
+    )
+
+    assert results.required_tool_calls[0].status.value == "passed"
+    assert results.required_sources[0].status.value == "passed"
+    assert results.required_findings[0].status.value == "passed"
+    assert results.all_passed is True
+
+
 def test_score_structured_assertions_marks_missing_and_forbidden_evidence_failed():
     scenario = _scenario()
 

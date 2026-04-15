@@ -197,8 +197,10 @@ services:
     volumes:
       - .env:/app/.env
       - ./config.yaml:/app/config.yaml  # Mount config for hot-reload on restart
+      - ./.artifacts:/app/.artifacts  # Persist eval output from container CLI runs
       - ./artifacts:/app/artifacts  # For data pipeline
       - /var/run/docker.sock:/var/run/docker.sock  # Needed for command-based MCP servers
+      - ./evals:/app/evals  # Mount live eval suites and scenarios for container CLI runs
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
     group_add:

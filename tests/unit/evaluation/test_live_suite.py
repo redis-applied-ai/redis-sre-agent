@@ -313,6 +313,7 @@ knowledge:
         live_suite_module.load_eval_scenario(scenario_path)
     )
     seen: dict[str, object] = {}
+    judge_calls: dict[str, object] = {}
 
     @contextmanager
     def fake_eval_injection_scope(**kwargs):
@@ -329,6 +330,11 @@ knowledge:
 
     monkeypatch.setattr(live_suite_module, "eval_injection_scope", fake_eval_injection_scope)
     monkeypatch.setattr(live_suite_module, "run_agent_only_scenario", fake_run_agent_only_scenario)
+    monkeypatch.setattr(
+        live_suite_module,
+        "evaluate_eval_scenario_response",
+        lambda **kwargs: _fake_judge_result(judge_calls, **kwargs),
+    )
     monkeypatch.setattr(
         live_suite_module,
         "build_eval_artifact_bundle",
@@ -354,6 +360,10 @@ knowledge:
 
     assert scenario.tools.mcp_servers == {}
     assert seen == {"mcp_runtime": None, "mcp_servers": None}
+    assert judge_calls["scenario_id"] == "prompt/no-mcp"
+    assert judge_calls["required_sources"] == []
+    assert judge_calls["required_findings"] == []
+    assert judge_calls["forbidden_claims"] == []
     assert result == LiveEvalScenarioResult(
         scenario_id="prompt/no-mcp",
         execution_lane=ExecutionLane.AGENT_ONLY,
@@ -388,3 +398,17 @@ def test_compare_live_eval_reports_flags_score_drop_and_missing_candidate(tmp_pa
         "judge score drop exceeded allowed variance (91.0 -> 85.0, allowed 3.0)"
     ]
     assert summary.rows[1].violations == ["missing candidate report"]
+
+
+async def _fake_judge_result(target: dict[str, object], **kwargs):
+    structured_assertions = kwargs["structured_assertions"]
+    target["scenario_id"] = kwargs["scenario"].id
+    target["required_sources"] = list(structured_assertions.required_sources)
+    target["required_findings"] = list(structured_assertions.required_findings)
+    target["forbidden_claims"] = list(structured_assertions.forbidden_claims)
+    return JudgeSummary(
+        overall_score=90.0,
+        criteria_scores={},
+        detailed_feedback="ok",
+        passed=True,
+    )
