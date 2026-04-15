@@ -141,7 +141,7 @@ if [ "$SKIP_UI_IMAGE" = false ]; then
     START_UI_STEP_NUMBER=5
 fi
 
-cat > "$OUTPUT_DIR/README.md" <<EOF
+cat > "$OUTPUT_DIR/README.md" <<'EOF'
 # Redis SRE Agent - Air-Gapped Deployment Bundle
 
 This bundle contains everything needed to deploy Redis SRE Agent in an
@@ -149,7 +149,7 @@ air-gapped environment without internet access.
 
 ## Contents
 
-- \`redis-sre-agent-airgap.tar.gz\` - Docker image with pre-bundled models
+- `redis-sre-agent-airgap.tar.gz` - Docker image with pre-bundled models
 EOF
 
 if [ "$SKIP_UI_IMAGE" = false ]; then
