@@ -49,6 +49,7 @@ from redis_sre_agent.core.targets import (
 )
 from redis_sre_agent.core.tasks import TaskState, TaskStatus
 from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
+from redis_sre_agent.core.turn_scope import TurnScope
 
 
 def _build_approval_required_error(
@@ -2272,6 +2273,30 @@ class TestProcessAgentTurn:
             )
         )
 
+        async def _bind_instance_scope(**kwargs):
+            binding = TargetBinding(
+                target_handle="tgt_explicit_instance",
+                target_kind="instance",
+                resource_id="redis-explicit-instance",
+                display_name="explicit-instance",
+                capabilities=["redis"],
+            )
+            scope_context = {
+                "instance_id": "redis-explicit-instance",
+                "cluster_id": "",
+                "attached_target_handles": [binding.target_handle],
+                "target_bindings": [binding.public_dump()],
+                "target_toolset_generation": 1,
+            }
+            kwargs["routing_context"].update(scope_context)
+            kwargs["thread_context"].update(scope_context)
+            return TurnScope.from_context(
+                scope_context,
+                thread_id="thread-123",
+                session_id="session-1",
+                seed_hints={"instance_id": "redis-explicit-instance"},
+            )
+
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch(
@@ -2289,6 +2314,10 @@ class TestProcessAgentTurn:
             patch(
                 "redis_sre_agent.core.docket_tasks.get_instance_by_id",
                 new=AsyncMock(return_value=instance),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._ensure_handle_backed_turn_scope",
+                new=AsyncMock(side_effect=_bind_instance_scope),
             ),
             patch(
                 "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
@@ -2451,6 +2480,30 @@ class TestProcessAgentTurn:
             )
         )
 
+        async def _bind_cluster_scope(**kwargs):
+            binding = TargetBinding(
+                target_handle="tgt_explicit_cluster",
+                target_kind="cluster",
+                resource_id="cluster-explicit",
+                display_name="cluster-explicit",
+                capabilities=["admin"],
+            )
+            scope_context = {
+                "cluster_id": "cluster-explicit",
+                "instance_id": "",
+                "attached_target_handles": [binding.target_handle],
+                "target_bindings": [binding.public_dump()],
+                "target_toolset_generation": 1,
+            }
+            kwargs["routing_context"].update(scope_context)
+            kwargs["thread_context"].update(scope_context)
+            return TurnScope.from_context(
+                scope_context,
+                thread_id="thread-123",
+                session_id="session-1",
+                seed_hints={"cluster_id": "cluster-explicit"},
+            )
+
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
             patch(
@@ -2468,6 +2521,10 @@ class TestProcessAgentTurn:
             patch(
                 "redis_sre_agent.core.docket_tasks.get_cluster_by_id",
                 new=AsyncMock(return_value=cluster),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._ensure_handle_backed_turn_scope",
+                new=AsyncMock(side_effect=_bind_cluster_scope),
             ),
             patch(
                 "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
