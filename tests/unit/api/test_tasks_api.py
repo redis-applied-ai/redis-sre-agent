@@ -395,12 +395,12 @@ class TestTasksAPI:
 
         assert resp.status_code == 500
         assert mock_tm.set_pending_approval.await_args_list == [
-            (( "t1", None), {}),
-            (( "t1", AwaitingApprovalState.pending_approval), {}),
+            (("t1", None), {}),
+            (("t1", AwaitingApprovalState.pending_approval), {}),
         ]
         assert mock_tm.update_task_status.await_args_list == [
-            (( "t1", TaskStatus.IN_PROGRESS), {}),
-            (( "t1", TaskStatus.AWAITING_APPROVAL), {}),
+            (("t1", TaskStatus.IN_PROGRESS), {}),
+            (("t1", TaskStatus.AWAITING_APPROVAL), {}),
         ]
 
     def test_resume_task_maps_validation_errors(self, client):

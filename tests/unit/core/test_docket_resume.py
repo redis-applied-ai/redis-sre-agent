@@ -158,9 +158,7 @@ async def test_resume_task_after_approval_accepts_pretransitioned_in_progress_st
     post_resume_state = _build_task_state(status=TaskStatus.IN_PROGRESS, pending=None)
 
     mock_task_manager = AsyncMock()
-    mock_task_manager.get_task_state = AsyncMock(
-        side_effect=[in_progress_state, post_resume_state]
-    )
+    mock_task_manager.get_task_state = AsyncMock(side_effect=[in_progress_state, post_resume_state])
     mock_task_manager.set_pending_approval = AsyncMock()
     mock_task_manager.set_resume_supported = AsyncMock()
     mock_task_manager.update_task_status = AsyncMock()
