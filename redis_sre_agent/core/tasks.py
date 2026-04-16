@@ -567,10 +567,10 @@ async def list_tasks(
             if status_filter:
                 expr = Tag("status") == status_filter.value
             else:
-                expr = (Tag("status") == TaskStatus.IN_PROGRESS.value) | (
-                    Tag("status") == TaskStatus.QUEUED.value
-                ) | (
-                    Tag("status") == TaskStatus.AWAITING_APPROVAL.value
+                expr = (
+                    (Tag("status") == TaskStatus.IN_PROGRESS.value)
+                    | (Tag("status") == TaskStatus.QUEUED.value)
+                    | (Tag("status") == TaskStatus.AWAITING_APPROVAL.value)
                 )
             if user_id:
                 expr = expr & (Tag("user_id") == user_id)

@@ -2919,7 +2919,9 @@ class TestTaskApprovalTools:
             ),
             patch("redis_sre_agent.core.approvals.ApprovalManager") as mock_manager_cls,
         ):
-            mock_manager_cls.return_value.list_task_approvals = AsyncMock(return_value=[mock_approval])
+            mock_manager_cls.return_value.list_task_approvals = AsyncMock(
+                return_value=[mock_approval]
+            )
             result = await redis_sre_get_task_approvals(task_id="task-123")
 
         assert result["task_id"] == "task-123"

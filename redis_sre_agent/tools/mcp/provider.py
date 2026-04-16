@@ -309,6 +309,13 @@ class MCPToolProvider(ToolProvider):
             return config.description
         return mcp_description
 
+    def _get_action_kind(self, tool_name: str) -> ToolActionKind:
+        """Get the approval action kind for a tool, with config override support."""
+        config = self._get_tool_config(tool_name)
+        if config and config.action_kind is not None:
+            return config.action_kind
+        return ToolActionKind.UNKNOWN
+
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas from the MCP server's tools.
 
@@ -373,7 +380,7 @@ class MCPToolProvider(ToolProvider):
                 capability=schema.capability,
                 provider_name=self.provider_name,
                 requires_instance=False,  # MCP tools typically don't require Redis instance
-                action_kind=ToolActionKind.UNKNOWN,
+                action_kind=self._get_action_kind(mcp_tool_name),
             )
 
             # Create the invoke closure that calls the MCP server

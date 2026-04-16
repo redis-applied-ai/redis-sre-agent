@@ -2819,7 +2819,9 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 if target_instance is None and target_cluster is None
                 else None
             )
-            initial_toolset_generation = turn_scope.toolset_generation if initial_target_bindings else 0
+            initial_toolset_generation = (
+                turn_scope.toolset_generation if initial_target_bindings else 0
+            )
             async with ToolManager(
                 redis_instance=target_instance,
                 redis_cluster=target_cluster,

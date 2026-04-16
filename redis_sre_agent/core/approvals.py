@@ -240,9 +240,7 @@ def extract_approval_required_error(graph_result: Any) -> Optional[ApprovalRequi
         approval_record_raw = payload.get("approval_record")
         pending_approval_raw = payload.get("pending_approval")
         approval_record = (
-            ApprovalRecord(**approval_record_raw)
-            if isinstance(approval_record_raw, dict)
-            else None
+            ApprovalRecord(**approval_record_raw) if isinstance(approval_record_raw, dict) else None
         )
         pending_approval = (
             PendingApprovalSummary(**pending_approval_raw)

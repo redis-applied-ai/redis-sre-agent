@@ -759,7 +759,9 @@ async def process_chat_turn(
                     if current_task_state and current_task_state.pending_approval
                     else None
                 ),
-                "resume_supported": current_task_state.resume_supported if current_task_state else True,
+                "resume_supported": current_task_state.resume_supported
+                if current_task_state
+                else True,
             }
             return result
 
@@ -917,7 +919,9 @@ async def process_knowledge_query(
                     if current_task_state and current_task_state.pending_approval
                     else None
                 ),
-                "resume_supported": current_task_state.resume_supported if current_task_state else True,
+                "resume_supported": current_task_state.resume_supported
+                if current_task_state
+                else True,
             }
 
         # Store result on task (convert AgentResponse to dict for JSON serialization)
@@ -1763,20 +1767,19 @@ async def process_agent_turn(
         if pending_approval or (
             current_task_state and current_task_state.status == TaskStatus.AWAITING_APPROVAL
         ):
-            pending_approval = (
-                pending_approval
-                or (
-                    current_task_state.pending_approval.model_dump(mode="json")
-                    if current_task_state and current_task_state.pending_approval
-                    else None
-                )
+            pending_approval = pending_approval or (
+                current_task_state.pending_approval.model_dump(mode="json")
+                if current_task_state and current_task_state.pending_approval
+                else None
             )
             result = {
                 "status": TaskStatus.AWAITING_APPROVAL.value,
                 "thread_id": thread_id,
                 "task_id": task_id,
                 "pending_approval": pending_approval,
-                "resume_supported": current_task_state.resume_supported if current_task_state else True,
+                "resume_supported": current_task_state.resume_supported
+                if current_task_state
+                else True,
             }
             logger.info("Task %s is awaiting approval", task_id)
             return result
@@ -2048,6 +2051,7 @@ async def process_agent_turn(
 
         raise
 
+
 @sre_task
 async def resume_task_after_approval(
     task_id: str,
@@ -2102,10 +2106,13 @@ async def resume_task_after_approval(
     normalized_decision = decision_model.decision
 
     if approval_record.decision is None:
-        approval_record = await approval_manager.record_decision(
-            approval_id,
-            decision_model,
-        ) or approval_record
+        approval_record = (
+            await approval_manager.record_decision(
+                approval_id,
+                decision_model,
+            )
+            or approval_record
+        )
     elif approval_record.decision.decision != normalized_decision:
         raise ValueError(
             f"Approval {approval_id} was already decided as {approval_record.decision.decision.value}"
@@ -2190,7 +2197,9 @@ async def resume_task_after_approval(
             current_task_state = await task_manager.get_task_state(task_id)
             await persist_approval_wait_state(
                 task_id=task_id,
-                pending_approval=current_task_state.pending_approval if current_task_state else None,
+                pending_approval=current_task_state.pending_approval
+                if current_task_state
+                else None,
             )
             return result
         except ApprovalRequiredError as exc:

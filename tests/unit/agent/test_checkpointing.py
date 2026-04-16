@@ -54,6 +54,20 @@ def test_open_graph_checkpointer_uses_redis_saver_setup():
     fake_checkpointer.setup.assert_called_once_with()
 
 
+def test_open_graph_checkpointer_falls_back_to_memory_saver_on_connection_error():
+    fake_memory_saver = MagicMock()
+
+    with (
+        patch(
+            "redis_sre_agent.agent.checkpointing.RedisSaver.from_conn_string",
+            side_effect=RuntimeError("connection refused"),
+        ),
+        patch("redis_sre_agent.agent.checkpointing.InMemorySaver", return_value=fake_memory_saver),
+    ):
+        with open_graph_checkpointer() as checkpointer:
+            assert checkpointer is fake_memory_saver
+
+
 @pytest.mark.asyncio
 async def test_persist_checkpoint_metadata_saves_resume_state():
     fake_checkpointer = MagicMock()

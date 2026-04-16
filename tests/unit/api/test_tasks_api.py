@@ -308,9 +308,7 @@ class TestTasksAPI:
             resume_supported = True
 
         mock_tm = MagicMock()
-        mock_tm.get_task_state = AsyncMock(
-            side_effect=[AwaitingApprovalState(), InProgressState()]
-        )
+        mock_tm.get_task_state = AsyncMock(side_effect=[AwaitingApprovalState(), InProgressState()])
         mock_tm.get_task_tool_calls = AsyncMock(return_value=None)
         docket_instance = AsyncMock()
         docket_instance.__aenter__.return_value = docket_instance
@@ -320,7 +318,9 @@ class TestTasksAPI:
 
         with (
             patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm),
-            patch("redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://")),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://")
+            ),
             patch(
                 "redis_sre_agent.api.tasks.validate_task_resume_request",
                 new=AsyncMock(),

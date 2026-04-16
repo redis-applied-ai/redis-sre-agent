@@ -90,6 +90,8 @@ def _summarize_tool_result(result: Any, *, max_chars: int = 240) -> str:
     if len(rendered) > max_chars:
         return f"{rendered[:max_chars].rstrip()}..."
     return rendered
+
+
 def _command_is_available(command: Optional[str]) -> bool:
     """Return True when an executable command is available."""
     if not command:
@@ -1152,7 +1154,9 @@ class ToolManager:
         approval_manager = ApprovalManager()
         resume_state = await approval_manager.get_resume_state(self.task_id)
         if resume_state and resume_state.pending_approval_id:
-            existing_approval = await approval_manager.get_approval(resume_state.pending_approval_id)
+            existing_approval = await approval_manager.get_approval(
+                resume_state.pending_approval_id
+            )
             if (
                 existing_approval
                 and existing_approval.tool_name == tool_name

@@ -6,6 +6,7 @@ import logging
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.redis import RedisSaver
 
 from redis_sre_agent import __version__
@@ -47,15 +48,22 @@ def build_graph_config(
 
 
 @contextmanager
-def open_graph_checkpointer() -> Iterator[RedisSaver]:
+def open_graph_checkpointer() -> Iterator[Any]:
     """Open a Redis-backed LangGraph checkpointer for the current repo config."""
     redis_url = settings.redis_url.get_secret_value()
-    with RedisSaver.from_conn_string(redis_url=redis_url) as checkpointer:
-        try:
-            checkpointer.setup()
-        except Exception as exc:
-            logger.warning("Redis checkpoint setup failed: %s", exc)
-        yield checkpointer
+    try:
+        with RedisSaver.from_conn_string(redis_url=redis_url) as checkpointer:
+            try:
+                checkpointer.setup()
+            except Exception as exc:
+                logger.warning("Redis checkpoint setup failed: %s", exc)
+            yield checkpointer
+    except Exception as exc:
+        logger.warning(
+            "Redis checkpoint connection failed, falling back to in-memory saver: %s",
+            exc,
+        )
+        yield InMemorySaver()
 
 
 async def persist_checkpoint_metadata(
@@ -95,7 +103,9 @@ async def persist_checkpoint_metadata(
                 checkpoint_ns=checkpoint_ns,
                 checkpoint_id=checkpoint_id,
                 waiting_reason=(
-                    existing.waiting_reason if existing and existing.waiting_reason else "checkpoint_ready"
+                    existing.waiting_reason
+                    if existing and existing.waiting_reason
+                    else "checkpoint_ready"
                 ),
                 pending_approval_id=existing.pending_approval_id if existing else None,
                 pending_interrupt_id=existing.pending_interrupt_id if existing else None,

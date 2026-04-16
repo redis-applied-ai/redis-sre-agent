@@ -17,7 +17,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from redis_sre_agent.tools.models import ToolCapability
+from redis_sre_agent.tools.models import ToolActionKind, ToolCapability
 
 if TYPE_CHECKING:
     pass
@@ -45,6 +45,11 @@ class MCPToolConfig(BaseModel):
         default=None,
         description="Alternative description for this tool. "
         "If provided, the agent sees this instead of the MCP server's description.",
+    )
+    action_kind: Optional[ToolActionKind] = Field(
+        default=None,
+        description="Optional approval action override for the tool. "
+        "If omitted, MCP tools remain unknown by default.",
     )
 
 

@@ -397,7 +397,9 @@ class TestSRELangGraphAgent:
         assert captured["config"]["configurable"]["checkpoint_ns"] == "agent_turn"
         assert mock_persist_checkpoint_metadata.await_args.kwargs["task_id"] == "task-123"
         assert mock_persist_checkpoint_metadata.await_args.kwargs["graph_thread_id"] == "task-123"
-        assert mock_persist_checkpoint_metadata.await_args.kwargs["checkpointer"] is fake_checkpointer
+        assert (
+            mock_persist_checkpoint_metadata.await_args.kwargs["checkpointer"] is fake_checkpointer
+        )
 
     @pytest.mark.asyncio
     async def test_get_conversation_history_reopens_redis_checkpoint_state(

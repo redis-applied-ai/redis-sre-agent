@@ -46,7 +46,10 @@ async def execute_tool_calls_with_gate(
         for tool_call in tool_calls or []
     ]
     results = await tool_manager.execute_tool_calls(
-        [{"name": tool_call["name"], "args": tool_call["args"]} for tool_call in normalized_tool_calls]
+        [
+            {"name": tool_call["name"], "args": tool_call["args"]}
+            for tool_call in normalized_tool_calls
+        ]
     )
 
     tool_messages: List[ToolMessage] = []

@@ -105,18 +105,28 @@ class TestApprovalManager:
         )
 
     @pytest.mark.asyncio
-    async def test_create_approval_stores_record_and_indexes(self, manager, redis_client, approval_record):
+    async def test_create_approval_stores_record_and_indexes(
+        self, manager, redis_client, approval_record
+    ):
         record = await manager.create_approval(approval_record)
 
         assert record == approval_record
         redis_client.set.assert_called_once()
         redis_client.zadd.assert_any_call(
             RedisKeys.task_approvals("task-1"),
-            {"approval-1": pytest.approx(redis_client.zadd.call_args_list[0].args[1]["approval-1"])},
+            {
+                "approval-1": pytest.approx(
+                    redis_client.zadd.call_args_list[0].args[1]["approval-1"]
+                )
+            },
         )
         redis_client.zadd.assert_any_call(
             RedisKeys.approvals_pending(),
-            {"approval-1": pytest.approx(redis_client.zadd.call_args_list[1].args[1]["approval-1"])},
+            {
+                "approval-1": pytest.approx(
+                    redis_client.zadd.call_args_list[1].args[1]["approval-1"]
+                )
+            },
         )
 
     @pytest.mark.asyncio
@@ -130,8 +140,12 @@ class TestApprovalManager:
         assert record.tool_args["memory_size_gb"] == 4
 
     @pytest.mark.asyncio
-    async def test_list_task_approvals_uses_ordered_index(self, manager, redis_client, approval_record):
-        second = approval_record.model_copy(update={"approval_id": "approval-2", "action_hash": "def456"})
+    async def test_list_task_approvals_uses_ordered_index(
+        self, manager, redis_client, approval_record
+    ):
+        second = approval_record.model_copy(
+            update={"approval_id": "approval-2", "action_hash": "def456"}
+        )
         redis_client.zrevrange.return_value = [b"approval-2", b"approval-1"]
 
         async def get_side_effect(key):
@@ -210,7 +224,9 @@ class TestApprovalManager:
         assert loaded == ledger
 
     @pytest.mark.asyncio
-    async def test_list_pending_approvals_filters_non_pending(self, manager, redis_client, approval_record):
+    async def test_list_pending_approvals_filters_non_pending(
+        self, manager, redis_client, approval_record
+    ):
         approved = approval_record.model_copy(
             update={
                 "approval_id": "approval-2",
