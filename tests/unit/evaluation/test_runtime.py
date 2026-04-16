@@ -561,6 +561,22 @@ class _MemoryTaskManager:
         return True
 
 
+class _MemoryHandleStore:
+    def __init__(self) -> None:
+        self.records: dict[str, TargetHandleRecord] = {}
+
+    async def save_records(self, records):
+        for record in records:
+            self.records[record.target_handle] = record
+        return True
+
+    async def get_record(self, target_handle):
+        return self.records.get(target_handle)
+
+    async def get_records(self, target_handles):
+        return {handle: self.records[handle] for handle in target_handles if handle in self.records}
+
+
 @pytest.mark.asyncio
 async def test_build_full_turn_context_compiles_bound_targets_and_agent_override():
     scenario = _build_scenario(route_via_router=False, agent="redis_triage")
@@ -810,7 +826,7 @@ async def test_run_full_turn_scenario_uses_production_turn_path_for_attached_sco
     fake_checkpointer.get_tuple.return_value = None
 
     @contextmanager
-    def fake_open_graph_checkpointer():
+    def fake_open_graph_checkpointer(**_kwargs):
         yield fake_checkpointer
 
     with (
@@ -1380,6 +1396,10 @@ async def test_run_full_turn_scenario_virtualizes_target_bound_provider_executio
     monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
 
     with (
+        patch(
+            "redis_sre_agent.evaluation.runtime.get_target_integration_registry",
+            return_value=registry,
+        ),
         patch("redis_sre_agent.tools.manager.get_target_handle_store", return_value=handle_store),
         patch(
             "redis_sre_agent.tools.manager.get_target_integration_registry",
@@ -1409,6 +1429,149 @@ async def test_run_full_turn_scenario_virtualizes_target_bound_provider_executio
         "section": "memory",
     }
     assert _EvalRedisCommandProvider.actual_call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_supports_discovery_first_target_attachment(
+    monkeypatch,
+):
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "runtime-discovery-first-cluster-databases",
+            "name": "Runtime discovery-first cluster databases",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-16",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "What Redis databases are on the payments east cluster?",
+                "route_via_router": False,
+                "agent": "chat",
+            },
+            "scope": {
+                "turn_scope": {
+                    "resolution_policy": "allow_zero_scope",
+                    "automation_mode": "interactive",
+                },
+                "target_catalog": [
+                    {
+                        "handle": "tgt_cluster_payments_east",
+                        "kind": "cluster",
+                        "resource_id": "cluster-payments-east",
+                        "display_name": "payments east cluster",
+                        "cluster_type": "redis_enterprise",
+                        "capabilities": ["admin", "diagnostics"],
+                        "public_metadata": {
+                            "environment": "production",
+                            "usage": "cache",
+                            "aliases": ["payments-east", "payments east enterprise cluster"],
+                        },
+                    },
+                    {
+                        "handle": "tgt_cluster_checkout_west",
+                        "kind": "cluster",
+                        "resource_id": "cluster-checkout-west",
+                        "display_name": "checkout west cluster",
+                        "cluster_type": "redis_enterprise",
+                        "capabilities": ["admin", "diagnostics"],
+                        "public_metadata": {
+                            "environment": "production",
+                            "usage": "cache",
+                            "aliases": ["checkout-west", "checkout west enterprise cluster"],
+                        },
+                    },
+                ],
+            },
+            "tools": {
+                "re_admin": {
+                    "list_databases": {
+                        "result": {
+                            "databases": [
+                                {"uid": 101, "name": "payments-cache-prod"},
+                                {"uid": 102, "name": "payments-ledger-prod"},
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+    handle_store = _MemoryHandleStore()
+
+    async def turn_processor(**kwargs):
+        async with ToolManager(
+            thread_id=kwargs["thread_id"],
+            task_id=kwargs["task_id"],
+            user_id="user-123",
+        ) as tool_mgr:
+            resolve_tool = next(
+                tool.name
+                for tool in tool_mgr.get_tools()
+                if tool.name.startswith("target_discovery_")
+                and tool.name.endswith("resolve_redis_targets")
+            )
+            resolution = await tool_mgr.resolve_tool_call(
+                resolve_tool,
+                {
+                    "query": "payments east enterprise cluster",
+                    "attach_tools": True,
+                },
+            )
+            list_tool = next(
+                tool.name
+                for tool in tool_mgr.get_tools()
+                if tool.name.startswith("re_admin_") and tool.name.endswith("list_databases")
+            )
+            databases = await tool_mgr.resolve_tool_call(list_tool, {})
+            return {
+                "resolution": resolution,
+                "databases": databases,
+                "tool_names": [tool.name for tool in tool_mgr.get_tools()],
+            }
+
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.targets.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.targets.get_redis_client", lambda: object())
+    monkeypatch.setattr(
+        "redis_sre_agent.core.targets.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.targets.services.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.tools.manager.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(ToolManager, "_load_mcp_providers", AsyncMock())
+    monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
+
+    result = await run_full_turn_scenario(
+        scenario,
+        user_id="user-123",
+        session_id="session-123",
+        redis_client=object(),
+        turn_processor=turn_processor,
+    )
+
+    resolution = result.turn_result["resolution"]
+    assert result.turn_context["turn_scope"]["scope_kind"] == "zero_scope"
+    assert resolution["status"] == "resolved"
+    assert resolution["attached_target_handles"]
+    assert resolution["toolset_generation"] >= 2
+    assert any(name.startswith("re_admin_") for name in result.turn_result["tool_names"])
+    assert result.turn_result["databases"]["databases"] == [
+        {"uid": 101, "name": "payments-cache-prod"},
+        {"uid": 102, "name": "payments-ledger-prod"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -1520,6 +1683,10 @@ async def test_run_full_turn_scenario_supports_stateful_responder_sequences(
     monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
 
     with (
+        patch(
+            "redis_sre_agent.evaluation.runtime.get_target_integration_registry",
+            return_value=registry,
+        ),
         patch("redis_sre_agent.tools.manager.get_target_handle_store", return_value=handle_store),
         patch(
             "redis_sre_agent.tools.manager.get_target_integration_registry",
@@ -1697,6 +1864,10 @@ async def test_run_full_turn_scenario_supports_injected_tool_failures(
     monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
 
     with (
+        patch(
+            "redis_sre_agent.evaluation.runtime.get_target_integration_registry",
+            return_value=registry,
+        ),
         patch("redis_sre_agent.tools.manager.get_target_handle_store", return_value=handle_store),
         patch(
             "redis_sre_agent.tools.manager.get_target_integration_registry",

@@ -64,6 +64,20 @@ def test_open_graph_checkpointer_raises_on_connection_error():
                 pass
 
 
+def test_open_graph_checkpointer_uses_memory_saver_for_non_durable_paths():
+    fake_memory_saver = MagicMock()
+
+    with (
+        patch(
+            "redis_sre_agent.agent.checkpointing.RedisSaver.from_conn_string",
+            side_effect=RuntimeError("connection refused"),
+        ),
+        patch("redis_sre_agent.agent.checkpointing.InMemorySaver", return_value=fake_memory_saver),
+    ):
+        with open_graph_checkpointer(durable=False) as checkpointer:
+            assert checkpointer is fake_memory_saver
+
+
 def test_open_graph_checkpointer_does_not_swallow_body_exceptions():
     fake_checkpointer = MagicMock()
 

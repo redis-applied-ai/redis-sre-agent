@@ -849,7 +849,7 @@ User Query: {query}"""
 
             try:
                 await emitter.emit("Chat agent processing your question...", "agent_start")
-                with open_graph_checkpointer() as checkpointer:
+                with open_graph_checkpointer(durable=bool(task_id)) as checkpointer:
                     app = workflow.compile(checkpointer=checkpointer)
                     final_state = await app.ainvoke(initial_state, config=thread_config)
                     await persist_checkpoint_metadata(
@@ -953,7 +953,7 @@ User Query: {query}"""
             thread_config = build_graph_config(graph_thread_id=graph_thread_id)
 
             try:
-                with open_graph_checkpointer() as checkpointer:
+                with open_graph_checkpointer(durable=True) as checkpointer:
                     app = workflow.compile(checkpointer=checkpointer)
                     final_state = await app.ainvoke(
                         Command(resume=resume_payload or {}),

@@ -344,7 +344,7 @@ class TestSRELangGraphAgent:
         fake_checkpointer = MagicMock()
 
         @contextmanager
-        def fake_open_graph_checkpointer():
+        def fake_open_graph_checkpointer(**_kwargs):
             yield fake_checkpointer
 
         class _FakeApp:
@@ -421,7 +421,7 @@ class TestSRELangGraphAgent:
             )
 
             @contextmanager
-            def fake_open_graph_checkpointer():
+            def fake_open_graph_checkpointer(**_kwargs):
                 yield fake_checkpointer
 
             class _FakeApp:
@@ -461,7 +461,7 @@ class TestSRELangGraphAgent:
         fake_checkpointer = MagicMock()
 
         @contextmanager
-        def fake_open_graph_checkpointer():
+        def fake_open_graph_checkpointer(**_kwargs):
             yield fake_checkpointer
 
         class _FakeApp:

@@ -2421,7 +2421,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             )
 
             try:
-                with open_graph_checkpointer() as checkpointer:
+                with open_graph_checkpointer(durable=bool(task_id)) as checkpointer:
                     self.app = self.workflow.compile(checkpointer=checkpointer)
                     final_state = await self.app.ainvoke(initial_state, config=thread_config)
                     await persist_checkpoint_metadata(
@@ -2490,7 +2490,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             )
 
             if hasattr(self, "workflow"):
-                with open_graph_checkpointer() as checkpointer:
+                with open_graph_checkpointer(durable=False) as checkpointer:
                     app = self.workflow.compile(checkpointer=checkpointer)
                     current_state = await app.aget_state(config=thread_config)
             else:
@@ -2533,7 +2533,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 recursion_limit=recursion_limit,
             )
             if hasattr(self, "workflow"):
-                with open_graph_checkpointer() as checkpointer:
+                with open_graph_checkpointer(durable=False) as checkpointer:
                     app = self.workflow.compile(checkpointer=checkpointer)
                     current_state = await app.aget_state(config=thread_config)
             else:
@@ -2850,7 +2850,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     recursion_limit=self.settings.recursion_limit,
                 )
 
-                with open_graph_checkpointer() as checkpointer:
+                with open_graph_checkpointer(durable=True) as checkpointer:
                     self.app = self.workflow.compile(checkpointer=checkpointer)
                     final_state = await self.app.ainvoke(
                         Command(resume=resume_payload or {}),

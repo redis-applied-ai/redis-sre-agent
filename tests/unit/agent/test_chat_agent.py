@@ -1000,7 +1000,7 @@ class TestChatAgentStartupContext:
         fake_checkpointer = MagicMock()
 
         @contextmanager
-        def fake_open_graph_checkpointer():
+        def fake_open_graph_checkpointer(**_kwargs):
             yield fake_checkpointer
 
         class _FakeApp:

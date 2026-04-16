@@ -6,6 +6,7 @@ import logging
 from contextlib import ExitStack, contextmanager
 from typing import Any, Dict, Iterator, Optional
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.redis import RedisSaver
 
 from redis_sre_agent import __version__
@@ -47,7 +48,7 @@ def build_graph_config(
 
 
 @contextmanager
-def open_graph_checkpointer() -> Iterator[Any]:
+def open_graph_checkpointer(*, durable: bool = True) -> Iterator[Any]:
     """Open a Redis-backed LangGraph checkpointer for the current repo config."""
     redis_url = settings.redis_url.get_secret_value()
     stack = ExitStack()
@@ -59,7 +60,11 @@ def open_graph_checkpointer() -> Iterator[Any]:
             "Redis checkpoint connection failed; durable resume is unavailable: %s",
             exc,
         )
-        raise RuntimeError("Redis-backed graph checkpoint unavailable") from exc
+        if durable:
+            raise RuntimeError("Redis-backed graph checkpoint unavailable") from exc
+        logger.warning("Falling back to in-memory graph checkpoint for non-durable session path")
+        yield InMemorySaver()
+        return
 
     try:
         try:
