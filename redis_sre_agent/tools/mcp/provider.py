@@ -18,7 +18,13 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
 from redis_sre_agent.core.runtime_overrides import get_active_mcp_runtime
-from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
+from redis_sre_agent.tools.models import (
+    Tool,
+    ToolActionKind,
+    ToolCapability,
+    ToolDefinition,
+    ToolMetadata,
+)
 from redis_sre_agent.tools.protocols import ToolProvider
 
 if TYPE_CHECKING:
@@ -367,6 +373,7 @@ class MCPToolProvider(ToolProvider):
                 capability=schema.capability,
                 provider_name=self.provider_name,
                 requires_instance=False,  # MCP tools typically don't require Redis instance
+                action_kind=ToolActionKind.UNKNOWN,
             )
 
             # Create the invoke closure that calls the MCP server

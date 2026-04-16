@@ -11,18 +11,49 @@ from docket import Docket
 from fastapi import APIRouter, HTTPException, status
 
 from redis_sre_agent.api.schemas import (
+    TaskApprovalListResponse,
     TaskCreateRequest,
     TaskCreateResponse,
     TaskResponse,
+    TaskResumeRequest,
 )
-from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
+from redis_sre_agent.core.approvals import ApprovalManager
+from redis_sre_agent.core.docket_tasks import (
+    get_redis_url,
+    process_agent_turn,
+    resume_task_after_approval,
+    validate_task_resume_request,
+)
 from redis_sre_agent.core.redis import get_redis_client
-from redis_sre_agent.core.tasks import TaskManager, create_task
+from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskResponse:
+    state = await task_manager.get_task_state(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    tool_calls = await task_manager.get_task_tool_calls(state)
+
+    return TaskResponse(
+        task_id=state.task_id,
+        thread_id=state.thread_id,
+        status=state.status,
+        updates=[u.model_dump() for u in state.updates],
+        result=state.result,
+        tool_calls=tool_calls,
+        error_message=state.error_message,
+        pending_approval=getattr(state, "pending_approval", None),
+        resume_supported=bool(getattr(state, "resume_supported", False)),
+        subject=state.metadata.subject if state.metadata else None,
+        created_at=state.metadata.created_at if state.metadata else None,
+        updated_at=state.metadata.updated_at if state.metadata else None,
+    )
 
 
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -73,25 +104,56 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
 async def get_task(task_id: str) -> TaskResponse:
     redis_client = get_redis_client()
     task_manager = TaskManager(redis_client=redis_client)
-    state = await task_manager.get_task_state(task_id)
+    return await _build_task_response(task_id, task_manager)
 
+
+@router.get("/tasks/{task_id}/approvals", response_model=TaskApprovalListResponse)
+async def list_task_approvals(task_id: str) -> TaskApprovalListResponse:
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+    state = await task_manager.get_task_state(task_id)
     if not state:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    tool_calls = await task_manager.get_task_tool_calls(state)
+    approvals = await ApprovalManager(redis_client=redis_client).list_task_approvals(task_id)
+    return TaskApprovalListResponse(task_id=task_id, approvals=approvals)
 
-    return TaskResponse(
-        task_id=state.task_id,
-        thread_id=state.thread_id,
-        status=state.status,
-        updates=[u.model_dump() for u in state.updates],
-        result=state.result,
-        tool_calls=tool_calls,
-        error_message=state.error_message,
-        subject=state.metadata.subject if state.metadata else None,
-        created_at=state.metadata.created_at if state.metadata else None,
-        updated_at=state.metadata.updated_at if state.metadata else None,
-    )
+
+@router.post("/tasks/{task_id}/resume", response_model=TaskResponse)
+async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+    state = await task_manager.get_task_state(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if state.status != TaskStatus.AWAITING_APPROVAL:
+        return await _build_task_response(task_id, task_manager)
+
+    try:
+        await validate_task_resume_request(
+            task_id=task_id,
+            approval_id=req.approval_id,
+            decision=req.decision,
+            decision_by=req.decision_by,
+            decision_comment=req.decision_comment,
+            redis_client=redis_client,
+        )
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            task_func = docket.add(resume_task_after_approval, key=task_id)
+            await task_func(
+                task_id=task_id,
+                approval_id=req.approval_id,
+                decision=req.decision,
+                decision_by=req.decision_by,
+                decision_comment=req.decision_comment,
+            )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    return await _build_task_response(task_id, task_manager)
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_200_OK)

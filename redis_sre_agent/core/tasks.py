@@ -15,6 +15,7 @@ from redisvl.query import FilterQuery
 from redisvl.query.filter import Tag
 from ulid import ULID
 
+from redis_sre_agent.core.approvals import PendingApprovalSummary
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client, get_tasks_index
 from redis_sre_agent.core.threads import ThreadManager
@@ -42,6 +43,7 @@ class TaskStatus(str, Enum):
 
     QUEUED = "queued"
     IN_PROGRESS = "in_progress"
+    AWAITING_APPROVAL = "awaiting_approval"
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -54,6 +56,8 @@ class TaskState(BaseModel):
     updates: List[TaskUpdate] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+    pending_approval: Optional[PendingApprovalSummary] = None
+    resume_supported: bool = False
     metadata: TaskMetadata = Field(default_factory=TaskMetadata)
 
 
@@ -171,6 +175,37 @@ class TaskManager:
         await self._upsert_task_search_doc(task_id)
         return True
 
+    async def set_pending_approval(
+        self,
+        task_id: str,
+        pending_approval: Optional[PendingApprovalSummary],
+    ) -> bool:
+        import json
+
+        metadata_key = RedisKeys.task_metadata(task_id)
+        if pending_approval is None:
+            await self._redis.hdel(metadata_key, "pending_approval")
+        else:
+            await self._redis.hset(
+                metadata_key,
+                "pending_approval",
+                json.dumps(pending_approval.model_dump(mode="json")),
+            )
+        await self._redis.hset(metadata_key, "updated_at", datetime.now(timezone.utc).isoformat())
+        await self._upsert_task_search_doc(task_id)
+        return True
+
+    async def set_resume_supported(self, task_id: str, resume_supported: bool) -> bool:
+        await self._redis.hset(
+            RedisKeys.task_metadata(task_id),
+            mapping={
+                "resume_supported": "true" if resume_supported else "false",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        await self._upsert_task_search_doc(task_id)
+        return True
+
     async def _upsert_task_search_doc(self, task_id: str) -> bool:
         """Upsert a simplified task document into the tasks FT index (hash)."""
         try:
@@ -277,6 +312,15 @@ class TaskManager:
 
         # thread_id stored in metadata for convenience
         thread_id = md.get("thread_id")
+        pending_approval = None
+        pending_approval_raw = md.get("pending_approval")
+        if pending_approval_raw:
+            try:
+                pending_approval = PendingApprovalSummary(**json.loads(pending_approval_raw))
+            except Exception:
+                pending_approval = None
+        resume_supported_raw = str(md.get("resume_supported") or "").strip().lower()
+        resume_supported = resume_supported_raw in {"1", "true", "yes", "on"}
 
         # Handle error_message - decode if bytes
         error_raw = await self._redis.get(RedisKeys.task_error(task_id))
@@ -293,6 +337,8 @@ class TaskManager:
             updates=updates,
             result=result,
             error_message=error_message,
+            pending_approval=pending_approval,
+            resume_supported=resume_supported,
             metadata=TaskMetadata(
                 created_at=md.get("created_at") or datetime.now(timezone.utc).isoformat(),
                 updated_at=md.get("updated_at"),
@@ -480,6 +526,10 @@ async def get_task_by_id(*, task_id: str, redis_client=None) -> Dict[str, Any]:
         "result": task.result,
         "tool_calls": tool_calls,
         "error_message": task.error_message,
+        "pending_approval": task.pending_approval.model_dump(mode="json")
+        if task.pending_approval
+        else None,
+        "resume_supported": task.resume_supported,
         "metadata": metadata,
         "context": {},
     }
@@ -519,6 +569,8 @@ async def list_tasks(
             else:
                 expr = (Tag("status") == TaskStatus.IN_PROGRESS.value) | (
                     Tag("status") == TaskStatus.QUEUED.value
+                ) | (
+                    Tag("status") == TaskStatus.AWAITING_APPROVAL.value
                 )
             if user_id:
                 expr = expr & (Tag("user_id") == user_id)
@@ -592,6 +644,8 @@ async def list_tasks(
                     "updates": [],
                     "result": None,
                     "error_message": None,
+                    "pending_approval": None,
+                    "resume_supported": False,
                     "metadata": metadata,
                     "context": {},
                 }
@@ -620,7 +674,11 @@ async def list_tasks(
         elif status_filter:
             statuses = [status_filter]
         else:
-            statuses = [TaskStatus.IN_PROGRESS, TaskStatus.QUEUED]
+            statuses = [
+                TaskStatus.IN_PROGRESS,
+                TaskStatus.QUEUED,
+                TaskStatus.AWAITING_APPROVAL,
+            ]
 
         fetch_size = max(limit * 10, 200)
         raw_summaries = await thread_manager.list_threads(
@@ -652,6 +710,8 @@ async def list_tasks(
                     "updates": [],
                     "result": None,
                     "error_message": None,
+                    "pending_approval": None,
+                    "resume_supported": False,
                     "metadata": metadata,
                     "context": {},
                 }

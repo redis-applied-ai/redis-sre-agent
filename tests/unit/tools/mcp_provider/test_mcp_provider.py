@@ -9,7 +9,7 @@ from redis_sre_agent.evaluation.fake_mcp import build_fixture_mcp_runtime
 from redis_sre_agent.evaluation.injection import eval_injection_scope
 from redis_sre_agent.evaluation.scenarios import EvalScenario
 from redis_sre_agent.tools.mcp.provider import MCPToolProvider
-from redis_sre_agent.tools.models import ToolCapability
+from redis_sre_agent.tools.models import ToolActionKind, ToolCapability
 
 
 class TestMCPToolProvider:
@@ -302,5 +302,6 @@ class TestMCPToolProviderAsync:
         assert len(tools) == 1
         assert tools[0].definition.name.endswith("_query_metrics")
         assert tools[0].definition.capability is ToolCapability.METRICS
+        assert tools[0].metadata.action_kind is ToolActionKind.UNKNOWN
         assert result["status"] == "success"
         assert result["data"]["series"] == "memory_pressure"

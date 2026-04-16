@@ -1156,6 +1156,7 @@ class TestScheduleRunHelpers:
         )
 
         assert _normalize_task_status(TaskStatus.IN_PROGRESS) == "in_progress"
+        assert _normalize_task_status(TaskStatus.AWAITING_APPROVAL) == "awaiting_approval"
         assert _normalize_task_status("done") == "done"
         assert _normalize_task_status(None) == "queued"
         assert _build_schedule_subject({"name": "", "instructions": "First line\nSecond line"}) == (

@@ -161,6 +161,8 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     result = None
     error_message = None
     task_status = None
+    pending_approval = None
+    resume_supported = False
 
     try:
         from redis_sre_agent.core.keys import RedisKeys
@@ -179,6 +181,8 @@ async def get_thread(thread_id: str) -> ThreadResponse:
                 result = task_state.result
                 error_message = task_state.error_message
                 task_status = task_state.status
+                pending_approval = getattr(task_state, "pending_approval", None)
+                resume_supported = bool(getattr(task_state, "resume_supported", False))
     except Exception as e:
         logger.warning(f"Failed to fetch task updates for thread {thread_id}: {e}")
 
@@ -195,6 +199,8 @@ async def get_thread(thread_id: str) -> ThreadResponse:
         result=result,
         error_message=error_message,
         status=task_status,
+        pending_approval=pending_approval,
+        resume_supported=resume_supported,
     )
 
 
