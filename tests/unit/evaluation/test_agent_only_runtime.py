@@ -125,7 +125,7 @@ async def test_run_agent_only_scenario_calls_selected_agent_with_prebuilt_contex
             "query": "Investigate failovers on the prod enterprise cluster.",
             "session_id": "sess-2",
             "user_id": "user-1",
-            "max_iterations": 6,
+            "max_iterations": 7,
             "context": result.context,
             "progress_emitter": progress_emitter,
             "conversation_history": history,

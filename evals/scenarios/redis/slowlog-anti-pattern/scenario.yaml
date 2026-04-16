@@ -53,7 +53,7 @@ knowledge:
 
 tools:
   redis_command:
-    slowlog_get:
+    slowlog:
       description: Fetch slowlog entries for the attached instance.
       result: fixtures/tools/slowlog.json
     info:
@@ -67,7 +67,7 @@ tools:
 expectations:
   required_tool_calls:
     - provider_family: redis_command
-      operation: slowlog_get
+      operation: slowlog
       target_handle: tgt_instance_sessions_cache
     - provider_family: redis_command
       operation: info

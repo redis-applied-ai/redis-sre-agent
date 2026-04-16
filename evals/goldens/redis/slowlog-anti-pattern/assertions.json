@@ -2,7 +2,7 @@
   "required_tool_calls": [
     {
       "provider_family": "redis_command",
-      "operation": "slowlog_get",
+      "operation": "slowlog",
       "target_handle": "tgt_instance_sessions_cache"
     },
     {

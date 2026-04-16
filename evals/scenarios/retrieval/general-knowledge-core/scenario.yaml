@@ -26,7 +26,7 @@ execution:
   query: >
     Measure retrieval behavior for general documents, pinned policy content, and version-specific
     knowledge without invoking the agent.
-  max_tool_steps: 1
+  max_tool_steps: 3
   llm_mode: replay
 
 knowledge:
