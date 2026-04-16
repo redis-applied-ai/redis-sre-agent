@@ -92,6 +92,28 @@ def test_tool_metadata_treats_builtin_utilities_as_read():
     assert metadata.action_kind is ToolActionKind.READ
 
 
+def test_tool_metadata_does_not_treat_set_noun_as_write_marker():
+    metadata = ToolMetadata(
+        name="redis_command_deadbeef_custom_action",
+        description="Returns a set of configuration details for the selected database.",
+        capability=ToolCapability.DIAGNOSTICS,
+        provider_name="redis_command",
+    )
+
+    assert metadata.action_kind is ToolActionKind.READ
+
+
+def test_tool_metadata_uses_write_description_marker_at_start_of_sentence():
+    metadata = ToolMetadata(
+        name="redis_command_deadbeef_custom_action",
+        description="Update Redis database tags for the selected instance.",
+        capability=ToolCapability.DIAGNOSTICS,
+        provider_name="redis_command",
+    )
+
+    assert metadata.action_kind is ToolActionKind.WRITE
+
+
 def test_tool_provider_tools_propagate_inferred_action_kind():
     provider = _StubToolProvider()
     tools = {tool.definition.name: tool for tool in provider.tools()}

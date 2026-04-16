@@ -107,6 +107,11 @@ _WRITE_DESCRIPTION_MARKERS = (
 )
 
 
+def _description_starts_with_marker(description: str, markers: tuple[str, ...]) -> bool:
+    normalized = description.strip().lower()
+    return any(normalized.startswith(marker) for marker in markers)
+
+
 def _extract_operation_name(tool_name: str, provider_name: str) -> str:
     prefix_pattern = rf"^{re.escape(provider_name)}_[^_]+_"
     if re.match(prefix_pattern, tool_name):
@@ -142,10 +147,10 @@ def infer_tool_action_kind(
         return ToolActionKind.WRITE
     if operation.startswith(_READ_PREFIXES):
         return ToolActionKind.READ
-    if any(marker in description_lower for marker in _WRITE_DESCRIPTION_MARKERS):
-        return ToolActionKind.WRITE
-    if any(marker in description_lower for marker in _READ_DESCRIPTION_MARKERS):
+    if _description_starts_with_marker(description_lower, _READ_DESCRIPTION_MARKERS):
         return ToolActionKind.READ
+    if _description_starts_with_marker(description_lower, _WRITE_DESCRIPTION_MARKERS):
+        return ToolActionKind.WRITE
     if capability in {
         ToolCapability.METRICS,
         ToolCapability.LOGS,

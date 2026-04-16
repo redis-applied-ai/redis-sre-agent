@@ -6,7 +6,6 @@ import logging
 from contextlib import ExitStack, contextmanager
 from typing import Any, Dict, Iterator, Optional
 
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.redis import RedisSaver
 
 from redis_sre_agent import __version__
@@ -56,12 +55,11 @@ def open_graph_checkpointer() -> Iterator[Any]:
         checkpointer = stack.enter_context(RedisSaver.from_conn_string(redis_url=redis_url))
     except Exception as exc:
         stack.close()
-        logger.warning(
-            "Redis checkpoint connection failed, falling back to in-memory saver: %s",
+        logger.error(
+            "Redis checkpoint connection failed; durable resume is unavailable: %s",
             exc,
         )
-        yield InMemorySaver()
-        return
+        raise RuntimeError("Redis-backed graph checkpoint unavailable") from exc
 
     try:
         try:
