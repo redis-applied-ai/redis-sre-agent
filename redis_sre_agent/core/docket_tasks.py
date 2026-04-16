@@ -1629,13 +1629,18 @@ async def process_agent_turn(
         # Import and initialize the appropriate agent based on routing decision
         # REDIS_TRIAGE = full triage agent (heavy, comprehensive)
         # REDIS_CHAT / KNOWLEDGE_ONLY = lightweight/default chat agent
+        explicit_client_scope = bool(instance_id_from_client or cluster_id_from_client)
+
         if agent_type == AgentType.REDIS_TRIAGE:
             agent = get_sre_agent()
         else:
             if (
-                current_scope.scope_kind == "target_bindings"
+                explicit_client_scope
+                or current_scope.scope_kind == "target_bindings"
                 or len(get_attached_target_handles_from_context(routing_context)) > 1
             ):
+                # Explicit client-selected scope should flow through routing context so
+                # stale direct bindings never survive handle-backed scope rebuilds.
                 target_instance = None
                 target_cluster = None
             else:
