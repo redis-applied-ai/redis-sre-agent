@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any, Dict, Iterator, Optional
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -51,19 +51,26 @@ def build_graph_config(
 def open_graph_checkpointer() -> Iterator[Any]:
     """Open a Redis-backed LangGraph checkpointer for the current repo config."""
     redis_url = settings.redis_url.get_secret_value()
+    stack = ExitStack()
     try:
-        with RedisSaver.from_conn_string(redis_url=redis_url) as checkpointer:
-            try:
-                checkpointer.setup()
-            except Exception as exc:
-                logger.warning("Redis checkpoint setup failed: %s", exc)
-            yield checkpointer
+        checkpointer = stack.enter_context(RedisSaver.from_conn_string(redis_url=redis_url))
     except Exception as exc:
+        stack.close()
         logger.warning(
             "Redis checkpoint connection failed, falling back to in-memory saver: %s",
             exc,
         )
         yield InMemorySaver()
+        return
+
+    try:
+        try:
+            checkpointer.setup()
+        except Exception as exc:
+            logger.warning("Redis checkpoint setup failed: %s", exc)
+        yield checkpointer
+    finally:
+        stack.close()
 
 
 async def persist_checkpoint_metadata(

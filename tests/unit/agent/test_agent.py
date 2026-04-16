@@ -448,6 +448,55 @@ class TestSRELangGraphAgent:
             assert captured["config"]["configurable"]["checkpoint_ns"] == "agent_turn"
 
     @pytest.mark.asyncio
+    async def test_resume_query_returns_error_response_on_runtime_failure(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+        fake_checkpointer = MagicMock()
+
+        @contextmanager
+        def fake_open_graph_checkpointer():
+            yield fake_checkpointer
+
+        class _FakeApp:
+            async def ainvoke(self, *_args, **_kwargs):
+                raise RuntimeError("resume failed")
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            response = await agent.resume_query(
+                session_id="session-1",
+                user_id="user-1",
+                context={"task_id": "task-123"},
+                resume_payload={"decision": "approved"},
+            )
+
+        assert response.response == "Error resuming query: resume failed"
+
+    @pytest.mark.asyncio
     async def test_process_query_constructs_turn_scope_once(self, mock_settings, mock_llm):
         agent = SRELangGraphAgent()
 

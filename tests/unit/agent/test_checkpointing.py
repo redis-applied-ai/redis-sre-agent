@@ -68,6 +68,22 @@ def test_open_graph_checkpointer_falls_back_to_memory_saver_on_connection_error(
             assert checkpointer is fake_memory_saver
 
 
+def test_open_graph_checkpointer_does_not_swallow_body_exceptions():
+    fake_checkpointer = MagicMock()
+
+    @contextmanager
+    def fake_from_conn_string(**_kwargs):
+        yield fake_checkpointer
+
+    with patch(
+        "redis_sre_agent.agent.checkpointing.RedisSaver.from_conn_string",
+        side_effect=fake_from_conn_string,
+    ):
+        with pytest.raises(RuntimeError, match="resume failed"):
+            with open_graph_checkpointer():
+                raise RuntimeError("resume failed")
+
+
 @pytest.mark.asyncio
 async def test_persist_checkpoint_metadata_saves_resume_state():
     fake_checkpointer = MagicMock()

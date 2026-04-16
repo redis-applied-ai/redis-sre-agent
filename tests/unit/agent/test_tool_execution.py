@@ -63,3 +63,27 @@ async def test_execute_tool_calls_with_gate_propagates_manager_errors():
             }
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_with_gate_rejects_mismatched_result_counts():
+    tool_manager = SimpleNamespace(
+        execute_tool_calls=AsyncMock(return_value=[{"status": "ok"}]),
+    )
+
+    with pytest.raises(RuntimeError, match="mismatched number of results"):
+        await execute_tool_calls_with_gate(
+            tool_manager=tool_manager,
+            tool_calls=[
+                {
+                    "id": "tool-call-1",
+                    "name": "redis_cloud_deadbeef_update_database",
+                    "args": {"database_id": 7},
+                },
+                {
+                    "id": "tool-call-2",
+                    "name": "redis_cloud_deadbeef_delete_database",
+                    "args": {"database_id": 8},
+                },
+            ],
+        )

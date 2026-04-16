@@ -2879,6 +2879,11 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     return AgentResponse(
                         response="I apologize, but I couldn't generate a proper response. Please try again.",
                     )
+        except GraphInterrupt:
+            raise
+        except Exception as exc:
+            logger.exception("SRE agent resume error: %s", exc)
+            return AgentResponse(response=f"Error resuming query: {exc}")
         finally:
             try:
                 self._end_run_cache()

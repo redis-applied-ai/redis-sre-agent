@@ -229,7 +229,7 @@ async def _load_resume_context(
     task_state = task_state or await task_manager.get_task_state(task_id)
     if not task_state:
         raise ValueError(f"Task {task_id} not found")
-    if task_state.status != TaskStatus.AWAITING_APPROVAL:
+    if task_state.status not in {TaskStatus.AWAITING_APPROVAL, TaskStatus.IN_PROGRESS}:
         raise ValueError(f"Task {task_id} is not awaiting approval")
 
     thread_id = task_state.thread_id
@@ -1996,18 +1996,6 @@ async def _process_agent_turn_impl(
             error=exc,
         )
         try:
-            await task_manager._publish_stream_update(
-                thread_id,
-                "awaiting_approval",
-                {
-                    "task_id": task_id,
-                    "message": str(exc),
-                    "pending_approval": result["pending_approval"] or {},
-                },
-            )
-        except Exception:
-            logger.debug("Failed to publish awaiting_approval update for task %s", task_id)
-        try:
             if _root_span is not None:
                 _root_span.end()
         except Exception:
@@ -2072,7 +2060,7 @@ async def resume_task_after_approval(
     task_state = await task_manager.get_task_state(task_id)
     if not task_state:
         raise ValueError(f"Task {task_id} not found")
-    if task_state.status != TaskStatus.AWAITING_APPROVAL:
+    if task_state.status not in {TaskStatus.AWAITING_APPROVAL, TaskStatus.IN_PROGRESS}:
         if task_state.status in {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}:
             await approval_manager.delete_resume_state(task_id)
         return {

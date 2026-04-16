@@ -310,6 +310,8 @@ class TestTasksAPI:
         mock_tm = MagicMock()
         mock_tm.get_task_state = AsyncMock(side_effect=[AwaitingApprovalState(), InProgressState()])
         mock_tm.get_task_tool_calls = AsyncMock(return_value=None)
+        mock_tm.set_pending_approval = AsyncMock()
+        mock_tm.update_task_status = AsyncMock()
         docket_instance = AsyncMock()
         docket_instance.__aenter__.return_value = docket_instance
         docket_instance.__aexit__.return_value = False
@@ -336,6 +338,8 @@ class TestTasksAPI:
         assert resp.json()["task_id"] == "t1"
         assert resp.json()["status"] == TaskStatus.IN_PROGRESS.value
         mock_validate.assert_awaited_once()
+        mock_tm.set_pending_approval.assert_awaited_once_with("t1", None)
+        mock_tm.update_task_status.assert_awaited_once_with("t1", TaskStatus.IN_PROGRESS)
         docket_instance.add.assert_called_once()
         resume_task.assert_awaited_once_with(
             task_id="t1",
@@ -344,6 +348,60 @@ class TestTasksAPI:
             decision_by=None,
             decision_comment=None,
         )
+
+    def test_resume_task_restores_awaiting_approval_when_enqueue_fails(self, client):
+        class Metadata:
+            subject = "Resumed task"
+            created_at = "2024-01-01T00:00:00Z"
+            updated_at = "2024-01-01T00:02:00Z"
+
+        class AwaitingApprovalState:
+            task_id = "t1"
+            thread_id = "th1"
+            status = TaskStatus.AWAITING_APPROVAL
+            updates = []
+            result = None
+            error_message = None
+            metadata = Metadata()
+            pending_approval = {"approval_id": "approval-1"}
+            resume_supported = True
+
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=AwaitingApprovalState())
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=None)
+        mock_tm.set_pending_approval = AsyncMock()
+        mock_tm.update_task_status = AsyncMock()
+        docket_instance = AsyncMock()
+        docket_instance.__aenter__.return_value = docket_instance
+        docket_instance.__aexit__.return_value = False
+        resume_task = AsyncMock(side_effect=RuntimeError("queue failed"))
+        docket_instance.add = MagicMock(return_value=resume_task)
+
+        with (
+            patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url", new=AsyncMock(return_value="redis://")
+            ),
+            patch(
+                "redis_sre_agent.api.tasks.validate_task_resume_request",
+                new=AsyncMock(),
+            ),
+            patch("redis_sre_agent.api.tasks.Docket", return_value=docket_instance),
+        ):
+            resp = client.post(
+                "/api/v1/tasks/t1/resume",
+                json={"approval_id": "approval-1", "decision": "approved"},
+            )
+
+        assert resp.status_code == 500
+        assert mock_tm.set_pending_approval.await_args_list == [
+            (( "t1", None), {}),
+            (( "t1", AwaitingApprovalState.pending_approval), {}),
+        ]
+        assert mock_tm.update_task_status.await_args_list == [
+            (( "t1", TaskStatus.IN_PROGRESS), {}),
+            (( "t1", TaskStatus.AWAITING_APPROVAL), {}),
+        ]
 
     def test_resume_task_maps_validation_errors(self, client):
         """POST /api/v1/tasks/{task_id}/resume returns 400 for invalid resume requests."""

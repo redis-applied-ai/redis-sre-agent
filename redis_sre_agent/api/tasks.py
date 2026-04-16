@@ -130,6 +130,8 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
     if state.status != TaskStatus.AWAITING_APPROVAL:
         return await _build_task_response(task_id, task_manager)
 
+    resume_requested = False
+    pending_approval = getattr(state, "pending_approval", None)
     try:
         await validate_task_resume_request(
             task_id=task_id,
@@ -139,6 +141,9 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
             decision_comment=req.decision_comment,
             redis_client=redis_client,
         )
+        await task_manager.set_pending_approval(task_id, None)
+        await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
+        resume_requested = True
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
             task_func = docket.add(resume_task_after_approval, key=task_id)
             await task_func(
@@ -152,6 +157,11 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
         message = str(exc)
         status_code = 404 if "not found" in message.lower() else 400
         raise HTTPException(status_code=status_code, detail=message) from exc
+    except Exception:
+        if resume_requested:
+            await task_manager.set_pending_approval(task_id, pending_approval)
+            await task_manager.update_task_status(task_id, TaskStatus.AWAITING_APPROVAL)
+        raise
 
     return await _build_task_response(task_id, task_manager)
 

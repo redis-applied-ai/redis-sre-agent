@@ -133,6 +133,79 @@ async def test_resume_task_after_approval_completes_chat_turn():
 
 
 @pytest.mark.asyncio
+async def test_resume_task_after_approval_accepts_pretransitioned_in_progress_state():
+    approval_record = _build_approval()
+    thread = _build_thread()
+    resume_state = GraphResumeState(
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        graph_type="chat",
+        graph_version="v1",
+        checkpoint_ns="agent_turn",
+        checkpoint_id="ckpt-1",
+        waiting_reason="approval_required",
+        pending_approval_id="approval-1",
+        pending_interrupt_id="interrupt-1",
+    )
+    decided_record = approval_record.model_copy(
+        update={
+            "status": ApprovalStatus.APPROVED,
+            "decision": ApprovalDecision(decision=ApprovalDecisionType.APPROVED),
+        }
+    )
+    in_progress_state = _build_task_state(status=TaskStatus.IN_PROGRESS, pending=None)
+    post_resume_state = _build_task_state(status=TaskStatus.IN_PROGRESS, pending=None)
+
+    mock_task_manager = AsyncMock()
+    mock_task_manager.get_task_state = AsyncMock(
+        side_effect=[in_progress_state, post_resume_state]
+    )
+    mock_task_manager.set_pending_approval = AsyncMock()
+    mock_task_manager.set_resume_supported = AsyncMock()
+    mock_task_manager.update_task_status = AsyncMock()
+    mock_task_manager.add_task_update = AsyncMock()
+    mock_task_manager.set_task_result = AsyncMock()
+
+    mock_thread_manager = AsyncMock()
+    mock_thread_manager.get_thread = AsyncMock(return_value=thread)
+    mock_thread_manager.set_message_trace = AsyncMock()
+    mock_thread_manager.append_messages = AsyncMock()
+
+    mock_approval_manager = AsyncMock()
+    mock_approval_manager.get_resume_state = AsyncMock(return_value=resume_state)
+    mock_approval_manager.get_approval = AsyncMock(return_value=approval_record)
+    mock_approval_manager.record_decision = AsyncMock(return_value=decided_record)
+    mock_approval_manager.save_resume_state = AsyncMock()
+    mock_approval_manager.delete_resume_state = AsyncMock()
+
+    mock_chat_agent = AsyncMock()
+    mock_chat_agent.resume_query = AsyncMock(
+        return_value=AgentResponse(response="Applied the change.", tool_envelopes=[])
+    )
+
+    with (
+        patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+        patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
+        patch(
+            "redis_sre_agent.core.docket_tasks.ApprovalManager",
+            return_value=mock_approval_manager,
+        ),
+        patch("redis_sre_agent.core.docket_tasks.get_instance_by_id", new=AsyncMock()),
+        patch("redis_sre_agent.core.docket_tasks.get_cluster_by_id", new=AsyncMock()),
+        patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_chat_agent),
+    ):
+        result = await resume_task_after_approval(
+            task_id="task-1",
+            approval_id="approval-1",
+            decision="approved",
+        )
+
+    assert result["response"]["response"] == "Applied the change."
+    mock_chat_agent.resume_query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_resume_task_after_approval_returns_next_pending_approval():
     approval_record = _build_approval()
     pending = PendingApprovalSummary.from_record(approval_record)

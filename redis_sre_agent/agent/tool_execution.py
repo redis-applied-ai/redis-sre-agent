@@ -51,6 +51,10 @@ async def execute_tool_calls_with_gate(
             for tool_call in normalized_tool_calls
         ]
     )
+    if len(results) != len(normalized_tool_calls):
+        raise RuntimeError(
+            "Tool manager returned a mismatched number of results for the requested tool calls"
+        )
 
     tool_messages: List[ToolMessage] = []
 

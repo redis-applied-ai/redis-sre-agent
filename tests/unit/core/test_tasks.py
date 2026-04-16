@@ -1675,6 +1675,7 @@ class TestProcessAgentTurn:
         mock_task_manager.update_task_status.assert_any_call(
             "task-123", TaskStatus.AWAITING_APPROVAL
         )
+        assert mock_task_manager._publish_stream_update.await_count == 1
         assert not any(
             call.args == ("task-123", TaskStatus.DONE)
             for call in mock_task_manager.update_task_status.await_args_list
