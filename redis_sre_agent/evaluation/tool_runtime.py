@@ -263,6 +263,10 @@ class FixtureToolRuntime(EvalToolRuntime):
             behaviors=provider_behaviors,
             state=state,
         )
+        self._declared_provider_keys = {
+            (provider_family, server_name)
+            for provider_family, _operation, server_name in provider_behaviors
+        }
 
     def _lookup_behavior(self, *, provider_family: str, operation: str) -> EvalToolBehavior | None:
         return self._resolver._lookup_behavior(provider_family=provider_family, operation=operation)
@@ -286,6 +290,12 @@ class FixtureToolRuntime(EvalToolRuntime):
             operation=identity.operation,
         )
         if behavior is None:
+            if (identity.provider_family, identity.server_name) in self._declared_provider_keys:
+                return EvalToolDispatchResult(
+                    result={
+                        "error": (f"Tool '{tool_name}' is not configured for this eval scenario")
+                    }
+                )
             return None
 
         return EvalToolDispatchResult(

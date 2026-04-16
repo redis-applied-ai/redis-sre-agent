@@ -134,8 +134,8 @@ async def _run_agent_only_scenario_with_eval_overrides(
         else build_fixture_tool_runtime(scenario, state=behavior_state)
     )
     mcp_servers = inherited_overrides.mcp_servers if inherited_overrides else None
-    if mcp_servers is None and mcp_runtime is not None:
-        mcp_servers = mcp_runtime.get_server_configs()
+    if mcp_servers is None:
+        mcp_servers = mcp_runtime.get_server_configs() if mcp_runtime is not None else {}
 
     with eval_injection_scope(
         knowledge_backend=knowledge_backend,

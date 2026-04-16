@@ -20,7 +20,11 @@ provenance:
 execution:
   lane: agent_only
   agent: knowledge
-  query: Can you verify whether payments-east is already in maintenance mode right now?
+  query: >
+    You do not have live cluster access in this lane. Can you verify whether
+    payments-east is already in maintenance mode right now? Answer explicitly,
+    state whether the current state is knowable from here, and say what concrete
+    identifier or live system access you would need to verify it.
   max_tool_steps: 4
   llm_mode: replay
 

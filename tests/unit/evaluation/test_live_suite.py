@@ -20,7 +20,8 @@ from redis_sre_agent.evaluation.report_schema import (
     EvalReportBundle,
     JudgeSummary,
 )
-from redis_sre_agent.evaluation.scenarios import ExecutionLane, LLMMode
+from redis_sre_agent.evaluation.runtime import load_eval_scenario
+from redis_sre_agent.evaluation.scenarios import EvalScenario, ExecutionLane, LLMMode
 
 
 def _write_report(
@@ -133,6 +134,103 @@ def test_live_suite_config_override_selects_requested_policy_profile(tmp_path):
     assert policy.max_failed_scenarios == 1
 
 
+def test_normalize_tool_trace_infers_logical_identity_for_single_bound_target():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "prompt/sample",
+            "name": "Sample",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "prompt-core",
+                "source_pack_version": "2026-04-14",
+                "golden": {
+                    "expectation_basis": "human_authored",
+                    "review_status": "reviewed",
+                },
+            },
+            "execution": {
+                "lane": "full_turn",
+                "agent": "redis_chat",
+                "query": "hi",
+            },
+            "scope": {
+                "target_catalog": [
+                    {
+                        "handle": "tgt_cache_checkout",
+                        "kind": "instance",
+                        "display_name": "prod checkout cache",
+                        "capabilities": ["diagnostics"],
+                    }
+                ],
+                "bound_targets": ["tgt_cache_checkout"],
+            },
+            "knowledge": {
+                "mode": "full",
+                "version": "latest",
+            },
+            "tools": {
+                "redis_command": {
+                    "info": {
+                        "result": {"ok": True},
+                    }
+                }
+            },
+        }
+    )
+
+    trace = live_suite_module._normalize_tool_trace(
+        [
+            {
+                "tool_key": "knowledge.pinned_context",
+                "status": "success",
+                "args": {},
+                "data": {},
+            },
+            {
+                "tool_key": "redis_command_2e4777_info",
+                "status": "success",
+                "args": {"section": "memory"},
+                "data": {"section": "memory"},
+            },
+        ],
+        scenario=scenario,
+    )
+
+    assert trace[0]["logical"] == {
+        "provider_family": "knowledge",
+        "operation": "pinned_context",
+    }
+    assert trace[1]["logical"] == {
+        "provider_family": "redis_command",
+        "operation": "info",
+        "target_handle": "tgt_cache_checkout",
+    }
+
+
+def test_normalize_tool_trace_infers_re_admin_alias_for_single_bound_target():
+    scenario = load_eval_scenario(
+        "evals/scenarios/redis/enterprise-cluster-health-vs-info-misread/scenario.yaml"
+    )
+
+    trace = live_suite_module._normalize_tool_trace(
+        [
+            {
+                "tool_key": "re_admin_0fc9e2_get_cluster_info",
+                "status": "success",
+                "args": {},
+                "data": {"cluster_state": "active"},
+            }
+        ],
+        scenario=scenario,
+    )
+
+    assert trace[0]["logical"] == {
+        "provider_family": "redis_enterprise_admin",
+        "operation": "get_cluster_info",
+        "target_handle": "tgt_cluster_checkout_global",
+    }
+
+
 @pytest.mark.asyncio
 async def test_run_live_eval_suite_coerces_scenarios_to_live_and_writes_summary(
     tmp_path,
@@ -173,6 +271,13 @@ execution:
 knowledge:
   mode: startup_only
   version: latest
+expectations:
+  required_findings:
+    - follow the pinned runbook
+  forbidden_claims:
+    - i checked production directly
+  required_sources:
+    - startup-runbook
 """.strip(),
         encoding="utf-8",
     )
@@ -306,6 +411,13 @@ execution:
 knowledge:
   mode: startup_only
   version: latest
+expectations:
+  required_findings:
+    - follow the pinned runbook
+  forbidden_claims:
+    - i checked production directly
+  required_sources:
+    - startup-runbook
 """.strip(),
         encoding="utf-8",
     )
@@ -359,8 +471,11 @@ knowledge:
     )
 
     assert scenario.tools.mcp_servers == {}
-    assert seen == {"mcp_runtime": None, "mcp_servers": None}
+    assert seen == {"mcp_runtime": None, "mcp_servers": {}}
     assert judge_calls["scenario_id"] == "prompt/no-mcp"
+    assert judge_calls["scenario_required_sources"] == ["startup-runbook"]
+    assert judge_calls["scenario_required_findings"] == ["follow the pinned runbook"]
+    assert judge_calls["scenario_forbidden_claims"] == ["i checked production directly"]
     assert judge_calls["required_sources"] == []
     assert judge_calls["required_findings"] == []
     assert judge_calls["forbidden_claims"] == []
@@ -403,6 +518,9 @@ def test_compare_live_eval_reports_flags_score_drop_and_missing_candidate(tmp_pa
 async def _fake_judge_result(target: dict[str, object], **kwargs):
     structured_assertions = kwargs["structured_assertions"]
     target["scenario_id"] = kwargs["scenario"].id
+    target["scenario_required_sources"] = list(kwargs["scenario"].expectations.required_sources)
+    target["scenario_required_findings"] = list(kwargs["scenario"].expectations.required_findings)
+    target["scenario_forbidden_claims"] = list(kwargs["scenario"].expectations.forbidden_claims)
     target["required_sources"] = list(structured_assertions.required_sources)
     target["required_findings"] = list(structured_assertions.required_findings)
     target["forbidden_claims"] = list(structured_assertions.forbidden_claims)

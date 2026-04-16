@@ -440,9 +440,12 @@ class KnowledgeOnlyAgent:
             try:
                 from redis_sre_agent.core.config import settings as _settings
 
-                _budget = int(_settings.max_tool_calls_per_stage)
+                _budget = max(
+                    int(_settings.max_tool_calls_per_stage),
+                    int(state.get("max_iterations", 0) or 0),
+                )
             except Exception:
-                _budget = 3
+                _budget = max(int(state.get("max_iterations", 0) or 0), 3)
             prev_exec = int(state.get("tool_calls_executed", 0) or 0)
             pending = int(len(state.get("current_tool_calls", []) or []))
             if prev_exec >= _budget:
@@ -609,13 +612,8 @@ class KnowledgeOnlyAgent:
                 # Extract the final response
                 messages = final_state.get("messages", [])
 
-                if messages:
-                    last_message = messages[-1]
-                    if isinstance(last_message, AIMessage):
-                        response = last_message.content
-                    else:
-                        response = str(last_message.content)
-                else:
+                response = self._extract_final_response(messages)
+                if not response:
                     response = "I apologize, but I wasn't able to process your query. Please try asking a more specific question about SRE practices or troubleshooting."
 
                 # Emit completion notification
@@ -638,6 +636,46 @@ class KnowledgeOnlyAgent:
                 await emitter.emit(f"Knowledge agent encountered an error: {str(e)}", "agent_error")
 
                 return AgentResponse(response=error_response, search_results=[], tool_envelopes=[])
+
+    @staticmethod
+    def _coerce_response_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                elif isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+            return "\n".join(parts).strip()
+        if content is None:
+            return ""
+        return str(content).strip()
+
+    @classmethod
+    def _extract_final_response(cls, messages: List[BaseMessage]) -> str:
+        if not messages:
+            return ""
+
+        for message in reversed(messages):
+            if isinstance(message, AIMessage):
+                candidate = cls._coerce_response_text(message.content)
+                if candidate:
+                    return candidate
+
+        last_message = messages[-1]
+        candidate = cls._coerce_response_text(getattr(last_message, "content", None))
+        if candidate:
+            return candidate
+
+        return (
+            "I gathered relevant evidence, but the workflow ended before I produced a final "
+            "natural-language summary. Please retry with a narrower question or allow one more "
+            "tool step."
+        )
 
 
 # Singleton instance for reuse

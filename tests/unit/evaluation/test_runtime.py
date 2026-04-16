@@ -19,6 +19,7 @@ from redis_sre_agent.evaluation.injection import EvalInjectionOverrides
 from redis_sre_agent.evaluation.runner import EvalRunner
 from redis_sre_agent.evaluation.runtime import (
     EvalRuntime,
+    _build_catalog_matches,
     _default_turn_processor,
     build_full_turn_context,
     run_full_turn_scenario,
@@ -117,6 +118,32 @@ def _build_binding(
         task_id=task_id,
         resource_id="cluster-prod-east",
     )
+
+
+def test_build_catalog_matches_persists_eval_target_seed():
+    scenario = _build_scenario(route_via_router=False, agent="redis_triage")
+
+    matches, existing = _build_catalog_matches(
+        scenario,
+        thread_id="thread-123",
+        task_id="task-123",
+    )
+
+    assert len(matches) == 1
+    candidate = matches[0]
+    assert candidate.binding_subject == "cluster-prod-east"
+    assert candidate.private_binding_ref["eval_target_seed"] == {
+        "seed_kind": "cluster",
+        "id": "cluster-prod-east",
+        "name": "prod-east cluster",
+        "cluster_type": "redis_enterprise",
+        "environment": "production",
+        "description": "Eval target seed for prod-east cluster",
+        "admin_url": "https://eval-target.invalid:9443",
+        "admin_username": "eval",
+        "admin_password": "eval-password",
+    }
+    assert existing[("cluster", "cluster-prod-east")].target_handle == "tgt_cluster_prod_east"
 
 
 def _build_instance_bound_scenario(*, route_via_router: bool = True) -> EvalScenario:
@@ -420,11 +447,13 @@ class _EvalRedisCommandBindingStrategy:
 
 class _MemoryThreadManager:
     threads: dict[str, Thread] = {}
+    traces: dict[str, dict[str, object]] = {}
     counter = 0
 
     @classmethod
     def reset(cls) -> None:
         cls.threads = {}
+        cls.traces = {}
         cls.counter = 0
 
     def __init__(self, *, redis_client=None):
@@ -470,7 +499,12 @@ class _MemoryThreadManager:
         return True
 
     async def set_message_trace(self, **kwargs):
+        message_id = kwargs["message_id"]
+        type(self).traces[message_id] = kwargs
         return kwargs
+
+    async def get_message_trace(self, message_id):
+        return type(self).traces.get(message_id)
 
     async def _save_thread_state(self, thread):
         type(self).threads[thread.thread_id] = thread
@@ -686,7 +720,11 @@ async def test_run_full_turn_scenario_uses_production_turn_path_for_attached_sco
             return True
 
         async def set_message_trace(self, **kwargs):
+            stored_threads.setdefault("_traces", {})[kwargs["message_id"]] = kwargs
             return kwargs
+
+        async def get_message_trace(self, message_id):
+            return stored_threads.get("_traces", {}).get(message_id)
 
         async def _save_thread_state(self, thread):
             stored_threads[thread.thread_id] = thread
@@ -1488,6 +1526,67 @@ async def test_run_full_turn_scenario_supports_stateful_responder_sequences(
 
     assert result.turn_result["first"] == {"phase": "initial"}
     assert result.turn_result["second"] == {"phase": "followup"}
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_enriches_turn_result_from_message_trace(monkeypatch):
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "runtime-message-trace-enrichment",
+            "name": "Runtime message trace enrichment",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-13",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "Inspect the checkout cache memory state.",
+                "route_via_router": False,
+                "agent": "chat",
+            },
+        }
+    )
+
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+
+    async def turn_processor(**kwargs):
+        thread_manager = _MemoryThreadManager(redis_client=kwargs["redis_client"])
+        await thread_manager.set_message_trace(
+            message_id="msg-1",
+            tool_envelopes=[
+                {
+                    "tool_key": "knowledge_search",
+                    "status": "success",
+                    "args": {"query": "checkout cache memory"},
+                    "data": {
+                        "results": [
+                            {
+                                "document_hash": "memory-runbook",
+                                "title": "Memory Runbook",
+                                "source_kind": "runbook",
+                            }
+                        ]
+                    },
+                }
+            ],
+        )
+        return {"response": "ok", "message_id": "msg-1"}
+
+    result = await run_full_turn_scenario(
+        scenario,
+        user_id="user-123",
+        session_id="session-123",
+        redis_client=object(),
+        turn_processor=turn_processor,
+    )
+
+    assert result.turn_result["tool_envelopes"][0]["tool_key"] == "knowledge_search"
+    assert result.turn_result["search_results"][0]["document_hash"] == "memory-runbook"
 
 
 @pytest.mark.asyncio

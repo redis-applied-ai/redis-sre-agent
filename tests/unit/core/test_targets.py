@@ -835,6 +835,34 @@ async def test_build_attached_target_scope_prompt_single_target_uses_single_targ
 
 
 @pytest.mark.asyncio
+async def test_build_attached_target_scope_prompt_uses_binding_metadata_without_missing_state():
+    context = {
+        "attached_target_handles": ["tgt_eval_instance"],
+        "target_bindings": [
+            {
+                "target_handle": "tgt_eval_instance",
+                "target_kind": "instance",
+                "resource_id": "redis-eval-checkout",
+                "display_name": "eval-checkout-cache",
+                "capabilities": ["diagnostics", "knowledge"],
+                "public_metadata": {"environment": "production", "deployment": "oss"},
+            }
+        ],
+    }
+
+    with patch(
+        "redis_sre_agent.core.targets.get_instance_by_id",
+        new=AsyncMock(return_value=None),
+    ):
+        prompt = await build_attached_target_scope_prompt(context)
+
+    assert prompt is not None
+    assert "eval-checkout-cache" in prompt
+    assert "environment=production, deployment=oss" in prompt
+    assert "state=missing" not in prompt
+
+
+@pytest.mark.asyncio
 async def test_build_attached_target_prompt_loader_retries_none_results():
     prompt_builder = AsyncMock(side_effect=[None, "ATTACHED TARGET SCOPE"])
     loader = build_attached_target_prompt_loader({}, 1, prompt_builder)

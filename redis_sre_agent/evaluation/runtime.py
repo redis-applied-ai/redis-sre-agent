@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.core.targets import build_bound_target_scope_context
 from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.core.threads import ThreadManager, _build_initial_context
@@ -20,7 +21,11 @@ from redis_sre_agent.evaluation.runtime_overrides import (
 from redis_sre_agent.evaluation.scenarios import EvalScenario, ExecutionLane
 from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorState, build_fixture_tool_runtime
 from redis_sre_agent.targets import TargetBindingService
-from redis_sre_agent.targets.contracts import PublicTargetBinding, PublicTargetMatch
+from redis_sre_agent.targets.contracts import (
+    DiscoveryCandidate,
+    PublicTargetBinding,
+    PublicTargetMatch,
+)
 
 _REQUESTED_AGENT_TYPES = {
     "chat": "chat",
@@ -73,14 +78,92 @@ def _normalize_requested_agent_type(agent_name: str | None) -> str:
         ) from exc
 
 
+def _infer_eval_instance_type(entry: Any) -> str:
+    """Infer a synthetic Redis instance type from public target metadata."""
+
+    deployment = (
+        str(
+            entry.public_metadata.get("deployment")
+            or entry.public_metadata.get("target_type")
+            or entry.cluster_type
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if deployment in {"redis_enterprise", "enterprise"}:
+        return "redis_enterprise"
+    if deployment in {"redis_cloud", "cloud"}:
+        return "redis_cloud"
+    if deployment in {"oss_cluster", "cluster"}:
+        return "oss_cluster"
+    return "oss_single"
+
+
+def _build_eval_target_private_ref(entry: Any, *, binding_subject: str) -> dict[str, Any]:
+    """Attach synthetic private target seed data for eval-only target bindings."""
+
+    environment = str(entry.public_metadata.get("environment") or "test")
+    if entry.kind == "cluster":
+        cluster_type = str(entry.cluster_type or "redis_enterprise").strip().lower()
+        seed: dict[str, Any] = {
+            "seed_kind": "cluster",
+            "id": binding_subject,
+            "name": entry.display_name,
+            "cluster_type": cluster_type,
+            "environment": environment,
+            "description": f"Eval target seed for {entry.display_name}",
+        }
+        if cluster_type == "redis_enterprise":
+            seed.update(
+                {
+                    "admin_url": "https://eval-target.invalid:9443",
+                    "admin_username": "eval",
+                    "admin_password": "eval-password",
+                }
+            )
+        return {"target_kind": entry.kind, "eval_target_seed": seed}
+
+    instance_type = _infer_eval_instance_type(entry)
+    seed = {
+        "seed_kind": "instance",
+        "id": binding_subject,
+        "name": entry.display_name,
+        "connection_url": "redis://eval-target.invalid:6379/0",
+        "environment": environment,
+        "usage": "custom",
+        "description": f"Eval target seed for {entry.display_name}",
+        "instance_type": instance_type,
+    }
+    if instance_type == "redis_enterprise":
+        seed.update(
+            {
+                "cluster_id": binding_subject,
+                "admin_url": "https://eval-target.invalid:9443",
+                "admin_username": "eval",
+                "admin_password": "eval-password",
+            }
+        )
+    elif instance_type == "redis_cloud":
+        seed.update(
+            {
+                "redis_cloud_subscription_id": 1,
+                "redis_cloud_database_id": 1,
+                "redis_cloud_subscription_type": "pro",
+                "redis_cloud_database_name": entry.display_name,
+            }
+        )
+    return {"target_kind": entry.kind, "eval_target_seed": seed}
+
+
 def _build_catalog_matches(
     scenario: EvalScenario,
     *,
     thread_id: str,
     task_id: str,
-) -> tuple[list[PublicTargetMatch], dict[tuple[str, str], PublicTargetBinding]]:
+) -> tuple[list[DiscoveryCandidate], dict[tuple[str, str], PublicTargetBinding]]:
     catalog_by_handle = {entry.handle: entry for entry in scenario.scope.target_catalog}
-    matches: list[PublicTargetMatch] = []
+    matches: list[DiscoveryCandidate] = []
     existing_by_subject: dict[tuple[str, str], PublicTargetBinding] = {}
 
     for handle in scenario.scope.bound_targets:
@@ -89,16 +172,24 @@ def _build_catalog_matches(
         public_metadata = dict(entry.public_metadata)
         environment = public_metadata.get("environment")
         target_type = public_metadata.get("target_type") or entry.cluster_type
+        public_match = PublicTargetMatch(
+            target_kind=entry.kind,
+            display_name=entry.display_name,
+            environment=str(environment) if environment else None,
+            target_type=str(target_type) if target_type else None,
+            capabilities=list(entry.capabilities),
+            confidence=1.0,
+            public_metadata=public_metadata,
+            resource_id=entry.resource_id,
+        )
         matches.append(
-            PublicTargetMatch(
-                target_kind=entry.kind,
-                display_name=entry.display_name,
-                environment=str(environment) if environment else None,
-                target_type=str(target_type) if target_type else None,
-                capabilities=list(entry.capabilities),
-                confidence=1.0,
-                public_metadata=public_metadata,
-                resource_id=entry.resource_id,
+            DiscoveryCandidate.from_public_match(
+                public_match,
+                binding_subject=binding_subject,
+                private_binding_ref=_build_eval_target_private_ref(
+                    entry,
+                    binding_subject=binding_subject,
+                ),
             )
         )
         existing_by_subject[(entry.kind, binding_subject)] = PublicTargetBinding(
@@ -186,6 +277,27 @@ def _scenario_runtime_context(scenario: EvalScenario) -> dict[str, Any]:
     }
 
 
+def _enrich_turn_result_from_trace(
+    turn_result: dict[str, Any],
+    message_trace: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Backfill tool/citation evidence from the persisted assistant message trace."""
+
+    if not message_trace:
+        return turn_result
+
+    enriched = dict(turn_result)
+    tool_envelopes = list(message_trace.get("tool_envelopes") or [])
+    if tool_envelopes and not enriched.get("tool_envelopes"):
+        enriched["tool_envelopes"] = tool_envelopes
+    if tool_envelopes and not enriched.get("search_results"):
+        enriched["search_results"] = AgentResponse(
+            response=str(enriched.get("response") or ""),
+            tool_envelopes=tool_envelopes,
+        ).search_results
+    return enriched
+
+
 def _llm_mode_name(mode: Any) -> str:
     value = getattr(mode, "value", mode)
     return str(value)
@@ -225,8 +337,8 @@ async def run_full_turn_scenario(
         state=behavior_state,
     )
     mcp_servers = effective_overrides.mcp_servers
-    if mcp_servers is None and mcp_runtime is not None:
-        mcp_servers = mcp_runtime.get_server_configs()
+    if mcp_servers is None:
+        mcp_servers = mcp_runtime.get_server_configs() if mcp_runtime is not None else {}
     with eval_injection_scope(
         knowledge_backend=knowledge_backend,
         mcp_servers=mcp_servers,
@@ -273,6 +385,10 @@ async def run_full_turn_scenario(
             task_id=task_id,
             redis_client=redis_client,
         )
+        assistant_message_id = str(turn_result.get("message_id") or "").strip()
+        if assistant_message_id:
+            message_trace = await thread_manager.get_message_trace(assistant_message_id)
+            turn_result = _enrich_turn_result_from_trace(turn_result, message_trace)
 
         task_state = await task_manager.get_task_state(task_id)
         task_status = None

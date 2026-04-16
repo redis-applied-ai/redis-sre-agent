@@ -41,6 +41,18 @@ def normalize_provider_family(provider_family: str) -> str:
     return _PROVIDER_FAMILY_ALIASES.get(normalized, normalized)
 
 
+def concrete_provider_family_prefixes(provider_family: str) -> set[str]:
+    """Return all concrete provider-name prefixes that map to this family."""
+
+    normalized = _normalize_token(provider_family)
+    canonical = normalize_provider_family(normalized)
+    prefixes = {normalized, canonical}
+    prefixes.update(
+        alias for alias, target in _PROVIDER_FAMILY_ALIASES.items() if target == canonical
+    )
+    return prefixes
+
+
 def extract_mcp_server_name(provider_name: str) -> str | None:
     """Return the MCP server name encoded in a provider name, if any."""
     normalized = _normalize_token(provider_name)

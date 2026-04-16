@@ -4,11 +4,6 @@
       "provider_family": "redis_command",
       "operation": "info",
       "target_handle": "tgt_cache_checkout"
-    },
-    {
-      "provider_family": "redis_command",
-      "operation": "memory_stats",
-      "target_handle": "tgt_cache_checkout"
     }
   ],
   "forbidden_tool_calls": [

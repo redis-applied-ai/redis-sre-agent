@@ -288,6 +288,8 @@ def eval_injection_scope(
     """Temporarily install eval-only backend overrides for the current context."""
 
     current = get_active_eval_injection_overrides()
+    settings_restore_needed = False
+    original_mcp_servers: EvalMCPServerConfigs | None = None
     merged = EvalInjectionOverrides(
         knowledge_backend=(
             knowledge_backend
@@ -307,9 +309,19 @@ def eval_injection_scope(
         ),
     )
     token = _eval_runtime_overrides.set(merged)
+    if mcp_servers is not None:
+        from redis_sre_agent.core.config import settings
+
+        settings_restore_needed = True
+        original_mcp_servers = settings.mcp_servers
+        settings.mcp_servers = dict(merged.mcp_servers or {})
     try:
         yield merged
     finally:
+        if settings_restore_needed:
+            from redis_sre_agent.core.config import settings
+
+            settings.mcp_servers = dict(original_mcp_servers or {})
         _eval_runtime_overrides.reset(token)
 
 

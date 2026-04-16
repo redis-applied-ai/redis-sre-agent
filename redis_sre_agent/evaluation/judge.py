@@ -2,15 +2,27 @@
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Sequence
 
+import yaml
 from pydantic import BaseModel, Field
 
 from ..core.llm_helpers import create_mini_llm
 from .scenarios import EvalScenario
 
 logger = logging.getLogger(__name__)
+_FENCED_JSON_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
+_TRAILING_COMMA_RE = re.compile(r",(?=\s*[}\]])")
+_SMART_PUNCT_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+    }
+)
 
 
 class EvaluationCriteria(BaseModel):
@@ -101,6 +113,52 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
             return json.dumps(value, indent=2, sort_keys=True)
         except TypeError:
             return str(value)
+
+    @staticmethod
+    def _sanitize_judge_response(content: str) -> str:
+        """Normalize common JSON-adjacent judge output into parseable JSON."""
+
+        response_text = content.strip()
+        fenced_match = _FENCED_JSON_RE.match(response_text)
+        if fenced_match:
+            response_text = fenced_match.group(1).strip()
+        response_text = response_text.translate(_SMART_PUNCT_TRANSLATION)
+        response_text = _TRAILING_COMMA_RE.sub("", response_text)
+
+        cleaned: list[str] = []
+        in_string = False
+        escaping = False
+        for char in response_text:
+            if escaping:
+                cleaned.append(char)
+                escaping = False
+                continue
+            if char == "\\":
+                cleaned.append(char)
+                escaping = True
+                continue
+            if char == '"':
+                cleaned.append(char)
+                in_string = not in_string
+                continue
+            if in_string and char in {"\n", "\r", "\t"}:
+                cleaned.append(" ")
+                continue
+            cleaned.append(char)
+        return "".join(cleaned)
+
+    @staticmethod
+    def _parse_judge_payload(content: str) -> dict[str, Any]:
+        """Parse sanitized judge output with a YAML fallback for near-JSON."""
+
+        response_text = SREAgentJudge._sanitize_judge_response(content)
+        try:
+            parsed = json.loads(response_text)
+        except json.JSONDecodeError:
+            parsed = yaml.safe_load(response_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Judge response must deserialize to an object")
+        return parsed
 
     async def evaluate_response(
         self, agent_response: str, test_case: Dict[str, Any], criteria: List[EvaluationCriteria]
@@ -208,15 +266,7 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
 
             # Parse judge response
             try:
-                # Handle markdown code blocks if present
-                response_text = response.content.strip()
-                if response_text.startswith("```json"):
-                    response_text = response_text[7:]  # Remove ```json
-                if response_text.endswith("```"):
-                    response_text = response_text[:-3]  # Remove ```
-                response_text = response_text.strip()
-
-                result_data = json.loads(response_text)
+                result_data = self._parse_judge_payload(response.content)
 
                 return EvaluationResult(
                     test_case_id=test_case.get("id", "unknown"),

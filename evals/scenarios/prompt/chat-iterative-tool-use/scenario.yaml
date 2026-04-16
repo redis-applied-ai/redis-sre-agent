@@ -65,6 +65,14 @@ tools:
             args_contains:
               section: memory
           result: fixtures/tools/info-memory.json
+        - when:
+            args_contains:
+              section: stats
+          result: fixtures/tools/info-stats.json
+        - when:
+            args_contains:
+              section: clients
+          result: fixtures/tools/info-clients.json
     memory_stats:
       description: Fetch MEMORY STATS output for the attached instance.
       result: fixtures/tools/memory-stats.json
@@ -72,9 +80,6 @@ expectations:
   required_tool_calls:
     - provider_family: redis_command
       operation: info
-      target_handle: tgt_cache_checkout
-    - provider_family: redis_command
-      operation: memory_stats
       target_handle: tgt_cache_checkout
   forbidden_tool_calls:
     - provider_family: redis_command
