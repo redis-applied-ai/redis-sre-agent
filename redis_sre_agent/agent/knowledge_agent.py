@@ -89,6 +89,7 @@ class KnowledgeAgentState(TypedDict):
     startup_system_prompt: Optional[str]
     startup_prompt_initialized: NotRequired[bool]
     tool_calls_executed: int
+    tool_call_budget_override: NotRequired[int]
     # Accumulated search results for citation tracking
     knowledge_search_results: List[Dict[str, Any]]
     # Accumulated tool result envelopes for decision traces
@@ -440,15 +441,14 @@ class KnowledgeOnlyAgent:
                 return END
 
             # Enforce a tool call budget to avoid runaway loops
+            budget_override = state.get("tool_call_budget_override")
             try:
                 from redis_sre_agent.core.config import settings as _settings
 
-                _budget = max(
-                    int(_settings.max_tool_calls_per_stage),
-                    int(state.get("max_iterations", 0) or 0),
-                )
+                _budget = int(budget_override or _settings.max_tool_calls_per_stage)
             except Exception:
-                _budget = max(int(state.get("max_iterations", 0) or 0), 3)
+                _budget = int(budget_override or 3)
+            _budget = max(_budget, 1)
             prev_exec = int(state.get("tool_calls_executed", 0) or 0)
             pending = int(len(state.get("current_tool_calls", []) or []))
             if prev_exec >= _budget:
@@ -514,7 +514,7 @@ class KnowledgeOnlyAgent:
             session_id: Session identifier
             user_id: Optional user identifier
             max_iterations: Maximum number of agent iterations
-            context: Additional context (currently ignored for knowledge-only agent)
+            context: Additional context, including optional eval-only budget overrides
             progress_emitter: Emitter for progress/notification updates
             conversation_history: Optional list of previous messages for context
 
@@ -587,6 +587,14 @@ class KnowledgeOnlyAgent:
                     getattr(startup_context, "internal_tool_envelopes", []),
                 ),
             }
+            if context and context.get("tool_call_budget_override") is not None:
+                try:
+                    initial_state["tool_call_budget_override"] = max(
+                        int(context["tool_call_budget_override"]),
+                        1,
+                    )
+                except (TypeError, ValueError):
+                    pass
 
             # Create MemorySaver for this query
             # Conversation history is managed by ThreadManager and passed via messages

@@ -116,13 +116,19 @@ class TestKnowledgeAgent:
             ),
             patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
         ):
-            await agent.process_query(query="who runs AOP?", session_id="s1", user_id="u1")
+            await agent.process_query(
+                query="who runs AOP?",
+                session_id="s1",
+                user_id="u1",
+                context={"tool_call_budget_override": 7},
+            )
 
         initial_state = captured["initial_state"]
         assert isinstance(initial_state["messages"][0], SystemMessage)
         assert "STARTUP_CONTEXT" in initial_state["messages"][0].content
         assert initial_state["startup_prompt_initialized"] is True
         assert "STARTUP_CONTEXT" in (initial_state["startup_system_prompt"] or "")
+        assert initial_state["tool_call_budget_override"] == 7
         mock_build_startup_context.assert_awaited_once_with(
             query="who runs AOP?",
             version="latest",
@@ -310,6 +316,7 @@ class TestKnowledgeAgent:
         assert "document_hash" in params
         assert "current_chunk_index" in params
         assert "context_window" in params
+        assert "index_type" in params
 
 
 class TestKnowledgeAgentState:

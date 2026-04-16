@@ -119,6 +119,7 @@ async def test_run_agent_only_scenario_calls_selected_agent_with_prebuilt_contex
     assert result.agent_name == "redis_triage"
     assert result.response.response == "ok"
     assert result.context["task_id"] == "task-1"
+    assert result.context["tool_call_budget_override"] == 7
     assert result.context["turn_scope"]["thread_id"] == "thread-2"
     assert fake_agent.calls == [
         {

@@ -170,6 +170,7 @@ async def run_agent_only_scenario(
         thread_id=thread_id,
         base_context=base_context,
     )
+    context["tool_call_budget_override"] = _agent_iteration_budget(scenario)
     agent = factory()
     response = await agent.process_query(
         query=scenario.execution.query,

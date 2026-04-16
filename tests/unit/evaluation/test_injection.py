@@ -125,7 +125,7 @@ def test_eval_injection_scope_restores_previous_state():
     assert get_active_mcp_servers(default_catalog) == default_catalog
 
 
-def test_eval_injection_scope_temporarily_overrides_global_mcp_settings(monkeypatch):
+def test_eval_injection_scope_leaves_global_mcp_settings_unchanged(monkeypatch):
     from redis_sre_agent.core.config import settings
 
     original = dict(settings.mcp_servers)
@@ -138,7 +138,8 @@ def test_eval_injection_scope_temporarily_overrides_global_mcp_settings(monkeypa
     with eval_injection_scope(
         mcp_servers={"eval": MCPServerConfig(url="https://eval.example/mcp")}
     ):
-        assert list(settings.mcp_servers) == ["eval"]
+        assert list(settings.mcp_servers) == ["github"]
+        assert list(get_active_mcp_servers(settings.mcp_servers)) == ["eval"]
 
     assert list(settings.mcp_servers) == ["github"]
     monkeypatch.setattr(settings, "mcp_servers", original)
@@ -200,6 +201,7 @@ async def test_related_fragments_dispatch_uses_helper_parameter_names():
             current_chunk_index=4,
             context_window=3,
             version="7.8",
+            index_type="skills",
         )
 
     assert result == {
@@ -207,7 +209,7 @@ async def test_related_fragments_dispatch_uses_helper_parameter_names():
         "current_chunk_index": 4,
         "context_window": 3,
         "version": "7.8",
-        "index_type": "knowledge",
+        "index_type": "skills",
     }
 
 
