@@ -15,7 +15,11 @@ from redis_sre_agent.evaluation.report_schema import (
     ToolTraceEntry,
 )
 from redis_sre_agent.evaluation.scenarios import EvalScenario
-from redis_sre_agent.evaluation.tool_identity import LogicalToolIdentity
+from redis_sre_agent.evaluation.tool_identity import (
+    LogicalToolIdentity,
+    concrete_provider_family_prefixes,
+    normalize_provider_family,
+)
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:[-'][a-z0-9]+)*")
 _NEGATION_PREFIXES: tuple[tuple[str, ...], ...] = (
@@ -40,10 +44,23 @@ _NEGATION_PREFIXES: tuple[tuple[str, ...], ...] = (
     ("without",),
     ("avoid",),
 )
+_ROUTING_ALIASES = {
+    "redis_chat": "chat",
+    "chat": "chat",
+    "redis_triage": "triage",
+    "triage": "triage",
+    "knowledge_only": "knowledge",
+    "knowledge": "knowledge",
+}
 
 
 def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
+
+
+def _normalize_routing_decision(value: Any) -> str:
+    normalized = _normalize_text(value)
+    return _ROUTING_ALIASES.get(normalized, normalized)
 
 
 def _tokenize_text(value: Any) -> list[str]:
@@ -72,6 +89,56 @@ def _normalize_expected_tool_ref(expected: Any) -> LogicalToolIdentity:
     if hasattr(expected, "model_dump"):
         return _normalize_logical_identity(expected.model_dump())
     return _normalize_logical_identity(expected)
+
+
+def _infer_trace_logical_identity(
+    scenario: EvalScenario,
+    concrete_name: str,
+) -> LogicalToolIdentity | None:
+    normalized_name = _normalize_text(concrete_name).replace(" ", "_")
+    if not normalized_name:
+        return None
+    if normalized_name == "knowledge.pinned_context":
+        return LogicalToolIdentity(
+            provider_family="knowledge",
+            operation="pinned_context",
+        )
+
+    candidate_operations: list[tuple[int, LogicalToolIdentity]] = []
+    for provider_family, operation_map in scenario.tools.providers.items():
+        raw_provider = _normalize_text(provider_family).replace(" ", "_")
+        canonical_provider = normalize_provider_family(raw_provider)
+        provider_prefixes = {
+            f"{provider_prefix}_"
+            for provider_prefix in concrete_provider_family_prefixes(raw_provider)
+        }
+        if not any(normalized_name.startswith(prefix) for prefix in provider_prefixes):
+            continue
+        for operation in operation_map:
+            normalized_operation = _normalize_text(operation).replace(" ", "_")
+            if not normalized_name.endswith(f"_{normalized_operation}"):
+                continue
+            payload: dict[str, Any] = {
+                "provider_family": canonical_provider,
+                "operation": normalized_operation,
+            }
+            if len(scenario.scope.bound_targets) == 1 and canonical_provider not in {
+                "knowledge",
+                "mcp",
+                "target_discovery",
+                "utilities",
+            }:
+                payload["target_handle"] = scenario.scope.bound_targets[0]
+            candidate_operations.append(
+                (
+                    len(normalized_operation),
+                    LogicalToolIdentity.model_validate(payload),
+                )
+            )
+
+    if not candidate_operations:
+        return None
+    return max(candidate_operations, key=lambda item: item[0])[1]
 
 
 def _match_logical_identity(
@@ -106,14 +173,26 @@ def _identity_map_by_concrete(
 def _normalize_tool_trace(
     tool_trace: Sequence[ToolTraceEntry | dict[str, Any]] | None,
     *,
+    scenario: EvalScenario,
     tool_identity_map: Sequence[ToolIdentityReportRow | dict[str, Any]] | None = None,
 ) -> list[ToolTraceEntry]:
     identity_by_concrete = _identity_map_by_concrete(tool_identity_map)
     normalized: list[ToolTraceEntry] = []
     for entry in tool_trace or []:
-        trace = entry if isinstance(entry, ToolTraceEntry) else ToolTraceEntry.model_validate(entry)
+        if isinstance(entry, dict) and "concrete_name" not in entry and "tool_key" in entry:
+            trace = ToolTraceEntry.from_result_envelope(entry)
+        elif hasattr(entry, "tool_key") and not isinstance(entry, ToolTraceEntry):
+            trace = ToolTraceEntry.from_result_envelope(entry)
+        else:
+            trace = (
+                entry if isinstance(entry, ToolTraceEntry) else ToolTraceEntry.model_validate(entry)
+            )
         if trace.logical is None and trace.concrete_name in identity_by_concrete:
             trace = trace.model_copy(update={"logical": identity_by_concrete[trace.concrete_name]})
+        if trace.logical is None:
+            inferred = _infer_trace_logical_identity(scenario, trace.concrete_name)
+            if inferred is not None:
+                trace = trace.model_copy(update={"logical": inferred})
         normalized.append(trace)
     return normalized
 
@@ -186,7 +265,11 @@ def score_structured_assertions(
 ) -> StructuredAssertionResults:
     """Score one scenario's hard assertions against trace and output evidence."""
 
-    normalized_trace = _normalize_tool_trace(tool_trace, tool_identity_map=tool_identity_map)
+    normalized_trace = _normalize_tool_trace(
+        tool_trace,
+        scenario=scenario,
+        tool_identity_map=tool_identity_map,
+    )
     normalized_sources = _normalize_sources(retrieved_sources)
     answer = final_answer or ""
 
@@ -334,8 +417,8 @@ def score_structured_assertions(
 
     expected_routing_decision = None
     if scenario.expectations.expected_routing_decision is not None:
-        expected = _normalize_text(scenario.expectations.expected_routing_decision)
-        actual = _normalize_text(actual_routing_decision)
+        expected = _normalize_routing_decision(scenario.expectations.expected_routing_decision)
+        actual = _normalize_routing_decision(actual_routing_decision)
         if actual and actual == expected:
             expected_routing_decision = _pass(
                 f"Observed expected routing decision '{scenario.expectations.expected_routing_decision}'",

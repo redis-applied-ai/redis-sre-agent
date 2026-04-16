@@ -125,6 +125,26 @@ def test_eval_injection_scope_restores_previous_state():
     assert get_active_mcp_servers(default_catalog) == default_catalog
 
 
+def test_eval_injection_scope_leaves_global_mcp_settings_unchanged(monkeypatch):
+    from redis_sre_agent.core.config import settings
+
+    original = dict(settings.mcp_servers)
+    monkeypatch.setattr(
+        settings,
+        "mcp_servers",
+        {"github": MCPServerConfig(url="https://github.example/mcp")},
+    )
+
+    with eval_injection_scope(
+        mcp_servers={"eval": MCPServerConfig(url="https://eval.example/mcp")}
+    ):
+        assert list(settings.mcp_servers) == ["github"]
+        assert list(get_active_mcp_servers(settings.mcp_servers)) == ["eval"]
+
+    assert list(settings.mcp_servers) == ["github"]
+    monkeypatch.setattr(settings, "mcp_servers", original)
+
+
 @pytest.mark.asyncio
 async def test_knowledge_helpers_dispatch_to_eval_backend():
     with eval_injection_scope(knowledge_backend=_FakeKnowledgeBackend()):
@@ -180,14 +200,16 @@ async def test_related_fragments_dispatch_uses_helper_parameter_names():
             document_hash="fixture-doc",
             current_chunk_index=4,
             context_window=3,
+            version="7.8",
+            index_type="skills",
         )
 
     assert result == {
         "document_hash": "fixture-doc",
         "current_chunk_index": 4,
         "context_window": 3,
-        "version": "latest",
-        "index_type": "knowledge",
+        "version": "7.8",
+        "index_type": "skills",
     }
 
 

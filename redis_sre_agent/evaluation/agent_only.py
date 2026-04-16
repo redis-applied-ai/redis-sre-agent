@@ -50,6 +50,17 @@ def _default_agent_factories() -> dict[str, AgentFactory]:
     }
 
 
+def _agent_iteration_budget(scenario: EvalScenario) -> int:
+    """Reserve one final synthesis turn beyond the tool-step budget.
+
+    Eval scenarios define `max_tool_steps`, but the direct agent entrypoints take
+    `max_iterations`, which counts LLM turns. Agent-only live evals need one
+    extra turn after the last tool call so the model can produce a final answer.
+    """
+
+    return int(scenario.execution.max_tool_steps) + 1
+
+
 def _normalize_agent_name(agent_name: str) -> str:
     normalized = str(agent_name or "").strip().lower()
     if not normalized:
@@ -159,12 +170,13 @@ async def run_agent_only_scenario(
         thread_id=thread_id,
         base_context=base_context,
     )
+    context["tool_call_budget_override"] = _agent_iteration_budget(scenario)
     agent = factory()
     response = await agent.process_query(
         query=scenario.execution.query,
         session_id=session_id,
         user_id=user_id,
-        max_iterations=scenario.execution.max_tool_steps,
+        max_iterations=_agent_iteration_budget(scenario),
         context=context,
         progress_emitter=progress_emitter,
         conversation_history=list(conversation_history or []) or None,

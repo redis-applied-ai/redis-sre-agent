@@ -1892,6 +1892,8 @@ async def get_related_document_fragments(
     current_chunk_index: Optional[int] = None,
     context_window: int = 2,
     config: Optional[Settings] = None,
+    version: Optional[str] = "latest",
+    index_type: str = "knowledge",
 ) -> Dict[str, Any]:
     """
     Get related fragments around a specific chunk for additional context.
@@ -1903,6 +1905,8 @@ async def get_related_document_fragments(
         document_hash: The document hash to get related fragments for
         current_chunk_index: The chunk index to get context around (if None, gets all)
         context_window: Number of chunks before and after to include
+        version: Optional knowledge corpus version to query
+        index_type: Knowledge index family to query for document fragments
 
     Returns:
         Dictionary containing related fragments with context
@@ -1912,7 +1916,8 @@ async def get_related_document_fragments(
         document_hash=document_hash,
         current_chunk_index=current_chunk_index,
         context_window=context_window,
-        index_type="knowledge",
+        version=version,
+        index_type=index_type,
     )
     if override_result is not None:
         return override_result
@@ -1927,6 +1932,8 @@ async def get_related_document_fragments(
             document_hash,
             include_metadata=True,
             config=config,
+            version=version,
+            index_type=index_type,
         )
 
         if "error" in all_fragments_result:

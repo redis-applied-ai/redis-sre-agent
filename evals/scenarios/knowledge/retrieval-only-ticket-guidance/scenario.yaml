@@ -22,8 +22,11 @@ provenance:
 execution:
   lane: agent_only
   agent: knowledge
-  query: What previous Redis Enterprise maintenance incident should I review before I put a node into maintenance mode?
-  max_tool_steps: 4
+  query: >
+    Before I put a Redis Enterprise node into maintenance mode, which previous incident ticket,
+    maintenance guidance document, and maintenance checklist skill should I review? Give the
+    specific pre-change check they all reinforce.
+  max_tool_steps: 5
   llm_mode: replay
 
 scope:

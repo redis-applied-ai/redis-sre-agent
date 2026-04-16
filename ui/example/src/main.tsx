@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider } from '@radar/ui-kit';
 import App from './App';
-import TestApp from './TestApp';
 
 // Import styles (includes UI Kit styles)
 import './index.css';
@@ -33,7 +32,6 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasErr
   }
 }
 
-// Try the real App now
 const CurrentApp = App;
 
 createRoot(document.getElementById('root')!).render(

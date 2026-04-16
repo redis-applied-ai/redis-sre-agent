@@ -2,6 +2,7 @@ suites:
   live-agent-only-smoke:
     description: Low-cost live-model suite for scheduled and manually triggered CI runs.
     policy_file: ../baseline_policy.yaml
+    judge_pass_threshold: 75.0
     scenarios:
       - ../scenarios/prompt/knowledge-agent-no-live-access/scenario.yaml
       - ../scenarios/sources/pinned-sev1-escalation-policy/scenario.yaml

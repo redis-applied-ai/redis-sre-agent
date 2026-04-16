@@ -19,24 +19,30 @@ class _StubRedisCommandProvider(ToolProvider):
         return "redis_command"
 
     def tools(self) -> list[Tool]:
-        schema = ToolDefinition(
-            name=self._make_tool_name("info"),
-            description="Run INFO",
-            capability=ToolCapability.DIAGNOSTICS,
-            parameters={"type": "object", "properties": {"section": {"type": "string"}}},
-        )
-        metadata = ToolMetadata(
-            name=schema.name,
-            description=schema.description,
-            capability=ToolCapability.DIAGNOSTICS,
-            provider_name=self.provider_name,
-            requires_instance=True,
-        )
+        def _build_tool(operation: str, description: str) -> Tool:
+            schema = ToolDefinition(
+                name=self._make_tool_name(operation),
+                description=description,
+                capability=ToolCapability.DIAGNOSTICS,
+                parameters={"type": "object", "properties": {"section": {"type": "string"}}},
+            )
+            metadata = ToolMetadata(
+                name=schema.name,
+                description=schema.description,
+                capability=ToolCapability.DIAGNOSTICS,
+                provider_name=self.provider_name,
+                requires_instance=True,
+            )
 
-        async def _invoke(_args):
-            return {"live": True}
+            async def _invoke(_args):
+                return {"live": True, "operation": operation}
 
-        return [Tool(metadata=metadata, definition=schema, invoke=_invoke)]
+            return Tool(metadata=metadata, definition=schema, invoke=_invoke)
+
+        return [
+            _build_tool("info", "Run INFO"),
+            _build_tool("config_get", "Run CONFIG GET"),
+        ]
 
 
 @pytest.mark.asyncio
@@ -295,3 +301,52 @@ async def test_fixture_tool_runtime_supports_partial_and_empty_results():
     assert second is not None
     assert first.result == {"status": "partial", "keys": ["used_memory"]}
     assert second.result == {}
+
+
+@pytest.mark.asyncio
+async def test_fixture_tool_runtime_blocks_undeclared_operations_on_declared_provider_family():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "block-undeclared-ops",
+            "name": "Block undeclared ops",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-13",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "full_turn", "query": "inspect memory"},
+            "tools": {
+                "redis_command": {
+                    "info": {
+                        "result": {"phase": "ok"},
+                    }
+                }
+            },
+        }
+    )
+    runtime = build_fixture_tool_runtime(scenario)
+    provider = _StubRedisCommandProvider(
+        redis_instance=RedisInstance(
+            id="tgt_instance_checkout",
+            name="checkout-cache-prod",
+            connection_url="redis://localhost:6379/0",
+            environment="test",
+            usage="cache",
+            description="test",
+            instance_type="oss_single",
+        )
+    )
+    config_get_tool = provider.tools()[1]
+
+    result = await runtime.dispatch_tool_call(
+        tool_name=config_get_tool.definition.name,
+        args={},
+        tool_by_name={config_get_tool.definition.name: config_get_tool},
+        routing_table={config_get_tool.definition.name: provider},
+    )
+
+    assert result is not None
+    assert result.result == {
+        "error": f"Tool '{config_get_tool.definition.name}' is not configured for this eval scenario"
+    }

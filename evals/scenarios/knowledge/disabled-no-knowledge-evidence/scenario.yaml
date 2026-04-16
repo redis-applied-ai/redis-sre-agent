@@ -23,7 +23,8 @@ execution:
   agent: knowledge_only
   query: >
     I do not have an attached target. Can you tell me what the runbook or support ticket says
-    about checkout-cache memory pressure?
+    about checkout-cache memory pressure? If no runbook or ticket evidence is available in this
+    lane, say that plainly and stop there; do not switch into general Redis guidance.
   max_tool_steps: 4
   llm_mode: replay
 

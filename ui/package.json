@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite",
+    "dev": "vite --force",
     "e2e": "playwright test",
     "e2e:clean": "node scripts/cleanup-e2e.mjs",
     "e2e:headed": "playwright test --headed --project=chromium",

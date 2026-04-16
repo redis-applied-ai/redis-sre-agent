@@ -58,7 +58,10 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 - Focus on general principles, methodologies, and documented best practices
 - Only call tool categories that are available in your current tool list
 - Always cite knowledge base sources when available
-- If you don't find relevant information in the knowledge base, provide general SRE guidance based on industry best practices
+- If you do not find relevant documentation or support-ticket evidence, say that explicitly before giving any general SRE guidance
+- Do not imply that you read a runbook, skill, or ticket unless you actually retrieved it in this conversation
+- If the user asks about current live state, say that it is unknown from this lane and name the live access or concrete identifier that would be needed to verify it
+- If the user explicitly asks what a specific runbook, skill, or ticket says and you cannot retrieve it, stop after explaining that the evidence is unavailable unless the user separately asks for general guidance
 
 ## Response Style:
 - Be concise but thorough
@@ -86,6 +89,7 @@ class KnowledgeAgentState(TypedDict):
     startup_system_prompt: Optional[str]
     startup_prompt_initialized: NotRequired[bool]
     tool_calls_executed: int
+    tool_call_budget_override: NotRequired[int]
     # Accumulated search results for citation tracking
     knowledge_search_results: List[Dict[str, Any]]
     # Accumulated tool result envelopes for decision traces
@@ -437,12 +441,14 @@ class KnowledgeOnlyAgent:
                 return END
 
             # Enforce a tool call budget to avoid runaway loops
+            budget_override = state.get("tool_call_budget_override")
             try:
                 from redis_sre_agent.core.config import settings as _settings
 
-                _budget = int(_settings.max_tool_calls_per_stage)
+                _budget = int(budget_override or _settings.max_tool_calls_per_stage)
             except Exception:
-                _budget = 3
+                _budget = int(budget_override or 3)
+            _budget = max(_budget, 1)
             prev_exec = int(state.get("tool_calls_executed", 0) or 0)
             pending = int(len(state.get("current_tool_calls", []) or []))
             if prev_exec >= _budget:
@@ -508,7 +514,7 @@ class KnowledgeOnlyAgent:
             session_id: Session identifier
             user_id: Optional user identifier
             max_iterations: Maximum number of agent iterations
-            context: Additional context (currently ignored for knowledge-only agent)
+            context: Additional context, including optional eval-only budget overrides
             progress_emitter: Emitter for progress/notification updates
             conversation_history: Optional list of previous messages for context
 
@@ -581,6 +587,14 @@ class KnowledgeOnlyAgent:
                     getattr(startup_context, "internal_tool_envelopes", []),
                 ),
             }
+            if context and context.get("tool_call_budget_override") is not None:
+                try:
+                    initial_state["tool_call_budget_override"] = max(
+                        int(context["tool_call_budget_override"]),
+                        1,
+                    )
+                except (TypeError, ValueError):
+                    pass
 
             # Create MemorySaver for this query
             # Conversation history is managed by ThreadManager and passed via messages
@@ -609,13 +623,8 @@ class KnowledgeOnlyAgent:
                 # Extract the final response
                 messages = final_state.get("messages", [])
 
-                if messages:
-                    last_message = messages[-1]
-                    if isinstance(last_message, AIMessage):
-                        response = last_message.content
-                    else:
-                        response = str(last_message.content)
-                else:
+                response = self._extract_final_response(messages)
+                if not response:
                     response = "I apologize, but I wasn't able to process your query. Please try asking a more specific question about SRE practices or troubleshooting."
 
                 # Emit completion notification
@@ -638,6 +647,46 @@ class KnowledgeOnlyAgent:
                 await emitter.emit(f"Knowledge agent encountered an error: {str(e)}", "agent_error")
 
                 return AgentResponse(response=error_response, search_results=[], tool_envelopes=[])
+
+    @staticmethod
+    def _coerce_response_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                elif isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+            return "\n".join(parts).strip()
+        if content is None:
+            return ""
+        return str(content).strip()
+
+    @classmethod
+    def _extract_final_response(cls, messages: List[BaseMessage]) -> str:
+        if not messages:
+            return ""
+
+        for message in reversed(messages):
+            if isinstance(message, AIMessage):
+                candidate = cls._coerce_response_text(message.content)
+                if candidate:
+                    return candidate
+
+        last_message = messages[-1]
+        candidate = cls._coerce_response_text(getattr(last_message, "content", None))
+        if candidate:
+            return candidate
+
+        return (
+            "I gathered relevant evidence, but the workflow ended before I produced a final "
+            "natural-language summary. Please retry with a narrower question or allow one more "
+            "tool step."
+        )
 
 
 # Singleton instance for reuse

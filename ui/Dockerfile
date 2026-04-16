@@ -54,11 +54,20 @@ FROM nginx:alpine AS production
 # Copy built assets from build stage
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Copy the nginx configuration template outside the base image's default
+# envsubst scan path so our custom entrypoint is the only renderer.
+COPY nginx.conf /etc/nginx/sre/default.conf.template
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Expose port
 EXPOSE 80
+
+# Allow callers to override the upstream at container start.
+ENV SRE_UI_API_UPSTREAM=http://sre-agent:8000
+
+# Render the nginx template, then delegate to the upstream nginx entrypoint.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]

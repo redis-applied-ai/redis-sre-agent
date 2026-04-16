@@ -35,6 +35,10 @@ from redis_sre_agent.evaluation.reporting import (
 from redis_sre_agent.evaluation.runtime import load_eval_scenario, run_full_turn_scenario
 from redis_sre_agent.evaluation.runtime_overrides import EvalRuntimeOverrides
 from redis_sre_agent.evaluation.scenarios import EvalScenario, ExecutionLane, LLMMode
+from redis_sre_agent.evaluation.tool_identity import (
+    concrete_provider_family_prefixes,
+    normalize_provider_family,
+)
 from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorState, build_fixture_tool_runtime
 
 
@@ -330,16 +334,74 @@ def normalize_agent_response_payload(
     )
 
 
-def _normalize_tool_trace(tool_envelopes: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def _infer_live_trace_logical_identity(
+    scenario: EvalScenario,
+    concrete_name: str,
+) -> dict[str, Any] | None:
+    normalized_name = str(concrete_name or "").strip().lower().replace("-", "_")
+    if not normalized_name:
+        return None
+    if normalized_name == "knowledge.pinned_context":
+        return {
+            "provider_family": "knowledge",
+            "operation": "pinned_context",
+        }
+
+    candidate_operations: list[tuple[int, str, str]] = []
+    for provider_family, operation_map in scenario.tools.providers.items():
+        raw_provider = str(provider_family or "").strip().lower().replace("-", "_")
+        normalized_provider = normalize_provider_family(raw_provider)
+        provider_prefixes = {
+            f"{provider_prefix}_"
+            for provider_prefix in concrete_provider_family_prefixes(raw_provider)
+        }
+        if not any(normalized_name.startswith(prefix) for prefix in provider_prefixes):
+            continue
+        for operation in operation_map:
+            normalized_operation = str(operation or "").strip().lower().replace("-", "_")
+            if normalized_name.endswith(f"_{normalized_operation}"):
+                candidate_operations.append(
+                    (len(normalized_operation), normalized_provider, normalized_operation)
+                )
+
+    if not candidate_operations:
+        return None
+
+    _length, provider_family, operation = max(candidate_operations, key=lambda item: item[0])
+    target_handle = (
+        scenario.scope.bound_targets[0] if len(scenario.scope.bound_targets) == 1 else None
+    )
+    logical_identity: dict[str, Any] = {
+        "provider_family": provider_family,
+        "operation": operation,
+    }
+    if target_handle and provider_family not in {
+        "knowledge",
+        "mcp",
+        "target_discovery",
+        "utilities",
+    }:
+        logical_identity["target_handle"] = target_handle
+    return logical_identity
+
+
+def _normalize_tool_trace(
+    tool_envelopes: Sequence[dict[str, Any]],
+    *,
+    scenario: EvalScenario,
+) -> list[dict[str, Any]]:
     trace: list[dict[str, Any]] = []
     for envelope in tool_envelopes:
+        concrete_name = envelope.get("tool_key") or envelope.get("name") or "unknown"
         trace.append(
             {
-                "tool_key": envelope.get("tool_key") or envelope.get("name") or "unknown",
+                "concrete_name": concrete_name,
+                "logical": _infer_live_trace_logical_identity(scenario, str(concrete_name)),
                 "status": envelope.get("status") or "success",
                 "args": dict(envelope.get("args") or {}),
-                "summary": envelope.get("summary"),
-                "data": envelope.get("data") or {},
+                "result_preview": envelope.get("summary")
+                if envelope.get("summary") is not None
+                else envelope.get("data") or {},
             }
         )
     return trace
@@ -380,6 +442,25 @@ def _coerce_live_scenario(scenario: EvalScenario) -> EvalScenario:
     return scenario.model_copy(update={"execution": execution})
 
 
+def _mechanical_assertion_scenario(scenario: EvalScenario) -> EvalScenario:
+    """Drop free-form text assertions for live suites.
+
+    Live-model evals should use hard assertions only for mechanical outputs
+    such as tool calls and routing. Text quality, semantic correctness, and
+    retrieval/source selection belong in the judge path because they depend on
+    live-model wording and query formulation.
+    """
+
+    expectations = scenario.expectations.model_copy(
+        update={
+            "required_sources": [],
+            "required_findings": [],
+            "forbidden_claims": [],
+        }
+    )
+    return scenario.model_copy(update={"expectations": expectations})
+
+
 async def _run_scenario_live(
     scenario: EvalScenario,
     *,
@@ -398,7 +479,7 @@ async def _run_scenario_live(
     knowledge_backend = build_fixture_knowledge_backend(scenario)
     mcp_runtime = build_fixture_mcp_runtime(scenario, state=behavior_state)
     tool_runtime = build_fixture_tool_runtime(scenario, state=behavior_state)
-    mcp_servers = mcp_runtime.get_server_configs() if mcp_runtime is not None else None
+    mcp_servers = mcp_runtime.get_server_configs() if mcp_runtime is not None else {}
 
     with eval_injection_scope(
         knowledge_backend=knowledge_backend,
@@ -443,22 +524,18 @@ async def _run_scenario_live(
             )
             actual_agent = run_result.agent_name
 
-    tool_trace = _normalize_tool_trace(tool_envelopes)
+    tool_trace = _normalize_tool_trace(tool_envelopes, scenario=scenario)
     retrieved_sources = _normalize_retrieved_sources(search_results)
+    assertion_scenario = _mechanical_assertion_scenario(scenario)
     assertion_results = score_structured_assertions(
-        scenario,
+        assertion_scenario,
         tool_trace=tool_trace,
         retrieved_sources=retrieved_sources,
         final_answer=response_text,
         actual_routing_decision=actual_agent or scenario.execution.agent,
     )
 
-    should_judge = (
-        scenario.execution.lane is ExecutionLane.FULL_TURN
-        or judge is not None
-        or judge_criteria is not None
-        or judge_pass_threshold is not None
-    )
+    should_judge = True
     judge_result = None
     if should_judge:
         active_criteria = list(judge_criteria or build_default_eval_criteria())

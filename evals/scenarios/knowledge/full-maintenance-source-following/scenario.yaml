@@ -25,8 +25,11 @@ execution:
   lane: agent_only
   agent: knowledge_only
   query: >
-    I do not have live cluster access. Summarize the documented Redis Enterprise maintenance
-    workflow you would follow before changing cluster state.
+    I do not have live cluster access. Give me a concise numbered Redis Enterprise
+    pre-change maintenance workflow based only on the available documented
+    evidence. State explicitly that current cluster state is unknown from this
+    lane, and include the key pre-change checks you would perform before changing
+    maintenance state.
   max_tool_steps: 4
   llm_mode: replay
 

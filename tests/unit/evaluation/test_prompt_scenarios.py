@@ -212,7 +212,7 @@ async def test_knowledge_agent_prompt_scenario_uses_agent_only_harness():
     assert result.agent_name == "knowledge_only"
     assert result.context["turn_scope"]["scope_kind"] == "zero_scope"
     assert result.context["session_id"] == "sess-knowledge"
-    assert fake_agent.calls[0]["max_iterations"] == 4
+    assert fake_agent.calls[0]["max_iterations"] == scenario.execution.max_tool_steps + 1
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 id: retrieval/support-ticket-exact-match
 name: Support ticket retrieval core
-description: Measure exact and semantic support-ticket lookup across multiple fixture packs.
+description: Retrieval suite ticket case should resolve exact IDs and semantic incident lookups across prompt-core and Redis-doc ticket fixtures.
 
 provenance:
   source_kind: mixed
@@ -23,8 +23,11 @@ execution:
   lane: agent_only
   agent: knowledge_only
   query: >
-    Measure support-ticket retrieval behavior for exact IDs and semantic incident lookups.
-  max_tool_steps: 1
+    I need prior support-ticket evidence for three cases: ticket RET-5032, checkout cache
+    memory pressure that should be confirmed with INFO memory, and maintenance-window
+    failover churn during a node drain. Which tickets match each case, and which one is the
+    reviewed Redis Enterprise maintenance incident?
+  max_tool_steps: 5
   llm_mode: replay
 
 knowledge:

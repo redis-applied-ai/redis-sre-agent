@@ -119,13 +119,14 @@ async def test_run_agent_only_scenario_calls_selected_agent_with_prebuilt_contex
     assert result.agent_name == "redis_triage"
     assert result.response.response == "ok"
     assert result.context["task_id"] == "task-1"
+    assert result.context["tool_call_budget_override"] == 7
     assert result.context["turn_scope"]["thread_id"] == "thread-2"
     assert fake_agent.calls == [
         {
             "query": "Investigate failovers on the prod enterprise cluster.",
             "session_id": "sess-2",
             "user_id": "user-1",
-            "max_iterations": 6,
+            "max_iterations": 7,
             "context": result.context,
             "progress_emitter": progress_emitter,
             "conversation_history": history,

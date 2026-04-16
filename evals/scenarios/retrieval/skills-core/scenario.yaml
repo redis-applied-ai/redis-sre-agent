@@ -1,6 +1,6 @@
 id: retrieval/skills-core
 name: Skill retrieval core
-description: Measure skill matching across prompt and Redis-doc corpora without agent reasoning.
+description: Retrieval suite skill case should surface the right prompt-core and Redis-doc-derived skills for concrete triage asks.
 
 provenance:
   source_kind: mixed
@@ -23,8 +23,10 @@ execution:
   lane: agent_only
   agent: knowledge_only
   query: >
-    Measure skill retrieval behavior across prompt-derived and Redis-doc-derived skill fixtures.
-  max_tool_steps: 1
+    I need documented skills for two cases: memory pressure triage on an OSS cache, and
+    Redis Enterprise failover churn during maintenance. Which skill names best match each
+    case, and which one is the Redis Enterprise maintenance checklist?
+  max_tool_steps: 5
   llm_mode: replay
 
 knowledge:

@@ -16,6 +16,7 @@ EXCLUDED_CLI_COMMAND_PATHS = frozenset(
         "eval compare",
         "eval list",
         "eval live-suite",
+        "eval run",
         "mcp list-tools",
         "mcp serve",
         "worker start",

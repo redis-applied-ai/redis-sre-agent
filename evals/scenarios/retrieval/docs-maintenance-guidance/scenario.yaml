@@ -20,8 +20,10 @@ provenance:
 execution:
   lane: agent_only
   agent: knowledge
-  query: Redis Enterprise maintenance mode guidance
-  max_tool_steps: 3
+  query: >
+    Find the document named Maintenance Mode Guidance for Redis Enterprise and
+    summarize the guidance it gives about maintenance mode.
+  max_tool_steps: 5
   llm_mode: replay
 
 scope:
