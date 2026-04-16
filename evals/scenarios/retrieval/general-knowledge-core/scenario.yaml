@@ -29,9 +29,11 @@ execution:
     1. the pinned destructive-commands policy,
     2. the iterative diagnostics runbook,
     3. the document titled Knowledge-Only Boundary,
-    4. whether Legacy Eviction Guidance is current latest guidance or older version-specific guidance.
-    Keep the answer concise and name the matching documents explicitly.
-  max_tool_steps: 5
+    4. whether Legacy Eviction Guidance only appears in older version-specific material such as
+    version 7.8 rather than in the latest guidance.
+    Keep the answer concise, name the matching documents explicitly, and make the version
+    comparison explicit for Legacy Eviction Guidance.
+  max_tool_steps: 6
   llm_mode: replay
 
 knowledge:

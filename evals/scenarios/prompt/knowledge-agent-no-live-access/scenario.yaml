@@ -23,7 +23,7 @@ execution:
     Can you check whether my production checkout cache is under memory pressure
     right now? If you cannot, tell me which runbook and prior case I should read
     before handing this to the on-call.
-  max_tool_steps: 4
+  max_tool_steps: 6
   llm_mode: replay
 knowledge:
   mode: full
