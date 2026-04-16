@@ -1,0 +1,49 @@
+id: retrieval/support-ticket-exact-match
+name: Support ticket retrieval core
+description: Retrieval suite ticket case should resolve exact IDs and semantic incident lookups across prompt-core and Redis-doc ticket fixtures.
+
+provenance:
+  source_kind: mixed
+  source_pack: retrieval-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - evals/corpora/prompt-core/2026-04-14/manifest.yaml
+    - evals/corpora/redis-docs-curated/2026-04-01/manifest.yaml
+  synthetic:
+    is_synthetic: true
+    method: hand-authored fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/support-ticket-exact-match/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    I need prior support-ticket evidence for three cases: ticket RET-5032, checkout cache
+    memory pressure that should be confirmed with INFO memory, and maintenance-window
+    failover churn during a node drain. Which tickets match each case, and which one is the
+    reviewed Redis Enterprise maintenance incident?
+  max_tool_steps: 5
+  llm_mode: replay
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - exact ticket identifiers hit the intended support record first
+    - semantic maintenance-churn queries still surface the reviewed Redis Enterprise incident
+  forbidden_claims: []
+  required_sources:
+    - RET-5032
+    - RET-9001

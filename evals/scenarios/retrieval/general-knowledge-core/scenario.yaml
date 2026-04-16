@@ -1,0 +1,60 @@
+id: retrieval/general-knowledge-core
+name: General knowledge retrieval core
+description: Retrieval suite document case should surface the pinned destructive-command policy, the iterative diagnostics runbook, the knowledge-only boundary doc, and the fact that legacy eviction guidance is version-specific.
+
+provenance:
+  source_kind: mixed
+  source_pack: retrieval-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - evals/corpora/prompt-core/2026-04-01/manifest.yaml
+    - evals/corpora/prompt-core/2026-04-14/manifest.yaml
+    - evals/corpora/redis-docs-curated/2026-04-01/manifest.yaml
+  synthetic:
+    is_synthetic: true
+    method: hand-authored fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/general-knowledge-core/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    Using only the available documents here, identify the source-grounded answers for these four
+    retrieval targets:
+    1. the pinned destructive-commands policy,
+    2. the iterative diagnostics runbook,
+    3. the document titled Knowledge-Only Boundary,
+    4. whether Legacy Eviction Guidance only appears in older version-specific material such as
+    version 7.8 rather than in the latest guidance.
+    Keep the answer concise, name the matching documents explicitly, and make the version
+    comparison explicit for Legacy Eviction Guidance.
+  max_tool_steps: 6
+  llm_mode: replay
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../../corpora/prompt-core/2026-04-14/documents/destructive-command-safety-policy.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-01
+    - ../../../corpora/prompt-core/2026-04-14
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - pinned policy content loads separately from general retrieval results
+    - latest retrieval excludes version 7.8-only guidance
+  forbidden_claims: []
+  required_sources:
+    - destructive-command-safety-policy
+    - iterative-diagnostics-runbook
+    - knowledge-only-boundary
+    - legacy-eviction-guidance

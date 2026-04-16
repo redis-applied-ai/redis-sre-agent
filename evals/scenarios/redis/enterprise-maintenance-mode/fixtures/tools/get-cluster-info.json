@@ -1,0 +1,9 @@
+{
+  "cluster_name": "payments-east",
+  "cluster_state": "active",
+  "maintenance_mode": true,
+  "recent_failovers": 4,
+  "alerts": [
+    "maintenance_window_active"
+  ]
+}

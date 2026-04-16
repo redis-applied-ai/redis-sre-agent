@@ -1,0 +1,40 @@
+id: sources/no-knowledge-baseline
+name: Knowledge-disabled baseline
+description: Provide a disabled-knowledge baseline so source-following ablations cover all declared modes.
+
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-policy-curated
+  source_pack_version: 2026-04-14
+  derived_from: []
+  synthetic:
+    is_synthetic: true
+    method: hand-authored fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/sources/no-knowledge-baseline/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    The cache is evicting. What should I do first if you have no startup context or retrieval
+    available?
+  max_tool_steps: 2
+  llm_mode: replay
+
+knowledge:
+  mode: disabled
+  version: latest
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - no startup or retrieval knowledge is available in this baseline
+  forbidden_claims:
+    - according to the runbook
+  required_sources: []

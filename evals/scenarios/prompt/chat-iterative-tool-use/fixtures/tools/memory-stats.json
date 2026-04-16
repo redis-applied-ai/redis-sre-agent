@@ -1,0 +1,7 @@
+{
+  "peak.allocated": 8375186227,
+  "dataset.bytes": 7602092112,
+  "overhead.total": 412345678,
+  "keys.count": 14822011,
+  "avg_ttl_ms": 1800000
+}

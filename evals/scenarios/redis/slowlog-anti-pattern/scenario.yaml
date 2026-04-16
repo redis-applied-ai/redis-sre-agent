@@ -1,0 +1,87 @@
+id: redis/slowlog-anti-pattern
+name: Slowlog reveals workload anti-pattern
+description: Exercise the production full_turn chat lane against an OSS cache where SLOWLOG points to an application-side anti-pattern.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - evals/corpora/redis-docs-curated/2026-04-01/documents/slowlog-anti-pattern-guidance.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/redis/slowlog-anti-pattern/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: full_turn
+  agent: redis_chat
+  route_via_router: false
+  query: >
+    The attached sessions cache has rising latency but memory looks fine. Show me the next
+    targeted diagnostic step and tell me what kind of fix this points toward.
+  max_tool_steps: 4
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: require_target
+    automation_mode: interactive
+  target_catalog:
+    - handle: tgt_instance_sessions_cache
+      kind: instance
+      display_name: prod sessions cache
+      resource_id: redis-prod-sessions
+      cluster_type: oss_single
+      capabilities: [diagnostics, knowledge]
+      public_metadata:
+        environment: production
+        deployment: oss
+  bound_targets:
+    - tgt_instance_sessions_cache
+
+knowledge:
+  mode: full
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+tools:
+  redis_command:
+    slowlog:
+      description: Fetch slowlog entries for the attached instance.
+      result: fixtures/tools/slowlog.json
+    info:
+      description: Fetch latency-related INFO for the attached instance.
+      responders:
+        - when:
+            args_contains:
+              section: stats
+          result: fixtures/tools/info-stats.json
+
+expectations:
+  required_tool_calls:
+    - provider_family: redis_command
+      operation: slowlog
+      target_handle: tgt_instance_sessions_cache
+    - provider_family: redis_command
+      operation: info
+      target_handle: tgt_instance_sessions_cache
+  forbidden_tool_calls:
+    - provider_family: redis_command
+      operation: config_set
+      target_handle: tgt_instance_sessions_cache
+  required_findings:
+    - slowlog points to an application anti-pattern
+    - prefer fixing the command pattern before changing Redis configuration
+  forbidden_claims:
+    - restart redis first
+  required_sources:
+    - slowlog-anti-pattern-guidance
+    - evidence-first-triage
+  expected_routing_decision: chat

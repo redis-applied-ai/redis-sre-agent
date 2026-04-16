@@ -1,0 +1,51 @@
+id: retrieval/skills-core
+name: Skill retrieval core
+description: Retrieval suite skill case should surface the right prompt-core and Redis-doc-derived skills for concrete triage asks.
+
+provenance:
+  source_kind: mixed
+  source_pack: retrieval-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - evals/corpora/prompt-core/2026-04-14/manifest.yaml
+    - evals/corpora/redis-docs-curated/2026-04-01/manifest.yaml
+  synthetic:
+    is_synthetic: true
+    method: hand-authored fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/skills-core/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    I need documented skills for two cases: memory pressure triage on an OSS cache, and
+    Redis Enterprise failover churn during maintenance. Which skill names best match each
+    case, and which one is the Redis Enterprise maintenance checklist?
+  max_tool_steps: 5
+  llm_mode: replay
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - memory-pressure queries match iterative memory skills
+    - maintenance failover queries match the Redis Enterprise checklist
+  forbidden_claims: []
+  required_sources:
+    - iterative-memory-check
+    - iterative-redis-triage
+    - evidence-first-triage
+    - failover-investigation-skill
+    - redis-enterprise-maintenance-checklist

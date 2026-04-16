@@ -1,0 +1,74 @@
+name: Live Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Suite manifest to run
+        required: false
+        default: evals/suites/live-agent-only-smoke.yaml
+        type: string
+      baseline_profile:
+        description: Baseline-policy profile to attach
+        required: false
+        default: scheduled_live
+        type: choice
+        options:
+          - scheduled_live
+          - manual_update
+      update_baseline:
+        description: Attempt a baseline update if the suite policy allows it
+        required: false
+        default: "false"
+        type: string
+  schedule:
+    - cron: "0 14 * * 1-5"
+
+jobs:
+  live-evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.5.7"
+        enable-cache: true
+
+    - name: Set up Python 3.12
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Run live eval suite
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+        SUITE_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.suite || 'evals/suites/live-agent-only-smoke.yaml' }}
+        BASELINE_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.baseline_profile || 'scheduled_live' }}
+        UPDATE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.update_baseline || 'false' }}
+      run: |
+        if [ -z "$OPENAI_API_KEY" ]; then
+          echo "::error::OPENAI_API_KEY is required for live eval workflows"
+          exit 1
+        fi
+
+        make test-eval-live \
+          EVAL_LIVE_CONFIG="$SUITE_PATH" \
+          EVAL_LIVE_BASELINE_PROFILE="$BASELINE_PROFILE" \
+          EVAL_LIVE_TRIGGER="${{ github.event_name }}" \
+          EVAL_LIVE_UPDATE_BASELINE="$UPDATE_BASELINE" \
+          EVAL_LIVE_OUTPUT_DIR=artifacts/live-evals
+
+    - name: Upload live eval artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: live-evals
+        path: artifacts/live-evals

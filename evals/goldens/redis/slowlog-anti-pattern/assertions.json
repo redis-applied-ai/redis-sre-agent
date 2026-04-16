@@ -1,0 +1,33 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "slowlog",
+      "target_handle": "tgt_instance_sessions_cache"
+    },
+    {
+      "provider_family": "redis_command",
+      "operation": "info",
+      "target_handle": "tgt_instance_sessions_cache"
+    }
+  ],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "config_set",
+      "target_handle": "tgt_instance_sessions_cache"
+    }
+  ],
+  "required_findings": [
+    "slowlog points to an application anti-pattern",
+    "prefer fixing the command pattern before changing Redis configuration"
+  ],
+  "forbidden_claims": [
+    "restart redis first"
+  ],
+  "required_sources": [
+    "slowlog-anti-pattern-guidance",
+    "evidence-first-triage"
+  ],
+  "expected_routing_decision": "chat"
+}

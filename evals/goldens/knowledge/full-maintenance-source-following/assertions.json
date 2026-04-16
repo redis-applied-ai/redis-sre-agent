@@ -1,0 +1,16 @@
+{
+  "required_findings": [
+    "maintenance mode can explain topology changes without proving a cluster failure",
+    "verify replica health before changing maintenance state",
+    "state clearly that current cluster state is not known without live access"
+  ],
+  "forbidden_claims": [
+    "maintenance mode is definitely enabled right now"
+  ],
+  "required_sources": [
+    "maintenance-mode-overview",
+    "maintenance-mode-guidance",
+    "redis-enterprise-maintenance-checklist",
+    "RET-5032"
+  ]
+}

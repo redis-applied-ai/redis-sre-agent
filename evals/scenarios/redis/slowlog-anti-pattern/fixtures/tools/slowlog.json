@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 401,
+      "duration_usec": 22344,
+      "command": "HGETALL session:active:users:us-west"
+    },
+    {
+      "id": 402,
+      "duration_usec": 19872,
+      "command": "ZRANGE session:index 0 5000 WITHSCORES"
+    }
+  ]
+}

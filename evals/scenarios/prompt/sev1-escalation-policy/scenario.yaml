@@ -1,0 +1,44 @@
+id: prompt/sev1-escalation-policy
+name: Pinned Sev1 policy drives immediate escalation guidance
+description: >
+  Exercises startup-context policy grounding for customer-visible multi-region failovers.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-policy-curated
+  source_pack_version: 2026-04-14
+  derived_from: []
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - sev1-escalation-policy
+    review_status: draft
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    Customers across two regions are seeing repeated failovers. Can this wait until tomorrow
+    morning, or what should happen now?
+  max_tool_steps: 3
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: startup_only
+  version: 2026-04-14
+  pinned_documents:
+    - ../../../corpora/prompt-policy-curated/2026-04-14/documents/sev1-escalation-policy.md
+
+expectations:
+  required_findings:
+    - escalate immediately
+    - page the incident commander
+  forbidden_claims:
+    - wait until tomorrow
+    - wait until business hours

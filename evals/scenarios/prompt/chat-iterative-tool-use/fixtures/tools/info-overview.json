@@ -1,0 +1,21 @@
+{
+  "status": "success",
+  "section": "all",
+  "data": {
+    "memory": {
+      "used_memory_human": "7.4G",
+      "maxmemory_human": "8G",
+      "maxmemory_policy": "allkeys-lru",
+      "used_memory_peak_human": "7.8G"
+    },
+    "stats": {
+      "evicted_keys": 1542,
+      "keyspace_hits": 9812301,
+      "keyspace_misses": 413201
+    },
+    "replication": {
+      "role": "master",
+      "connected_slaves": 2
+    }
+  }
+}

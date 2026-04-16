@@ -1,0 +1,13 @@
+{
+  "required_findings": [
+    "verify replica health before maintenance changes",
+    "use documented maintenance guidance rather than generic oss advice"
+  ],
+  "forbidden_claims": [
+    "restart redis first"
+  ],
+  "required_sources": [
+    "maintenance-mode-guidance",
+    "RET-5032"
+  ]
+}

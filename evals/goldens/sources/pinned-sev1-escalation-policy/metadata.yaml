@@ -1,0 +1,4 @@
+scenario_id: sources/pinned-sev1-escalation-policy
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored

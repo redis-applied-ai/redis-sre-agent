@@ -22,6 +22,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     search_support_tickets_helper,
     skills_check_helper,
 )
+from redis_sre_agent.evaluation.injection import eval_runtime_overrides
 
 
 class TestKnowledgeHelpers:
@@ -100,6 +101,57 @@ class TestKnowledgeHelpers:
 
 class TestSearchKnowledgeBaseHelper:
     """Test search_knowledge_base_helper function."""
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_uses_eval_backend_override(self):
+        """Eval-scoped overrides should bypass the global vectorized knowledge path."""
+
+        class FakeKnowledgeBackend:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            async def search_knowledge_base(self, **kwargs):
+                self.calls.append(("search_knowledge_base", kwargs))
+                return {
+                    "query": kwargs["query"],
+                    "results": [{"title": "Scenario doc", "doc_type": "runbook"}],
+                    "results_count": 1,
+                }
+
+        backend = FakeKnowledgeBackend()
+
+        with (
+            eval_runtime_overrides(knowledge_backend=backend),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                side_effect=AssertionError("global vectorizer should not be used"),
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="redis memory",
+                limit=3,
+                version="latest",
+            )
+
+        assert result["results_count"] == 1
+        assert result["results"][0]["title"] == "Scenario doc"
+        assert backend.calls == [
+            (
+                "search_knowledge_base",
+                {
+                    "query": "redis memory",
+                    "category": None,
+                    "doc_type": None,
+                    "limit": 3,
+                    "offset": 0,
+                    "distance_threshold": 0.8,
+                    "hybrid_search": False,
+                    "version": "latest",
+                    "index_type": "knowledge",
+                    "include_special_document_types": False,
+                },
+            )
+        ]
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_success(self):

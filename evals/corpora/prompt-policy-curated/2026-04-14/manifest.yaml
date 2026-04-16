@@ -1,0 +1,7 @@
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-policy-curated
+  source_pack_version: 2026-04-14
+  derived_from: []
+golden:
+  review_status: draft

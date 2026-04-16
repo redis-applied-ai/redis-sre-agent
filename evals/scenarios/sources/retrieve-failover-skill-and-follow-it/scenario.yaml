@@ -1,0 +1,46 @@
+id: sources/retrieve-failover-skill-and-follow-it
+name: Retrieved failover skill should drive guidance
+description: Ensure retrieval-only mode can surface a skill and prior incident that shape the answer.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - evals/corpora/redis-docs-curated/2026-04-01/skills/failover-investigation-skill.md
+    - evals/corpora/redis-docs-curated/2026-04-01/tickets/RET-5032.yaml
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/sources/retrieve-failover-skill-and-follow-it/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    We saw failover churn during maintenance. What checklist should I follow before touching the
+    cluster again?
+  max_tool_steps: 4
+  llm_mode: replay
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - verify replica health before changing maintenance state
+    - follow the failover investigation checklist
+  forbidden_claims:
+    - change maintenance state immediately
+  required_sources:
+    - failover-investigation-skill
+    - RET-5032

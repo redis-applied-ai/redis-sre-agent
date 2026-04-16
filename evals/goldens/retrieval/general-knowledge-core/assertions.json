@@ -1,0 +1,15 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "pinned policy content loads separately from general retrieval results",
+    "latest retrieval excludes version 7.8-only guidance"
+  ],
+  "forbidden_claims": [],
+  "required_sources": [
+    "destructive-command-safety-policy",
+    "iterative-diagnostics-runbook",
+    "knowledge-only-boundary",
+    "legacy-eviction-guidance"
+  ]
+}

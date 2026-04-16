@@ -1,0 +1,1 @@
+In this baseline there is no startup context or retrieval-backed guidance available, so I would keep the answer generic and explicitly avoid claiming a runbook or prior incident says anything specific.

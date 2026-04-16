@@ -873,16 +873,12 @@ async def register_sre_tasks() -> None:
         raise
 
 
-@sre_task
-async def process_agent_turn(
+async def _process_agent_turn_impl(
     thread_id: str,
     message: str,
     context: Optional[Dict[str, Any]] = None,
     task_id: Optional[str] = None,
-    concurrency: ConcurrencyLimit = ConcurrencyLimit(
-        "thread_id", max_concurrent=1, scope="thread_turns"
-    ),
-    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
+    redis_client=None,
 ) -> Dict[str, Any]:
     """
     Process a single agent conversation turn.
@@ -894,9 +890,8 @@ async def process_agent_turn(
         thread_id: Thread/conversation identifier
         message: User message for this turn
         context: Additional context for the turn
-        retry: Retry configuration
     """
-    redis_client = get_redis_client()
+    redis_client = redis_client or get_redis_client()
     thread_manager = ThreadManager(redis_client=redis_client)
 
     # OTel: root span for the entire agent turn so Redis commands nest under it
@@ -1522,9 +1517,7 @@ async def process_agent_turn(
 
     except Exception as e:
         error_message = f"Agent turn failed: {str(e)}"
-        logger.error(
-            f"Turn processing failed for thread {thread_id} (attempt {retry.attempt}): {e}"
-        )
+        logger.error(f"Turn processing failed for thread {thread_id}: {e}")
         # Record exception on root span if available
         try:
             if _root_span is not None:
@@ -1555,6 +1548,27 @@ async def process_agent_turn(
             pass
 
         raise
+
+
+@sre_task
+async def process_agent_turn(
+    thread_id: str,
+    message: str,
+    context: Optional[Dict[str, Any]] = None,
+    task_id: Optional[str] = None,
+    concurrency: ConcurrencyLimit = ConcurrencyLimit(
+        "thread_id", max_concurrent=1, scope="thread_turns"
+    ),
+    retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
+) -> Dict[str, Any]:
+    """Docket-managed wrapper around the in-process agent turn implementation."""
+
+    return await _process_agent_turn_impl(
+        thread_id=thread_id,
+        message=message,
+        context=context,
+        task_id=task_id,
+    )
 
 
 async def run_agent_with_progress(

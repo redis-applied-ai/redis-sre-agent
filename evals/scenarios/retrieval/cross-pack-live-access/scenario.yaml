@@ -1,0 +1,43 @@
+id: retrieval/cross-pack-live-access
+name: Retrieval-only query preserves cross-pack provenance
+description: Retrieval suite cross-pack case should surface live-access guidance from both prompt and Redis docs packs.
+
+provenance:
+  source_kind: mixed
+  source_pack: cross-pack-retrieval
+  source_pack_version: 2026-04-14
+  derived_from:
+    - knowledge-only-boundary
+    - knowledge-only-access-policy
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/retrieval/cross-pack-live-access/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: live access policy
+  max_tool_steps: 3
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01/documents/knowledge-only-boundary.md
+    - ../../../corpora/prompt-core/2026-04-14/documents/knowledge-only-access-policy.md
+
+expectations:
+  required_sources:
+    - knowledge-only-boundary
+    - knowledge-only-access-policy

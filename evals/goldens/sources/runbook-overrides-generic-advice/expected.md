@@ -1,0 +1,1 @@
+There is a better runbook-driven sequence. The retrieved runbook says to start with evidence such as `INFO memory` and `INFO replication`, explain what those results show, and only then consider whether any configuration change is justified. Generic advice to change `maxmemory-policy` immediately should wait until the diagnostic evidence supports it.

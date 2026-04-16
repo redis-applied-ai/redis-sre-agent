@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from redis_sre_agent.agent.knowledge_context import build_startup_knowledge_context
+from redis_sre_agent.evaluation.injection import eval_runtime_overrides
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 
 
@@ -186,3 +187,48 @@ async def test_startup_context_carries_internal_pinned_context_envelope():
     assert envelope["data"]["retrieval_kind"] == "pinned_context"
     assert envelope["data"]["results"][0]["title"] == "Pinned Runbook"
     assert envelope["data"]["results"][0]["retrieval_kind"] == "pinned_context"
+
+
+@pytest.mark.asyncio
+async def test_startup_context_uses_eval_scoped_knowledge_backend():
+    class FakeKnowledgeBackend:
+        async def get_pinned_documents(self, **kwargs):
+            assert kwargs["version"] == "latest"
+            return {
+                "pinned_documents": [
+                    {
+                        "name": "Scoped Pinned Doc",
+                        "priority": "high",
+                        "doc_type": "runbook",
+                        "full_content": "Pinned eval content",
+                    }
+                ]
+            }
+
+        async def skills_check(self, **kwargs):
+            assert kwargs["query"] == "memory issue"
+            return {
+                "skills": [
+                    {
+                        "name": "Scoped Skill",
+                        "summary": "Use the scenario fixture backend.",
+                    }
+                ]
+            }
+
+    with (
+        eval_runtime_overrides(knowledge_backend=FakeKnowledgeBackend()),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(side_effect=AssertionError("global pinned helper should not run")),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(side_effect=AssertionError("global skills helper should not run")),
+        ),
+    ):
+        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+
+    assert "Scoped Pinned Doc" in context
+    assert "Pinned eval content" in context
+    assert "Scoped Skill: Use the scenario fixture backend." in context

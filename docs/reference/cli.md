@@ -84,6 +84,11 @@ Generated from the Click command tree.
 - support-package info — Get information about a support package.
 - support-package list — List uploaded support packages.
 - support-package upload — Upload a support package.
+- eval — Run eval scenario utilities and live suites.
+- eval compare — Compare one live eval artifact directory against a baseline.
+- eval list — List known eval scenario ids.
+- eval live-suite — Run one configured live-model eval suite.
+- eval run — Run one mocked eval scenario.
 - version — Show the Redis SRE Agent version.
 
 See How-to guides for examples.
