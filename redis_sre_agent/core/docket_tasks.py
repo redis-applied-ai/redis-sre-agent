@@ -2427,6 +2427,7 @@ async def resume_task_after_approval(
     )
     return result
 
+
 @sre_task
 async def process_agent_turn(
     thread_id: str,
@@ -2446,6 +2447,7 @@ async def process_agent_turn(
         context=context,
         task_id=task_id,
     )
+
 
 async def run_agent_with_progress(
     agent,
