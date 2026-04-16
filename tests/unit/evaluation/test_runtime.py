@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -805,6 +806,12 @@ async def test_run_full_turn_scenario_uses_production_turn_path_for_attached_sco
     fake_workflow.compile.return_value = fake_app
     fake_handle_store = MagicMock()
     fake_handle_store.get_records = AsyncMock(return_value={"tgt_cluster_prod_east": object()})
+    fake_checkpointer = MagicMock()
+    fake_checkpointer.get_tuple.return_value = None
+
+    @contextmanager
+    def fake_open_graph_checkpointer():
+        yield fake_checkpointer
 
     with (
         patch("redis_sre_agent.agent.chat_agent.create_llm") as mock_create_llm,
@@ -842,6 +849,10 @@ async def test_run_full_turn_scenario_uses_production_turn_path_for_attached_sco
         patch(
             "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
             new=AsyncMock(return_value=""),
+        ),
+        patch(
+            "redis_sre_agent.agent.chat_agent.open_graph_checkpointer",
+            side_effect=fake_open_graph_checkpointer,
         ),
         patch(
             "redis_sre_agent.targets.get_target_handle_store",
