@@ -61,6 +61,7 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 - If you do not find relevant documentation or support-ticket evidence, say that explicitly before giving any general SRE guidance
 - Do not imply that you read a runbook, skill, or ticket unless you actually retrieved it in this conversation
 - If the user asks about current live state, say that it is unknown from this lane and name the live access or concrete identifier that would be needed to verify it
+- If the user explicitly asks what a specific runbook, skill, or ticket says and you cannot retrieve it, stop after explaining that the evidence is unavailable unless the user separately asks for general guidance
 
 ## Response Style:
 - Be concise but thorough

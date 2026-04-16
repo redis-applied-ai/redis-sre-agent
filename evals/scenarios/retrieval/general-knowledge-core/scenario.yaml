@@ -1,6 +1,6 @@
 id: retrieval/general-knowledge-core
 name: General knowledge retrieval core
-description: Measure general document retrieval, pinned loading, doc-type filters, and versioned corpus behavior.
+description: Retrieval suite document case should surface the pinned destructive-command policy, the iterative diagnostics runbook, the knowledge-only boundary doc, and the fact that legacy eviction guidance is version-specific.
 
 provenance:
   source_kind: mixed
@@ -24,9 +24,14 @@ execution:
   lane: agent_only
   agent: knowledge_only
   query: >
-    Measure retrieval behavior for general documents, pinned policy content, and version-specific
-    knowledge without invoking the agent.
-  max_tool_steps: 3
+    Using only the available documents here, identify the source-grounded answers for these four
+    retrieval targets:
+    1. the pinned destructive-commands policy,
+    2. the iterative diagnostics runbook,
+    3. the document titled Knowledge-Only Boundary,
+    4. whether Legacy Eviction Guidance is current latest guidance or older version-specific guidance.
+    Keep the answer concise and name the matching documents explicitly.
+  max_tool_steps: 5
   llm_mode: replay
 
 knowledge:
