@@ -15,6 +15,7 @@ from redis_sre_agent.core.runbook_execution_helpers import (
     queue_runbook_operation_task,
     run_runbook_operation_helper,
 )
+from redis_sre_agent.mcp_server.task_contract import runtime_task_execution_context
 
 
 class TestRunRunbookOperationHelper:
@@ -264,7 +265,7 @@ class TestQueueRunbookOperationTask:
 
     @pytest.mark.asyncio
     async def test_queue_runbook_operation_task(self):
-        """Queue helper should create a task and enqueue the Docket job."""
+        """Queue helper should create a task and submit the background job."""
         mock_client = AsyncMock()
         mock_status = MagicMock()
         mock_status.value = "queued"
@@ -284,19 +285,12 @@ class TestQueueRunbookOperationTask:
                 new_callable=AsyncMock,
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.runbook_execution_helpers.get_redis_url",
+                "redis_sre_agent.core.runbook_execution_helpers.submit_background_task_call",
                 new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch("redis_sre_agent.core.runbook_execution_helpers.Docket") as mock_docket,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             mock_create_task.return_value = mock_result
-            docket_instance = AsyncMock()
-            docket_instance.__aenter__.return_value = docket_instance
-            docket_instance.__aexit__.return_value = False
-            queued = AsyncMock()
-            docket_instance.add.return_value = queued
-            mock_docket.return_value = docket_instance
 
             result = await queue_runbook_operation_task(
                 operation="generate",
@@ -321,7 +315,13 @@ class TestQueueRunbookOperationTask:
             },
             redis_client=mock_client,
         )
-        queued.assert_awaited_once()
+        assert mock_submit.await_args.kwargs["processor_kwargs"] == {
+            "operation": "generate",
+            "task_id": "task-456",
+            "thread_id": "thread-123",
+            "topic": "Memory Pressure",
+            "scenario_description": "Redis memory saturation on primaries",
+        }
 
     @pytest.mark.asyncio
     async def test_queue_runbook_operation_task_preserves_falsy_kwargs(self):
@@ -345,19 +345,12 @@ class TestQueueRunbookOperationTask:
                 new_callable=AsyncMock,
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.runbook_execution_helpers.get_redis_url",
+                "redis_sre_agent.core.runbook_execution_helpers.submit_background_task_call",
                 new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch("redis_sre_agent.core.runbook_execution_helpers.Docket") as mock_docket,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             mock_create_task.return_value = mock_result
-            docket_instance = AsyncMock()
-            docket_instance.__aenter__.return_value = docket_instance
-            docket_instance.__aexit__.return_value = False
-            queued = AsyncMock()
-            docket_instance.add.return_value = queued
-            mock_docket.return_value = docket_instance
 
             await queue_runbook_operation_task(
                 operation="evaluate",
@@ -367,13 +360,61 @@ class TestQueueRunbookOperationTask:
                 requirements=None,
             )
 
-        queued.assert_awaited_once_with(
+        assert mock_submit.await_args.kwargs["processor_kwargs"] == {
+            "operation": "evaluate",
+            "task_id": "task-456",
+            "thread_id": "thread-123",
+            "ingest": False,
+            "max_iterations": 0,
+            "output_file": "",
+        }
+
+    @pytest.mark.asyncio
+    async def test_queue_runbook_operation_task_processes_inline_in_runtime(self):
+        mock_client = AsyncMock()
+        mock_status = MagicMock()
+        mock_status.value = "queued"
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": mock_status,
+        }
+        mock_processor = AsyncMock(return_value={"success": True})
+
+        with (
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers.get_redis_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "redis_sre_agent.core.runbook_execution_helpers._get_runbook_task_callable",
+                return_value=mock_processor,
+            ),
+        ):
+            with runtime_task_execution_context({"outerTaskId": "runtime-task-1"}):
+                result = await queue_runbook_operation_task(
+                    operation="evaluate",
+                    input_dir="/tmp/runbooks",
+                )
+
+        assert result == {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "done",
+            "message": "Runbook evaluate processed inline during runtime execution",
+            "operation": "evaluate",
+            "result": {"success": True},
+        }
+        mock_processor.assert_awaited_once_with(
             operation="evaluate",
             task_id="task-456",
             thread_id="thread-123",
-            ingest=False,
-            max_iterations=0,
-            output_file="",
+            input_dir="/tmp/runbooks",
         )
 
 

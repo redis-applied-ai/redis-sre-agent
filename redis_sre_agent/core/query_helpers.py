@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import Any, Dict, Optional
-
-from docket import Docket
 
 from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
@@ -16,6 +13,7 @@ from redis_sre_agent.core.support_package_helpers import get_support_package_man
 from redis_sre_agent.core.tasks import create_task
 from redis_sre_agent.core.threads import ThreadManager
 from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
+from redis_sre_agent.mcp_server.task_contract import submit_background_task_call
 
 VALID_QUERY_AGENTS = {"auto", "triage", "chat", "knowledge"}
 
@@ -114,23 +112,38 @@ async def queue_query_task_helper(
         redis_client=redis_client,
     )
 
-    async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-        task_func = docket.add(_get_query_task_callable(), key=result["task_id"])
-        if inspect.isawaitable(task_func):
-            task_func = await task_func
-        await task_func(
-            thread_id=result["thread_id"],
-            message=query,
-            context=turn_context or None,
-            task_id=result["task_id"],
-        )
+    execution = await submit_background_task_call(
+        processor=_get_query_task_callable(),
+        key=str(result["task_id"]),
+        processor_kwargs={
+            "thread_id": result["thread_id"],
+            "message": query,
+            "context": turn_context or None,
+            "task_id": result["task_id"],
+        },
+    )
 
-    return {
+    response = {
         "thread_id": result["thread_id"],
         "task_id": result["task_id"],
-        "status": result["status"].value
-        if hasattr(result["status"], "value")
-        else str(result["status"]),
-        "message": "Query task queued for processing",
         "agent": agent_selection,
     }
+    if execution["mode"] == "inline":
+        response.update(
+            {
+                "status": "done",
+                "message": "Query processed inline during runtime execution",
+                "result": execution["result"],
+            }
+        )
+        return response
+
+    response.update(
+        {
+            "status": result["status"].value
+            if hasattr(result["status"], "value")
+            else str(result["status"]),
+            "message": "Query task queued for processing",
+        }
+    )
+    return response

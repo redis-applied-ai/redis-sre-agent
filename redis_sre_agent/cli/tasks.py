@@ -368,11 +368,9 @@ def task_delete(task_id: str, yes: bool, as_json: bool):
     async def _run():
         import json as _json
 
-        from docket import Docket
-
-        from redis_sre_agent.core.docket_tasks import get_redis_url
         from redis_sre_agent.core.redis import get_redis_client
         from redis_sre_agent.core.tasks import delete_task as delete_task_core
+        from redis_sre_agent.mcp_server.task_contract import cancel_background_task
 
         # Interactive confirmation for safety (unless JSON or --yes)
         if not yes and not as_json:
@@ -382,12 +380,11 @@ def task_delete(task_id: str, yes: bool, as_json: bool):
 
         # Best-effort: attempt to cancel any in-flight Docket task for this id.
         try:
-            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-                try:
-                    await docket.cancel(task_id)
-                except Exception:
-                    # Best-effort; do not fail CLI if cancel is not possible.
-                    pass
+            try:
+                await cancel_background_task(task_id=task_id)
+            except Exception:
+                # Best-effort; do not fail CLI if cancel is not possible.
+                pass
         except Exception:
             # If Docket is unavailable, continue with Redis cleanup.
             pass

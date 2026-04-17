@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -38,6 +38,8 @@ class RedisDocsScraper(BaseScraper):
         }
 
         self.session: Optional[aiohttp.ClientSession] = None
+        self._visited_urls: set[str] = set()
+        self._pages_scraped = 0
 
     def _is_versioned_url(self, url: str) -> bool:
         """Return True if URL path contains a version segment like /7.4/ or /6.2/."""
@@ -78,9 +80,19 @@ class RedisDocsScraper(BaseScraper):
     def get_source_name(self) -> str:
         return "redis_documentation"
 
+    def _normalize_documentation_url(self, url: str) -> str:
+        """Normalize docs URLs so the crawler does not revisit the same page."""
+        parsed = urlparse(url)
+        path = parsed.path or "/"
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
+        return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
     async def scrape(self) -> List[ScrapedDocument]:
         """Scrape Redis OSS and Enterprise documentation."""
         documents = []
+        self._visited_urls.clear()
+        self._pages_scraped = 0
 
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.config["timeout"])
@@ -250,27 +262,37 @@ class RedisDocsScraper(BaseScraper):
         if current_depth >= max_depth:
             return []
 
+        normalized_url = self._normalize_documentation_url(section_url)
+        if normalized_url in self._visited_urls:
+            return []
+        if self._pages_scraped >= self.config["max_pages"]:
+            self.logger.info("Reached max_pages=%s, stopping crawl", self.config["max_pages"])
+            return []
+
         documents = []
 
         try:
             # Respect latest-only: skip versioned URLs outright
-            if self.config.get("latest_only") and self._is_versioned_url(section_url):
+            if self.config.get("latest_only") and self._is_versioned_url(normalized_url):
                 return []
 
+            self._visited_urls.add(normalized_url)
+            self._pages_scraped += 1
+
             # Get section page
-            async with self.session.get(section_url) as response:
+            async with self.session.get(normalized_url) as response:
                 if response.status != 200:
-                    self.logger.warning(f"HTTP {response.status} for {section_url}")
+                    self.logger.warning(f"HTTP {response.status} for {normalized_url}")
                     return []
 
                 html = await response.text()
                 soup = BeautifulSoup(html, "html.parser")
 
             # Extract main content
-            main_content = await self._extract_page_content(soup, section_url)
+            main_content = await self._extract_page_content(soup, normalized_url)
             if main_content:
                 # Extract version from URL and add to metadata
-                version = self._extract_version_from_url(section_url)
+                version = self._extract_version_from_url(normalized_url)
                 metadata = {
                     **main_content["metadata"],
                     "version": version,
@@ -278,7 +300,7 @@ class RedisDocsScraper(BaseScraper):
                 doc = ScrapedDocument(
                     title=main_content["title"],
                     content=main_content["content"],
-                    source_url=section_url,
+                    source_url=normalized_url,
                     category=category,
                     doc_type=doc_type,
                     severity=severity,
@@ -288,9 +310,16 @@ class RedisDocsScraper(BaseScraper):
 
             # Find links to sub-pages (if not at max depth)
             if current_depth < max_depth - 1:
-                links = await self._find_documentation_links(soup, section_url)
+                links = await self._find_documentation_links(soup, normalized_url)
 
                 for link_url in links[:50]:  # Increased limit for comprehensive scraping
+                    if self._pages_scraped >= self.config["max_pages"]:
+                        self.logger.info(
+                            "Reached max_pages=%s while traversing children of %s",
+                            self.config["max_pages"],
+                            normalized_url,
+                        )
+                        break
                     try:
                         subdocs = await self._scrape_section(
                             link_url, category, doc_type, severity, max_depth, current_depth + 1
@@ -409,7 +438,7 @@ class RedisDocsScraper(BaseScraper):
             href = link["href"]
 
             # Convert relative URLs to absolute
-            full_url = urljoin(base_url, href)
+            full_url = self._normalize_documentation_url(urljoin(base_url, href))
             parsed = urlparse(full_url)
 
             # Only include links from the same domain

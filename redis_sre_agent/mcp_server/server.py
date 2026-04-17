@@ -16,6 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from ulid import ULID
 
 from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
+from redis_sre_agent.mcp_server.task_contract import submit_async_tool_task
 
 logger = logging.getLogger(__name__)
 
@@ -218,11 +219,7 @@ async def redis_sre_deep_triage(
         thread_id: Conversation thread (for multi-turn follow-ups)
         status: Initial status (usually "queued")
     """
-    from docket import Docket
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
-    from redis_sre_agent.core.redis import get_redis_client
-    from redis_sre_agent.core.tasks import create_task
+    from redis_sre_agent.core.docket_tasks import process_agent_turn
 
     logger.info(f"MCP deep_triage request: {query[:100]}...")
 
@@ -233,40 +230,24 @@ async def redis_sre_deep_triage(
                 "message": "Please provide only one of instance_id or cluster_id",
             }
 
-        redis_client = get_redis_client()
         context = _build_mcp_query_context(
             instance_id=instance_id,
             cluster_id=cluster_id,
             user_id=user_id,
         )
 
-        result = await create_task(
+        return await submit_async_tool_task(
+            tool_name="redis_sre_deep_triage",
             message=query,
             context=context,
-            redis_client=redis_client,
+            processor=process_agent_turn,
+            processor_kwargs={
+                "message": query,
+                "context": context,
+            },
+            native_message="Triage queued for processing",
+            runtime_message="Triage executed inline under runtime task",
         )
-
-        # Submit to Docket for processing (this is what the API does).
-        # Use the task_id as the Docket key so we can cancel by task_id later.
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_agent_turn, key=result["task_id"])
-            await task_func(
-                thread_id=result["thread_id"],
-                message=query,
-                context=context,
-                task_id=result["task_id"],
-            )
-
-        return {
-            "thread_id": result["thread_id"],
-            "task_id": result["task_id"],
-            "status": (
-                result["status"].value
-                if hasattr(result["status"], "value")
-                else str(result["status"])
-            ),
-            "message": result.get("message", "Triage queued for processing"),
-        }
 
     except Exception as e:
         logger.error(f"Triage failed: {e}")
@@ -320,11 +301,7 @@ async def redis_sre_general_chat(
         thread_id: Conversation thread (for follow-up questions)
         status: Initial status (usually "queued")
     """
-    from docket import Docket
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url, process_chat_turn
-    from redis_sre_agent.core.redis import get_redis_client
-    from redis_sre_agent.core.tasks import create_task
+    from redis_sre_agent.core.docket_tasks import process_chat_turn
 
     logger.info(f"MCP general_chat request: {query[:100]}...")
 
@@ -332,7 +309,6 @@ async def redis_sre_general_chat(
         if instance_id and cluster_id:
             raise ValueError("Please provide only one of instance_id or cluster_id")
 
-        redis_client = get_redis_client()
         context = _build_mcp_query_context(
             instance_id=instance_id,
             cluster_id=cluster_id,
@@ -340,34 +316,20 @@ async def redis_sre_general_chat(
             extra_context={"agent_type": "chat"},
         )
 
-        result = await create_task(
+        return await submit_async_tool_task(
+            tool_name="redis_sre_general_chat",
             message=query,
             context=context,
-            redis_client=redis_client,
+            processor=process_chat_turn,
+            processor_kwargs={
+                "query": query,
+                "instance_id": instance_id,
+                "cluster_id": cluster_id,
+                "user_id": user_id,
+            },
+            native_message="Chat task queued for processing",
+            runtime_message="Chat executed inline under runtime task",
         )
-
-        # Submit to Docket for processing; key by task_id for later cancellation.
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_chat_turn, key=result["task_id"])
-            await task_func(
-                query=query,
-                task_id=result["task_id"],
-                thread_id=result["thread_id"],
-                instance_id=instance_id,
-                cluster_id=cluster_id,
-                user_id=user_id,
-            )
-
-        return {
-            "thread_id": result["thread_id"],
-            "task_id": result["task_id"],
-            "status": (
-                result["status"].value
-                if hasattr(result["status"], "value")
-                else str(result["status"])
-            ),
-            "message": "Chat task queued for processing",
-        }
 
     except Exception as e:
         logger.error(f"Chat failed: {e}")
@@ -438,11 +400,7 @@ async def redis_sre_database_chat(
         thread_id: Conversation thread (for follow-up questions)
         status: Initial status (usually "queued")
     """
-    from docket import Docket
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url, process_chat_turn
-    from redis_sre_agent.core.redis import get_redis_client
-    from redis_sre_agent.core.tasks import create_task
+    from redis_sre_agent.core.docket_tasks import process_chat_turn
     from redis_sre_agent.tools.models import ToolCapability
 
     logger.info(f"MCP database_chat request: {query[:100]}...")
@@ -459,7 +417,6 @@ async def redis_sre_database_chat(
         if instance_id and cluster_id:
             raise ValueError("Please provide only one of instance_id or cluster_id")
 
-        redis_client = get_redis_client()
         context = _build_mcp_query_context(
             instance_id=instance_id,
             cluster_id=cluster_id,
@@ -470,35 +427,21 @@ async def redis_sre_database_chat(
             },
         )
 
-        result = await create_task(
+        return await submit_async_tool_task(
+            tool_name="redis_sre_database_chat",
             message=query,
             context=context,
-            redis_client=redis_client,
+            processor=process_chat_turn,
+            processor_kwargs={
+                "query": query,
+                "instance_id": instance_id,
+                "cluster_id": cluster_id,
+                "user_id": user_id,
+                "exclude_mcp_categories": exclude_mcp_categories,
+            },
+            native_message=f"Database chat task queued (excluded categories: {exclude_mcp_categories})",
+            runtime_message="Database chat executed inline under runtime task",
         )
-
-        # Submit to Docket for processing with category exclusions; key by task_id.
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_chat_turn, key=result["task_id"])
-            await task_func(
-                query=query,
-                task_id=result["task_id"],
-                thread_id=result["thread_id"],
-                instance_id=instance_id,
-                cluster_id=cluster_id,
-                user_id=user_id,
-                exclude_mcp_categories=exclude_mcp_categories,
-            )
-
-        return {
-            "thread_id": result["thread_id"],
-            "task_id": result["task_id"],
-            "status": (
-                result["status"].value
-                if hasattr(result["status"], "value")
-                else str(result["status"])
-            ),
-            "message": f"Database chat task queued (excluded categories: {exclude_mcp_categories})",
-        }
 
     except Exception as e:
         logger.error(f"Database chat failed: {e}")
@@ -1886,46 +1829,27 @@ async def redis_sre_knowledge_query(
         thread_id: Conversation thread (for follow-up questions)
         status: Initial status (usually "queued")
     """
-    from docket import Docket
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url, process_knowledge_query
-    from redis_sre_agent.core.redis import get_redis_client
-    from redis_sre_agent.core.tasks import create_task
+    from redis_sre_agent.core.docket_tasks import process_knowledge_query
 
     logger.info(f"MCP knowledge_query: {query[:100]}...")
 
     try:
-        redis_client = get_redis_client()
         context: Dict[str, Any] = {"agent_type": "knowledge"}
         if user_id:
             context["user_id"] = user_id
 
-        result = await create_task(
+        return await submit_async_tool_task(
+            tool_name="redis_sre_knowledge_query",
             message=query,
             context=context,
-            redis_client=redis_client,
+            processor=process_knowledge_query,
+            processor_kwargs={
+                "query": query,
+                "user_id": user_id,
+            },
+            native_message="Knowledge query task queued for processing",
+            runtime_message="Knowledge query executed inline under runtime task",
         )
-
-        # Submit to Docket for processing; key by task_id for later cancellation.
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(process_knowledge_query, key=result["task_id"])
-            await task_func(
-                query=query,
-                task_id=result["task_id"],
-                thread_id=result["thread_id"],
-                user_id=user_id,
-            )
-
-        return {
-            "thread_id": result["thread_id"],
-            "task_id": result["task_id"],
-            "status": (
-                result["status"].value
-                if hasattr(result["status"], "value")
-                else str(result["status"])
-            ),
-            "message": "Knowledge query task queued for processing",
-        }
 
     except Exception as e:
         logger.error(f"Knowledge query failed: {e}")
@@ -2440,11 +2364,9 @@ async def redis_sre_delete_task(task_id: str) -> Dict[str, Any]:
     2. Run core Redis cleanup via core.tasks.delete_task.
     """
 
-    from docket import Docket
-
-    from redis_sre_agent.core.docket_tasks import get_redis_url
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.tasks import delete_task as delete_task_core
+    from redis_sre_agent.mcp_server.task_contract import cancel_background_task
 
     logger.info(f"MCP delete_task: {task_id}")
 
@@ -2452,11 +2374,10 @@ async def redis_sre_delete_task(task_id: str) -> Dict[str, Any]:
 
     # Best-effort Docket cancellation
     try:
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            try:
-                await docket.cancel(task_id)
-            except Exception as e:  # pragma: no cover - defensive
-                logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
+        try:
+            await cancel_background_task(task_id=task_id)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("Failed to initialize Docket for cancel of %s: %s", task_id, e)
 

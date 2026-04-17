@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from redis_sre_agent.core.tasks import TaskMetadata, TaskState, TaskStatus
+from redis_sre_agent.mcp_server.task_contract import runtime_task_execution_context
 
 
 def _schedule(**overrides):
@@ -471,12 +472,6 @@ class TestScheduleRunHelpers:
         thread_manager.create_thread.return_value = "thread-1"
         thread_manager.set_thread_subject.return_value = True
 
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        queued = AsyncMock(return_value="docket-1")
-        docket_instance.add = MagicMock(return_value=queued)
-
         with (
             patch(
                 "redis_sre_agent.core.schedule_helpers.core_schedules.get_schedule",
@@ -492,11 +487,6 @@ class TestScheduleRunHelpers:
                 return_value=thread_manager,
             ),
             patch(
-                "redis_sre_agent.core.schedule_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch(
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
             ),
@@ -505,7 +495,11 @@ class TestScheduleRunHelpers:
                 new_callable=AsyncMock,
                 return_value={"task_id": "task-1"},
             ) as mock_create_task,
-            patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": "docket-1"},
+            ) as mock_submit,
         ):
             result = await run_schedule_now_helper("schedule-1")
 
@@ -514,8 +508,7 @@ class TestScheduleRunHelpers:
         assert result["docket_task_id"] == "docket-1"
         assert result["task_id"] == "task-1"
         mock_create_task.assert_awaited_once()
-        assert queued.await_args.kwargs["task_id"] == "task-1"
-        queued.assert_awaited_once()
+        assert mock_submit.await_args.kwargs["processor_kwargs"]["task_id"] == "task-1"
 
     @pytest.mark.asyncio
     async def test_run_schedule_now_helper_returns_error_when_missing_schedule(self):
@@ -538,12 +531,6 @@ class TestScheduleRunHelpers:
         thread_manager.create_thread.return_value = "thread-1"
         thread_manager.set_thread_subject.return_value = True
 
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        queued = AsyncMock(side_effect=RuntimeError("duplicate key"))
-        docket_instance.add = MagicMock(return_value=queued)
-
         with (
             patch(
                 "redis_sre_agent.core.schedule_helpers.core_schedules.get_schedule",
@@ -559,11 +546,6 @@ class TestScheduleRunHelpers:
                 return_value=thread_manager,
             ),
             patch(
-                "redis_sre_agent.core.schedule_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch(
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
             ),
@@ -572,25 +554,24 @@ class TestScheduleRunHelpers:
                 new_callable=AsyncMock,
                 return_value={"task_id": "task-1"},
             ),
-            patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("duplicate key"),
+            ),
         ):
             result = await run_schedule_now_helper("schedule-1")
 
         assert result["docket_task_id"] == "already_running"
 
     @pytest.mark.asyncio
-    async def test_run_schedule_now_helper_awaits_async_docket_add_result(self):
+    async def test_run_schedule_now_helper_processes_inline_in_runtime(self):
         from redis_sre_agent.core.schedule_helpers import run_schedule_now_helper
 
         thread_manager = AsyncMock()
         thread_manager.create_thread.return_value = "thread-1"
         thread_manager.set_thread_subject.return_value = True
-
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        queued = AsyncMock(return_value="docket-1")
-        docket_instance.add = AsyncMock(return_value=queued)
+        mock_processor = AsyncMock(return_value={"response": "done"})
 
         with (
             patch(
@@ -607,26 +588,22 @@ class TestScheduleRunHelpers:
                 return_value=thread_manager,
             ),
             patch(
-                "redis_sre_agent.core.schedule_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch(
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
-                return_value="process-agent-turn",
+                return_value=mock_processor,
             ),
             patch(
                 "redis_sre_agent.core.schedule_helpers.create_task",
                 new_callable=AsyncMock,
                 return_value={"task_id": "task-1"},
             ),
-            patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
         ):
-            result = await run_schedule_now_helper("schedule-1")
+            with runtime_task_execution_context({"outerTaskId": "runtime-task-1"}):
+                result = await run_schedule_now_helper("schedule-1")
 
-        assert result["docket_task_id"] == "docket-1"
-        docket_instance.add.assert_awaited_once()
-        queued.assert_awaited_once()
+        assert result["status"] == "done"
+        assert result["docket_task_id"] is None
+        assert result["result"] == {"response": "done"}
+        mock_processor.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_run_schedule_now_helper_ignores_subject_update_failure(self):
@@ -635,12 +612,6 @@ class TestScheduleRunHelpers:
         thread_manager = AsyncMock()
         thread_manager.create_thread.return_value = "thread-1"
         thread_manager.set_thread_subject.side_effect = RuntimeError("ignore me")
-
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        queued = AsyncMock(return_value="docket-1")
-        docket_instance.add = MagicMock(return_value=queued)
 
         with (
             patch(
@@ -657,11 +628,6 @@ class TestScheduleRunHelpers:
                 return_value=thread_manager,
             ),
             patch(
-                "redis_sre_agent.core.schedule_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch(
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
             ),
@@ -670,7 +636,11 @@ class TestScheduleRunHelpers:
                 new_callable=AsyncMock,
                 return_value={"task_id": "task-1"},
             ),
-            patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": "docket-1"},
+            ),
         ):
             result = await run_schedule_now_helper("schedule-1")
 
@@ -683,12 +653,6 @@ class TestScheduleRunHelpers:
         thread_manager = AsyncMock()
         thread_manager.create_thread.return_value = "thread-1"
         thread_manager.set_thread_subject.return_value = True
-
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        queued = AsyncMock(side_effect=RuntimeError("boom"))
-        docket_instance.add = MagicMock(return_value=queued)
 
         with (
             patch(
@@ -705,11 +669,6 @@ class TestScheduleRunHelpers:
                 return_value=thread_manager,
             ),
             patch(
-                "redis_sre_agent.core.schedule_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://test",
-            ),
-            patch(
                 "redis_sre_agent.core.schedule_helpers._get_schedule_task_callable",
                 return_value="process-agent-turn",
             ),
@@ -718,7 +677,11 @@ class TestScheduleRunHelpers:
                 new_callable=AsyncMock,
                 return_value={"task_id": "task-1"},
             ),
-            patch("redis_sre_agent.core.schedule_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.schedule_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("boom"),
+            ),
         ):
             with pytest.raises(RuntimeError, match="boom"):
                 await run_schedule_now_helper("schedule-1")

@@ -1,0 +1,139 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock README.md LICENSE.txt /workspace/
+
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY . /workspace
+
+RUN if [ -f /workspace/vendor/re-analyzer-mcp/package.json ] && [ ! -d /workspace/vendor/re-analyzer-mcp/node_modules ]; then \
+      npm ci --prefix /workspace/vendor/re-analyzer-mcp; \
+    fi
+
+RUN uv sync --frozen --no-dev
+
+RUN /workspace/.venv/bin/python - <<'PY'
+import importlib.metadata
+import subprocess
+import sys
+
+installed = sorted(
+    {
+        dist.metadata["Name"]
+        for dist in importlib.metadata.distributions()
+        if dist.metadata["Name"].startswith("nvidia-")
+        or dist.metadata["Name"] in {"torch", "triton"}
+    }
+)
+if installed:
+    subprocess.check_call(
+        ["uv", "pip", "uninstall", "--python", sys.executable, *installed]
+    )
+subprocess.check_call(
+    [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        "--no-cache-dir",
+        "--index-url",
+        "https://download.pytorch.org/whl/cpu",
+        "torch==2.8.0",
+    ]
+)
+PY
+
+RUN /workspace/.venv/bin/python - <<'PY'
+import pathlib
+import shutil
+import site
+import subprocess
+import sys
+
+repo_candidate_paths = (
+    pathlib.Path("/workspace/.rar/sdk/redis-agent-kit"),
+    pathlib.Path("/workspace/.rar/sdk/redis_agent_kit"),
+)
+repo_root = next(
+    (
+        path
+        for path in repo_candidate_paths
+        if path.is_dir() and (path / "pyproject.toml").is_file()
+    ),
+    None,
+)
+if repo_root is not None:
+    subprocess.check_call(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--no-cache-dir",
+            str(repo_root),
+        ]
+    )
+    raise SystemExit(0)
+package_candidate_paths = (
+    pathlib.Path("/workspace/.rar/sdk/redis-agent-kit/redis_agent_kit"),
+    pathlib.Path("/workspace/.rar/sdk/redis_agent_kit"),
+)
+src = next((path for path in package_candidate_paths if path.is_dir()), None)
+if src is None:
+    subprocess.check_call(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--no-cache-dir",
+            "redis-agent-kit==0.1.0",
+        ]
+    )
+    raise SystemExit(0)
+target = pathlib.Path(site.getsitepackages()[0]) / "redis_agent_kit"
+if target.exists():
+    shutil.rmtree(target)
+shutil.copytree(src, target)
+PY
+
+RUN rm -rf /root/.cache /workspace/.cache
+
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/workspace/.venv/bin:$PATH"
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace /workspace
+
+CMD ["python", "runtime_agent.py"]

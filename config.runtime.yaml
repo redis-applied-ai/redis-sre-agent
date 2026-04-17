@@ -1,0 +1,38 @@
+# Runtime MCP configuration for the Redis SRE Agent adapter checkout.
+# This file is intended for runtime deployments where the agent is packaged
+# with vendored MCP servers under /workspace/vendor.
+
+max_iterations: 50
+
+mcp_servers:
+  re_analyzer:
+    command: node
+    args:
+      - vendor/re-analyzer-mcp/dist/src/index.js
+    env:
+      ANALYZER_BASE_URL: https://analyzerqa.cs.redislabs.com
+      ANALYZER_API_TOKEN: xAwPdOqvsl+nhqBuhOpEM9+Y4a83rpm2XKPpZ+sjuvs=
+    tools:
+      analyzer_list_accounts: {}
+      analyzer_search_accounts: {}
+      analyzer_get_account: {}
+      analyzer_list_clusters: {}
+      analyzer_get_cluster: {}
+      analyzer_list_packages: {}
+      analyzer_get_package_by_hash: {}
+      analyzer_get_package: {}
+      analyzer_resolve_package: {}
+      analyzer_get_package_messages: {}
+      analyzer_get_cluster_packages: {}
+      analyzer_get_latest_cluster_package: {}
+      analyzer_get_package_overview: {}
+      analyzer_get_package_alerts: {}
+      analyzer_get_package_health_checks: {}
+      analyzer_get_package_events: {}
+      analyzer_get_package_databases: {}
+      analyzer_get_database_slowlog: {}
+      analyzer_get_database_commands: {}
+      analyzer_get_package_nodes: {}
+      analyzer_get_package_topology: {}
+      analyzer_get_package_time_series: {}
+      analyzer_export_package_json: {}

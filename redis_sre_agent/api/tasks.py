@@ -19,6 +19,11 @@ from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager, create_task
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
+from redis_sre_agent.core.tasks import TaskStatus
+from redis_sre_agent.mcp_server.task_contract import (
+    cancel_background_task,
+    submit_background_task_call,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,15 +56,19 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
             logger.error("create_task returned no thread_id; refusing to queue turn")
             raise HTTPException(status_code=500, detail="Failed to create thread for task")
 
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            # Use the task_id as the Docket key so we can cancel by task_id later.
-            task_func = docket.add(process_agent_turn, key=task.task_id)
-            await task_func(
-                thread_id=task.thread_id,
-                message=req.message,
-                context=context,
-                task_id=task.task_id,
-            )
+        execution = await submit_background_task_call(
+            processor=process_agent_turn,
+            key=task.task_id,
+            processor_kwargs={
+                "thread_id": task.thread_id,
+                "message": req.message,
+                "context": context,
+                "task_id": task.task_id,
+            },
+        )
+        if execution["mode"] == "inline":
+            task.status = TaskStatus.DONE
+            task.message = "Task completed inline during runtime execution"
 
         return task
     except HTTPException:
@@ -108,14 +117,14 @@ async def delete_task(task_id: str):
     redis_client = get_redis_client()
 
     # Best-effort: attempt to cancel any in-flight Docket task for this id.
+    cancel_msg = ""
     try:
-        cancel_msg = ""
-        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            try:
-                await docket.cancel(task_id)
-            except Exception as e:  # pragma: no cover - defensive logging
-                cancel_msg = f"Failed to cancel Docket task {task_id}: {e}"
-                logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
+        try:
+            cancel_result = await cancel_background_task(task_id=task_id)
+            cancel_msg = str(cancel_result.get("message") or "")
+        except Exception as e:  # pragma: no cover - defensive logging
+            cancel_msg = f"Failed to cancel Docket task {task_id}: {e}"
+            logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
     except Exception as e:  # pragma: no cover - defensive logging
         cancel_msg = f"Failed to initialize Docket for cancel of {task_id}: {e}"
         logger.warning("Failed to initialize Docket for cancel of %s: %s", task_id, e)

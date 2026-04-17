@@ -64,6 +64,40 @@ mcp_servers:
       get_commit:
         capability: repos
 
+  # Redis Enterprise Analyzer MCP server (vendored runtime checkout)
+  # For runtime deployments in this checkout, see config.runtime.yaml.
+  re_analyzer:
+    command: node
+    args:
+      - vendor/re-analyzer-mcp/dist/src/index.js
+    env:
+      ANALYZER_BASE_URL: https://analyzerqa.cs.redislabs.com
+      ANALYZER_API_TOKEN: fake-auth-key
+    tools:
+      analyzer_list_accounts: {}
+      analyzer_search_accounts: {}
+      analyzer_get_account: {}
+      analyzer_list_clusters: {}
+      analyzer_get_cluster: {}
+      analyzer_list_packages: {}
+      analyzer_get_package_by_hash: {}
+      analyzer_get_package: {}
+      analyzer_resolve_package: {}
+      analyzer_get_package_messages: {}
+      analyzer_get_cluster_packages: {}
+      analyzer_get_latest_cluster_package: {}
+      analyzer_get_package_overview: {}
+      analyzer_get_package_alerts: {}
+      analyzer_get_package_health_checks: {}
+      analyzer_get_package_events: {}
+      analyzer_get_package_databases: {}
+      analyzer_get_database_slowlog: {}
+      analyzer_get_database_commands: {}
+      analyzer_get_package_nodes: {}
+      analyzer_get_package_topology: {}
+      analyzer_get_package_time_series: {}
+      analyzer_export_package_json: {}
+
 # Manually overriding tool providers configuration (fully qualified class paths).
 # Useful to disable some built-in tool providers and/or enable your own custom providers.
 # For more on custom tool providers, see: https://redis-applied-ai.github.io/redis-sre-agent/how-to/tool-providers/#create-a-custom-provider

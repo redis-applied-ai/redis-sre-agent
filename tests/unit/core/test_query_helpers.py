@@ -13,6 +13,7 @@ from redis_sre_agent.core.query_helpers import (
     queue_query_task_helper,
 )
 from redis_sre_agent.core.tasks import TaskStatus
+from redis_sre_agent.mcp_server.task_contract import runtime_task_execution_context
 
 
 class TestNormalizeAgentSelection:
@@ -60,11 +61,6 @@ class TestQueueQueryTaskHelper:
         mock_manager = AsyncMock()
         mock_manager.get_metadata = AsyncMock(return_value=SimpleNamespace(filename="pkg.tar.gz"))
         mock_manager.extract = AsyncMock(return_value=Path("/tmp/extracted/pkg-1"))
-        task_callable = AsyncMock()
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        docket_instance.add.return_value = task_callable
 
         with (
             patch("redis_sre_agent.core.query_helpers.get_redis_client", return_value=redis_client),
@@ -87,15 +83,14 @@ class TestQueueQueryTaskHelper:
                 },
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.query_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://localhost:6379/0",
-            ),
-            patch(
                 "redis_sre_agent.core.query_helpers._get_query_task_callable",
                 return_value="process-agent-turn",
             ),
-            patch("redis_sre_agent.core.query_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.query_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             result = await queue_query_task_helper(
                 query="Investigate memory usage",
@@ -127,7 +122,7 @@ class TestQueueQueryTaskHelper:
         assert context["target_bindings"][0]["resource_id"] == "redis-prod-1"
         assert context["turn_scope"]["seed_hints"] == {"instance_id": "redis-prod-1"}
 
-        task_kwargs = task_callable.await_args.kwargs
+        task_kwargs = mock_submit.await_args.kwargs["processor_kwargs"]
         assert task_kwargs["thread_id"] == "thread-123"
         assert task_kwargs["message"] == "Investigate memory usage"
         assert task_kwargs["task_id"] == "task-123"
@@ -138,11 +133,6 @@ class TestQueueQueryTaskHelper:
         redis_client = AsyncMock()
         thread_manager = AsyncMock()
         thread_manager.get_thread = AsyncMock(return_value=SimpleNamespace(thread_id="thread-123"))
-        task_callable = AsyncMock()
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        docket_instance.add.return_value = task_callable
 
         with (
             patch("redis_sre_agent.core.query_helpers.get_redis_client", return_value=redis_client),
@@ -160,15 +150,14 @@ class TestQueueQueryTaskHelper:
                 },
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.query_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://localhost:6379/0",
-            ),
-            patch(
                 "redis_sre_agent.core.query_helpers._get_query_task_callable",
                 return_value="process-agent-turn",
             ),
-            patch("redis_sre_agent.core.query_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.query_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             result = await queue_query_task_helper(
                 query="Follow up",
@@ -186,20 +175,15 @@ class TestQueueQueryTaskHelper:
         assert context["resolution_policy"] == "allow_zero_scope"
         assert context["turn_scope"]["scope_kind"] == "zero_scope"
 
-        task_kwargs = task_callable.await_args.kwargs
+        task_kwargs = mock_submit.await_args.kwargs["processor_kwargs"]
         assert task_kwargs["thread_id"] == "thread-123"
         assert task_kwargs["message"] == "Follow up"
         assert task_kwargs["task_id"] == "task-123"
         assert task_kwargs["context"] == context
 
     @pytest.mark.asyncio
-    async def test_queue_query_task_helper_supports_cluster_context_and_awaitable_docket_add(self):
+    async def test_queue_query_task_helper_supports_cluster_context(self):
         redis_client = AsyncMock()
-        task_callable = AsyncMock()
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        docket_instance.add = AsyncMock(return_value=task_callable)
 
         with (
             patch("redis_sre_agent.core.query_helpers.get_redis_client", return_value=redis_client),
@@ -218,15 +202,14 @@ class TestQueueQueryTaskHelper:
                 },
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.query_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://localhost:6379/0",
-            ),
-            patch(
                 "redis_sre_agent.core.query_helpers._get_query_task_callable",
                 return_value="process-agent-turn",
             ),
-            patch("redis_sre_agent.core.query_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.query_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             result = await queue_query_task_helper(
                 query="Check cluster",
@@ -246,7 +229,7 @@ class TestQueueQueryTaskHelper:
         assert context["target_bindings"][0]["resource_id"] == "cluster-1"
         assert context["turn_scope"]["seed_hints"] == {"cluster_id": "cluster-1"}
 
-        task_kwargs = task_callable.await_args.kwargs
+        task_kwargs = mock_submit.await_args.kwargs["processor_kwargs"]
         assert task_kwargs["thread_id"] == "thread-123"
         assert task_kwargs["message"] == "Check cluster"
         assert task_kwargs["task_id"] == "task-123"
@@ -255,11 +238,6 @@ class TestQueueQueryTaskHelper:
     @pytest.mark.asyncio
     async def test_queue_query_task_helper_preserves_instance_hint_with_agent_override(self):
         redis_client = AsyncMock()
-        task_callable = AsyncMock()
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        docket_instance.add.return_value = task_callable
 
         with (
             patch("redis_sre_agent.core.query_helpers.get_redis_client", return_value=redis_client),
@@ -278,15 +256,14 @@ class TestQueueQueryTaskHelper:
                 },
             ) as mock_create_task,
             patch(
-                "redis_sre_agent.core.query_helpers.get_redis_url",
-                new_callable=AsyncMock,
-                return_value="redis://localhost:6379/0",
-            ),
-            patch(
                 "redis_sre_agent.core.query_helpers._get_query_task_callable",
                 return_value="process-agent-turn",
             ),
-            patch("redis_sre_agent.core.query_helpers.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.query_helpers.submit_background_task_call",
+                new_callable=AsyncMock,
+                return_value={"mode": "agent_task", "task_system": "sre", "result": None},
+            ) as mock_submit,
         ):
             await queue_query_task_helper(
                 query="Investigate with chat",
@@ -307,11 +284,53 @@ class TestQueueQueryTaskHelper:
         assert "thread_id" not in context
         assert "session_id" not in context
 
-        task_kwargs = task_callable.await_args.kwargs
+        task_kwargs = mock_submit.await_args.kwargs["processor_kwargs"]
         assert task_kwargs["thread_id"] == "thread-123"
         assert task_kwargs["message"] == "Investigate with chat"
         assert task_kwargs["task_id"] == "task-123"
         assert task_kwargs["context"] == context
+
+    @pytest.mark.asyncio
+    async def test_queue_query_task_helper_processes_inline_in_runtime(self):
+        redis_client = AsyncMock()
+        mock_processor = AsyncMock(return_value={"response": "inline-result"})
+
+        with (
+            patch("redis_sre_agent.core.query_helpers.get_redis_client", return_value=redis_client),
+            patch(
+                "redis_sre_agent.core.query_helpers.get_instance_by_id",
+                new_callable=AsyncMock,
+                return_value=SimpleNamespace(id="redis-prod-1"),
+            ),
+            patch(
+                "redis_sre_agent.core.query_helpers.create_task",
+                new_callable=AsyncMock,
+                return_value={
+                    "thread_id": "thread-123",
+                    "task_id": "task-123",
+                    "status": TaskStatus.QUEUED,
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.query_helpers._get_query_task_callable",
+                return_value=mock_processor,
+            ),
+        ):
+            with runtime_task_execution_context({"outerTaskId": "runtime-task-1"}):
+                result = await queue_query_task_helper(
+                    query="Investigate memory usage",
+                    instance_id="redis-prod-1",
+                )
+
+        assert result == {
+            "thread_id": "thread-123",
+            "task_id": "task-123",
+            "status": "done",
+            "message": "Query processed inline during runtime execution",
+            "agent": "auto",
+            "result": {"response": "inline-result"},
+        }
+        mock_processor.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_queue_query_task_helper_rejects_multiple_targets(self):

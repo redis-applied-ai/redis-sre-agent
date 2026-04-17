@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-
-from docket import Docket
 
 from redis_sre_agent.core import schedules as core_schedules
 from redis_sre_agent.core.helper_utils import get_docket_redis_url as get_redis_url
@@ -16,6 +13,7 @@ from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 from redis_sre_agent.core.threads import ThreadManager
 from redis_sre_agent.core.turn_scope import build_legacy_target_scope_adapter
+from redis_sre_agent.mcp_server.task_contract import submit_background_task_call
 
 _SCHEDULE_RUNS_PAGE_SIZE = 100
 
@@ -236,32 +234,45 @@ async def run_schedule_now_helper(schedule_id: str) -> Dict[str, Any]:
     )
     task_id = str(task_result["task_id"])
     docket_task_id = None
-    async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-        task_key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
-        try:
-            task_func = docket.add(_get_schedule_task_callable(), key=task_key)
-            if inspect.isawaitable(task_func):
-                task_func = await task_func
-            docket_task_id = await task_func(
-                thread_id=thread_id,
-                message=schedule.get("instructions") or "",
-                context=run_context,
-                task_id=task_id,
-            )
-        except Exception as e:
-            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                docket_task_id = "already_running"
-            else:
-                raise
+    task_key = f"manual_schedule_{schedule_id}_{current_time.strftime('%Y%m%d_%H%M%S')}"
+    try:
+        execution = await submit_background_task_call(
+            processor=_get_schedule_task_callable(),
+            key=task_key,
+            processor_kwargs={
+                "thread_id": thread_id,
+                "message": schedule.get("instructions") or "",
+                "context": run_context,
+                "task_id": task_id,
+            },
+        )
+        docket_task_id = execution["result"] if execution["mode"] == "agent_task" else None
+    except Exception as e:
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            docket_task_id = "already_running"
+            execution = None
+        else:
+            raise
 
-    return {
+    response = {
         "schedule_id": schedule_id,
-        "status": "pending",
         "scheduled_at": current_time.isoformat(),
         "thread_id": thread_id,
         "task_id": task_id,
         "docket_task_id": str(docket_task_id) if docket_task_id is not None else None,
     }
+    if execution and execution["mode"] == "inline":
+        response.update(
+            {
+                "status": "done",
+                "message": "Schedule run processed inline during runtime execution",
+                "result": execution["result"],
+            }
+        )
+        return response
+
+    response["status"] = "pending"
+    return response
 
 
 async def list_schedule_runs_helper(schedule_id: str, limit: int = 50) -> Dict[str, Any]:
