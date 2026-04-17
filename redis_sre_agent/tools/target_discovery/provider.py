@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from redis_sre_agent.core.targets import bind_target_matches, list_known_targets, resolve_target_query
+from redis_sre_agent.core.targets import (
+    bind_target_matches,
+    list_known_targets,
+    resolve_target_query,
+)
 from redis_sre_agent.targets.contracts import DiscoveryResponse
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 from redis_sre_agent.tools.protocols import ToolProvider
@@ -111,7 +115,7 @@ class TargetDiscoveryToolProvider(ToolProvider):
                     },
                     "required": ["query"],
                 },
-            )
+            ),
         ]
 
     async def list_known_redis_targets(

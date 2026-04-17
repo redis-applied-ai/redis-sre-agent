@@ -54,6 +54,7 @@ from .checkpointing import (
     open_graph_checkpointer,
     persist_approval_wait_state,
     persist_checkpoint_metadata,
+    resolve_checkpoint_lookup_thread_id,
     resolve_graph_thread_id,
 )
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
@@ -2479,13 +2480,14 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             List of conversation messages
         """
         try:
+            graph_thread_id = await resolve_checkpoint_lookup_thread_id(session_id)
             recursion_limit = getattr(
                 getattr(self, "settings", settings),
                 "recursion_limit",
                 settings.recursion_limit,
             )
             thread_config = build_graph_config(
-                graph_thread_id=session_id,
+                graph_thread_id=graph_thread_id,
                 recursion_limit=recursion_limit,
             )
 
@@ -2523,13 +2525,14 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         LangChain message objects that may include ``tool_calls`` metadata.
         """
         try:
+            graph_thread_id = await resolve_checkpoint_lookup_thread_id(session_id)
             recursion_limit = getattr(
                 getattr(self, "settings", settings),
                 "recursion_limit",
                 settings.recursion_limit,
             )
             thread_config = build_graph_config(
-                graph_thread_id=session_id,
+                graph_thread_id=graph_thread_id,
                 recursion_limit=recursion_limit,
             )
             if hasattr(self, "workflow"):

@@ -89,23 +89,26 @@ class FixtureBehaviorResolver:
         target_handle: str | None = None,
         server_name: str | None = None,
     ) -> EvalToolBehavior | None:
-        return self._behaviors.get(
-            (
-                provider_family,
-                operation,
-                _normalize_target_handle(target_handle),
-                server_name,
+        return (
+            self._behaviors.get(
+                (
+                    provider_family,
+                    operation,
+                    _normalize_target_handle(target_handle),
+                    server_name,
+                )
             )
-        ) or self._behaviors.get(
-            (provider_family, operation, None, server_name)
-        ) or self._behaviors.get(
-            (
-                provider_family,
-                operation,
-                _normalize_target_handle(target_handle),
-                None,
+            or self._behaviors.get((provider_family, operation, None, server_name))
+            or self._behaviors.get(
+                (
+                    provider_family,
+                    operation,
+                    _normalize_target_handle(target_handle),
+                    None,
+                )
             )
-        ) or self._behaviors.get((provider_family, operation, None, None))
+            or self._behaviors.get((provider_family, operation, None, None))
+        )
 
     def _materialize_fixture_value(self, value: Any) -> Any:
         if not isinstance(value, str):

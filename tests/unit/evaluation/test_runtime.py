@@ -1356,9 +1356,11 @@ async def test_run_full_turn_scenario_transitions_to_awaiting_approval_for_write
     monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
     monkeypatch.setattr("redis_sre_agent.core.docket_tasks.ThreadManager", _MemoryThreadManager)
     monkeypatch.setattr("redis_sre_agent.core.docket_tasks.TaskManager", _MemoryTaskManager)
-    monkeypatch.setattr(ToolManager, "_always_on_providers", [
-        "tests.unit.evaluation.test_runtime._EvalApprovalProvider"
-    ])
+    monkeypatch.setattr(
+        ToolManager,
+        "_always_on_providers",
+        ["tests.unit.evaluation.test_runtime._EvalApprovalProvider"],
+    )
     monkeypatch.setattr(ToolManager, "_load_mcp_providers", AsyncMock())
     monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
 

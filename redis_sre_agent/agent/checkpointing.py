@@ -12,6 +12,8 @@ from langgraph.checkpoint.redis import RedisSaver
 from redis_sre_agent import __version__
 from redis_sre_agent.core.approvals import ApprovalManager, GraphResumeState, PendingApprovalSummary
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.keys import RedisKeys
+from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,42 @@ def build_graph_config(
     if recursion_limit is not None:
         config["recursion_limit"] = recursion_limit
     return config
+
+
+async def resolve_checkpoint_lookup_thread_id(session_id: str) -> str:
+    """Resolve the checkpoint thread id for readback helpers.
+
+    Execution may persist checkpoints under the latest task id for a thread.
+    When available, prefer that persisted graph thread id so history/state
+    reads land on the same checkpoint namespace used at runtime.
+    """
+
+    try:
+        redis_client = get_redis_client()
+        latest_task_ids = await redis_client.zrevrange(
+            RedisKeys.thread_tasks_index(session_id),
+            0,
+            0,
+        )
+        if not latest_task_ids:
+            return session_id
+
+        raw_task_id = latest_task_ids[0]
+        task_id = raw_task_id.decode() if isinstance(raw_task_id, bytes) else str(raw_task_id)
+        if not task_id:
+            return session_id
+
+        resume_state = await ApprovalManager(redis_client=redis_client).get_resume_state(task_id)
+        if resume_state and resume_state.graph_thread_id:
+            return resume_state.graph_thread_id
+        return task_id
+    except Exception as exc:
+        logger.warning(
+            "Falling back to session checkpoint lookup for %s: %s",
+            session_id,
+            exc,
+        )
+        return session_id
 
 
 @contextmanager

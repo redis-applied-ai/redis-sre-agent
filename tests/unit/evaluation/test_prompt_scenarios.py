@@ -316,13 +316,19 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
     assert target_instance.expectations.required_tool_calls[0].provider_family == "target_discovery"
     assert target_cluster.expectations.required_tool_calls[1].operation == "list_databases"
     assert target_ambiguous.expectations.forbidden_tool_calls[0].operation == "info"
-    assert target_inventory.expectations.required_tool_calls[0].operation == "list_known_redis_targets"
+    assert (
+        target_inventory.expectations.required_tool_calls[0].operation == "list_known_redis_targets"
+    )
     assert target_inventory.expectations.forbidden_claims == [
         "do not have an auto-enumerable list",
         "ask me for a search term first",
     ]
-    assert target_multi.expectations.required_tool_calls[1].target_handle == "tgt_checkout_cache_prod"
-    assert target_multi.expectations.required_tool_calls[2].target_handle == "tgt_session_cache_prod"
+    assert (
+        target_multi.expectations.required_tool_calls[1].target_handle == "tgt_checkout_cache_prod"
+    )
+    assert (
+        target_multi.expectations.required_tool_calls[2].target_handle == "tgt_session_cache_prod"
+    )
     assert (
         target_inventory_connect.expectations.required_tool_calls[0].operation
         == "list_known_redis_targets"

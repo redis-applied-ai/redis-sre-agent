@@ -913,7 +913,10 @@ async def list_known_targets(
     for doc in docs:
         if normalized_kind and _normalize(doc.target_kind) != normalized_kind:
             continue
-        if normalized_environment and _normalize_environment(doc.environment) != normalized_environment:
+        if (
+            normalized_environment
+            and _normalize_environment(doc.environment) != normalized_environment
+        ):
             continue
         if normalized_capability:
             supported = {_normalize(item) for item in doc.capabilities}

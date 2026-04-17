@@ -120,6 +120,33 @@ class TestSRELangGraphAgent:
             assert history[1]["content"] == "Hi there!"
 
     @pytest.mark.asyncio
+    async def test_get_conversation_history_uses_resolved_checkpoint_thread_id(
+        self, mock_settings, mock_llm
+    ):
+        """History lookup should follow the persisted checkpoint thread id."""
+        with (
+            patch.object(SRELangGraphAgent, "__init__", lambda self: None),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.resolve_checkpoint_lookup_thread_id",
+                new=AsyncMock(return_value="task-123"),
+            ),
+        ):
+            agent = SRELangGraphAgent()
+
+            mock_state = MagicMock()
+            mock_state.values = {"messages": []}
+
+            mock_app = AsyncMock()
+            mock_app.aget_state = AsyncMock(return_value=mock_state)
+            agent.app = mock_app
+
+            await agent.get_conversation_history("thread-abc")
+
+            mock_app.aget_state.assert_awaited_once()
+            _, kwargs = mock_app.aget_state.await_args
+            assert kwargs["config"]["configurable"]["thread_id"] == "task-123"
+
+    @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
     async def test_process_query_seeds_startup_context_into_initial_state(
         self, mock_build_startup_context, mock_settings, mock_llm
