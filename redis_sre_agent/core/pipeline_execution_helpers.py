@@ -79,6 +79,19 @@ def _get_pipeline_task_callable() -> Any:
     return process_pipeline_operation
 
 
+def _build_progress_callback(progress_emitter: Any) -> Any:
+    """Wrap a task emitter so orchestrator callbacks share one interface."""
+
+    async def _progress_callback(
+        message: str,
+        update_type: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        await _emit_progress(progress_emitter, message, update_type, metadata)
+
+    return _progress_callback
+
+
 async def run_pipeline_operation_helper(
     operation: str,
     *,
@@ -96,6 +109,7 @@ async def run_pipeline_operation_helper(
     progress_emitter: Any = None,
 ) -> Dict[str, Any]:
     """Execute a pipeline operation and return a structured result."""
+    progress_callback = _build_progress_callback(progress_emitter)
     await _emit_progress(
         progress_emitter,
         f"Starting pipeline {operation}",
@@ -109,7 +123,9 @@ async def run_pipeline_operation_helper(
             _build_scrape_config(latest_only=latest_only, docs_path=docs_path),
             scrapers=scrapers,
         )
-        result = await orchestrator.run_scraping_pipeline(scrapers)
+        result = await orchestrator.run_scraping_pipeline(
+            scrapers, progress_callback=progress_callback
+        )
         await _emit_progress(
             progress_emitter,
             f"Completed pipeline {operation}",
@@ -123,7 +139,9 @@ async def run_pipeline_operation_helper(
             artifacts_path,
             {"ingestion": {"latest_only": latest_only}},
         )
-        result = await orchestrator.run_ingestion_pipeline(batch_date)
+        result = await orchestrator.run_ingestion_pipeline(
+            batch_date, progress_callback=progress_callback
+        )
         await _emit_progress(
             progress_emitter,
             f"Completed pipeline {operation}",
@@ -136,7 +154,7 @@ async def run_pipeline_operation_helper(
         config = _build_scrape_config(latest_only=latest_only, docs_path=docs_path)
         config["ingestion"] = {"latest_only": latest_only}
         orchestrator = PipelineOrchestrator(artifacts_path, config, scrapers=scrapers)
-        result = await orchestrator.run_full_pipeline(scrapers)
+        result = await orchestrator.run_full_pipeline(scrapers, progress_callback=progress_callback)
         await _emit_progress(
             progress_emitter,
             f"Completed pipeline {operation}",

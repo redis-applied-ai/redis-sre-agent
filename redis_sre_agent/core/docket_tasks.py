@@ -696,7 +696,7 @@ async def process_runbook_operation(
 async def scheduler_task(
     global_limit="scheduler",  # Need a sentinel value for concurrency limit argument
     perpetual: Perpetual = Perpetual(every=timedelta(seconds=30), automatic=True),
-    concurrency: ConcurrencyLimit = ConcurrencyLimit("sentinel", max_concurrent=1),
+    concurrency: ConcurrencyLimit = ConcurrencyLimit("global_limit", max_concurrent=1),
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """
