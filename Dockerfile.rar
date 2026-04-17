@@ -66,11 +66,36 @@ import site
 import subprocess
 import sys
 
-candidate_paths = (
+repo_candidate_paths = (
+    pathlib.Path("/workspace/.rar/sdk/redis-agent-kit"),
+    pathlib.Path("/workspace/.rar/sdk/redis_agent_kit"),
+)
+repo_root = next(
+    (
+        path
+        for path in repo_candidate_paths
+        if path.is_dir() and (path / "pyproject.toml").is_file()
+    ),
+    None,
+)
+if repo_root is not None:
+    subprocess.check_call(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--no-cache-dir",
+            str(repo_root),
+        ]
+    )
+    raise SystemExit(0)
+package_candidate_paths = (
     pathlib.Path("/workspace/.rar/sdk/redis-agent-kit/redis_agent_kit"),
     pathlib.Path("/workspace/.rar/sdk/redis_agent_kit"),
 )
-src = next((path for path in candidate_paths if path.is_dir()), None)
+src = next((path for path in package_candidate_paths if path.is_dir()), None)
 if src is None:
     subprocess.check_call(
         [
