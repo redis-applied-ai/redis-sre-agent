@@ -130,6 +130,7 @@ async def persist_checkpoint_metadata(
         return
 
     try:
+        redis_client = get_redis_client()
         if hasattr(checkpointer, "aget_tuple"):
             checkpoint_tuple = await checkpointer.aget_tuple(config)
         else:
@@ -143,7 +144,7 @@ async def persist_checkpoint_metadata(
         if not checkpoint_id:
             return
 
-        manager = ApprovalManager()
+        manager = ApprovalManager(redis_client=redis_client)
         existing = await manager.get_resume_state(task_id)
         await manager.save_resume_state(
             GraphResumeState(
@@ -178,15 +179,18 @@ async def persist_approval_wait_state(
         return
 
     try:
-        resume_state = await ApprovalManager().get_resume_state(task_id)
+        redis_client = get_redis_client()
+        approval_manager = ApprovalManager(redis_client=redis_client)
+        task_manager = TaskManager(redis_client=redis_client)
+        resume_state = await approval_manager.get_resume_state(task_id)
         pending = pending_approval
         if pending is None:
-            task_state = await TaskManager().get_task_state(task_id)
+            task_state = await task_manager.get_task_state(task_id)
             pending = task_state.pending_approval if task_state else None
         if not resume_state or not pending:
             return
 
-        await ApprovalManager().save_resume_state(
+        await approval_manager.save_resume_state(
             GraphResumeState(
                 task_id=resume_state.task_id,
                 thread_id=resume_state.thread_id,

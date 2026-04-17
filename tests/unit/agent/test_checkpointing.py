@@ -11,6 +11,7 @@ from redis_sre_agent.agent.checkpointing import (
     build_graph_config,
     open_graph_checkpointer,
     persist_checkpoint_metadata,
+    persist_approval_wait_state,
     resolve_graph_thread_id,
 )
 
@@ -126,6 +127,7 @@ async def test_persist_checkpoint_metadata_saves_resume_state():
 
     fake_checkpointer.aget_tuple.assert_awaited_once()
     fake_checkpointer.get_tuple.assert_not_called()
+    fake_manager.get_resume_state.assert_awaited_once_with("task-1")
     saved_state = fake_manager.save_resume_state.await_args.args[0]
     assert saved_state.task_id == "task-1"
     assert saved_state.thread_id == "thread-1"
@@ -166,3 +168,49 @@ async def test_persist_checkpoint_metadata_falls_back_to_sync_get_tuple():
     assert saved_state.thread_id == "thread-1"
     assert saved_state.graph_thread_id == "task-1"
     assert saved_state.checkpoint_id == "checkpoint-1"
+
+
+@pytest.mark.asyncio
+async def test_persist_approval_wait_state_reuses_shared_redis_client():
+    fake_redis_client = object()
+    fake_resume_state = SimpleNamespace(
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        graph_type="chat",
+        graph_version="v1",
+        checkpoint_ns=GRAPH_CHECKPOINT_NAMESPACE,
+        checkpoint_id="checkpoint-1",
+        resume_count=0,
+    )
+    fake_pending_approval = SimpleNamespace(approval_id="approval-1", interrupt_id="interrupt-1")
+    fake_manager = SimpleNamespace(
+        get_resume_state=AsyncMock(return_value=fake_resume_state),
+        save_resume_state=AsyncMock(),
+    )
+    fake_task_manager = SimpleNamespace(
+        get_task_state=AsyncMock(
+            return_value=SimpleNamespace(pending_approval=fake_pending_approval)
+        )
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.agent.checkpointing.get_redis_client", return_value=fake_redis_client
+        ),
+        patch(
+            "redis_sre_agent.agent.checkpointing.ApprovalManager",
+            return_value=fake_manager,
+        ) as mock_approval_manager,
+        patch(
+            "redis_sre_agent.agent.checkpointing.TaskManager",
+            return_value=fake_task_manager,
+        ) as mock_task_manager,
+    ):
+        await persist_approval_wait_state(task_id="task-1")
+
+    mock_approval_manager.assert_called_once_with(redis_client=fake_redis_client)
+    mock_task_manager.assert_called_once_with(redis_client=fake_redis_client)
+    fake_manager.get_resume_state.assert_awaited_once_with("task-1")
+    fake_task_manager.get_task_state.assert_awaited_once_with("task-1")
+    fake_manager.save_resume_state.assert_awaited_once()

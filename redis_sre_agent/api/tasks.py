@@ -56,6 +56,28 @@ async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskR
     )
 
 
+async def _enqueue_resume_task(
+    *,
+    docket: Docket,
+    task_id: str,
+    approval_id: str,
+    decision,
+    decision_by: str | None,
+    decision_comment: str | None,
+):
+    """Schedule the resume worker using Docket's returned scheduler callable."""
+
+    decision_value = decision.value if hasattr(decision, "value") else decision
+    schedule_resume = docket.add(resume_task_after_approval, key=task_id)
+    return await schedule_resume(
+        task_id=task_id,
+        approval_id=approval_id,
+        decision=decision_value,
+        decision_by=decision_by,
+        decision_comment=decision_comment,
+    )
+
+
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
     context = dict(req.context or {})
@@ -145,8 +167,8 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
         await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
         resume_requested = True
         async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-            task_func = docket.add(resume_task_after_approval, key=task_id)
-            await task_func(
+            await _enqueue_resume_task(
+                docket=docket,
                 task_id=task_id,
                 approval_id=req.approval_id,
                 decision=req.decision,
