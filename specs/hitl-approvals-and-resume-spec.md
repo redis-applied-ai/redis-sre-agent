@@ -1,9 +1,8 @@
-# Phase 2 HITL Approvals and Resume Spec
+# HITL Approvals and Resume Spec
 
 Status: Proposed
 
 Related:
-- Confluence: `SRE Agent Phase Two Scope: Human-in-the-Loop`
 - `specs/natural-language-target-discovery-spec.md`
 - `specs/late-discovery-default-migration-spec.md`
 - `specs/redis-cluster-instance-split-implementation-plan.md`
@@ -21,7 +20,7 @@ The current runtime already has the right high-level pieces:
 - handle-backed target discovery and authenticated tool loading
 - Redis already available as the persistence backend
 
-What is missing is the remaining Phase 2 glue:
+What is missing is the remaining approvals and resume glue:
 
 - a durable graph checkpoint per task turn
 - an approval record and decision lifecycle

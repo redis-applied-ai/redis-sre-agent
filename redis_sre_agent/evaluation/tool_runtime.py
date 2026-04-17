@@ -26,6 +26,11 @@ def _normalize_operation(value: str) -> str:
     return str(value or "").strip().lower().replace("-", "_")
 
 
+def _normalize_target_handle(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    return normalized or None
+
+
 def _value_matches(expected: Any, actual: Any) -> bool:
     if isinstance(expected, dict):
         if not isinstance(actual, Mapping):
@@ -69,7 +74,7 @@ class FixtureBehaviorResolver:
         self,
         *,
         scenario: EvalScenario,
-        behaviors: Mapping[tuple[str, str, str | None], EvalToolBehavior],
+        behaviors: Mapping[tuple[str, str, str | None, str | None], EvalToolBehavior],
         state: FixtureBehaviorState | None = None,
     ) -> None:
         self._scenario = scenario
@@ -81,11 +86,26 @@ class FixtureBehaviorResolver:
         *,
         provider_family: str,
         operation: str,
+        target_handle: str | None = None,
         server_name: str | None = None,
     ) -> EvalToolBehavior | None:
         return self._behaviors.get(
-            (provider_family, operation, server_name)
-        ) or self._behaviors.get((provider_family, operation, None))
+            (
+                provider_family,
+                operation,
+                _normalize_target_handle(target_handle),
+                server_name,
+            )
+        ) or self._behaviors.get(
+            (provider_family, operation, None, server_name)
+        ) or self._behaviors.get(
+            (
+                provider_family,
+                operation,
+                _normalize_target_handle(target_handle),
+                None,
+            )
+        ) or self._behaviors.get((provider_family, operation, None, None))
 
     def _materialize_fixture_value(self, value: Any) -> Any:
         if not isinstance(value, str):
@@ -228,6 +248,7 @@ class FixtureBehaviorResolver:
         behavior = self._lookup_behavior(
             provider_family=provider_family,
             operation=operation,
+            target_handle=target_handle,
             server_name=server_name,
         )
         if behavior is None:
@@ -255,7 +276,7 @@ class FixtureToolRuntime(EvalToolRuntime):
         self,
         *,
         scenario: EvalScenario,
-        provider_behaviors: Mapping[tuple[str, str, str | None], EvalToolBehavior],
+        provider_behaviors: Mapping[tuple[str, str, str | None, str | None], EvalToolBehavior],
         state: FixtureBehaviorState | None = None,
     ) -> None:
         self._resolver = FixtureBehaviorResolver(
@@ -265,11 +286,21 @@ class FixtureToolRuntime(EvalToolRuntime):
         )
         self._declared_provider_keys = {
             (provider_family, server_name)
-            for provider_family, _operation, server_name in provider_behaviors
+            for provider_family, _operation, _target_handle, server_name in provider_behaviors
         }
 
-    def _lookup_behavior(self, *, provider_family: str, operation: str) -> EvalToolBehavior | None:
-        return self._resolver._lookup_behavior(provider_family=provider_family, operation=operation)
+    def _lookup_behavior(
+        self,
+        *,
+        provider_family: str,
+        operation: str,
+        target_handle: str | None = None,
+    ) -> EvalToolBehavior | None:
+        return self._resolver._lookup_behavior(
+            provider_family=provider_family,
+            operation=operation,
+            target_handle=target_handle,
+        )
 
     async def dispatch_tool_call(
         self,
@@ -288,6 +319,7 @@ class FixtureToolRuntime(EvalToolRuntime):
         behavior = self._lookup_behavior(
             provider_family=identity.provider_family,
             operation=identity.operation,
+            target_handle=identity.target_handle,
         )
         if behavior is None:
             if (identity.provider_family, identity.server_name) in self._declared_provider_keys:
@@ -316,13 +348,22 @@ def build_fixture_tool_runtime(
 ) -> FixtureToolRuntime | None:
     """Build a scenario-backed provider override registry, if the scenario declares one."""
 
-    provider_behaviors: dict[tuple[str, str, str | None], EvalToolBehavior] = {}
+    provider_behaviors: dict[tuple[str, str, str | None, str | None], EvalToolBehavior] = {}
     for provider_family, operation_map in scenario.tools.providers.items():
         normalized_provider_family = normalize_provider_family(provider_family)
         for operation, behavior in operation_map.items():
             provider_behaviors[
-                (normalized_provider_family, _normalize_operation(operation), None)
+                (normalized_provider_family, _normalize_operation(operation), None, None)
             ] = behavior
+            for target_handle, target_behavior in behavior.target_overrides.items():
+                provider_behaviors[
+                    (
+                        normalized_provider_family,
+                        _normalize_operation(operation),
+                        _normalize_target_handle(target_handle),
+                        None,
+                    )
+                ] = target_behavior
 
     if not provider_behaviors:
         return None

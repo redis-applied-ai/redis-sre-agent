@@ -350,6 +350,12 @@ class _EvalTargetCatalogDiscoveryBackend:
         )
 
 
+def _build_eval_target_catalog_docs(scenario: EvalScenario) -> list[TargetCatalogDoc]:
+    """Return scenario-backed catalog docs for eval discovery and inventory tools."""
+
+    return [_build_eval_target_catalog_doc(entry) for entry in scenario.scope.target_catalog]
+
+
 def _build_eval_target_registry(scenario: EvalScenario) -> TargetIntegrationRegistry | None:
     """Install a scenario-backed discovery backend while reusing production binders."""
 
@@ -382,6 +388,13 @@ def _target_registry_override_scope(
     if registry is None:
         return nullcontext()
 
+    catalog_docs = _build_eval_target_catalog_docs(scenario)
+
+    async def _get_eval_target_catalog(*, user_id: str | None = None) -> list[TargetCatalogDoc]:
+        if not user_id:
+            return list(catalog_docs)
+        return [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+
     stack = ExitStack()
     for target in (
         "redis_sre_agent.targets.services.get_target_integration_registry",
@@ -389,6 +402,9 @@ def _target_registry_override_scope(
         "redis_sre_agent.core.targets.get_target_integration_registry",
     ):
         stack.enter_context(patch(target, return_value=registry))
+    stack.enter_context(
+        patch("redis_sre_agent.core.targets.get_target_catalog", new=_get_eval_target_catalog)
+    )
     return stack
 
 

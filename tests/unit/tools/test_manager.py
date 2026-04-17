@@ -156,6 +156,7 @@ async def test_tool_manager_knowledge_tools():
         # Knowledge tools (always loaded)
         assert len(knowledge_tools) == 8
         assert any("target_discovery_" in n and "resolve_redis_targets" in n for n in tool_names)
+        assert any("target_discovery_" in n and "list_known_redis_targets" in n for n in tool_names)
         assert any("search" in n for n in knowledge_tools)
         assert any("ingest" in n for n in knowledge_tools)
         assert any("get_all_fragments" in n for n in knowledge_tools)

@@ -136,7 +136,7 @@ def build_fixture_mcp_runtime(
     for server_name, server_config in scenario.tools.mcp_servers.items():
         capability = _coerce_capability(server_config.capability)
         behaviors = {
-            ("mcp", _normalize_operation(operation), server_name): behavior
+            ("mcp", _normalize_operation(operation), None, server_name): behavior
             for operation, behavior in server_config.tools.items()
         }
         resolver = FixtureBehaviorResolver(

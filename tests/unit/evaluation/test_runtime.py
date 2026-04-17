@@ -12,6 +12,7 @@ from redis_sre_agent.agent.chat_agent import ChatAgent
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.agent.router import AgentType
 from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
+from redis_sre_agent.core.approvals import ApprovalRecord
 from redis_sre_agent.core.config import MCPServerConfig
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.tasks import TaskMetadata, TaskState, TaskStatus, TaskUpdate
@@ -34,7 +35,14 @@ from redis_sre_agent.targets.contracts import (
 )
 from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.manager import ToolManager
-from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
+from redis_sre_agent.tools.manager import settings as tool_manager_settings
+from redis_sre_agent.tools.models import (
+    Tool,
+    ToolActionKind,
+    ToolCapability,
+    ToolDefinition,
+    ToolMetadata,
+)
 from redis_sre_agent.tools.protocols import ToolProvider
 
 
@@ -446,6 +454,86 @@ class _EvalRedisCommandBindingStrategy:
         )
 
 
+class _EvalApprovalProvider(ToolProvider):
+    actual_call_count = 0
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.actual_call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "change_control"
+
+    def create_tool_schemas(self):
+        return [
+            ToolDefinition(
+                name=self._make_tool_name("enable_maintenance_mode"),
+                description="Enable maintenance mode for a target.",
+                capability=ToolCapability.UTILITIES,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "reason": {"type": "string"},
+                    },
+                },
+            )
+        ]
+
+    def tools(self) -> list[Tool]:
+        schema = self.create_tool_schemas()[0]
+
+        async def _invoke(args):
+            type(self).actual_call_count += 1
+            return {
+                "status": "ok",
+                "reason": args.get("reason"),
+                "target_handle": getattr(self.redis_instance, "id", None),
+            }
+
+        return [
+            Tool(
+                metadata=ToolMetadata(
+                    name=schema.name,
+                    description=schema.description,
+                    capability=schema.capability,
+                    provider_name=self.provider_name,
+                    requires_instance=self.requires_redis_instance,
+                    action_kind=ToolActionKind.WRITE,
+                ),
+                definition=schema,
+                invoke=_invoke,
+            )
+        ]
+
+
+class _EvalApprovalBindingStrategy:
+    strategy_name = "eval_approval_runtime_strategy"
+
+    async def bind(self, request):
+        target_handle = request.handle_record.target_handle
+        instance = RedisInstance(
+            id=target_handle,
+            name=request.handle_record.public_summary.display_name,
+            connection_url="redis://fixture.invalid:6379/0",
+            environment="production",
+            usage="custom",
+            description="fixture approval target",
+            instance_type="oss_single",
+        )
+        return BindingResult(
+            public_summary=request.handle_record.public_summary,
+            provider_loads=[
+                ProviderLoadRequest(
+                    provider_path="tests.unit.evaluation.test_runtime._EvalApprovalProvider",
+                    provider_key=f"target:{target_handle}:change_control",
+                    target_handle=target_handle,
+                    provider_context={"redis_instance_override": instance},
+                )
+            ],
+        )
+
+
 class _MemoryThreadManager:
     threads: dict[str, Thread] = {}
     traces: dict[str, dict[str, object]] = {}
@@ -554,6 +642,14 @@ class _MemoryTaskManager:
         task.status = TaskStatus.FAILED
         return True
 
+    async def set_pending_approval(self, task_id, pending_approval):
+        type(self).tasks[task_id].pending_approval = pending_approval
+        return True
+
+    async def set_resume_supported(self, task_id, resume_supported):
+        type(self).tasks[task_id].resume_supported = resume_supported
+        return True
+
     async def get_task_state(self, task_id):
         return type(self).tasks.get(task_id)
 
@@ -575,6 +671,27 @@ class _MemoryHandleStore:
 
     async def get_records(self, target_handles):
         return {handle: self.records[handle] for handle in target_handles if handle in self.records}
+
+
+class _MemoryApprovalManager:
+    approvals: dict[str, ApprovalRecord] = {}
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.approvals = {}
+
+    def __init__(self, *, redis_client=None):
+        self.redis_client = redis_client
+
+    async def create_approval(self, record):
+        type(self).approvals[record.approval_id] = record
+        return record
+
+    async def get_approval(self, approval_id):
+        return type(self).approvals.get(approval_id)
+
+    async def get_resume_state(self, task_id):
+        return None
 
 
 @pytest.mark.asyncio
@@ -1179,6 +1296,256 @@ async def test_run_full_turn_scenario_mounts_fake_mcp_catalog_and_invokes_real_p
 
 
 @pytest.mark.asyncio
+async def test_run_full_turn_scenario_transitions_to_awaiting_approval_for_write_tool(
+    monkeypatch,
+):
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "runtime-write-tool-awaits-approval",
+            "name": "Runtime write tool awaits approval",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-16",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "Enable maintenance mode for the current target.",
+                "route_via_router": False,
+                "agent": "chat",
+            },
+        }
+    )
+
+    class FakeChatAgent:
+        async def process_query(
+            self,
+            query,
+            session_id,
+            user_id,
+            max_iterations=10,
+            context=None,
+            progress_emitter=None,
+            conversation_history=None,
+        ):
+            async with ToolManager(
+                thread_id=context["turn_scope"]["thread_id"],
+                task_id=context["task_id"],
+                user_id=user_id,
+            ) as tool_mgr:
+                tool_name = next(
+                    tool.name
+                    for tool in tool_mgr.get_tools()
+                    if tool.name.startswith("change_control_")
+                    and tool.name.endswith("enable_maintenance_mode")
+                )
+                await tool_mgr.resolve_tool_call(
+                    tool_name,
+                    {"reason": "planned maintenance"},
+                )
+            raise AssertionError("approval gate should interrupt before the tool executes")
+
+    _EvalApprovalProvider.reset()
+    _MemoryApprovalManager.reset()
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr(tool_manager_settings, "agent_permission_mode", "read_write")
+    monkeypatch.setattr(tool_manager_settings, "agent_approval_ttl_seconds", 900)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr(ToolManager, "_always_on_providers", [
+        "tests.unit.evaluation.test_runtime._EvalApprovalProvider"
+    ])
+    monkeypatch.setattr(ToolManager, "_load_mcp_providers", AsyncMock())
+    monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
+
+    with (
+        patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=FakeChatAgent()),
+        patch(
+            "redis_sre_agent.tools.manager.ApprovalManager",
+            _MemoryApprovalManager,
+        ),
+    ):
+        result = await run_full_turn_scenario(
+            scenario,
+            user_id="user-123",
+            session_id="session-123",
+            redis_client=object(),
+        )
+
+    pending = result.turn_result["pending_approval"]
+    stored_task = _MemoryTaskManager.tasks[result.task_id]
+    approval_record = next(iter(_MemoryApprovalManager.approvals.values()))
+
+    assert result.task_status == "awaiting_approval"
+    assert result.turn_result["status"] == "awaiting_approval"
+    assert result.turn_result["resume_supported"] is True
+    assert pending["approval_id"] == approval_record.approval_id
+    assert pending["tool_name"] == approval_record.tool_name
+    assert stored_task.pending_approval is not None
+    assert stored_task.pending_approval.approval_id == approval_record.approval_id
+    assert stored_task.resume_supported is True
+    assert _EvalApprovalProvider.actual_call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_supports_discovery_first_approval_pause(
+    monkeypatch,
+):
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "runtime-discovery-first-write-awaits-approval",
+            "name": "Runtime discovery-first write awaits approval",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-16",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "Enable maintenance mode on checkout cache prod.",
+                "route_via_router": False,
+                "agent": "chat",
+            },
+            "scope": {
+                "turn_scope": {
+                    "resolution_policy": "allow_zero_scope",
+                    "automation_mode": "interactive",
+                },
+                "target_catalog": [
+                    {
+                        "handle": "tgt_instance_checkout",
+                        "kind": "instance",
+                        "resource_id": "inst-checkout-cache",
+                        "display_name": "checkout-cache-prod",
+                        "cluster_type": "oss_single",
+                        "capabilities": ["diagnostics"],
+                        "public_metadata": {
+                            "environment": "production",
+                            "usage": "cache",
+                            "aliases": ["checkout cache prod", "checkout cache"],
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    base_registry = TargetIntegrationRegistry(
+        default_discovery_backend="eval_target_catalog",
+        default_binding_strategy="eval_approval_runtime_strategy",
+    )
+    base_registry.register_binding_strategy(_EvalApprovalBindingStrategy())
+    handle_store = _MemoryHandleStore()
+
+    class FakeChatAgent:
+        async def process_query(
+            self,
+            query,
+            session_id,
+            user_id,
+            max_iterations=10,
+            context=None,
+            progress_emitter=None,
+            conversation_history=None,
+        ):
+            async with ToolManager(
+                thread_id=context["turn_scope"]["thread_id"],
+                task_id=context["task_id"],
+                user_id=user_id,
+            ) as tool_mgr:
+                resolve_tool = next(
+                    tool.name
+                    for tool in tool_mgr.get_tools()
+                    if tool.name.startswith("target_discovery_")
+                    and tool.name.endswith("resolve_redis_targets")
+                )
+                resolution = await tool_mgr.resolve_tool_call(
+                    resolve_tool,
+                    {
+                        "query": "checkout cache prod",
+                        "attach_tools": True,
+                    },
+                )
+                write_tool = next(
+                    tool.name
+                    for tool in tool_mgr.get_tools()
+                    if tool.name.startswith("change_control_")
+                    and tool.name.endswith("enable_maintenance_mode")
+                )
+                assert resolution["status"] == "resolved"
+                await tool_mgr.resolve_tool_call(
+                    write_tool,
+                    {"reason": "maintenance rollout"},
+                )
+            raise AssertionError("approval gate should interrupt before the tool executes")
+
+    _EvalApprovalProvider.reset()
+    _MemoryApprovalManager.reset()
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr(tool_manager_settings, "agent_permission_mode", "read_write")
+    monkeypatch.setattr(tool_manager_settings, "agent_approval_ttl_seconds", 900)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.targets.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.targets.get_redis_client", lambda: object())
+    monkeypatch.setattr(
+        "redis_sre_agent.core.targets.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.targets.services.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.tools.manager.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.evaluation.runtime.get_target_integration_registry",
+        lambda: base_registry,
+    )
+    monkeypatch.setattr(
+        ToolManager,
+        "_always_on_providers",
+        ["redis_sre_agent.tools.target_discovery.provider.TargetDiscoveryToolProvider"],
+    )
+    monkeypatch.setattr(ToolManager, "_load_mcp_providers", AsyncMock())
+    monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
+
+    with (
+        patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=FakeChatAgent()),
+        patch(
+            "redis_sre_agent.tools.manager.ApprovalManager",
+            _MemoryApprovalManager,
+        ),
+    ):
+        result = await run_full_turn_scenario(
+            scenario,
+            user_id="user-123",
+            session_id="session-123",
+            redis_client=object(),
+        )
+
+    pending = result.turn_result["pending_approval"]
+    approval_record = next(iter(_MemoryApprovalManager.approvals.values()))
+
+    assert result.turn_context["turn_scope"]["scope_kind"] == "zero_scope"
+    assert result.task_status == "awaiting_approval"
+    assert result.turn_result["status"] == "awaiting_approval"
+    assert pending["approval_id"] == approval_record.approval_id
+    assert len(approval_record.target_handles) == 1
+    assert pending["summary"].endswith(f"on {approval_record.target_handles[0]}")
+    assert _EvalApprovalProvider.actual_call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_run_full_turn_scenario_installs_fixture_knowledge_backend_for_turn_processor(
     monkeypatch,
     tmp_path: Path,
@@ -1572,6 +1939,159 @@ async def test_run_full_turn_scenario_supports_discovery_first_target_attachment
         {"uid": 101, "name": "payments-cache-prod"},
         {"uid": 102, "name": "payments-ledger-prod"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_virtualizes_known_target_inventory_before_attachment(
+    monkeypatch,
+):
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "eval-known-targets-then-connect",
+            "name": "Eval known targets then connect",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-13",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "What targets do you know about, and what databases are on payments east enterprise cluster?",
+                "route_via_router": False,
+                "agent": "redis_chat",
+            },
+            "scope": {
+                "turn_scope": {
+                    "resolution_policy": "allow_zero_scope",
+                    "automation_mode": "interactive",
+                },
+                "target_catalog": [
+                    {
+                        "handle": "tgt_checkout_cache_prod",
+                        "kind": "instance",
+                        "resource_id": "redis-prod-checkout-cache",
+                        "display_name": "prod checkout cache",
+                        "capabilities": ["diagnostics"],
+                        "public_metadata": {
+                            "environment": "production",
+                            "usage": "cache",
+                            "status": "healthy",
+                            "target_type": "oss_single",
+                        },
+                    },
+                    {
+                        "handle": "tgt_payments_east_cluster",
+                        "kind": "cluster",
+                        "resource_id": "cluster-payments-east",
+                        "display_name": "payments east enterprise cluster",
+                        "cluster_type": "redis_enterprise",
+                        "capabilities": ["admin", "diagnostics"],
+                        "public_metadata": {
+                            "environment": "production",
+                            "usage": "cache",
+                            "status": "healthy",
+                            "aliases": ["payments east cluster"],
+                        },
+                    },
+                ],
+            },
+            "tools": {
+                "re_admin": {
+                    "list_databases": {
+                        "result": {
+                            "databases": [
+                                {"uid": 101, "name": "payments-cache-prod"},
+                                {"uid": 102, "name": "payments-ledger-prod"},
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+    handle_store = _MemoryHandleStore()
+
+    async def turn_processor(**kwargs):
+        async with ToolManager(
+            thread_id=kwargs["thread_id"],
+            task_id=kwargs["task_id"],
+            user_id="user-123",
+        ) as tool_mgr:
+            inventory_tool = next(
+                tool.name
+                for tool in tool_mgr.get_tools()
+                if tool.name.startswith("target_discovery_")
+                and tool.name.endswith("list_known_redis_targets")
+            )
+            inventory = await tool_mgr.resolve_tool_call(
+                inventory_tool,
+                {"include_aliases": True},
+            )
+            resolve_tool = next(
+                tool.name
+                for tool in tool_mgr.get_tools()
+                if tool.name.startswith("target_discovery_")
+                and tool.name.endswith("resolve_redis_targets")
+            )
+            resolution = await tool_mgr.resolve_tool_call(
+                resolve_tool,
+                {
+                    "query": "payments east enterprise cluster",
+                    "attach_tools": True,
+                },
+            )
+            list_tool = next(
+                tool.name
+                for tool in tool_mgr.get_tools()
+                if tool.name.startswith("re_admin_") and tool.name.endswith("list_databases")
+            )
+            databases = await tool_mgr.resolve_tool_call(list_tool, {})
+            return {
+                "inventory": inventory,
+                "resolution": resolution,
+                "databases": databases,
+            }
+
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.targets.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.targets.get_redis_client", lambda: object())
+    monkeypatch.setattr(
+        "redis_sre_agent.core.targets.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.targets.services.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.tools.manager.get_target_handle_store",
+        lambda: handle_store,
+    )
+    monkeypatch.setattr(ToolManager, "_load_mcp_providers", AsyncMock())
+    monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
+
+    result = await run_full_turn_scenario(
+        scenario,
+        user_id="user-123",
+        session_id="session-123",
+        redis_client=object(),
+        turn_processor=turn_processor,
+    )
+
+    inventory = result.turn_result["inventory"]
+    assert inventory["status"] == "ok"
+    assert inventory["total_known_targets"] == 2
+    assert {target["display_name"] for target in inventory["targets"]} == {
+        "prod checkout cache",
+        "payments east enterprise cluster",
+    }
+    assert result.turn_result["resolution"]["status"] == "resolved"
+    assert result.turn_result["databases"]["databases"][0]["name"] == "payments-cache-prod"
 
 
 @pytest.mark.asyncio

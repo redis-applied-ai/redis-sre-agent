@@ -242,6 +242,14 @@ class TestChatAgentSystemPrompt:
         """Test that the system prompt mentions tool usage."""
         assert "tool" in CHAT_SYSTEM_PROMPT.lower()
 
+    def test_system_prompt_guides_target_discovery_inventory_and_comparison(self):
+        """Test that the prompt guides listing, resolution, and multi-target comparisons."""
+        prompt_lower = CHAT_SYSTEM_PROMPT.lower()
+        assert "list_known_redis_targets" in CHAT_SYSTEM_PROMPT
+        assert "resolve_redis_targets" in CHAT_SYSTEM_PROMPT
+        assert "allow_multiple=true" in CHAT_SYSTEM_PROMPT
+        assert "what redis targets you know about" in prompt_lower
+
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
         assert "Enterprise" in CHAT_SYSTEM_PROMPT or "Cloud" in CHAT_SYSTEM_PROMPT

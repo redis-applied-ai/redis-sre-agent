@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from redis_sre_agent.core.targets import bind_target_matches, resolve_target_query
+from redis_sre_agent.core.targets import bind_target_matches, list_known_targets, resolve_target_query
 from redis_sre_agent.targets.contracts import DiscoveryResponse
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 from redis_sre_agent.tools.protocols import ToolProvider
@@ -23,6 +23,52 @@ class TargetDiscoveryToolProvider(ToolProvider):
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         return [
+            ToolDefinition(
+                name=self._make_tool_name("list_known_redis_targets"),
+                description=(
+                    "List the safe Redis targets currently known in your target catalog. "
+                    "Use this when the user asks what Redis targets, instances, databases, "
+                    "or clusters you know about without naming a specific one yet. "
+                    "This does not attach live tools."
+                ),
+                capability=ToolCapability.UTILITIES,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "target_kind": {
+                            "type": "string",
+                            "enum": ["instance", "cluster"],
+                            "description": "Optional filter for instance or cluster targets.",
+                        },
+                        "environment": {
+                            "type": "string",
+                            "description": "Optional environment filter such as production or staging.",
+                        },
+                        "capability": {
+                            "type": "string",
+                            "description": "Optional required capability such as diagnostics, admin, cloud, metrics, or logs.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of known targets to return.",
+                            "default": 20,
+                            "minimum": 1,
+                            "maximum": 100,
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Number of known targets to skip before returning results.",
+                            "default": 0,
+                            "minimum": 0,
+                        },
+                        "include_aliases": {
+                            "type": "boolean",
+                            "description": "Whether to include safe search aliases in public metadata.",
+                            "default": False,
+                        },
+                    },
+                },
+            ),
             ToolDefinition(
                 name=self._make_tool_name("resolve_redis_targets"),
                 description=(
@@ -67,6 +113,31 @@ class TargetDiscoveryToolProvider(ToolProvider):
                 },
             )
         ]
+
+    async def list_known_redis_targets(
+        self,
+        target_kind: Optional[str] = None,
+        environment: Optional[str] = None,
+        capability: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+        include_aliases: bool = False,
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "_manager", None)
+        user_id = getattr(manager, "user_id", None)
+        toolset_generation = manager.get_toolset_generation() if manager else 0
+
+        payload = await list_known_targets(
+            user_id=user_id,
+            target_kind=target_kind,
+            environment=environment,
+            capability=capability,
+            limit=limit,
+            offset=offset,
+            include_aliases=include_aliases,
+        )
+        payload["toolset_generation"] = toolset_generation
+        return payload
 
     async def resolve_redis_targets(
         self,

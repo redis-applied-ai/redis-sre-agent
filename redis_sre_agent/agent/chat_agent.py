@@ -91,6 +91,12 @@ For metrics/logs:
 - Be specific with queries - broad queries return too much data
 - Fetch one metric or log query at a time
 
+For target discovery:
+- If the user asks what Redis targets you know about, call `list_known_redis_targets`
+- If the user describes a target but has not given `instance_id` or `cluster_id`, call `resolve_redis_targets` before making live-state claims
+- If the user asks to compare or investigate multiple targets, call `resolve_redis_targets` with `allow_multiple=true`, keep the attached target set, and gather evidence per target before comparing
+- If the user asks both "what do you know about?" and asks to drill into one target in the same turn, list first, then resolve the chosen target and continue with the attached live tools
+
 For historical incident context (if `tickets` tools are available):
 - Use tickets tools instead of general knowledge search because general knowledge search excludes support tickets
 - Search support tickets with concrete identifiers (cluster name/host, error strings)

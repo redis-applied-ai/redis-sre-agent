@@ -16,6 +16,7 @@ from redis_sre_agent.evaluation.fixture_layout import (
     golden_expected_response_path,
     golden_metadata_path,
     scenario_manifest_path,
+    shared_fixtures_dir,
 )
 from redis_sre_agent.evaluation.knowledge_backend import build_fixture_knowledge_backend
 from redis_sre_agent.evaluation.runtime import load_eval_scenario
@@ -101,6 +102,42 @@ def _normalize_assertion_payload(payload: dict) -> dict:
         ("knowledge-agent-no-live-access", "knowledge_only", KnowledgeMode.FULL, "prompt-core"),
         ("safety-no-destructive-commands", "chat", KnowledgeMode.STARTUP_ONLY, "prompt-core"),
         (
+            "target-discovery-instance-evictions",
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "target-discovery-cluster-database-list",
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "target-discovery-ambiguous-cache",
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "target-discovery-known-targets-inventory",
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "target-discovery-multi-target-comparison",
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "target-discovery-known-targets-then-connect",
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
             "sev1-escalation-policy",
             "knowledge_only",
             KnowledgeMode.STARTUP_ONLY,
@@ -119,7 +156,16 @@ def test_prompt_scenarios_load_from_authoritative_fixture_layout(
 
     expected_lane = (
         ExecutionLane.FULL_TURN
-        if scenario_id == "chat-iterative-tool-use"
+        if scenario_id
+        in {
+            "chat-iterative-tool-use",
+            "target-discovery-instance-evictions",
+            "target-discovery-cluster-database-list",
+            "target-discovery-ambiguous-cache",
+            "target-discovery-known-targets-inventory",
+            "target-discovery-multi-target-comparison",
+            "target-discovery-known-targets-then-connect",
+        }
         else ExecutionLane.AGENT_ONLY
     )
 
@@ -237,6 +283,24 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
     )
     safety = load_eval_scenario(scenario_manifest_path("prompt", "safety-no-destructive-commands"))
     sev1 = load_eval_scenario(scenario_manifest_path("prompt", "sev1-escalation-policy"))
+    target_instance = load_eval_scenario(
+        scenario_manifest_path("prompt", "target-discovery-instance-evictions")
+    )
+    target_cluster = load_eval_scenario(
+        scenario_manifest_path("prompt", "target-discovery-cluster-database-list")
+    )
+    target_ambiguous = load_eval_scenario(
+        scenario_manifest_path("prompt", "target-discovery-ambiguous-cache")
+    )
+    target_inventory = load_eval_scenario(
+        scenario_manifest_path("prompt", "target-discovery-known-targets-inventory")
+    )
+    target_multi = load_eval_scenario(
+        scenario_manifest_path("prompt", "target-discovery-multi-target-comparison")
+    )
+    target_inventory_connect = load_eval_scenario(
+        scenario_manifest_path("prompt", "target-discovery-known-targets-then-connect")
+    )
 
     assert knowledge_only.expectations.required_findings == [
         "do not have access to specific Redis instances or live system data",
@@ -249,11 +313,34 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         "escalate immediately",
         "page the incident commander",
     ]
+    assert target_instance.expectations.required_tool_calls[0].provider_family == "target_discovery"
+    assert target_cluster.expectations.required_tool_calls[1].operation == "list_databases"
+    assert target_ambiguous.expectations.forbidden_tool_calls[0].operation == "info"
+    assert target_inventory.expectations.required_tool_calls[0].operation == "list_known_redis_targets"
+    assert target_inventory.expectations.forbidden_claims == [
+        "do not have an auto-enumerable list",
+        "ask me for a search term first",
+    ]
+    assert target_multi.expectations.required_tool_calls[1].target_handle == "tgt_checkout_cache_prod"
+    assert target_multi.expectations.required_tool_calls[2].target_handle == "tgt_session_cache_prod"
+    assert (
+        target_inventory_connect.expectations.required_tool_calls[0].operation
+        == "list_known_redis_targets"
+    )
+    assert target_inventory_connect.expectations.required_tool_calls[2].target_handle == (
+        "tgt_payments_east_cluster"
+    )
 
     expected_metadata = {
         "chat-iterative-tool-use": "prompt-core",
         "knowledge-agent-no-live-access": "prompt-core",
         "safety-no-destructive-commands": "prompt-core",
+        "target-discovery-instance-evictions": "prompt-core",
+        "target-discovery-cluster-database-list": "prompt-core",
+        "target-discovery-ambiguous-cache": "prompt-core",
+        "target-discovery-known-targets-inventory": "prompt-core",
+        "target-discovery-multi-target-comparison": "prompt-core",
+        "target-discovery-known-targets-then-connect": "prompt-core",
         "sev1-escalation-policy": "prompt-policy-curated",
     }
     for scenario_id, source_pack in expected_metadata.items():
@@ -295,3 +382,6 @@ def test_prompt_scenario_corpora_ship_authoritative_manifests_and_core_fixtures(
     assert prompt_policy_provenance["source_pack"] == "prompt-policy-curated"
     assert _normalize_loaded_date(prompt_policy_provenance["source_pack_version"]) == "2026-04-14"
     assert (prompt_policy_root / "documents" / "sev1-escalation-policy.md").exists()
+    assert (
+        shared_fixtures_dir("startup/policies") / "target-discovery-before-live-access.md"
+    ).exists()
