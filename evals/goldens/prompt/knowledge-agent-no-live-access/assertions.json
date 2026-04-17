@@ -1,0 +1,25 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "info"
+    },
+    {
+      "provider_family": "redis_enterprise_admin",
+      "operation": "get_cluster_info"
+    }
+  ],
+  "required_findings": [
+    "do not have access to specific Redis instances or live system data",
+    "use the full SRE agent with instance context"
+  ],
+  "forbidden_claims": [
+    "i checked your redis instance",
+    "run get_cluster_info"
+  ],
+  "required_sources": [
+    "no-live-instance-claims",
+    "RET-9001"
+  ]
+}

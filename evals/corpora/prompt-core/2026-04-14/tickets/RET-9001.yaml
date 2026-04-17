@@ -1,0 +1,11 @@
+document_hash: RET-9001
+name: RET-9001
+title: Checkout cache memory pressure follow-up
+doc_type: support_ticket
+priority: high
+summary: Prior incident required handing live validation to the attached-target workflow and checking memory evidence first.
+source: fixture://corpora/prompt-core/2026-04-14/tickets/RET-9001.yaml
+content: |
+  A prior checkout-cache incident required live validation via the full SRE agent.
+  The knowledge-only path was used for guidance, then the on-call confirmed memory
+  pressure with INFO memory and MEMORY STATS in the live workflow.

@@ -1,0 +1,45 @@
+id: sources/pinned-sev1-escalation-policy
+name: Pinned Sev1 policy drives escalation
+description: Ensure startup-only pinned policy content is followed for customer-visible multi-region failovers.
+
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-policy-curated
+  source_pack_version: 2026-04-14
+  derived_from:
+    - evals/corpora/prompt-policy-curated/2026-04-14/documents/sev1-escalation-policy.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/sources/pinned-sev1-escalation-policy/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    Customers across two regions are seeing repeated failovers. Can this wait until tomorrow
+    morning, or what should happen now?
+  max_tool_steps: 3
+  llm_mode: replay
+
+knowledge:
+  mode: startup_only
+  version: latest
+  pinned_documents:
+    - ../../../corpora/prompt-policy-curated/2026-04-14/documents/sev1-escalation-policy.md
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls: []
+  required_findings:
+    - escalate immediately
+    - page the incident commander
+  forbidden_claims:
+    - wait until tomorrow
+    - wait until business hours
+  required_sources:
+    - sev1-escalation-policy

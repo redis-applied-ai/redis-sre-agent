@@ -1,0 +1,37 @@
+schema_version: "1"
+profiles:
+  scheduled_live:
+    baseline_id: live-agent-only-smoke-v1
+    update_allowed: false
+    max_failed_scenarios: 0
+    update_rule: manual_review_only
+    judge_score_variance_band: 3.0
+    notes:
+      - Scheduled runs are regression sentinels and must not auto-update baselines.
+      - Investigate failing scenarios before changing the stored baseline.
+    allowed_triggers:
+      - schedule
+      - workflow_dispatch
+    review_required: true
+    acceptable_variance:
+      overall_score_max_drop: 3.0
+      missing_required_findings_max_delta: 1
+      missing_required_sources_max_delta: 1
+      hard_assertion_failures_allowed: 0
+  manual_update:
+    baseline_id: live-agent-only-smoke-v1
+    update_allowed: true
+    max_failed_scenarios: 0
+    update_rule: human_reviewed_refresh
+    judge_score_variance_band: 0.0
+    notes:
+      - Manual updates are allowed only after explicit human review.
+      - Baseline refreshes should be triggered from workflow_dispatch runs.
+    allowed_triggers:
+      - workflow_dispatch
+    review_required: true
+    acceptable_variance:
+      overall_score_max_drop: 0.0
+      missing_required_findings_max_delta: 0
+      missing_required_sources_max_delta: 0
+      hard_assertion_failures_allowed: 0

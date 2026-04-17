@@ -187,6 +187,34 @@ class TestPipelineOrchestrator:
         assert result["scrapers_run"] == ["redis_docs"]
 
     @pytest.mark.asyncio
+    async def test_run_scraping_pipeline_emits_progress(self, orchestrator):
+        """Scraping pipeline should report scraper start and completion events."""
+        mock_result = {"documents_scraped": 1, "success": True}
+        sample_doc = [
+            ScrapedDocument(
+                title="Test",
+                content="Content",
+                source_url="https://test.com",
+                category=DocumentCategory.OSS,
+                doc_type=DocumentType.DOCUMENTATION,
+                severity=SeverityLevel.MEDIUM,
+            )
+        ]
+        progress_callback = AsyncMock()
+
+        orchestrator.scrapers["redis_docs"].run_scraping_job = AsyncMock(return_value=mock_result)
+        orchestrator.scrapers["redis_docs"].scraped_documents = sample_doc
+
+        with patch.object(orchestrator.storage, "save_batch_manifest") as mock_save:
+            mock_save.return_value = Path("/test/manifest.json")
+            await orchestrator.run_scraping_pipeline(
+                scrapers=["redis_docs"], progress_callback=progress_callback
+            )
+
+        progress_types = [call.args[1] for call in progress_callback.await_args_list]
+        assert progress_types == ["pipeline_scraper_start", "pipeline_scraper_complete"]
+
+    @pytest.mark.asyncio
     async def test_run_ingestion_pipeline_success(self, orchestrator, tmp_path):
         """Test successful ingestion pipeline execution."""
         batch_date = "2025-01-20"
@@ -269,6 +297,25 @@ class TestPipelineOrchestrator:
 
         mock_scrape.assert_called_once()
         mock_ingest.assert_not_called()  # Should not call ingestion
+
+    @pytest.mark.asyncio
+    async def test_run_full_pipeline_emits_stage_progress(self, orchestrator):
+        """Full pipeline should emit stage progress for scraping and ingestion."""
+        scraping_result = {"success": True, "total_documents": 2, "batch_date": "2025-01-20"}
+        ingestion_result = {"success": True, "documents_processed": 2, "chunks_indexed": 4}
+        progress_callback = AsyncMock()
+
+        with patch.object(orchestrator, "run_scraping_pipeline") as mock_scrape:
+            mock_scrape.return_value = scraping_result
+
+            with patch.object(orchestrator, "run_ingestion_pipeline") as mock_ingest:
+                mock_ingest.return_value = ingestion_result
+                await orchestrator.run_full_pipeline(progress_callback=progress_callback)
+
+        progress_types = [call.args[1] for call in progress_callback.await_args_list]
+        assert "pipeline_stage" in progress_types
+        mock_scrape.assert_awaited_once_with(None, progress_callback=progress_callback)
+        mock_ingest.assert_awaited_once_with(progress_callback=progress_callback)
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status(self, orchestrator):

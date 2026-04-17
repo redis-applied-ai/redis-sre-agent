@@ -1,0 +1,12 @@
+scenario_id: prompt/sev1-escalation-policy
+review_status: draft
+reviewed_by: codex
+expectation_basis: human_authored
+source_pack: prompt-policy-curated
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - Keep the recommendation immediate and operational.
+  - The answer should explicitly reject waiting until tomorrow or business hours.

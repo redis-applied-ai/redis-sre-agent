@@ -1,0 +1,49 @@
+id: knowledge/retrieval-only-ticket-guidance
+name: Retrieval-only mode finds ticket-backed maintenance guidance
+description: Retrieval-only mode should surface incident guidance from docs, skills, and prior support tickets without startup context.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - maintenance-mode-guidance
+    - redis-enterprise-maintenance-checklist
+    - RET-5032
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/knowledge/retrieval-only-ticket-guidance/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: >
+    Before I put a Redis Enterprise node into maintenance mode, which previous incident ticket,
+    maintenance guidance document, and maintenance checklist skill should I review? Give the
+    specific pre-change check they all reinforce.
+  max_tool_steps: 5
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: retrieval_only
+  version: latest
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+expectations:
+  required_findings:
+    - verify replica health before maintenance work
+  required_sources:
+    - maintenance-mode-guidance
+    - redis-enterprise-maintenance-checklist
+    - RET-5032

@@ -103,6 +103,28 @@ def _format_public_metadata_text(public_metadata: Optional[dict[str, Any]]) -> s
     )
 
 
+def _build_metadata_backed_target_line(
+    *,
+    display_name: str,
+    handle: str,
+    target_kind: str,
+    capability_text: str,
+    metadata_text: str,
+) -> str:
+    """Render a target line when only binding metadata is available.
+
+    Eval bindings often carry enough public metadata to ground the model even
+    when there is no backing instance or cluster record in the runtime store.
+    In that case, prefer the metadata over a hard "state=missing" warning.
+    """
+
+    return (
+        "- "
+        f"{display_name} [handle={handle}, kind={target_kind}, "
+        f"capabilities={capability_text}, metadata={metadata_text}]"
+    )
+
+
 def build_single_attached_binding_prompt(binding: TargetBinding) -> str:
     """Build minimal scope context when richer attached-target prompt loading fails."""
     capability_text = ", ".join(binding.capabilities or []) or "unspecified"
@@ -322,11 +344,22 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
                 )
             else:
                 metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
-                target_lines.append(
-                    "- "
-                    f"{binding_summary.display_name} [handle={handle}, kind=instance, "
-                    f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
-                )
+                if metadata_text != "none":
+                    target_lines.append(
+                        _build_metadata_backed_target_line(
+                            display_name=binding_summary.display_name,
+                            handle=handle,
+                            target_kind="instance",
+                            capability_text=capability_text,
+                            metadata_text=metadata_text,
+                        )
+                    )
+                else:
+                    target_lines.append(
+                        "- "
+                        f"{binding_summary.display_name} [handle={handle}, kind=instance, "
+                        f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
+                    )
         elif binding_summary.target_kind == "cluster":
             cluster_id = (
                 handle_record.binding_subject
@@ -343,11 +376,22 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
                 )
             else:
                 metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
-                target_lines.append(
-                    "- "
-                    f"{binding_summary.display_name} [handle={handle}, kind=cluster, "
-                    f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
-                )
+                if metadata_text != "none":
+                    target_lines.append(
+                        _build_metadata_backed_target_line(
+                            display_name=binding_summary.display_name,
+                            handle=handle,
+                            target_kind="cluster",
+                            capability_text=capability_text,
+                            metadata_text=metadata_text,
+                        )
+                    )
+                else:
+                    target_lines.append(
+                        "- "
+                        f"{binding_summary.display_name} [handle={handle}, kind=cluster, "
+                        f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
+                    )
         else:
             metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
             target_lines.append(

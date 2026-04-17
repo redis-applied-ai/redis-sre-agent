@@ -1,0 +1,18 @@
+{
+  "nodes": [
+    {
+      "node_uid": 1,
+      "hostname": "re-node-1",
+      "status": "ok",
+      "maintenance_mode": true,
+      "role": "primary"
+    },
+    {
+      "node_uid": 2,
+      "hostname": "re-node-2",
+      "status": "ok",
+      "maintenance_mode": false,
+      "role": "replica"
+    }
+  ]
+}

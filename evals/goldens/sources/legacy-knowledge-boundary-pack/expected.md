@@ -1,0 +1,1 @@
+I do not have live instance access in this mode. The retrieved boundary guidance says the knowledge-only agent must answer from sources, state that limitation clearly, and avoid claiming it already inspected Redis INFO, SLOWLOG, or admin APIs.

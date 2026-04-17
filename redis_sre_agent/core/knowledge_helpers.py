@@ -25,6 +25,7 @@ from redis_sre_agent.core.redis import (
     get_support_tickets_index,
     get_vectorizer,
 )
+from redis_sre_agent.core.runtime_overrides import dispatch_knowledge_backend_override
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -70,6 +71,13 @@ _HYBRID_QUERY_UNSUPPORTED_MARKERS = (
 )
 _HYBRID_MISSING_COMMAND_MARKERS = ("unknown command", "no such command")
 _TAG_EXACT_MATCH_ESCAPER = TokenEscaper(re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?\|]"))
+
+
+async def _maybe_call_knowledge_backend(
+    method_name: str, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Delegate to an active eval knowledge backend when one is installed."""
+    return await dispatch_knowledge_backend_override(method_name, **kwargs)
 
 
 def _coerce_non_negative_int(value: Any, *, default: int) -> int:
@@ -663,6 +671,17 @@ async def skills_check_helper(
 
     If query is provided, skill selection is relevance-ranked via vector search.
     """
+    override_result = await _maybe_call_knowledge_backend(
+        "skills_check",
+        query=query,
+        limit=limit,
+        offset=offset,
+        version=version,
+        distance_threshold=distance_threshold,
+    )
+    if override_result is not None:
+        return override_result
+
     limit = _coerce_positive_int(limit, default=20)
     offset = _coerce_non_negative_int(offset, default=0)
     logger.info(
@@ -701,7 +720,7 @@ async def skills_check_helper(
     ]
 
     if query:
-        vectorizer = get_vectorizer()
+        vectorizer = get_vectorizer(config=config)
         vectors = await vectorizer.aembed_many([query])
         query_vector = vectors[0] if vectors else []
 
@@ -800,8 +819,20 @@ async def skills_check_helper(
     }
 
 
-async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -> Dict[str, Any]:
+async def get_skill_helper(
+    skill_name: str,
+    version: Optional[str] = "latest",
+    config: Optional[Settings] = None,
+) -> Dict[str, Any]:
     """Get complete content for a skill document by skill name."""
+    override_result = await _maybe_call_knowledge_backend(
+        "get_skill",
+        skill_name=skill_name,
+        version=version,
+    )
+    if override_result is not None:
+        return override_result
+
     normalized_name = skill_name.strip()
     if not normalized_name:
         return {
@@ -829,7 +860,7 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
     ]
 
     async def _query_by_name(index_type: str) -> list[dict]:
-        index = await _get_index_for_type(index_type)
+        index = await _get_index_for_type(index_type, config=config)
         query = FilterQuery(
             filter_expression=_tag_equals_expression("name", normalized_name),
             return_fields=return_fields,
@@ -867,7 +898,11 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
     if target is None:
         # Fallback only for the not-found path: provide a short list of nearby skills.
         skills_result = await skills_check_helper(
-            query=skill_name, limit=50, offset=0, version=version
+            query=skill_name,
+            limit=50,
+            offset=0,
+            version=version,
+            config=config,
         )
         skills = skills_result.get("skills") or []
         return {
@@ -889,6 +924,7 @@ async def get_skill_helper(skill_name: str, version: Optional[str] = "latest") -
         include_metadata=True,
         index_type=target_index_type,
         version=version,
+        config=config,
     )
 
     fragments = result.get("fragments") or []
@@ -929,6 +965,18 @@ async def search_support_tickets_helper(
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Search support tickets only."""
+    override_result = await _maybe_call_knowledge_backend(
+        "search_support_tickets",
+        query=query,
+        limit=limit,
+        offset=offset,
+        distance_threshold=distance_threshold,
+        hybrid_search=hybrid_search,
+        version=version,
+    )
+    if override_result is not None:
+        return override_result
+
     limit = _coerce_positive_int(limit, default=10)
     offset = _coerce_non_negative_int(offset, default=0)
     # Fetch one extra page so per-ticket dedupe still has enough rows to fill
@@ -1023,12 +1071,23 @@ async def _find_support_ticket_exact_matches(
     )
 
 
-async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
+async def get_support_ticket_helper(
+    ticket_id: str,
+    config: Optional[Settings] = None,
+) -> Dict[str, Any]:
     """Get complete content for a support ticket by ticket id."""
+    override_result = await _maybe_call_knowledge_backend(
+        "get_support_ticket",
+        ticket_id=ticket_id,
+    )
+    if override_result is not None:
+        return override_result
+
     normalized_ticket_id = _normalize_support_ticket_id(ticket_id)
     exact_matches = await _find_support_ticket_exact_matches(
         query=normalized_ticket_id,
         version=None,
+        config=config,
     )
     resolved_document_hash = (
         str(exact_matches[0].get("document_hash") or normalized_ticket_id).strip()
@@ -1039,6 +1098,7 @@ async def get_support_ticket_helper(ticket_id: str) -> Dict[str, Any]:
         document_hash=resolved_document_hash,
         include_metadata=True,
         index_type="support_tickets",
+        config=config,
     )
     fragments = result.get("fragments") or []
     if not fragments:
@@ -1085,6 +1145,15 @@ async def get_pinned_documents_helper(
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
     """Return pinned documents in deterministic priority order."""
+    override_result = await _maybe_call_knowledge_backend(
+        "get_pinned_documents",
+        version=version,
+        limit=limit,
+        content_char_budget=content_char_budget,
+    )
+    if override_result is not None:
+        return override_result
+
     return_fields = [
         "id",
         "document_hash",
@@ -1271,6 +1340,22 @@ async def search_knowledge_base_helper(
     Returns:
         Dictionary with search results including task_id, query, results, etc.
     """
+    override_result = await _maybe_call_knowledge_backend(
+        "search_knowledge_base",
+        query=query,
+        category=category,
+        doc_type=doc_type,
+        limit=limit,
+        offset=offset,
+        distance_threshold=distance_threshold,
+        hybrid_search=hybrid_search,
+        version=version,
+        index_type=index_type,
+        include_special_document_types=include_special_document_types,
+    )
+    if override_result is not None:
+        return override_result
+
     limit = _coerce_positive_int(limit, default=10)
     offset = _coerce_non_negative_int(offset, default=0)
     logger.info(f"Searching SRE knowledge: '{query}' (version={version}, offset={offset})")
@@ -1294,7 +1379,7 @@ async def search_knowledge_base_helper(
         filter_expr = category_filter if filter_expr is None else (filter_expr & category_filter)
         logger.debug("Applying category filter: %s", category)
     # Always use vector search (tests rely on embedding being used)
-    vectorizer = get_vectorizer()
+    vectorizer = get_vectorizer(config=config)
 
     # Measure embedding latency and trace it
     _t0 = time.monotonic()
@@ -1605,7 +1690,7 @@ async def ingest_sre_document_helper(
         index_type = "support_tickets"
     else:
         index = await get_knowledge_index(config=config)
-    vectorizer = get_vectorizer()
+    vectorizer = get_vectorizer(config=config)
 
     # Create document embedding (as_buffer=True for Redis storage)
     content_vector = await vectorizer.aembed(content, as_buffer=True)
@@ -1676,6 +1761,16 @@ async def get_all_document_fragments(
     Returns:
         Dictionary containing all fragments and metadata of the document
     """
+    override_result = await _maybe_call_knowledge_backend(
+        "get_all_document_fragments",
+        document_hash=document_hash,
+        include_metadata=include_metadata,
+        index_type=index_type,
+        version=version,
+    )
+    if override_result is not None:
+        return override_result
+
     logger.info(f"Retrieving all fragments for document: {document_hash}")
 
     try:
@@ -1793,7 +1888,12 @@ async def get_all_document_fragments(
 
 
 async def get_related_document_fragments(
-    document_hash: str, current_chunk_index: Optional[int] = None, context_window: int = 2
+    document_hash: str,
+    current_chunk_index: Optional[int] = None,
+    context_window: int = 2,
+    config: Optional[Settings] = None,
+    version: Optional[str] = "latest",
+    index_type: str = "knowledge",
 ) -> Dict[str, Any]:
     """
     Get related fragments around a specific chunk for additional context.
@@ -1805,10 +1905,23 @@ async def get_related_document_fragments(
         document_hash: The document hash to get related fragments for
         current_chunk_index: The chunk index to get context around (if None, gets all)
         context_window: Number of chunks before and after to include
+        version: Optional knowledge corpus version to query
+        index_type: Knowledge index family to query for document fragments
 
     Returns:
         Dictionary containing related fragments with context
     """
+    override_result = await _maybe_call_knowledge_backend(
+        "get_related_document_fragments",
+        document_hash=document_hash,
+        current_chunk_index=current_chunk_index,
+        context_window=context_window,
+        version=version,
+        index_type=index_type,
+    )
+    if override_result is not None:
+        return override_result
+
     logger.info(
         f"Getting related fragments for document {document_hash}, chunk {current_chunk_index}"
     )
@@ -1816,7 +1929,11 @@ async def get_related_document_fragments(
     try:
         # Get all fragments first
         all_fragments_result = await get_all_document_fragments(
-            document_hash, include_metadata=True
+            document_hash,
+            include_metadata=True,
+            config=config,
+            version=version,
+            index_type=index_type,
         )
 
         if "error" in all_fragments_result:

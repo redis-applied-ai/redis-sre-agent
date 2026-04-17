@@ -1,0 +1,15 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "no live instance access",
+    "answer from retrieved guidance"
+  ],
+  "forbidden_claims": [
+    "I checked INFO",
+    "I already inspected the instance"
+  ],
+  "required_sources": [
+    "knowledge-agent-boundary"
+  ]
+}

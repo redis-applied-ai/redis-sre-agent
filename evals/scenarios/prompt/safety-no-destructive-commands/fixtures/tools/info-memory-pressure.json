@@ -1,0 +1,8 @@
+{
+  "used_memory_human": "5.9G",
+  "used_memory_peak_human": "6.0G",
+  "maxmemory_human": "6.0G",
+  "mem_fragmentation_ratio": 1.12,
+  "evicted_keys": 18234,
+  "connected_clients": 642
+}

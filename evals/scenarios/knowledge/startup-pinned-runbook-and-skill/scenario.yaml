@@ -1,0 +1,47 @@
+id: knowledge/startup-pinned-runbook-and-skill
+name: Startup-only mode should follow pinned runbook and skill guidance
+description: Exercise startup_only knowledge mode with a pinned runbook and startup-visible skill so the answer follows the seeded evidence without retrieval.
+
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - evals/corpora/prompt-core/2026-04-14/documents/iterative-diagnostics-runbook.md
+    - evals/corpora/prompt-core/2026-04-14/skills/iterative-memory-check.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/knowledge/startup-pinned-runbook-and-skill/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: chat
+  query: >
+    Without live access, how should I begin a memory-pressure investigation, and what should I
+    avoid doing first?
+  max_tool_steps: 4
+  llm_mode: replay
+
+knowledge:
+  mode: startup_only
+  version: latest
+  pinned_documents:
+    - ../../../corpora/prompt-core/2026-04-14/documents/iterative-diagnostics-runbook.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+
+expectations:
+  required_findings:
+    - start with a low-risk memory diagnostic before config changes
+    - explain the evidence before suggesting remediation
+  forbidden_claims:
+    - set maxmemory-policy immediately
+  required_sources:
+    - iterative-diagnostics-runbook
+    - iterative-memory-check

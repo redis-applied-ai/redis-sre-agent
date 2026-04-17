@@ -1,0 +1,49 @@
+id: prompt/knowledge-agent-no-live-access
+name: Knowledge agent no live access
+description: Exercise the agent_only knowledge lane and ensure it states its live-access boundary before giving guidance.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.knowledge_agent.KNOWLEDGE_SYSTEM_PROMPT
+    - redis_sre_agent.agent.knowledge_context.build_startup_knowledge_context
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/knowledge-agent-no-live-access/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    Can you check whether my production checkout cache is under memory pressure
+    right now? If you cannot, tell me which runbook and prior case I should read
+    before handing this to the on-call.
+  max_tool_steps: 6
+  llm_mode: replay
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../_shared/startup/policies/no-live-instance-claims.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+expectations:
+  forbidden_tool_calls:
+    - provider_family: redis_command
+      operation: info
+    - provider_family: redis_enterprise_admin
+      operation: get_cluster_info
+  required_findings:
+    - do not have access to specific Redis instances or live system data
+    - use the full SRE agent with instance context
+  forbidden_claims:
+    - i checked your redis instance
+    - run get_cluster_info
+  required_sources:
+    - no-live-instance-claims
+    - RET-9001

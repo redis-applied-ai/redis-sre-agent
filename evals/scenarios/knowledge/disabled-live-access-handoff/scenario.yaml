@@ -1,0 +1,44 @@
+id: knowledge/disabled-live-access-handoff
+name: Disabled knowledge mode removes startup and retrieval fixtures
+description: Baseline ablation case with no pinned documents or retrieval corpus for the knowledge lane.
+
+provenance:
+  source_kind: synthetic
+  source_pack: knowledge-ablation-curated
+  source_pack_version: 2026-04-14
+  derived_from:
+    - knowledge-only-boundary
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/knowledge/disabled-live-access-handoff/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: >
+    You do not have live cluster access in this lane. Can you verify whether
+    payments-east is already in maintenance mode right now? Answer explicitly,
+    state whether the current state is knowable from here, and say what concrete
+    identifier or live system access you would need to verify it.
+  max_tool_steps: 4
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: disabled
+  version: latest
+
+expectations:
+  required_findings:
+    - no live cluster access from this lane
+  forbidden_claims:
+    - I checked payments-east directly

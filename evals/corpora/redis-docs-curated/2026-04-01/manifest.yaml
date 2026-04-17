@@ -1,0 +1,10 @@
+source_kind: mixed
+source_pack: redis-docs-curated
+source_pack_version: 2026-04-01
+derived_from:
+  - redis-docs-snapshot-2026-04-01
+  - support-export-2026-04-01
+review_status: reviewed
+reviewed_by: sre-evals
+exemplar_sources:
+  - human-reviewed-baseline-v1

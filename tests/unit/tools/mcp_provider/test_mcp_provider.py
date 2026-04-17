@@ -1,8 +1,13 @@
 """Unit tests for MCP tool provider."""
 
+from unittest.mock import patch
+
 import pytest
 
 from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
+from redis_sre_agent.evaluation.fake_mcp import build_fixture_mcp_runtime
+from redis_sre_agent.evaluation.injection import eval_injection_scope
+from redis_sre_agent.evaluation.scenarios import EvalScenario
 from redis_sre_agent.tools.mcp.provider import MCPToolProvider
 from redis_sre_agent.tools.models import ToolCapability
 
@@ -225,3 +230,77 @@ class TestMCPToolProviderAsync:
         # Session should be cleared but not closed
         assert provider._session is None
         assert provider._using_pooled_connection is False
+
+    @pytest.mark.asyncio
+    async def test_connect_uses_eval_fake_mcp_runtime_before_network(self):
+        """Test that eval fake MCP catalogs bypass network transports."""
+        scenario = EvalScenario.model_validate(
+            {
+                "id": "fake-mcp-provider",
+                "name": "Fake MCP provider",
+                "provenance": {
+                    "source_kind": "synthetic",
+                    "source_pack": "fixture-pack",
+                    "source_pack_version": "2026-04-14",
+                    "golden": {"expectation_basis": "human_authored"},
+                },
+                "execution": {
+                    "lane": "full_turn",
+                    "query": "Check memory pressure.",
+                },
+                "tools": {
+                    "mcp_servers": {
+                        "metrics_eval": {
+                            "capability": "metrics",
+                            "tools": {
+                                "query_metrics": {
+                                    "description": "Query fixture metrics.",
+                                    "input_schema": {
+                                        "properties": {
+                                            "query": {"type": "string"},
+                                        },
+                                        "required": ["query"],
+                                    },
+                                    "result": {
+                                        "series": "memory_pressure",
+                                        "value": 91,
+                                    },
+                                }
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        runtime = build_fixture_mcp_runtime(scenario)
+        assert runtime is not None
+
+        provider = MCPToolProvider(
+            server_name="metrics_eval",
+            server_config=runtime.get_server_configs()["metrics_eval"],
+            use_pool=False,
+        )
+
+        with (
+            eval_injection_scope(
+                mcp_servers=runtime.get_server_configs(),
+                mcp_runtime=runtime,
+            ),
+            patch(
+                "redis_sre_agent.tools.mcp.provider.streamablehttp_client",
+                side_effect=AssertionError("network transport should not run"),
+            ),
+        ):
+            await provider._connect()
+            tools = provider.tools()
+            result = await provider._call_mcp_tool(
+                "query_metrics",
+                {"query": "memory pressure"},
+            )
+
+        assert provider._using_eval_runtime is True
+        assert len(tools) == 1
+        assert tools[0].definition.name.endswith("_query_metrics")
+        assert tools[0].definition.capability is ToolCapability.METRICS
+        assert result["status"] == "success"
+        assert result["data"]["series"] == "memory_pressure"

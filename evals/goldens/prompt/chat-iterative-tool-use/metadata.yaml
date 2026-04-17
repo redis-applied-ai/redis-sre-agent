@@ -1,0 +1,12 @@
+scenario_id: prompt/chat-iterative-tool-use
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - Verify that the answer keeps the investigation narrow at the start.
+  - Prefer explicit reference to INFO memory and MEMORY STATS before broader exploration.

@@ -12,6 +12,67 @@ from redis_sre_agent.core.instances import RedisInstance, get_instance_by_id
 from .contracts import BindingRequest, BindingResult, ProviderLoadRequest, TargetHandleRecord
 
 
+def _eval_target_seed(handle_record: TargetHandleRecord) -> dict[str, Any] | None:
+    seed = (handle_record.private_binding_ref or {}).get("eval_target_seed")
+    return seed if isinstance(seed, dict) else None
+
+
+def _build_seeded_instance(handle_record: TargetHandleRecord) -> RedisInstance | None:
+    seed = _eval_target_seed(handle_record)
+    if not seed or seed.get("seed_kind") != "instance":
+        return None
+    payload = dict(seed)
+    payload["id"] = handle_record.target_handle
+    payload.setdefault("created_by", "agent")
+    payload.setdefault("user_id", "eval")
+    return RedisInstance.model_validate(payload)
+
+
+def _build_seeded_cluster_admin_instance(handle_record: TargetHandleRecord) -> RedisInstance | None:
+    seed = _eval_target_seed(handle_record)
+    if not seed:
+        return None
+
+    if seed.get("seed_kind") == "instance":
+        instance_type = str(seed.get("instance_type") or "").strip().lower()
+        if instance_type != "redis_enterprise":
+            return None
+        payload = dict(seed)
+        payload["id"] = handle_record.target_handle
+        payload.setdefault("created_by", "agent")
+        payload.setdefault("user_id", "eval")
+        return RedisInstance.model_validate(payload)
+
+    if seed.get("seed_kind") != "cluster":
+        return None
+
+    cluster_type = str(seed.get("cluster_type") or "").strip().lower()
+    if cluster_type != "redis_enterprise":
+        return None
+
+    return RedisInstance.model_validate(
+        {
+            "id": handle_record.target_handle,
+            "name": f"{seed.get('name') or handle_record.public_summary.display_name} (cluster admin)",
+            "connection_url": "redis://cluster-only.invalid:6379",
+            "environment": seed.get("environment") or "test",
+            "usage": "custom",
+            "description": seed.get("description")
+            or f"Eval cluster admin target for {handle_record.public_summary.display_name}",
+            "instance_type": "redis_enterprise",
+            "cluster_id": seed.get("id") or handle_record.binding_subject,
+            "admin_url": seed.get("admin_url") or "https://eval-target.invalid:9443",
+            "admin_username": seed.get("admin_username") or "eval",
+            "admin_password": seed.get("admin_password") or "eval-password",
+            "monitoring_identifier": seed.get("name") or handle_record.public_summary.display_name,
+            "logging_identifier": seed.get("name") or handle_record.public_summary.display_name,
+            "notes": f"Eval cluster admin target for {handle_record.public_summary.display_name}",
+            "created_by": "agent",
+            "user_id": "eval",
+        }
+    )
+
+
 class RedisDataClientFactory:
     """Return a RedisInstance for instance-scoped provider loads."""
 
@@ -22,7 +83,7 @@ class RedisDataClientFactory:
             return None
         instance = await get_instance_by_id(handle_record.binding_subject)
         if instance is None:
-            return None
+            return _build_seeded_instance(handle_record)
         return instance.model_copy(update={"id": handle_record.target_handle})
 
 
@@ -74,14 +135,14 @@ class RedisEnterpriseAdminClientFactory:
         if public_summary.target_kind == "cluster":
             cluster = await core_clusters.get_cluster_by_id(handle_record.binding_subject)
             if cluster is None:
-                return None
+                return _build_seeded_cluster_admin_instance(handle_record)
             return self._build_cluster_admin_instance(
                 cluster, target_handle=handle_record.target_handle
             )
 
         instance = await get_instance_by_id(handle_record.binding_subject)
         if instance is None:
-            return None
+            return _build_seeded_cluster_admin_instance(handle_record)
 
         instance_type = (
             instance.instance_type.value
@@ -121,7 +182,9 @@ class RedisCloudClientFactory:
             return None
         instance = await get_instance_by_id(handle_record.binding_subject)
         if instance is None:
-            return None
+            instance = _build_seeded_instance(handle_record)
+            if instance is None:
+                return None
         instance_type = (
             instance.instance_type.value
             if hasattr(instance.instance_type, "value")

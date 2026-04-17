@@ -1,0 +1,10 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [],
+  "forbidden_claims": [],
+  "required_sources": [
+    "knowledge-only-boundary",
+    "knowledge-only-access-policy"
+  ]
+}
