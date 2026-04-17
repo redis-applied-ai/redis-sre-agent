@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import ExitStack, contextmanager
 from typing import Any, Dict, Iterator, Optional
@@ -129,7 +130,10 @@ async def persist_checkpoint_metadata(
         return
 
     try:
-        checkpoint_tuple = checkpointer.get_tuple(config)
+        if hasattr(checkpointer, "aget_tuple"):
+            checkpoint_tuple = await checkpointer.aget_tuple(config)
+        else:
+            checkpoint_tuple = await asyncio.to_thread(checkpointer.get_tuple, config)
         if checkpoint_tuple is None:
             return
 
