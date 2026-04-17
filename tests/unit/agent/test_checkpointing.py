@@ -10,8 +10,8 @@ from redis_sre_agent.agent.checkpointing import (
     GRAPH_CHECKPOINT_NAMESPACE,
     build_graph_config,
     open_graph_checkpointer,
-    persist_checkpoint_metadata,
     persist_approval_wait_state,
+    persist_checkpoint_metadata,
     resolve_graph_thread_id,
 )
 
