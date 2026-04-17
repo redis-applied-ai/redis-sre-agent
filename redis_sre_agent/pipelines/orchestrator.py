@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from .ingestion.processor import IngestionPipeline
 from .scraper.base import ArtifactStorage
@@ -28,6 +28,8 @@ class PipelineOrchestrator:
         "redis_cloud_api": RedisCloudAPIScraper,
         "runbook_generator": RunbookGenerator,
     }
+
+    ProgressCallback = Callable[[str, str, Optional[Dict[str, Any]]], Awaitable[None]]
 
     def __init__(
         self,
@@ -59,7 +61,22 @@ class PipelineOrchestrator:
             self.storage, self.config.get("ingestion", {}), knowledge_settings
         )
 
-    async def run_scraping_pipeline(self, scrapers: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def _emit_progress(
+        self,
+        progress_callback: Optional[ProgressCallback],
+        message: str,
+        update_type: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Emit pipeline progress when a callback is provided."""
+        if progress_callback is not None:
+            await progress_callback(message, update_type, metadata or {})
+
+    async def run_scraping_pipeline(
+        self,
+        scrapers: Optional[List[str]] = None,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> Dict[str, Any]:
         """Run the complete scraping pipeline."""
         logger.info("Starting scraping pipeline")
 
@@ -86,6 +103,13 @@ class PipelineOrchestrator:
 
                 logger.info(f"Running scraper: {scraper_name}")
                 scraper = self.scrapers[scraper_name]
+                scraper.progress_callback = progress_callback
+                await self._emit_progress(
+                    progress_callback,
+                    f"Starting scraper {scraper_name}",
+                    "pipeline_scraper_start",
+                    {"scraper": scraper_name, "batch_date": self.storage.current_date},
+                )
 
                 try:
                     scraper_result = await scraper.run_scraping_job()
@@ -97,6 +121,16 @@ class PipelineOrchestrator:
                     logger.info(
                         f"Scraper {scraper_name} completed: {scraper_result['documents_scraped']} documents"
                     )
+                    await self._emit_progress(
+                        progress_callback,
+                        f"Completed scraper {scraper_name}",
+                        "pipeline_scraper_complete",
+                        {
+                            "scraper": scraper_name,
+                            "documents_scraped": scraper_result.get("documents_scraped", 0),
+                            "batch_date": self.storage.current_date,
+                        },
+                    )
 
                 except Exception as e:
                     logger.error(f"Scraper {scraper_name} failed: {e}")
@@ -104,6 +138,12 @@ class PipelineOrchestrator:
                         "error": str(e),
                         "documents_scraped": 0,
                     }
+                    await self._emit_progress(
+                        progress_callback,
+                        f"Scraper {scraper_name} failed: {e}",
+                        "pipeline_scraper_error",
+                        {"scraper": scraper_name, "batch_date": self.storage.current_date},
+                    )
 
             # Save batch manifest
             if all_documents:
@@ -126,23 +166,43 @@ class PipelineOrchestrator:
 
         return pipeline_results
 
-    async def run_ingestion_pipeline(self, batch_date: Optional[str] = None) -> Dict[str, Any]:
+    async def run_ingestion_pipeline(
+        self,
+        batch_date: Optional[str] = None,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> Dict[str, Any]:
         """Run the ingestion pipeline for a specific batch."""
         target_batch = batch_date or self.storage.current_date
 
         logger.info(f"Starting ingestion pipeline for batch: {target_batch}")
+        await self._emit_progress(
+            progress_callback,
+            f"Starting ingestion for batch {target_batch}",
+            "pipeline_stage",
+            {"stage": "ingestion", "batch_date": target_batch},
+        )
 
         try:
             ingestion_results = await self.ingestion.ingest_batch(target_batch)
 
             logger.info(f"Ingestion pipeline completed for batch {target_batch}")
+            await self._emit_progress(
+                progress_callback,
+                f"Completed ingestion for batch {target_batch}",
+                "pipeline_stage_complete",
+                {"stage": "ingestion", "batch_date": target_batch},
+            )
             return ingestion_results
 
         except Exception as e:
             logger.error(f"Ingestion pipeline failed for batch {target_batch}: {e}")
             raise
 
-    async def run_full_pipeline(self, scrapers: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def run_full_pipeline(
+        self,
+        scrapers: Optional[List[str]] = None,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> Dict[str, Any]:
         """Run complete pipeline: scraping + ingestion."""
         logger.info("Starting full pipeline (scraping + ingestion)")
 
@@ -156,14 +216,24 @@ class PipelineOrchestrator:
         try:
             # Stage 1: Scraping
             logger.info("Stage 1: Running scraping pipeline")
-            scraping_results = await self.run_scraping_pipeline(scrapers)
+            await self._emit_progress(
+                progress_callback,
+                "Stage 1/2: scraping documents",
+                "pipeline_stage",
+                {"stage": "scraping", "batch_date": self.storage.current_date},
+            )
+            scraping_results = await self.run_scraping_pipeline(
+                scrapers, progress_callback=progress_callback
+            )
             full_results["scraping"] = scraping_results
 
             # Only proceed to ingestion if scraping was successful and found documents
             if scraping_results["success"] and scraping_results["total_documents"] > 0:
                 # Stage 2: Ingestion
                 logger.info("Stage 2: Running ingestion pipeline")
-                ingestion_results = await self.run_ingestion_pipeline()
+                ingestion_results = await self.run_ingestion_pipeline(
+                    progress_callback=progress_callback
+                )
                 full_results["ingestion"] = ingestion_results
 
                 full_results["success"] = ingestion_results["success"]

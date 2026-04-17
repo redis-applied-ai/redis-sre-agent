@@ -1,6 +1,6 @@
 """Tests for task-backed pipeline execution helpers."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -47,7 +47,9 @@ class TestRunPipelineOperationHelper:
             },
             scrapers=["redis_docs"],
         )
-        mock_orchestrator.run_scraping_pipeline.assert_awaited_once_with(["redis_docs"])
+        mock_orchestrator.run_scraping_pipeline.assert_awaited_once_with(
+            ["redis_docs"], progress_callback=ANY
+        )
         assert emitter.emit.await_count == 2
 
     @pytest.mark.asyncio
@@ -75,7 +77,9 @@ class TestRunPipelineOperationHelper:
             "/tmp/artifacts",
             {"ingestion": {"latest_only": True}},
         )
-        mock_orchestrator.run_ingestion_pipeline.assert_awaited_once_with("2026-03-25")
+        mock_orchestrator.run_ingestion_pipeline.assert_awaited_once_with(
+            "2026-03-25", progress_callback=ANY
+        )
 
     @pytest.mark.asyncio
     async def test_run_full_operation(self):
@@ -107,7 +111,9 @@ class TestRunPipelineOperationHelper:
             },
             scrapers=["redis_docs_local"],
         )
-        mock_orchestrator.run_full_pipeline.assert_awaited_once_with(["redis_docs_local"])
+        mock_orchestrator.run_full_pipeline.assert_awaited_once_with(
+            ["redis_docs_local"], progress_callback=ANY
+        )
 
     @pytest.mark.asyncio
     async def test_run_cleanup_operation(self):
