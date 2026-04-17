@@ -64,8 +64,12 @@ import pathlib
 import shutil
 import site
 
-src = pathlib.Path("/workspace/.rar/sdk/redis_agent_kit")
-if not src.is_dir():
+candidate_paths = (
+    pathlib.Path("/workspace/.rar/sdk/redis-agent-kit/redis_agent_kit"),
+    pathlib.Path("/workspace/.rar/sdk/redis_agent_kit"),
+)
+src = next((path for path in candidate_paths if path.is_dir()), None)
+if src is None:
     raise RuntimeError("missing injected redis_agent_kit SDK source")
 target = pathlib.Path(site.getsitepackages()[0]) / "redis_agent_kit"
 if target.exists():
