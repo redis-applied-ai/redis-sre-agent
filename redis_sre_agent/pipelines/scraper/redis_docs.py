@@ -457,14 +457,14 @@ class RedisDocsScraper(BaseScraper):
             href = link["href"]
 
             # Convert relative URLs to absolute
-            full_url = self._normalize_url(urljoin(base_url, href))
-            parsed = urlparse(full_url)
+            raw_full_url = urljoin(base_url, href)
+            parsed = urlparse(raw_full_url)
 
             # Only include links from the same domain
             if parsed.netloc == base_domain:
                 # Exclude non-documentation links
                 if any(
-                    exclude in full_url
+                    exclude in raw_full_url
                     for exclude in [
                         "#",
                         "javascript:",
@@ -485,6 +485,8 @@ class RedisDocsScraper(BaseScraper):
                     ]
                 ):
                     continue
+
+                full_url = self._normalize_url(raw_full_url)
 
                 # latest-only: skip versioned URLs
                 if self.config.get("latest_only") and self._is_versioned_url(full_url):

@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from bs4 import BeautifulSoup
 
 from redis_sre_agent.pipelines.scraper.base import (
     ArtifactStorage,
@@ -136,3 +137,22 @@ async def test_scrape_section_honors_max_pages_budget(tmp_path):
         "https://redis.io/docs/a",
     ]
     assert len(docs) == 2
+
+
+@pytest.mark.asyncio
+async def test_find_documentation_links_excludes_search_queries_before_normalizing(tmp_path):
+    """Search query URLs should still be filtered even though dedupe normalizes URLs."""
+    scraper = RedisDocsScraper(ArtifactStorage(tmp_path))
+    soup = BeautifulSoup(
+        """
+        <html><body>
+            <a href="/docs/?search=vector">Search results</a>
+            <a href="/search/query-engine/">Valid search docs</a>
+        </body></html>
+        """,
+        "html.parser",
+    )
+
+    links = await scraper._find_documentation_links(soup, "https://redis.io/docs/")
+
+    assert links == ["https://redis.io/search/query-engine"]
