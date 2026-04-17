@@ -13,12 +13,14 @@ from typing import Any, Mapping
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 try:
-    from redis_agent_kit import Agent, TaskEmitter
+    from redis_agent_kit import AgentKit, RuntimeAgent, TaskEmitter
+    from redis_agent_kit.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 except ImportError:  # pragma: no cover - local monorepo fallback for tests
     _repo_runner_src = Path(__file__).resolve().parents[1].parent / "apps" / "runner" / "src"
     if _repo_runner_src.is_dir():
         sys.path.insert(0, str(_repo_runner_src))
-        from redis_agent_kit import Agent, TaskEmitter
+        from redis_agent_kit import AgentKit, RuntimeAgent, TaskEmitter
+        from redis_agent_kit.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
     else:  # pragma: no cover - defensive
         raise
 
@@ -461,9 +463,56 @@ async def runtime_sre_agent(task_input: Mapping[str, Any], emitter: TaskEmitter)
     return await _dispatch_chat_query(task_input, emitter)
 
 
-agent = Agent(
-    agent_callable=runtime_sre_agent,
-    protocols=["a2a", "mcp"],
+async def _runtime_chat_handler(ctx: Any) -> dict[str, Any]:
+    task_input = dict(ctx.context)
+    task_input["message"] = ctx.message
+    task_input["contextId"] = ctx.session_id
+    return await runtime_sre_agent(task_input, ctx.emitter)
+
+
+def _build_runtime_mcp_tools() -> list[Tool]:
+    descriptions: dict[str, str] = {}
+    for name, tool in sorted(_load_mcp_tool_registry().items()):
+        descriptions[name] = (
+            (inspect.getdoc(tool) or "").strip().splitlines()[0] if inspect.getdoc(tool) else name
+        )
+    for name, tool_spec in sorted(_load_configured_external_mcp_tools().items()):
+        descriptions.setdefault(name, tool_spec["description"])
+
+    tools: list[Tool] = []
+    for name in sorted(descriptions):
+        description = descriptions[name]
+
+        async def _invoke(arguments: dict[str, Any], *, tool_name: str = name) -> Any:
+            envelope = await _dispatch_mcp_tool({"tool": tool_name, "arguments": dict(arguments)})
+            return envelope.get("result")
+
+        tools.append(
+            Tool(
+                metadata=ToolMetadata(
+                    name=name,
+                    description=description,
+                    capability=ToolCapability.CUSTOM,
+                    provider_name="redis-sre-agent",
+                ),
+                definition=ToolDefinition(
+                    name=name,
+                    description=description,
+                    parameters={
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": True,
+                    },
+                    capability=ToolCapability.CUSTOM,
+                ),
+                invoke=_invoke,
+            )
+        )
+    return tools
+
+
+runtime_agent = RuntimeAgent(
+    kit=AgentKit(redis_url=None, agent_callable=_runtime_chat_handler),
     a2a_card={
         "name": "Redis SRE Agent",
         "description": "Runtime-adapted Redis SRE agent for chat, triage, and Redis operations workflows.",
@@ -475,11 +524,24 @@ agent = Agent(
             }
         ],
     },
+    mcp_tools=_build_runtime_mcp_tools(),
     mcp_capabilities=_build_mcp_capabilities(),
 )
 
 
+def main() -> int:
+    if os.environ.get("RAR_TASK_INPUT_JSON"):
+        runtime_agent.run_from_env()
+        return 0
+    raise RuntimeError("runtime_agent.py is meant to run under Redis Agent Runtime")
+
+
 __all__ = [
-    "agent",
+    "main",
+    "runtime_agent",
     "runtime_sre_agent",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
