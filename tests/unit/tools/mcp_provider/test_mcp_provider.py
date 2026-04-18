@@ -9,7 +9,7 @@ from redis_sre_agent.evaluation.fake_mcp import build_fixture_mcp_runtime
 from redis_sre_agent.evaluation.injection import eval_injection_scope
 from redis_sre_agent.evaluation.scenarios import EvalScenario
 from redis_sre_agent.tools.mcp.provider import MCPToolProvider
-from redis_sre_agent.tools.models import ToolCapability
+from redis_sre_agent.tools.models import ToolActionKind, ToolCapability
 
 
 class TestMCPToolProvider:
@@ -123,6 +123,21 @@ class TestMCPToolProvider:
             provider._get_description("prepended", "Search for files.")
             == "WARNING: Use carefully. Search for files. See docs for details."
         )
+
+    def test_get_action_kind_with_override(self):
+        """Test that action kind override is respected."""
+        config = MCPServerConfig(
+            command="test",
+            tools={
+                "query_tool": MCPToolConfig(action_kind=ToolActionKind.READ),
+                "mutate_tool": MCPToolConfig(action_kind=ToolActionKind.WRITE),
+            },
+        )
+        provider = MCPToolProvider(server_name="test", server_config=config)
+
+        assert provider._get_action_kind("query_tool") == ToolActionKind.READ
+        assert provider._get_action_kind("mutate_tool") == ToolActionKind.WRITE
+        assert provider._get_action_kind("unknown") == ToolActionKind.UNKNOWN
 
     def test_get_tool_config(self):
         """Test getting tool config."""
@@ -302,5 +317,6 @@ class TestMCPToolProviderAsync:
         assert len(tools) == 1
         assert tools[0].definition.name.endswith("_query_metrics")
         assert tools[0].definition.capability is ToolCapability.METRICS
+        assert tools[0].metadata.action_kind is ToolActionKind.READ
         assert result["status"] == "success"
         assert result["data"]["series"] == "memory_pressure"

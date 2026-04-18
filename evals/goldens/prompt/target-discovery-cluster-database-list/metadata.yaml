@@ -1,0 +1,12 @@
+scenario_id: prompt/target-discovery-cluster-database-list
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - The intended path is discovery first, then cluster admin access.
+  - The answer should enumerate the discovered cluster databases from live admin output.

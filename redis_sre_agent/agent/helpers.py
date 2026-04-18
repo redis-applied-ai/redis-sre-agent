@@ -222,12 +222,18 @@ def build_result_envelope(
 
     tdef = tooldefs_by_name.get(tool_name) if tool_name else None
     description = tdef.description if tdef else None
+    raw_status = (
+        str(data_obj.get("status")).lower()
+        if isinstance(data_obj, dict) and data_obj.get("status") is not None
+        else ""
+    )
+    envelope_status = "error" if raw_status in {"error", "failed", "failure"} else "success"
     env = ResultEnvelope(
         tool_key=tool_name or "tool",
         name=_extract_operation_from_tool_name(tool_name or "tool"),
         description=description,
         args=dict(tool_args or {}),
-        status="success",
+        status=envelope_status,
         data=data_obj if isinstance(data_obj, dict) else {"raw": (content or "")[:4000]},
     )
     return env.model_dump()
@@ -283,7 +289,13 @@ async def build_adapters_for_tooldefs(tool_manager: Any, tooldefs: List[Any]) ->
     for tdef in tooldefs or []:
 
         async def _exec_fn(_name=tdef.name, **kwargs):
-            return await tool_manager.resolve_tool_call(_name, kwargs or {})
+            from .tool_execution import execute_tool_call_with_gate
+
+            return await execute_tool_call_with_gate(
+                tool_manager=tool_manager,
+                tool_name=_name,
+                tool_args=kwargs or {},
+            )
 
         args_model = _args_model_from_parameters(tdef.name, tdef.parameters or {})
         adapters.append(

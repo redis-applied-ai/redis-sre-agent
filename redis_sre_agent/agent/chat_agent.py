@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypedD
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode as LGToolNode
+from langgraph.types import Command
 from opentelemetry import trace
 
 from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
@@ -43,9 +43,17 @@ from redis_sre_agent.tools.models import ToolCapability
 if TYPE_CHECKING:
     from pathlib import Path
 
+from .checkpointing import (
+    build_graph_config,
+    open_graph_checkpointer,
+    persist_approval_wait_state,
+    persist_checkpoint_metadata,
+    resolve_graph_thread_id,
+)
 from .helpers import build_result_envelope
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
+from .tool_execution import execute_tool_calls_with_gate
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -82,6 +90,12 @@ For code/repo investigation:
 For metrics/logs:
 - Be specific with queries - broad queries return too much data
 - Fetch one metric or log query at a time
+
+For target discovery:
+- If the user asks what Redis targets you know about, call `list_known_redis_targets`
+- If the user describes a target but has not given `instance_id` or `cluster_id`, call `resolve_redis_targets` before making live-state claims
+- If the user asks to compare or investigate multiple targets, call `resolve_redis_targets` with `allow_multiple=true`, keep the attached target set, and gather evidence per target before comparing
+- If the user asks both "what do you know about?" and asks to drill into one target in the same turn, list first, then resolve the chosen target and continue with the attached live tools
 
 For historical incident context (if `tickets` tools are available):
 - Use tickets tools instead of general knowledge search because general knowledge search excludes support tickets
@@ -462,7 +476,6 @@ class ChatAgent:
                 "tooldefs_by_name": {t.name: t for t in tooldefs},
                 "all_adapters": all_adapters,
                 "llm_with_expand": self.llm.bind_tools(all_adapters),
-                "tool_node": LGToolNode(all_adapters),
             }
             runtime_tools_by_generation[generation] = runtime
             return runtime
@@ -560,9 +573,10 @@ class ChatAgent:
                         await emitter.emit(status_msg, "tool_call")
 
             with tracer.start_as_current_span("chat_tool_node"):
-                out = await runtime["tool_node"].ainvoke({"messages": messages})
-                out_messages = out.get("messages", [])
-                new_tool_messages = [m for m in out_messages if isinstance(m, ToolMessage)]
+                new_tool_messages = await execute_tool_calls_with_gate(
+                    tool_manager=tool_mgr,
+                    tool_calls=tool_calls,
+                )
 
                 # Build envelopes and create summarized messages for the LLM
                 # The LLM sees summarized versions; full data stays in envelopes
@@ -730,13 +744,16 @@ class ChatAgent:
             thread_id=tool_thread_id,
             task_id=normalized_context.get("task_id"),
             user_id=user_id,
+            graph_type="chat",
         ) as tool_mgr:
             tools = tool_mgr.get_tools()
             logger.info(f"Chat agent loaded {len(tools)} tools")
             workflow = self._build_workflow(tool_mgr, emitter)
-
-            checkpointer = MemorySaver()
-            app = workflow.compile(checkpointer=checkpointer)
+            task_id = normalized_context.get("task_id")
+            graph_thread_id = resolve_graph_thread_id(
+                session_id=session_id,
+                context=normalized_context,
+            )
 
             # Build initial messages with shared startup context (pinned docs, skills, tool usage)
             startup_context = await build_startup_knowledge_context(
@@ -834,40 +851,154 @@ User Query: {query}"""
                 ),
             }
 
-            thread_config = {"configurable": {"thread_id": session_id}}
+            thread_config = build_graph_config(graph_thread_id=graph_thread_id)
 
             try:
                 await emitter.emit("Chat agent processing your question...", "agent_start")
+                with open_graph_checkpointer(durable=bool(task_id)) as checkpointer:
+                    app = workflow.compile(checkpointer=checkpointer)
+                    final_state = await app.ainvoke(initial_state, config=thread_config)
+                    await persist_checkpoint_metadata(
+                        task_id=task_id,
+                        thread_id=tool_thread_id,
+                        graph_thread_id=graph_thread_id,
+                        graph_type="chat",
+                        checkpointer=checkpointer,
+                        config=thread_config,
+                    )
+                    if final_state.get("__interrupt__"):
+                        await persist_approval_wait_state(task_id=task_id)
+                        raise GraphInterrupt(tuple(final_state["__interrupt__"]))
 
-                final_state = await app.ainvoke(initial_state, config=thread_config)
+                    tool_envelopes = final_state.get("signals_envelopes", [])
 
-                # Get tool envelopes - AgentResponse derives search_results from these
-                tool_envelopes = final_state.get("signals_envelopes", [])
+                    messages = final_state.get("messages", [])
+                    if messages:
+                        last_message = messages[-1]
+                        if isinstance(last_message, AIMessage):
+                            response = AgentResponse(
+                                response=last_message.content,
+                                tool_envelopes=tool_envelopes,
+                            )
+                        else:
+                            response = AgentResponse(
+                                response=str(last_message.content),
+                                tool_envelopes=tool_envelopes,
+                            )
+                        await prepared_memory.persist_response_fail_open(response.response)
+                        return response
 
-                messages = final_state.get("messages", [])
-                if messages:
-                    last_message = messages[-1]
-                    if isinstance(last_message, AIMessage):
-                        response = AgentResponse(
-                            response=last_message.content,
-                            tool_envelopes=tool_envelopes,
-                        )
-                    else:
-                        response = AgentResponse(
-                            response=str(last_message.content),
-                            tool_envelopes=tool_envelopes,
-                        )
-                    await prepared_memory.persist_response_fail_open(response.response)
-                    return response
+                    fallback = AgentResponse(
+                        response="I couldn't process that query. Please try rephrasing.",
+                    )
+                    return fallback
 
-                fallback = AgentResponse(
-                    response="I couldn't process that query. Please try rephrasing.",
-                )
-                return fallback
-
+            except GraphInterrupt:
+                raise
             except Exception as e:
                 logger.exception(f"Chat agent error: {e}")
                 return AgentResponse(response=f"Error processing query: {e}")
+
+    async def resume_query(
+        self,
+        *,
+        session_id: str,
+        user_id: Optional[str],
+        context: Optional[Dict[str, Any]] = None,
+        progress_emitter: Optional[ProgressEmitter] = None,
+        resume_payload: Optional[Dict[str, Any]] = None,
+    ) -> AgentResponse:
+        """Resume a paused chat graph from its persisted checkpoint."""
+
+        normalized_context = dict(context or {})
+        turn_scope = TurnScope.from_context(
+            normalized_context,
+            thread_id=normalized_context.get("thread_id"),
+            session_id=session_id,
+        )
+        normalized_context.update(turn_scope.to_thread_context())
+        normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
+
+        emitter = progress_emitter if progress_emitter is not None else self._emitter
+        cache_client = None
+        if settings.tool_cache_enabled and self.redis_instance:
+            cache_client = get_redis_client()
+
+        support_package_path = self.support_package_path
+        scope_support_package_path = turn_scope.support_package_context.get("support_package_path")
+        if support_package_path is None and scope_support_package_path:
+            support_package_path = Path(scope_support_package_path)
+
+        has_attached_scope = (
+            turn_scope.scope_kind == "target_bindings" and turn_scope.target_count > 0
+        )
+        effective_redis_instance = None if has_attached_scope else self.redis_instance
+        effective_redis_cluster = None if has_attached_scope else self.redis_cluster
+
+        tool_thread_id = turn_scope.thread_id or session_id
+        async with ToolManager(
+            redis_instance=effective_redis_instance,
+            redis_cluster=effective_redis_cluster,
+            initial_target_bindings=turn_scope.bindings or None,
+            initial_toolset_generation=turn_scope.toolset_generation,
+            exclude_mcp_categories=self.exclude_mcp_categories,
+            support_package_path=support_package_path,
+            cache_client=cache_client,
+            cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
+            thread_id=tool_thread_id,
+            task_id=normalized_context.get("task_id"),
+            user_id=user_id,
+            graph_type="chat",
+        ) as tool_mgr:
+            workflow = self._build_workflow(tool_mgr, emitter)
+            task_id = normalized_context.get("task_id")
+            graph_thread_id = resolve_graph_thread_id(
+                session_id=session_id,
+                context=normalized_context,
+            )
+            thread_config = build_graph_config(graph_thread_id=graph_thread_id)
+
+            try:
+                with open_graph_checkpointer(durable=True) as checkpointer:
+                    app = workflow.compile(checkpointer=checkpointer)
+                    final_state = await app.ainvoke(
+                        Command(resume=resume_payload or {}),
+                        config=thread_config,
+                    )
+                    await persist_checkpoint_metadata(
+                        task_id=task_id,
+                        thread_id=tool_thread_id,
+                        graph_thread_id=graph_thread_id,
+                        graph_type="chat",
+                        checkpointer=checkpointer,
+                        config=thread_config,
+                    )
+                    if final_state.get("__interrupt__"):
+                        await persist_approval_wait_state(task_id=task_id)
+                        raise GraphInterrupt(tuple(final_state["__interrupt__"]))
+
+                    tool_envelopes = final_state.get("signals_envelopes", [])
+                    messages = final_state.get("messages", [])
+                    if messages:
+                        last_message = messages[-1]
+                        if isinstance(last_message, AIMessage):
+                            return AgentResponse(
+                                response=last_message.content,
+                                tool_envelopes=tool_envelopes,
+                            )
+                        return AgentResponse(
+                            response=str(last_message.content),
+                            tool_envelopes=tool_envelopes,
+                        )
+
+                    return AgentResponse(
+                        response="I couldn't resume that query. Please try again.",
+                    )
+            except GraphInterrupt:
+                raise
+            except Exception as e:
+                logger.exception(f"Chat agent resume error: {e}")
+                return AgentResponse(response=f"Error resuming query: {e}")
 
 
 # Singleton cache keyed by instance name

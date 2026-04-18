@@ -10,12 +10,32 @@ This module provides the ToolManager class which handles:
 import logging
 import shutil
 from contextlib import AsyncExitStack
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from langgraph.errors import GraphInterrupt
 from opentelemetry import trace
+from ulid import ULID
 
 from redis_sre_agent.core import clusters as core_clusters
+from redis_sre_agent.core.approvals import (
+    ActionExecutionLedger,
+    ActionExecutionStatus,
+    ApprovalManager,
+    ApprovalRecord,
+    ApprovalRequiredError,
+    ApprovalStatus,
+    PendingApprovalSummary,
+    ToolExecutionDecision,
+    ToolExecutionMode,
+    approval_expiry_iso,
+    build_action_hash,
+    build_approval_interrupt_payload,
+    build_blocked_tool_result,
+    build_tool_args_preview,
+)
+from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.runtime_overrides import (
     dispatch_tool_runtime_override,
@@ -25,7 +45,7 @@ from redis_sre_agent.core.runtime_overrides import (
 from redis_sre_agent.targets import get_target_handle_store, get_target_integration_registry
 from redis_sre_agent.targets.contracts import BindingRequest, ProviderLoadRequest
 
-from .models import Tool, ToolCapability, ToolDefinition
+from .models import Tool, ToolActionKind, ToolCapability, ToolDefinition
 from .protocols import ToolProvider
 
 if TYPE_CHECKING:
@@ -36,6 +56,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+_SENSITIVE_ARG_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+}
+
+
+def interrupt(payload: Any) -> Any:
+    """Call LangGraph interrupt through a patchable module seam."""
+
+    from langgraph.types import interrupt as langgraph_interrupt
+
+    return langgraph_interrupt(payload)
+
+
+def _summarize_tool_result(result: Any, *, max_chars: int = 240) -> str:
+    """Return a compact execution summary for the audit ledger."""
+
+    if isinstance(result, str):
+        rendered = result
+    else:
+        try:
+            import json as _json
+
+            rendered = _json.dumps(result, default=str)
+        except Exception:
+            rendered = str(result)
+    if len(rendered) > max_chars:
+        return f"{rendered[:max_chars].rstrip()}..."
+    return rendered
 
 
 def _command_is_available(command: Optional[str]) -> bool:
@@ -99,6 +153,8 @@ class ToolManager:
         thread_id: Optional[str] = None,
         task_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        graph_type: str = "agent_turn",
+        graph_version: str = "v1",
     ):
         """Initialize tool manager.
 
@@ -126,6 +182,8 @@ class ToolManager:
         self.thread_id = thread_id
         self.task_id = task_id
         self.user_id = user_id
+        self.graph_type = graph_type
+        self.graph_version = graph_version
         # Track loaded provider keys to avoid duplicate loads while allowing
         # the same provider class to be attached for multiple opaque targets.
         self._loaded_provider_keys: set[str] = set()
@@ -995,22 +1053,227 @@ class ToolManager:
         providers = self.get_providers_for_capability(capability)
         return providers[0] if providers else None
 
-    async def resolve_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """Route tool call to appropriate provider with caching.
+    def _target_handles_for_policy(self) -> List[str]:
+        handles = [
+            getattr(binding, "target_handle", None)
+            for binding in self.get_attached_target_bindings()
+            if getattr(binding, "target_handle", None)
+        ]
+        if handles:
+            return [str(handle) for handle in handles]
+        if self.redis_instance is not None and getattr(self.redis_instance, "id", None):
+            return [str(self.redis_instance.id)]
+        if self.redis_cluster is not None and getattr(self.redis_cluster, "id", None):
+            return [str(self.redis_cluster.id)]
+        return []
 
-        Uses both per-run in-memory cache and optional shared Redis cache.
-        The shared cache persists across runs and threads for the same instance.
+    async def evaluate_tool_call(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+    ) -> ToolExecutionDecision:
+        """Apply approval policy to a tool call before execution."""
 
-        Args:
-            tool_name: Tool name from LLM
-            args: Tool arguments from LLM
+        tool = self._tool_by_name.get(tool_name)
+        provider = self._routing_table.get(tool_name)
+        if not tool or not provider:
+            available_tools = list(self._routing_table.keys())
+            raise ValueError(
+                f"Unknown tool: {tool_name}. "
+                f"Available tools ({len(available_tools)}): {available_tools[:10]}..."
+            )
 
-        Returns:
-            Tool execution result
+        normalized_args = dict(args or {})
+        metadata = tool.metadata
+        action_kind = metadata.action_kind if metadata is not None else ToolActionKind.UNKNOWN
+        if action_kind is ToolActionKind.READ:
+            return ToolExecutionDecision(
+                mode=ToolExecutionMode.ALLOW,
+                tool_name=tool_name,
+                tool_args=normalized_args,
+            )
 
-        Raises:
-            ValueError: If tool name not found in routing table
-        """
+        if action_kind is ToolActionKind.UNKNOWN:
+            return ToolExecutionDecision(
+                mode=ToolExecutionMode.BLOCK,
+                tool_name=tool_name,
+                tool_args=normalized_args,
+                message=f"Blocked {tool_name}: this tool is not classified as read or write yet.",
+                result_payload=build_blocked_tool_result(
+                    tool_name=tool_name,
+                    reason="unclassified_tool",
+                    detail="This tool must be explicitly classified before the agent can execute it.",
+                ),
+            )
+
+        if settings.agent_permission_mode == "read_only":
+            return ToolExecutionDecision(
+                mode=ToolExecutionMode.BLOCK,
+                tool_name=tool_name,
+                tool_args=normalized_args,
+                message=(
+                    f"Blocked {tool_name}: write-capable tools are disabled while "
+                    "agent_permission_mode=read_only."
+                ),
+                result_payload=build_blocked_tool_result(
+                    tool_name=tool_name,
+                    reason="read_only_mode",
+                    detail=(
+                        "The agent is running in read-only mode. A human must switch to "
+                        "read_write mode before mutating tools can run."
+                    ),
+                ),
+            )
+
+        if not self.task_id or not self.thread_id:
+            return ToolExecutionDecision(
+                mode=ToolExecutionMode.BLOCK,
+                tool_name=tool_name,
+                tool_args=normalized_args,
+                message=f"Blocked {tool_name}: approval requires task and thread context.",
+                result_payload=build_blocked_tool_result(
+                    tool_name=tool_name,
+                    reason="missing_task_context",
+                    detail=(
+                        "This execution path cannot pause and resume safely because task context is missing."
+                    ),
+                ),
+            )
+
+        target_handles = self._target_handles_for_policy()
+        action_hash = build_action_hash(
+            tool_name=tool_name,
+            tool_args=normalized_args,
+            target_handles=target_handles,
+        )
+        tool_args_preview = build_tool_args_preview(normalized_args)
+        for key in list(tool_args_preview.keys()):
+            if str(key).strip().lower() in _SENSITIVE_ARG_KEYS:
+                tool_args_preview[key] = "[redacted]"
+
+        approval_manager = ApprovalManager()
+        resume_state = await approval_manager.get_resume_state(self.task_id)
+        if resume_state and resume_state.pending_approval_id:
+            existing_approval = await approval_manager.get_approval(
+                resume_state.pending_approval_id
+            )
+            if (
+                existing_approval
+                and existing_approval.tool_name == tool_name
+                and existing_approval.action_hash == action_hash
+            ):
+                pending_approval = PendingApprovalSummary.from_record(existing_approval)
+                if existing_approval.status is ApprovalStatus.APPROVED:
+                    return ToolExecutionDecision(
+                        mode=ToolExecutionMode.ALLOW,
+                        tool_name=tool_name,
+                        tool_args=normalized_args,
+                        message=f"Using approved action for {tool_name}.",
+                        approval_record=existing_approval,
+                        pending_approval=pending_approval,
+                    )
+                if existing_approval.status is ApprovalStatus.REJECTED:
+                    return ToolExecutionDecision(
+                        mode=ToolExecutionMode.BLOCK,
+                        tool_name=tool_name,
+                        tool_args=normalized_args,
+                        message=f"Blocked {tool_name}: approval was rejected.",
+                        approval_record=existing_approval,
+                        pending_approval=pending_approval,
+                        result_payload=build_blocked_tool_result(
+                            tool_name=tool_name,
+                            reason="approval_rejected",
+                            detail="A human reviewer rejected this tool call.",
+                        ),
+                    )
+                if existing_approval.status is ApprovalStatus.EXPIRED:
+                    return ToolExecutionDecision(
+                        mode=ToolExecutionMode.BLOCK,
+                        tool_name=tool_name,
+                        tool_args=normalized_args,
+                        message=f"Blocked {tool_name}: approval expired before resume.",
+                        approval_record=existing_approval,
+                        pending_approval=pending_approval,
+                        result_payload=build_blocked_tool_result(
+                            tool_name=tool_name,
+                            reason="approval_expired",
+                            detail="The approval expired before the task resumed.",
+                        ),
+                    )
+                if existing_approval.status is ApprovalStatus.PENDING:
+                    return ToolExecutionDecision(
+                        mode=ToolExecutionMode.REQUIRE_APPROVAL,
+                        tool_name=tool_name,
+                        tool_args=normalized_args,
+                        message=f"Approval required before executing {tool_name}.",
+                        approval_record=existing_approval,
+                        pending_approval=pending_approval,
+                    )
+
+        approval_record = ApprovalRecord(
+            task_id=self.task_id,
+            thread_id=self.thread_id,
+            graph_thread_id=self.task_id,
+            interrupt_id=str(ULID()),
+            graph_type=self.graph_type,
+            graph_version=self.graph_version,
+            tool_name=tool_name,
+            tool_args=normalized_args,
+            tool_args_preview=tool_args_preview,
+            action_kind=action_kind.value,
+            action_hash=action_hash,
+            target_handles=target_handles,
+            expires_at=approval_expiry_iso(settings.agent_approval_ttl_seconds),
+        )
+        pending_approval = PendingApprovalSummary.from_record(approval_record)
+        await approval_manager.create_approval(approval_record)
+        return ToolExecutionDecision(
+            mode=ToolExecutionMode.REQUIRE_APPROVAL,
+            tool_name=tool_name,
+            tool_args=normalized_args,
+            message=f"Approval required before executing {tool_name}.",
+            approval_record=approval_record,
+            pending_approval=pending_approval,
+        )
+
+    async def resolve_tool_call(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        decision: Optional[ToolExecutionDecision] = None,
+    ) -> Any:
+        """Route tool call to appropriate provider with approval-aware caching."""
+
+        normalized_args = dict(args or {})
+        decision = decision or await self.evaluate_tool_call(tool_name, normalized_args)
+        if decision.mode is ToolExecutionMode.BLOCK:
+            return dict(
+                decision.result_payload
+                or build_blocked_tool_result(
+                    tool_name=tool_name,
+                    reason="policy_blocked",
+                    detail=decision.message,
+                )
+            )
+        if decision.mode is ToolExecutionMode.REQUIRE_APPROVAL:
+            if decision.approval_record is None or decision.pending_approval is None:
+                return dict(
+                    decision.result_payload
+                    or build_blocked_tool_result(
+                        tool_name=tool_name,
+                        reason="approval_payload_missing",
+                        detail="Approval enforcement could not build approval state.",
+                    )
+                )
+            payload = build_approval_interrupt_payload(decision=decision)
+            try:
+                return interrupt(payload)
+            except RuntimeError as exc:
+                if "outside of a runnable context" not in str(exc):
+                    raise
+                raise ApprovalRequiredError(decision=decision, payload=payload) from exc
+
         provider = self._routing_table.get(tool_name)
         tool = self._tool_by_name.get(tool_name)
         if not provider or not tool:
@@ -1020,11 +1283,10 @@ class ToolManager:
                 f"Available tools ({len(available_tools)}): {available_tools[:10]}..."
             )
 
-        # OTel: per-tool resolve span
         _provider_name = provider.provider_name if provider else None
         _op = None
         try:
-            _op = provider.resolve_operation(tool_name, args)  # type: ignore[attr-defined]
+            _op = provider.resolve_operation(tool_name, normalized_args)  # type: ignore[attr-defined]
         except Exception:
             _op = None
         with tracer.start_as_current_span(
@@ -1037,61 +1299,103 @@ class ToolManager:
         ):
             override_result = await dispatch_tool_runtime_override(
                 tool_name=tool_name,
-                args=args or {},
+                args=normalized_args,
                 tool_by_name=self._tool_by_name,
                 routing_table=self._routing_table,
             )
             if override_result is not None:
                 return override_result.result
 
-            # Stable JSON key for args
+            action_kind = tool.metadata.action_kind
             try:
                 import json as _json
 
-                args_key = _json.dumps(args or {}, sort_keys=True, separators=(",", ":"))
+                args_key = _json.dumps(normalized_args, sort_keys=True, separators=(",", ":"))
             except Exception:
-                # Fallback to string repr
-                args_key = str(args or {})
+                args_key = str(normalized_args)
 
-            # Check per-run in-memory cache first (fastest)
             cache_key = f"{tool_name}|{args_key}"
-            if cache_key in self._call_cache:
+            cacheable = action_kind is ToolActionKind.READ
+            approval_record = (
+                decision.approval_record
+                if decision.approval_record is not None
+                and decision.approval_record.status is ApprovalStatus.APPROVED
+                else None
+            )
+            approval_manager = None
+            ledger = None
+            if approval_record is not None:
+                approval_manager = ApprovalManager()
+                existing_ledger = await approval_manager.get_execution_ledger(
+                    approval_record.approval_id,
+                    approval_record.action_hash,
+                )
+                if existing_ledger and existing_ledger.status is ActionExecutionStatus.EXECUTED:
+                    return {
+                        "status": "already_executed",
+                        "tool_name": tool_name,
+                        "approval_id": approval_record.approval_id,
+                        "action_hash": approval_record.action_hash,
+                        "result_summary": existing_ledger.result_summary,
+                    }
+                ledger = ActionExecutionLedger(
+                    approval_id=approval_record.approval_id,
+                    task_id=approval_record.task_id,
+                    tool_name=tool_name,
+                    action_hash=approval_record.action_hash,
+                )
+                await approval_manager.save_execution_ledger(ledger)
+            if cacheable and cache_key in self._call_cache:
                 return self._call_cache[cache_key]
 
-            # Check shared Redis cache (if enabled)
-            if self._shared_cache:
-                cached_result = await self._shared_cache.get(tool_name, args or {})
+            if cacheable and self._shared_cache:
+                cached_result = await self._shared_cache.get(tool_name, normalized_args)
                 if cached_result is not None:
-                    # Also store in per-run cache for faster subsequent lookups
                     self._call_cache[cache_key] = cached_result
                     return cached_result
 
-            result = await tool.invoke(args)
+            try:
+                result = await tool.invoke(normalized_args)
+            except Exception as exc:
+                if approval_manager is not None and ledger is not None:
+                    await approval_manager.save_execution_ledger(
+                        ledger.model_copy(
+                            update={
+                                "status": ActionExecutionStatus.FAILED,
+                                "error": str(exc),
+                            }
+                        )
+                    )
+                raise
 
-        # Cache result in per-run cache
-        self._call_cache[cache_key] = result
+        if cacheable:
+            self._call_cache[cache_key] = result
 
-        # Cache result in shared Redis cache (if enabled)
-        if self._shared_cache:
-            await self._shared_cache.set(tool_name, args or {}, result)
+        if cacheable and self._shared_cache:
+            await self._shared_cache.set(tool_name, normalized_args, result)
+
+        if approval_manager is not None and ledger is not None:
+            await approval_manager.save_execution_ledger(
+                ledger.model_copy(
+                    update={
+                        "status": ActionExecutionStatus.EXECUTED,
+                        "executed_at": datetime.now(timezone.utc).isoformat(),
+                        "result_summary": _summarize_tool_result(result),
+                    }
+                )
+            )
 
         return result
 
     async def execute_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Any]:
-        """Execute a batch of tool calls returned by an LLM.
-
-        Supports both LangChain-normalized tool_calls (with 'name' and 'args') and
-        OpenAI-style tool_calls (with 'function': {'name', 'arguments'}).
-        """
+        """Execute a batch of tool calls returned by an LLM."""
         results: List[Any] = []
         for tc in tool_calls or []:
             try:
-                # Extract tool name
                 name = tc.get("name")
                 if not name and isinstance(tc.get("function"), dict):
                     name = tc["function"].get("name")
 
-                # Extract arguments
                 args = tc.get("args")
                 if args is None and isinstance(tc.get("function"), dict):
                     arguments = tc["function"].get("arguments")
@@ -1106,7 +1410,6 @@ class ToolManager:
                         args = arguments
 
                 if not isinstance(args, dict):
-                    # Last resort: empty args
                     args = {}
 
                 if not name:
@@ -1114,9 +1417,17 @@ class ToolManager:
                     results.append({"status": "failed", "error": "missing tool name"})
                     continue
 
-                # Execute the tool via routing
-                result = await self.resolve_tool_call(name, args)
+                decision = await self.evaluate_tool_call(name, args)
+                result = await self.resolve_tool_call(name, args, decision=decision)
                 results.append(result)
+                if (
+                    isinstance(result, dict)
+                    and result.get("status") == "approval_required"
+                    and decision.mode is ToolExecutionMode.REQUIRE_APPROVAL
+                ):
+                    break
+            except (ApprovalRequiredError, GraphInterrupt):
+                raise
             except Exception as e:
                 logger.exception(f"Tool call execution failed for {tc}")
                 results.append({"status": "failed", "error": str(e)})

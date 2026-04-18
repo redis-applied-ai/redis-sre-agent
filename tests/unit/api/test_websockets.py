@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.api.websockets import TaskStreamManager
+from redis_sre_agent.core.approvals import ApprovalStatus, PendingApprovalSummary
 from redis_sre_agent.core.threads import Thread
 
 
@@ -260,6 +261,49 @@ class TestWebSocketEndpoint:
             data = response.json()
 
             assert data["stream_length"] == 0  # Fallback value
+
+    def test_websocket_initial_state_includes_pending_approval(self, test_client):
+        """Initial websocket payload should include pending approval metadata."""
+        thread_id = "test_thread"
+        pending = PendingApprovalSummary(
+            approval_id="approval-1",
+            interrupt_id="interrupt-1",
+            tool_name="redis_cloud_deadbeef_update_tags",
+            summary="redis_cloud_deadbeef_update_tags on inst-1",
+            requested_at="2024-01-01T00:00:00Z",
+            status=ApprovalStatus.PENDING,
+        )
+
+        mock_thread_state = Thread(thread_id=thread_id, context={}, metadata={})
+        mock_redis = AsyncMock(spec=Redis)
+        mock_redis.zrevrange = AsyncMock(return_value=["task-1"])
+
+        class TaskState:
+            updates = []
+            result = None
+            error_message = None
+            pending_approval = pending
+            resume_supported = True
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=TaskState())
+
+        with (
+            patch("redis_sre_agent.api.websockets.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.api.websockets.ThreadManager") as mock_manager_class,
+            patch("redis_sre_agent.core.tasks.TaskManager", return_value=mock_task_manager),
+            patch.object(TaskStreamManager, "start_consumer", new=AsyncMock()),
+            patch.object(TaskStreamManager, "stop_consumer", new=AsyncMock()),
+        ):
+            mock_manager = AsyncMock()
+            mock_manager_class.return_value = mock_manager
+            mock_manager.get_thread.return_value = mock_thread_state
+
+            with test_client.websocket_connect(f"/api/v1/ws/tasks/{thread_id}") as websocket:
+                data = websocket.receive_json()
+
+        assert data["pending_approval"]["approval_id"] == "approval-1"
+        assert data["resume_supported"] is True
 
 
 class TestThreadManagerIntegration:

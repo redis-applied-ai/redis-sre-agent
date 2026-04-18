@@ -4,19 +4,41 @@ from contextlib import AsyncExitStack
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Interrupt
 
+from redis_sre_agent.core.approvals import (
+    ActionExecutionLedger,
+    ActionExecutionStatus,
+    ApprovalRecord,
+    ApprovalRequiredError,
+    ApprovalStatus,
+    GraphResumeState,
+    build_action_hash,
+)
 from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
 from redis_sre_agent.core.config import MCPServerConfig
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.targets import TargetBinding
-from redis_sre_agent.targets.contracts import BindingResult, ProviderLoadRequest, TargetHandleRecord
+from redis_sre_agent.targets.contracts import (
+    BindingResult,
+    ProviderLoadRequest,
+    TargetHandleRecord,
+)
 from redis_sre_agent.targets.fake_integration import (
     FakeAuthenticatedClientFactory,
     FakeTargetBindingStrategy,
 )
 from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.manager import ToolManager, _command_is_available
-from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
+from redis_sre_agent.tools.manager import settings as manager_settings
+from redis_sre_agent.tools.models import (
+    Tool,
+    ToolActionKind,
+    ToolCapability,
+    ToolDefinition,
+    ToolMetadata,
+)
 from redis_sre_agent.tools.protocols import ToolProvider
 
 
@@ -58,6 +80,47 @@ class MockBindingStrategy:
         )
 
 
+def _register_tool(
+    mgr: ToolManager,
+    *,
+    name: str,
+    action_kind: ToolActionKind,
+    invoke: AsyncMock,
+    description: str,
+    capability: ToolCapability = ToolCapability.UTILITIES,
+    provider_name: str = "stub_default",
+) -> None:
+    tool = Tool(
+        metadata=ToolMetadata(
+            name=name,
+            description=description,
+            capability=capability,
+            provider_name=provider_name,
+            action_kind=action_kind,
+        ),
+        definition=ToolDefinition(
+            name=name,
+            description=description,
+            capability=capability,
+            parameters={"type": "object", "properties": {}},
+        ),
+        invoke=invoke,
+    )
+
+    class _Provider:
+        def __init__(self, provider_name: str, operation_name: str):
+            self.provider_name = provider_name
+            self._operation_name = operation_name
+
+        def resolve_operation(self, tool_name, args):
+            return self._operation_name
+
+    provider = _Provider(provider_name, name)
+    mgr._tools.append(tool)
+    mgr._tool_by_name[name] = tool
+    mgr._routing_table[name] = provider
+
+
 @pytest.mark.asyncio
 async def test_tool_manager_initialization():
     """Test that ToolManager initializes and loads knowledge provider."""
@@ -93,6 +156,7 @@ async def test_tool_manager_knowledge_tools():
         # Knowledge tools (always loaded)
         assert len(knowledge_tools) == 8
         assert any("target_discovery_" in n and "resolve_redis_targets" in n for n in tool_names)
+        assert any("target_discovery_" in n and "list_known_redis_targets" in n for n in tool_names)
         assert any("search" in n for n in knowledge_tools)
         assert any("ingest" in n for n in knowledge_tools)
         assert any("get_all_fragments" in n for n in knowledge_tools)
@@ -258,6 +322,334 @@ async def test_attach_bound_targets_supports_repo_fake_authenticated_integration
     assert auth_result["username"] == "demo-user"
     assert auth_result["audience"] == "fake-control-plane"
     assert auth_result["token_suffix"] == "oken"
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_executes_read_tool_without_interrupt(monkeypatch):
+    """Read tools should execute directly through the shared manager boundary."""
+    mgr = ToolManager(thread_id="thread-1", task_id="task-1")
+    invoke = AsyncMock(return_value={"status": "ok", "value": 42})
+    _register_tool(
+        mgr,
+        name="stub_default_fetch_status",
+        action_kind=ToolActionKind.READ,
+        invoke=invoke,
+        description="Fetch status",
+    )
+    monkeypatch.setattr(manager_settings, "agent_permission_mode", "read_write")
+
+    result = await mgr.resolve_tool_call("stub_default_fetch_status", {"scope": "demo"})
+
+    assert result == {"status": "ok", "value": 42}
+    invoke.assert_awaited_once_with({"scope": "demo"})
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_blocks_unknown_tool_kind(monkeypatch):
+    """Unclassified tools should fail closed without invoking the provider."""
+    mgr = ToolManager(thread_id="thread-1", task_id="task-1")
+    invoke = AsyncMock(return_value={"status": "should_not_run"})
+    _register_tool(
+        mgr,
+        name="stub_default_dynamic_tool",
+        action_kind=ToolActionKind.UNKNOWN,
+        invoke=invoke,
+        description="Dynamic tool",
+    )
+    monkeypatch.setattr(manager_settings, "agent_permission_mode", "read_write")
+
+    result = await mgr.resolve_tool_call("stub_default_dynamic_tool", {"scope": "demo"})
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "unclassified_tool"
+    invoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_interrupts_for_write_tool(monkeypatch):
+    """Write tools should interrupt before execution in runnable contexts."""
+    mgr = ToolManager(thread_id="thread-1", task_id="task-1")
+    invoke = AsyncMock(return_value={"status": "should_not_run"})
+    _register_tool(
+        mgr,
+        name="stub_default_update_password",
+        action_kind=ToolActionKind.WRITE,
+        invoke=invoke,
+        description="Update password",
+    )
+    monkeypatch.setattr(manager_settings, "agent_permission_mode", "read_write")
+    monkeypatch.setattr(manager_settings, "agent_approval_ttl_seconds", 900)
+
+    approval_manager = AsyncMock()
+    approval_manager.get_resume_state.return_value = None
+    approval_manager.create_approval.side_effect = lambda record: record
+
+    seen_payload = {}
+
+    def raise_graph_interrupt(payload):
+        seen_payload["payload"] = payload
+        raise GraphInterrupt((Interrupt(value=payload, id=payload["interrupt_id"]),))
+
+    with (
+        patch("redis_sre_agent.tools.manager.ApprovalManager", return_value=approval_manager),
+        patch("redis_sre_agent.tools.manager.interrupt", side_effect=raise_graph_interrupt),
+        pytest.raises(GraphInterrupt),
+    ):
+        await mgr.resolve_tool_call(
+            "stub_default_update_password",
+            {"password": "top-secret", "username": "demo"},
+        )
+
+    invoke.assert_not_awaited()
+    approval_manager.create_approval.assert_awaited_once()
+    approval_record = approval_manager.create_approval.await_args.args[0]
+    payload = seen_payload["payload"]
+    assert approval_record.task_id == "task-1"
+    assert approval_record.thread_id == "thread-1"
+    assert approval_record.action_kind == ToolActionKind.WRITE.value
+    assert approval_record.tool_args_preview["password"] == "[redacted]"
+    assert payload["kind"] == "approval_required"
+    assert payload["tool_name"] == "stub_default_update_password"
+    assert payload["pending_approval"]["tool_name"] == "stub_default_update_password"
+    assert payload["approval_id"] == approval_record.approval_id
+    assert payload["interrupt_id"] == approval_record.interrupt_id
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_propagates_approval_required(monkeypatch):
+    """Batch execution should surface approval pauses outside runnable contexts."""
+    mgr = ToolManager(thread_id="thread-1", task_id="task-1")
+    first_invoke = AsyncMock(return_value={"status": "should_not_run"})
+    second_invoke = AsyncMock(return_value={"status": "should_not_run"})
+    _register_tool(
+        mgr,
+        name="stub_default_delete_user",
+        action_kind=ToolActionKind.WRITE,
+        invoke=first_invoke,
+        description="Delete user",
+    )
+    _register_tool(
+        mgr,
+        name="stub_default_rotate_password",
+        action_kind=ToolActionKind.WRITE,
+        invoke=second_invoke,
+        description="Rotate password",
+    )
+    monkeypatch.setattr(manager_settings, "agent_permission_mode", "read_write")
+    monkeypatch.setattr(manager_settings, "agent_approval_ttl_seconds", 900)
+
+    approval_manager = AsyncMock()
+    approval_manager.get_resume_state.return_value = None
+    approval_manager.create_approval.side_effect = lambda record: record
+
+    with (
+        patch("redis_sre_agent.tools.manager.ApprovalManager", return_value=approval_manager),
+        patch(
+            "redis_sre_agent.tools.manager.interrupt",
+            side_effect=RuntimeError("called outside of a runnable context"),
+        ),
+        pytest.raises(ApprovalRequiredError),
+    ):
+        await mgr.execute_tool_calls(
+            [
+                {"name": "stub_default_delete_user", "args": {"username": "demo"}},
+                {"name": "stub_default_rotate_password", "args": {"username": "demo"}},
+            ]
+        )
+
+    first_invoke.assert_not_awaited()
+    second_invoke.assert_not_awaited()
+    approval_manager.create_approval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_allows_approved_resume_without_creating_new_approval(monkeypatch):
+    """Approved resume state should let the original write execute."""
+    mgr = ToolManager(thread_id="thread-1", task_id="task-1", graph_type="chat")
+    invoke = AsyncMock(return_value={"status": "ok"})
+    _register_tool(
+        mgr,
+        name="stub_default_update_password",
+        action_kind=ToolActionKind.WRITE,
+        invoke=invoke,
+        description="Update password",
+    )
+    monkeypatch.setattr(manager_settings, "agent_permission_mode", "read_write")
+
+    approval_record = ApprovalRecord(
+        approval_id="approval-1",
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        interrupt_id="interrupt-1",
+        graph_type="chat",
+        graph_version="v1",
+        tool_name="stub_default_update_password",
+        tool_args={"username": "demo"},
+        tool_args_preview={"username": "demo"},
+        action_kind=ToolActionKind.WRITE.value,
+        action_hash=build_action_hash(
+            tool_name="stub_default_update_password",
+            tool_args={"username": "demo"},
+            target_handles=[],
+        ),
+        target_handles=[],
+        status=ApprovalStatus.APPROVED,
+    )
+    resume_state = GraphResumeState(
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        graph_type="chat",
+        graph_version="v1",
+        checkpoint_ns="agent_turn",
+        checkpoint_id="checkpoint-1",
+        waiting_reason="resuming",
+        pending_approval_id="approval-1",
+        pending_interrupt_id="interrupt-1",
+    )
+
+    approval_manager = AsyncMock()
+    approval_manager.get_resume_state.return_value = resume_state
+    approval_manager.get_approval.return_value = approval_record
+    approval_manager.get_execution_ledger.return_value = None
+    approval_manager.save_execution_ledger = AsyncMock()
+
+    with patch("redis_sre_agent.tools.manager.ApprovalManager", return_value=approval_manager):
+        result = await mgr.resolve_tool_call("stub_default_update_password", {"username": "demo"})
+
+    assert result == {"status": "ok"}
+    invoke.assert_awaited_once_with({"username": "demo"})
+    approval_manager.create_approval.assert_not_awaited()
+    approval_manager.save_execution_ledger.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_blocks_rejected_resume_without_invoking(monkeypatch):
+    """Rejected approvals should fail closed when the graph resumes."""
+    mgr = ToolManager(thread_id="thread-1", task_id="task-1", graph_type="chat")
+    invoke = AsyncMock(return_value={"status": "should_not_run"})
+    _register_tool(
+        mgr,
+        name="stub_default_delete_user",
+        action_kind=ToolActionKind.WRITE,
+        invoke=invoke,
+        description="Delete user",
+    )
+    monkeypatch.setattr(manager_settings, "agent_permission_mode", "read_write")
+
+    approval_record = ApprovalRecord(
+        approval_id="approval-1",
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        interrupt_id="interrupt-1",
+        graph_type="chat",
+        graph_version="v1",
+        tool_name="stub_default_delete_user",
+        tool_args={"username": "demo"},
+        tool_args_preview={"username": "demo"},
+        action_kind=ToolActionKind.WRITE.value,
+        action_hash=build_action_hash(
+            tool_name="stub_default_delete_user",
+            tool_args={"username": "demo"},
+            target_handles=[],
+        ),
+        target_handles=[],
+        status=ApprovalStatus.REJECTED,
+    )
+    resume_state = GraphResumeState(
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        graph_type="chat",
+        graph_version="v1",
+        checkpoint_ns="agent_turn",
+        checkpoint_id="checkpoint-1",
+        waiting_reason="resuming",
+        pending_approval_id="approval-1",
+        pending_interrupt_id="interrupt-1",
+    )
+
+    approval_manager = AsyncMock()
+    approval_manager.get_resume_state.return_value = resume_state
+    approval_manager.get_approval.return_value = approval_record
+
+    with patch("redis_sre_agent.tools.manager.ApprovalManager", return_value=approval_manager):
+        result = await mgr.resolve_tool_call("stub_default_delete_user", {"username": "demo"})
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "approval_rejected"
+    invoke.assert_not_awaited()
+    approval_manager.create_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_returns_already_executed_for_duplicate_approved_resume(monkeypatch):
+    """Approved writes should not replay once the execution ledger is complete."""
+    mgr = ToolManager(thread_id="thread-1", task_id="task-1", graph_type="chat")
+    invoke = AsyncMock(return_value={"status": "should_not_run"})
+    _register_tool(
+        mgr,
+        name="stub_default_rotate_password",
+        action_kind=ToolActionKind.WRITE,
+        invoke=invoke,
+        description="Rotate password",
+    )
+    monkeypatch.setattr(manager_settings, "agent_permission_mode", "read_write")
+
+    approval_record = ApprovalRecord(
+        approval_id="approval-1",
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        interrupt_id="interrupt-1",
+        graph_type="chat",
+        graph_version="v1",
+        tool_name="stub_default_rotate_password",
+        tool_args={"username": "demo"},
+        tool_args_preview={"username": "demo"},
+        action_kind=ToolActionKind.WRITE.value,
+        action_hash=build_action_hash(
+            tool_name="stub_default_rotate_password",
+            tool_args={"username": "demo"},
+            target_handles=[],
+        ),
+        target_handles=[],
+        status=ApprovalStatus.APPROVED,
+    )
+    resume_state = GraphResumeState(
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        graph_type="chat",
+        graph_version="v1",
+        checkpoint_ns="agent_turn",
+        checkpoint_id="checkpoint-1",
+        waiting_reason="resuming",
+        pending_approval_id="approval-1",
+        pending_interrupt_id="interrupt-1",
+    )
+    executed_ledger = ActionExecutionLedger(
+        approval_id="approval-1",
+        task_id="task-1",
+        tool_name="stub_default_rotate_password",
+        action_hash=approval_record.action_hash,
+        status=ActionExecutionStatus.EXECUTED,
+        result_summary="already rotated",
+    )
+
+    approval_manager = AsyncMock()
+    approval_manager.get_resume_state.return_value = resume_state
+    approval_manager.get_approval.return_value = approval_record
+    approval_manager.get_execution_ledger.return_value = executed_ledger
+
+    with patch("redis_sre_agent.tools.manager.ApprovalManager", return_value=approval_manager):
+        result = await mgr.resolve_tool_call("stub_default_rotate_password", {"username": "demo"})
+
+    assert result["status"] == "already_executed"
+    assert result["result_summary"] == "already rotated"
+    invoke.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,8 @@
+import re
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ToolCapability(Enum):
@@ -17,6 +18,150 @@ class ToolCapability(Enum):
     UTILITIES = "utilities"  # Non-destructive utility functions (calc, date/time, http_head)
 
 
+class ToolActionKind(str, Enum):
+    """Behavioral classification used by HITL policy enforcement."""
+
+    READ = "read"
+    WRITE = "write"
+    UNKNOWN = "unknown"
+
+
+_READ_PREFIXES = (
+    "get_",
+    "list_",
+    "query_",
+    "search_",
+    "find_",
+    "read_",
+    "inspect_",
+    "describe_",
+)
+_WRITE_PREFIXES = (
+    "create_",
+    "update_",
+    "delete_",
+    "remove_",
+    "add_",
+    "upload_",
+    "move_",
+    "restart_",
+    "stop_",
+    "start_",
+    "enable_",
+    "disable_",
+    "approve_",
+    "resume_",
+    "retry_",
+    "cancel_",
+    "set_",
+    "link_",
+    "unlink_",
+    "transition_",
+    "attach_",
+    "detach_",
+    "failover_",
+)
+_READ_EXACT = {
+    "acl_log",
+    "auth_status",
+    "client_list",
+    "config_get",
+    "info",
+    "logs",
+    "rebalance_status",
+    "slowlog",
+}
+_READ_DESCRIPTION_MARKERS = (
+    "get ",
+    "list ",
+    "query ",
+    "search ",
+    "read ",
+    "inspect ",
+    "retrieve ",
+    "returns ",
+)
+_WRITE_DESCRIPTION_MARKERS = (
+    "create ",
+    "update ",
+    "delete ",
+    "remove ",
+    "add ",
+    "upload ",
+    "move ",
+    "restart ",
+    "enable ",
+    "disable ",
+    "approve ",
+    "resume ",
+    "retry ",
+    "cancel ",
+    "set ",
+    "link ",
+    "unlink ",
+    "transition ",
+    "attach ",
+    "detach ",
+    "overwrite ",
+    "modify ",
+)
+
+
+def _description_starts_with_marker(description: str, markers: tuple[str, ...]) -> bool:
+    normalized = description.strip().lower()
+    return any(normalized.startswith(marker) for marker in markers)
+
+
+def _extract_operation_name(tool_name: str, provider_name: str) -> str:
+    prefix_pattern = rf"^{re.escape(provider_name)}_[^_]+_"
+    if re.match(prefix_pattern, tool_name):
+        return re.sub(prefix_pattern, "", tool_name, count=1)
+    parts = tool_name.split("_")
+    if len(parts) >= 3:
+        return "_".join(parts[2:])
+    return tool_name
+
+
+def infer_tool_action_kind(
+    *,
+    name: str,
+    description: str,
+    capability: ToolCapability,
+    provider_name: str,
+) -> ToolActionKind:
+    """Infer the approval-relevant action kind for a tool.
+
+    Built-in providers default to conservative name/description inference.
+    Dynamic MCP tools stay ``unknown`` unless explicitly overridden by callers.
+    """
+
+    if provider_name.startswith("mcp_"):
+        return ToolActionKind.UNKNOWN
+
+    operation = _extract_operation_name(name, provider_name).lower()
+    description_lower = description.lower()
+
+    if operation in _READ_EXACT:
+        return ToolActionKind.READ
+    if operation.startswith(_WRITE_PREFIXES):
+        return ToolActionKind.WRITE
+    if operation.startswith(_READ_PREFIXES):
+        return ToolActionKind.READ
+    if _description_starts_with_marker(description_lower, _READ_DESCRIPTION_MARKERS):
+        return ToolActionKind.READ
+    if _description_starts_with_marker(description_lower, _WRITE_DESCRIPTION_MARKERS):
+        return ToolActionKind.WRITE
+    if capability in {
+        ToolCapability.METRICS,
+        ToolCapability.LOGS,
+        ToolCapability.TRACES,
+        ToolCapability.KNOWLEDGE,
+        ToolCapability.UTILITIES,
+    }:
+        return ToolActionKind.READ
+    return ToolActionKind.UNKNOWN
+
+
 class ToolMetadata(BaseModel):
     """Metadata about a concrete tool implementation.
 
@@ -29,6 +174,18 @@ class ToolMetadata(BaseModel):
     capability: ToolCapability
     provider_name: str
     requires_instance: bool = False
+    action_kind: Optional[ToolActionKind] = None
+
+    @model_validator(mode="after")
+    def populate_action_kind(self) -> "ToolMetadata":
+        if self.action_kind is None:
+            self.action_kind = infer_tool_action_kind(
+                name=self.name,
+                description=self.description,
+                capability=self.capability,
+                provider_name=self.provider_name,
+            )
+        return self
 
 
 class Tool(BaseModel):

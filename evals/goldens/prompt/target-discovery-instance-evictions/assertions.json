@@ -1,0 +1,21 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "target_discovery",
+      "operation": "resolve_redis_targets"
+    },
+    {
+      "provider_family": "redis_command",
+      "operation": "info"
+    }
+  ],
+  "required_findings": [
+    "checkout cache",
+    "evictions are happening"
+  ],
+  "required_sources": [
+    "live-system-boundary",
+    "target-discovery-before-live-access"
+  ],
+  "expected_routing_decision": "chat"
+}

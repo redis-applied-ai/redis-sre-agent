@@ -350,3 +350,75 @@ async def test_fixture_tool_runtime_blocks_undeclared_operations_on_declared_pro
     assert result.result == {
         "error": f"Tool '{config_get_tool.definition.name}' is not configured for this eval scenario"
     }
+
+
+@pytest.mark.asyncio
+async def test_fixture_tool_runtime_supports_target_specific_overrides():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "target-aware-runtime",
+            "name": "Target aware runtime",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-13",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "full_turn", "query": "compare two caches"},
+            "tools": {
+                "redis_command": {
+                    "info": {
+                        "result": {"name": "default"},
+                        "target_overrides": {
+                            "tgt_checkout_cache_prod": {"result": {"name": "checkout"}},
+                            "tgt_session_cache_prod": {"result": {"name": "session"}},
+                        },
+                    }
+                }
+            },
+        }
+    )
+    runtime = build_fixture_tool_runtime(scenario)
+    checkout_provider = _StubRedisCommandProvider(
+        redis_instance=RedisInstance(
+            id="tgt_checkout_cache_prod",
+            name="checkout-cache-prod",
+            connection_url="redis://localhost:6379/0",
+            environment="test",
+            usage="cache",
+            description="checkout",
+            instance_type="oss_single",
+        )
+    )
+    session_provider = _StubRedisCommandProvider(
+        redis_instance=RedisInstance(
+            id="tgt_session_cache_prod",
+            name="session-cache-prod",
+            connection_url="redis://localhost:6379/0",
+            environment="test",
+            usage="cache",
+            description="session",
+            instance_type="oss_single",
+        )
+    )
+
+    checkout_tool = checkout_provider.tools()[0]
+    session_tool = session_provider.tools()[0]
+
+    checkout = await runtime.dispatch_tool_call(
+        tool_name=checkout_tool.definition.name,
+        args={"section": "memory"},
+        tool_by_name={checkout_tool.definition.name: checkout_tool},
+        routing_table={checkout_tool.definition.name: checkout_provider},
+    )
+    session = await runtime.dispatch_tool_call(
+        tool_name=session_tool.definition.name,
+        args={"section": "memory"},
+        tool_by_name={session_tool.definition.name: session_tool},
+        routing_table={session_tool.definition.name: session_provider},
+    )
+
+    assert checkout is not None
+    assert session is not None
+    assert checkout.result == {"name": "checkout"}
+    assert session.result == {"name": "session"}

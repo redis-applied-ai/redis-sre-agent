@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .approvals import PendingApprovalSummary
 from .tasks import TaskUpdate
 
 
@@ -36,3 +37,5 @@ class InitialStateEvent(TaskStreamEvent):
     updates: List[TaskUpdate] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+    pending_approval: Optional[PendingApprovalSummary] = None
+    resume_supported: bool = False

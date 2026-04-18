@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from redis_sre_agent.core.approvals import PendingApprovalSummary
 from redis_sre_agent.core.tasks import (
     TaskManager,
     TaskMetadata,
@@ -63,6 +64,7 @@ class TestTaskModels:
         """Test TaskStatus enum values."""
         assert TaskStatus.QUEUED.value == "queued"
         assert TaskStatus.IN_PROGRESS.value == "in_progress"
+        assert TaskStatus.AWAITING_APPROVAL.value == "awaiting_approval"
         assert TaskStatus.DONE.value == "done"
         assert TaskStatus.FAILED.value == "failed"
         assert TaskStatus.CANCELLED.value == "cancelled"
@@ -76,6 +78,8 @@ class TestTaskModels:
         assert state.updates == []
         assert state.result is None
         assert state.error_message is None
+        assert state.pending_approval is None
+        assert state.resume_supported is False
 
 
 class TestTaskManagerCreateTask:
@@ -322,6 +326,49 @@ class TestTaskManagerSetError:
             assert task_manager._redis.set.call_count >= 1
 
 
+class TestTaskManagerApprovalMetadata:
+    @pytest.fixture
+    def task_manager(self):
+        mock_redis = AsyncMock()
+        mock_redis.hset = AsyncMock(return_value=True)
+        mock_redis.hdel = AsyncMock(return_value=1)
+        return TaskManager(redis_client=mock_redis)
+
+    @pytest.mark.asyncio
+    async def test_set_pending_approval_persists_json(self, task_manager):
+        pending_approval = PendingApprovalSummary(
+            approval_id="approval-1",
+            interrupt_id="interrupt-1",
+            tool_name="redis_scale",
+            summary="redis_scale on tgt-1",
+            requested_at="2026-04-15T12:00:00+00:00",
+        )
+
+        with patch.object(task_manager, "_upsert_task_search_doc", new_callable=AsyncMock):
+            result = await task_manager.set_pending_approval("task-123", pending_approval)
+
+        assert result is True
+        task_manager._redis.hset.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_clear_pending_approval_deletes_field(self, task_manager):
+        with patch.object(task_manager, "_upsert_task_search_doc", new_callable=AsyncMock):
+            result = await task_manager.set_pending_approval("task-123", None)
+
+        assert result is True
+        task_manager._redis.hdel.assert_called_once_with(
+            "sre:task:task-123:metadata", "pending_approval"
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_resume_supported_persists_flag(self, task_manager):
+        with patch.object(task_manager, "_upsert_task_search_doc", new_callable=AsyncMock):
+            result = await task_manager.set_resume_supported("task-123", True)
+
+        assert result is True
+        task_manager._redis.hset.assert_called()
+
+
 class TestTaskManagerUpsertSearchDoc:
     """Test TaskManager._upsert_task_search_doc method."""
 
@@ -459,6 +506,41 @@ class TestTaskManagerGetTaskState:
         assert state is not None
         assert state.status == TaskStatus.FAILED
         assert state.error_message == "Task failed: timeout"
+
+    @pytest.mark.asyncio
+    async def test_get_task_state_with_pending_approval_and_resume_supported(self, task_manager):
+        task_manager._redis.get = AsyncMock(
+            side_effect=[
+                b"awaiting_approval",
+                None,
+                None,
+            ]
+        )
+        task_manager._redis.lrange = AsyncMock(return_value=[])
+        task_manager._redis.hgetall = AsyncMock(
+            return_value={
+                b"thread_id": b"thread-123",
+                b"resume_supported": b"true",
+                b"pending_approval": json.dumps(
+                    {
+                        "approval_id": "approval-1",
+                        "interrupt_id": "interrupt-1",
+                        "tool_name": "redis_scale",
+                        "summary": "redis_scale on tgt-1",
+                        "requested_at": "2026-04-15T12:00:00+00:00",
+                        "status": "pending",
+                    }
+                ).encode(),
+            }
+        )
+
+        state = await task_manager.get_task_state("task-123")
+
+        assert state is not None
+        assert state.status == TaskStatus.AWAITING_APPROVAL
+        assert state.pending_approval is not None
+        assert state.pending_approval.approval_id == "approval-1"
+        assert state.resume_supported is True
 
     @pytest.mark.asyncio
     async def test_get_task_state_invalid_update_json(self, task_manager):
