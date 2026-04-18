@@ -416,6 +416,31 @@ def _load_mcp_tool_registry() -> dict[str, Any]:
         if getattr(tool, "context_kwarg", None):
             continue
         registry[str(name)] = tool_fn
+
+    try:
+        from redis_sre_agent.tools.target_discovery.provider import TargetDiscoveryToolProvider
+    except ImportError:
+        return registry
+
+    provider = TargetDiscoveryToolProvider()
+    for schema in provider.create_tool_schemas():
+        operation_name = str(schema.name)
+        if operation_name.endswith("list_known_redis_targets"):
+            method = provider.list_known_redis_targets
+        elif operation_name.endswith("resolve_redis_targets"):
+            method = provider.resolve_redis_targets
+        else:
+            continue
+
+        async def _invoke_runtime_tool(
+            _method: Any = method,
+            **kwargs: Any,
+        ) -> Any:
+            return await _method(**kwargs)
+
+        _invoke_runtime_tool.__name__ = operation_name
+        _invoke_runtime_tool.__doc__ = schema.description
+        registry.setdefault(operation_name, _invoke_runtime_tool)
     return registry
 
 
