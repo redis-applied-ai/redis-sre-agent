@@ -7,8 +7,10 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
@@ -16,13 +18,100 @@ try:
     from redis_agent_kit import AgentKit, RuntimeAgent, TaskEmitter
     from redis_agent_kit.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 except ImportError:  # pragma: no cover - local monorepo fallback for tests
-    _repo_runner_src = Path(__file__).resolve().parents[1].parent / "apps" / "runner" / "src"
-    if _repo_runner_src.is_dir():
-        sys.path.insert(0, str(_repo_runner_src))
-        from redis_agent_kit import AgentKit, RuntimeAgent, TaskEmitter
-        from redis_agent_kit.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
-    else:  # pragma: no cover - defensive
-        raise
+    _workspace_root = Path(__file__).resolve().parents[1].parent
+    _fallback_paths = (
+        _workspace_root / "tmp" / "redis-agent-kit",
+        _workspace_root / "apps" / "runner" / "src",
+    )
+    for _fallback_path in _fallback_paths:
+        if not _fallback_path.is_dir():
+            continue
+        sys.path.insert(0, str(_fallback_path))
+        for _module_name in tuple(sys.modules):
+            if _module_name == "redis_agent_kit" or _module_name.startswith("redis_agent_kit."):
+                sys.modules.pop(_module_name, None)
+        try:
+            from redis_agent_kit import AgentKit, RuntimeAgent, TaskEmitter
+            from redis_agent_kit.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
+        except ImportError:
+            continue
+        break
+    else:  # pragma: no cover - lightweight local test shim
+        class TaskEmitter(Protocol):
+            async def emit_async(
+                self,
+                message: str,
+                *,
+                update_type: str = "info",
+                stage: str | None = None,
+                metadata: dict[str, Any] | None = None,
+            ) -> None: ...
+
+            async def emit_tool_call_async(
+                self,
+                name: str,
+                *,
+                call_id: str,
+                status: str,
+                arguments: dict[str, Any] | None = None,
+                output_summary: str | None = None,
+                error_summary: str | None = None,
+            ) -> None: ...
+
+
+        class ToolCapability(StrEnum):
+            CUSTOM = "custom"
+
+
+        @dataclass(slots=True)
+        class ToolDefinition:
+            name: str
+            description: str
+            parameters: dict[str, Any]
+            capability: ToolCapability
+
+
+        @dataclass(slots=True)
+        class ToolMetadata:
+            name: str
+            description: str
+            capability: ToolCapability
+            provider_name: str
+
+
+        @dataclass(slots=True)
+        class Tool:
+            metadata: ToolMetadata
+            definition: ToolDefinition
+            invoke: Callable[[dict[str, Any]], Awaitable[Any]]
+
+
+        @dataclass(slots=True)
+        class AgentKit:
+            redis_url: str | None
+            agent_callable: Callable[..., Awaitable[dict[str, Any]]]
+
+
+        class RuntimeAgent:
+            def __init__(
+                self,
+                *,
+                kit: AgentKit,
+                a2a_card: dict[str, Any] | None = None,
+                mcp_tools: list[Tool] | None = None,
+                mcp_capabilities: dict[str, Any] | None = None,
+            ) -> None:
+                self.kit = kit
+                self.a2a_card = dict(a2a_card or {})
+                self.mcp_tools = list(mcp_tools or [])
+                self.mcp_capabilities = dict(mcp_capabilities or {})
+
+            def run_from_env(self) -> dict[str, Any]:
+                raw = os.environ.get("RAR_TASK_INPUT_JSON", "{}")
+                payload = json.loads(raw)
+                if not isinstance(payload, Mapping):
+                    raise RuntimeError("RAR_TASK_INPUT_JSON must decode to an object")
+                return asyncio.run(self.kit.agent_callable(payload))
 
 
 MAX_HISTORY_MESSAGES = 20
@@ -527,6 +616,7 @@ runtime_agent = RuntimeAgent(
     mcp_tools=_build_runtime_mcp_tools(),
     mcp_capabilities=_build_mcp_capabilities(),
 )
+agent = runtime_agent
 
 
 def main() -> int:
@@ -537,6 +627,7 @@ def main() -> int:
 
 
 __all__ = [
+    "agent",
     "main",
     "runtime_agent",
     "runtime_sre_agent",
