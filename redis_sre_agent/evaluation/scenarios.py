@@ -278,10 +278,16 @@ class EvalToolBehavior(BaseModel):
     failure: EvalToolFailure | None = None
     state_updates: dict[str, Any] = Field(default_factory=dict)
     responders: list[EvalToolResponder] = Field(default_factory=list)
+    target_overrides: dict[str, "EvalToolBehavior"] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _require_result_or_responder(self) -> "EvalToolBehavior":
-        if self.result is None and self.failure is None and not self.responders:
+        if (
+            self.result is None
+            and self.failure is None
+            and not self.responders
+            and not self.target_overrides
+        ):
             raise ValueError("tool behaviors must declare result, failure, and/or responders")
         return self
 
@@ -383,6 +389,9 @@ class EvalScenario(BaseModel):
         if ref_path.is_absolute() or self._source_path is None:
             return ref_path
         return resolve_scenario_reference(self._source_path, ref_path)
+
+
+EvalToolBehavior.model_rebuild()
 
 
 __all__ = [

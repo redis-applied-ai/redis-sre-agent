@@ -1,0 +1,108 @@
+id: prompt/target-discovery-instance-evictions
+name: Target discovery instance evictions
+description: Exercise discovery-first target resolution for a natural-language cache reference, then inspect live eviction state through attached Redis diagnostics.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - specs/natural-language-target-discovery-spec.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/target-discovery-instance-evictions/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: full_turn
+  agent: redis_chat
+  route_via_router: false
+  query: >
+    Check whether the prod checkout cache in us-east is evicting keys right now.
+    Resolve the target from the description if needed, then answer from live Redis
+    state instead of generic guidance.
+  max_tool_steps: 6
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+  target_catalog:
+    - handle: tgt_checkout_cache_prod
+      kind: instance
+      display_name: prod checkout cache
+      resource_id: redis-prod-checkout-cache
+      capabilities:
+        - diagnostics
+        - knowledge
+      public_metadata:
+        environment: production
+        usage: cache
+        status: healthy
+        target_type: oss_single
+        aliases:
+          - checkout cache
+          - prod checkout cache
+          - us-east checkout cache
+    - handle: tgt_session_cache_prod
+      kind: instance
+      display_name: prod session cache
+      resource_id: redis-prod-session-cache
+      capabilities:
+        - diagnostics
+        - knowledge
+      public_metadata:
+        environment: production
+        usage: cache
+        status: healthy
+        target_type: oss_single
+        aliases:
+          - session cache
+          - prod session cache
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../_shared/startup/live-system-boundary.md
+    - ../../_shared/startup/policies/target-discovery-before-live-access.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+
+tools:
+  redis_command:
+    info:
+      description: Fetch Redis INFO sections for the discovered target.
+      input_schema:
+        type: object
+        properties:
+          section:
+            type: string
+      responders:
+        - when:
+            args_contains:
+              section: memory
+          result: fixtures/tools/info-memory.json
+        - when:
+            args_contains:
+              section: stats
+          result: fixtures/tools/info-stats.json
+
+expectations:
+  required_tool_calls:
+    - provider_family: target_discovery
+      operation: resolve_redis_targets
+    - provider_family: redis_command
+      operation: info
+  required_findings:
+    - checkout cache
+    - evictions are happening
+  required_sources:
+    - live-system-boundary
+    - target-discovery-before-live-access
+  expected_routing_decision: chat

@@ -257,6 +257,82 @@ async def test_target_discovery_tool_attaches_tools_and_reloads_from_thread(
 
 
 @pytest.mark.asyncio
+async def test_target_inventory_tool_lists_known_targets_before_resolution(
+    async_redis_client,
+    redis_url,
+    redis_backed_target_state,
+):
+    """Inventory listing should work at zero scope before resolving and attaching one target."""
+
+    instances = [
+        RedisInstance(
+            id="redis-prod-checkout-cache",
+            name="checkout-cache-prod",
+            connection_url=redis_url,
+            environment="production",
+            usage="cache",
+            description="Primary checkout cache",
+            instance_type="oss_single",
+            extension_data={"target_discovery": {"aliases": ["checkout cache"]}},
+        ),
+        RedisInstance(
+            id="redis-prod-session-cache",
+            name="session-cache-prod",
+            connection_url=redis_url,
+            environment="production",
+            usage="cache",
+            description="Primary session cache",
+            instance_type="oss_single",
+            extension_data={"target_discovery": {"aliases": ["session cache"]}},
+        ),
+    ]
+    await save_instances(instances)
+
+    thread_manager = ThreadManager(redis_client=async_redis_client)
+    thread_id = await thread_manager.create_thread(
+        user_id="test-user",
+        session_id="test-session",
+        initial_context={},
+    )
+
+    async with ToolManager(thread_id=thread_id, user_id="test-user") as mgr:
+        list_tool = next(t.name for t in mgr.get_tools() if "list_known_redis_targets" in t.name)
+        inventory = await mgr.resolve_tool_call(list_tool, {"include_aliases": True})
+
+        assert inventory["status"] == "ok"
+        assert inventory["total_known_targets"] == 2
+        assert {target["display_name"] for target in inventory["targets"]} == {
+            "checkout-cache-prod",
+            "session-cache-prod",
+        }
+
+        resolve_tool = next(t.name for t in mgr.get_tools() if "resolve_redis_targets" in t.name)
+        resolution = await mgr.resolve_tool_call(
+            resolve_tool,
+            {
+                "query": "checkout cache",
+                "attach_tools": True,
+            },
+        )
+
+        assert resolution["status"] == "resolved"
+        assert len(resolution["attached_target_handles"]) == 1
+
+        info_tool = next(
+            t.name
+            for t in mgr.get_tools()
+            if "redis_command_" in t.name
+            and t.name.endswith("_info")
+            and "cluster_info" not in t.name
+            and "replication_info" not in t.name
+            and "search_index_info" not in t.name
+        )
+        info_result = await mgr.resolve_tool_call(info_tool, {"section": "server"})
+        assert info_result["status"] == "success"
+        assert "redis_version" in info_result["data"]
+
+
+@pytest.mark.asyncio
 async def test_target_discovery_tool_can_attach_multiple_targets(
     async_redis_client,
     redis_url,

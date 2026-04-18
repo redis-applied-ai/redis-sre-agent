@@ -22,9 +22,9 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode as LGToolNode
+from langgraph.types import Command
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
@@ -49,6 +49,14 @@ from ..core.targets import (
 )
 from ..core.turn_scope import TurnScope
 from ..tools.manager import ToolManager
+from .checkpointing import (
+    build_graph_config,
+    open_graph_checkpointer,
+    persist_approval_wait_state,
+    persist_checkpoint_metadata,
+    resolve_checkpoint_lookup_thread_id,
+    resolve_graph_thread_id,
+)
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
 from .helpers import log_preflight_messages
@@ -56,6 +64,7 @@ from .knowledge_context import build_startup_knowledge_context, merge_internal_t
 from .models import AgentResponse
 from .prompts import SRE_SYSTEM_PROMPT
 from .subgraphs.safety_fact_corrector import build_safety_fact_corrector
+from .tool_execution import execute_tool_calls_with_gate
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -592,9 +601,8 @@ class SRELangGraphAgent:
         # No tools bound at initialization - they're bound per conversation
         self.llm_with_tools = self.llm  # Will be rebound with tools per query
 
-        # Workflow will be built per-query with the appropriate ToolManager.
-        # Note: We create a new MemorySaver for each query to ensure proper isolation.
-        # This prevents cross-contamination between different tasks/threads.
+        # Workflow is built per-query with the appropriate ToolManager and compiled
+        # against a Redis-backed checkpoint for task-aware pause/resume support.
 
         logger.info("SRE LangGraph agent initialized (tools loaded per-query)")
 
@@ -1265,10 +1273,10 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
             return state
 
         async def tool_node(state: AgentState) -> AgentState:
-            """Execute SRE tools via LangGraph's ToolNode while preserving our telemetry.
+            """Execute SRE tools while preserving our telemetry.
 
             - Emit our progress callback before execution
-            - Execute tools with ToolNode (handles batching/arg normalization)
+            - Execute tools through the shared HITL gate
             - Pair returned ToolMessages to pending calls to build envelopes and sources
             """
             messages = state["messages"]
@@ -1291,21 +1299,11 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 except Exception:
                     pass
 
-            # 2) Build StructuredTool adapters once (resolve via ToolManager)
             try:
-                # Centralized adapter builder (returns StructuredTool adapters)
-                adapters = await _build_adapters(tool_mgr, list(tooldefs_by_name.values()))
-
-                lg_tool_node = LGToolNode(adapters)
-
-                # 3) Execute with ToolNode
-                log_preflight_messages(messages, label="Preflight toolnode-before", logger=logger)
-                out = await lg_tool_node.ainvoke({"messages": messages})
-                out_messages = out.get("messages", [])
-                # Some versions may return only ToolMessages; append deltas to preserve history
-                new_tool_messages = [m for m in out_messages if isinstance(m, ToolMessage)]
-                logger.info(
-                    f"ToolNode returned {len(out_messages)} msgs; appending {len(new_tool_messages)} tool msgs"
+                log_preflight_messages(messages, label="Preflight tool-exec-before", logger=logger)
+                new_tool_messages = await execute_tool_calls_with_gate(
+                    tool_manager=tool_mgr,
+                    tool_calls=tool_calls,
                 )
                 new_messages = messages + new_tool_messages if new_tool_messages else messages
 
@@ -1377,8 +1375,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 return state
 
             except Exception as e:
-                logger.exception(f"ToolNode execution failed, falling back to manual loop: {e}")
-                # Fallback: no-op; leave state unchanged so the graph can proceed or retry
+                logger.exception(f"Tool execution failed, leaving state unchanged: {e}")
                 return state
 
         async def reasoning_node(state: AgentState) -> AgentState:
@@ -2356,6 +2353,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             thread_id=tool_thread_id or session_id,
             task_id=normalized_context.get("task_id"),
             user_id=user_id,
+            graph_type="redis_triage",
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()
@@ -2411,42 +2409,54 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
             # Rebuild workflow with the tool manager and target instance
             self.workflow = self._build_workflow(tool_mgr, target_instance)
-
-            # Create MemorySaver for this query
-            # TODO: Had some trouble with the redis saver
-            checkpointer = MemorySaver()
-            self.app = self.workflow.compile(checkpointer=checkpointer)
+            task_id = normalized_context.get("task_id")
+            graph_thread_id = resolve_graph_thread_id(
+                session_id=session_id,
+                context=normalized_context,
+            )
 
             # Configure thread for session persistence and set higher recursion limit
-            thread_config = {
-                "configurable": {"thread_id": session_id},
-                "recursion_limit": self.settings.recursion_limit,
-            }
+            thread_config = build_graph_config(
+                graph_thread_id=graph_thread_id,
+                recursion_limit=self.settings.recursion_limit,
+            )
 
             try:
-                # Run the workflow with isolated memory
-                final_state = await self.app.ainvoke(initial_state, config=thread_config)
-
-                # Get tool envelopes - AgentResponse derives search_results from these
-                tool_envelopes = final_state.get("signals_envelopes", [])
-
-                # Extract the final response
-                messages = final_state["messages"]
-                if messages and isinstance(messages[-1], AIMessage):
-                    response_content = messages[-1].content
-                    logger.info(
-                        f"SRE agent completed processing with {final_state['iteration_count']} iterations"
+                with open_graph_checkpointer(durable=bool(task_id)) as checkpointer:
+                    self.app = self.workflow.compile(checkpointer=checkpointer)
+                    final_state = await self.app.ainvoke(initial_state, config=thread_config)
+                    await persist_checkpoint_metadata(
+                        task_id=task_id,
+                        thread_id=tool_thread_id or session_id,
+                        graph_thread_id=graph_thread_id,
+                        graph_type="redis_triage",
+                        checkpointer=checkpointer,
+                        config=thread_config,
                     )
-                    return AgentResponse(
-                        response=response_content,
-                        tool_envelopes=tool_envelopes,
-                    )
-                else:
+                    if final_state.get("__interrupt__"):
+                        await persist_approval_wait_state(task_id=task_id)
+                        raise GraphInterrupt(tuple(final_state["__interrupt__"]))
+
+                    tool_envelopes = final_state.get("signals_envelopes", [])
+
+                    messages = final_state["messages"]
+                    if messages and isinstance(messages[-1], AIMessage):
+                        response_content = messages[-1].content
+                        logger.info(
+                            f"SRE agent completed processing with {final_state['iteration_count']} iterations"
+                        )
+                        return AgentResponse(
+                            response=response_content,
+                            tool_envelopes=tool_envelopes,
+                        )
+
                     logger.warning("No valid response generated by SRE agent")
                     return AgentResponse(
                         response="I apologize, but I couldn't generate a proper response. Please try rephrasing your question.",
                     )
 
+            except GraphInterrupt:
+                raise
             except Exception as e:
                 logger.error(f"Error processing SRE query: {str(e)}")
                 logger.error(f"Error type: {type(e)}")
@@ -2470,10 +2480,23 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             List of conversation messages
         """
         try:
-            thread_config = {"configurable": {"thread_id": session_id}}
+            graph_thread_id = await resolve_checkpoint_lookup_thread_id(session_id)
+            recursion_limit = getattr(
+                getattr(self, "settings", settings),
+                "recursion_limit",
+                settings.recursion_limit,
+            )
+            thread_config = build_graph_config(
+                graph_thread_id=graph_thread_id,
+                recursion_limit=recursion_limit,
+            )
 
-            # Get the current state for the thread
-            current_state = await self.app.aget_state(config=thread_config)
+            if hasattr(self, "workflow"):
+                with open_graph_checkpointer(durable=False) as checkpointer:
+                    app = self.workflow.compile(checkpointer=checkpointer)
+                    current_state = await app.aget_state(config=thread_config)
+            else:
+                current_state = await self.app.aget_state(config=thread_config)
 
             if current_state and "messages" in current_state.values:
                 messages = current_state.values["messages"]
@@ -2502,8 +2525,22 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         LangChain message objects that may include ``tool_calls`` metadata.
         """
         try:
-            thread_config = {"configurable": {"thread_id": session_id}}
-            current_state = await self.app.aget_state(config=thread_config)
+            graph_thread_id = await resolve_checkpoint_lookup_thread_id(session_id)
+            recursion_limit = getattr(
+                getattr(self, "settings", settings),
+                "recursion_limit",
+                settings.recursion_limit,
+            )
+            thread_config = build_graph_config(
+                graph_thread_id=graph_thread_id,
+                recursion_limit=recursion_limit,
+            )
+            if hasattr(self, "workflow"):
+                with open_graph_checkpointer(durable=False) as checkpointer:
+                    app = self.workflow.compile(checkpointer=checkpointer)
+                    current_state = await app.aget_state(config=thread_config)
+            else:
+                current_state = await self.app.aget_state(config=thread_config)
             if current_state and current_state.values:
                 return {"messages": current_state.values.get("messages", [])}
         except Exception as e:
@@ -2520,9 +2557,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
             True if cleared successfully, False otherwise
         """
         try:
-            # Note: MemorySaver doesn't have a direct clear method
-            # In production, you'd want to use a more sophisticated checkpointer
-            # For now, we'll rely on the natural expiration of memory
+            # Resume metadata tracks task-bound checkpoints, but there is still
+            # no generic graph-history deletion flow at the agent layer.
             logger.info(f"Conversation clear requested for session {session_id}")
             return True
 
@@ -2724,6 +2760,134 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 return agent_response
         finally:
             # Clear LLM memo cache for this run
+            try:
+                self._end_run_cache()
+            except Exception:
+                pass
+
+    async def resume_query(
+        self,
+        *,
+        session_id: str,
+        user_id: Optional[str],
+        context: Optional[Dict[str, Any]] = None,
+        progress_emitter: Optional[ProgressEmitter] = None,
+        resume_payload: Optional[Dict[str, Any]] = None,
+    ) -> AgentResponse:
+        """Resume a paused SRE graph from its persisted checkpoint."""
+
+        self._begin_run_cache()
+        try:
+            normalized_context = dict(context or {})
+            turn_scope = TurnScope.from_context(
+                normalized_context,
+                thread_id=normalized_context.get("thread_id"),
+                session_id=session_id,
+            )
+            normalized_context.update(turn_scope.to_thread_context())
+            normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
+
+            target_instance = None
+            target_cluster = None
+            if turn_scope.single_binding is not None:
+                binding = turn_scope.single_binding
+                if binding.target_kind == "instance" and binding.resource_id:
+                    target_instance = await get_instance_by_id(binding.resource_id)
+                elif binding.target_kind == "cluster" and binding.resource_id:
+                    from ..core.clusters import get_cluster_by_id
+
+                    target_cluster = await get_cluster_by_id(binding.resource_id)
+            else:
+                instance_id = str(normalized_context.get("instance_id") or "").strip() or None
+                cluster_id = str(normalized_context.get("cluster_id") or "").strip() or None
+                if instance_id:
+                    target_instance = await get_instance_by_id(instance_id)
+                elif cluster_id:
+                    from ..core.clusters import get_cluster_by_id
+
+                    target_cluster = await get_cluster_by_id(cluster_id)
+
+            support_package_path = None
+            if turn_scope.support_package_context.get("support_package_path"):
+                pkg_path = turn_scope.support_package_context["support_package_path"]
+                support_package_path = Path(pkg_path) if isinstance(pkg_path, str) else pkg_path
+
+            cache_client = None
+            if settings.tool_cache_enabled and target_instance:
+                cache_client = get_redis_client()
+
+            tool_thread_id = turn_scope.thread_id
+            initial_target_bindings = (
+                turn_scope.bindings or None
+                if target_instance is None and target_cluster is None
+                else None
+            )
+            initial_toolset_generation = (
+                turn_scope.toolset_generation if initial_target_bindings else 0
+            )
+            async with ToolManager(
+                redis_instance=target_instance,
+                redis_cluster=target_cluster,
+                initial_target_bindings=initial_target_bindings,
+                initial_toolset_generation=initial_toolset_generation,
+                support_package_path=support_package_path,
+                cache_client=cache_client,
+                cache_ttl_overrides=settings.tool_cache_ttl_overrides or None,
+                thread_id=tool_thread_id or session_id,
+                task_id=normalized_context.get("task_id"),
+                user_id=user_id,
+                graph_type="redis_triage",
+            ) as tool_mgr:
+                tools = tool_mgr.get_tools()
+                adapters = await _build_adapters(tool_mgr, tools)
+                self.llm_with_tools = self.llm.bind_tools(adapters)
+                self.workflow = self._build_workflow(tool_mgr, target_instance)
+
+                task_id = normalized_context.get("task_id")
+                graph_thread_id = resolve_graph_thread_id(
+                    session_id=session_id,
+                    context=normalized_context,
+                )
+                thread_config = build_graph_config(
+                    graph_thread_id=graph_thread_id,
+                    recursion_limit=self.settings.recursion_limit,
+                )
+
+                with open_graph_checkpointer(durable=True) as checkpointer:
+                    self.app = self.workflow.compile(checkpointer=checkpointer)
+                    final_state = await self.app.ainvoke(
+                        Command(resume=resume_payload or {}),
+                        config=thread_config,
+                    )
+                    await persist_checkpoint_metadata(
+                        task_id=task_id,
+                        thread_id=tool_thread_id or session_id,
+                        graph_thread_id=graph_thread_id,
+                        graph_type="redis_triage",
+                        checkpointer=checkpointer,
+                        config=thread_config,
+                    )
+                    if final_state.get("__interrupt__"):
+                        await persist_approval_wait_state(task_id=task_id)
+                        raise GraphInterrupt(tuple(final_state["__interrupt__"]))
+
+                    tool_envelopes = final_state.get("signals_envelopes", [])
+                    messages = final_state.get("messages", [])
+                    if messages and isinstance(messages[-1], AIMessage):
+                        return AgentResponse(
+                            response=messages[-1].content,
+                            tool_envelopes=tool_envelopes,
+                        )
+
+                    return AgentResponse(
+                        response="I apologize, but I couldn't generate a proper response. Please try again.",
+                    )
+        except GraphInterrupt:
+            raise
+        except Exception as exc:
+            logger.exception("SRE agent resume error: %s", exc)
+            return AgentResponse(response=f"Error resuming query: {exc}")
+        finally:
             try:
                 self._end_run_cache()
             except Exception:

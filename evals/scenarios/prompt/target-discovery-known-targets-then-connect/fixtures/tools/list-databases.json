@@ -1,0 +1,12 @@
+{
+  "databases": [
+    {
+      "uid": 101,
+      "name": "payments-cache-prod"
+    },
+    {
+      "uid": 102,
+      "name": "payments-ledger-prod"
+    }
+  ]
+}

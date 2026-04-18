@@ -13,7 +13,7 @@ from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
 from redis_sre_agent.evaluation.injection import EvalMCPRuntime
 from redis_sre_agent.evaluation.scenarios import EvalScenario
 from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorResolver, FixtureBehaviorState
-from redis_sre_agent.tools.models import ToolCapability
+from redis_sre_agent.tools.models import ToolActionKind, ToolCapability
 
 
 def _normalize_operation(value: str) -> str:
@@ -136,7 +136,7 @@ def build_fixture_mcp_runtime(
     for server_name, server_config in scenario.tools.mcp_servers.items():
         capability = _coerce_capability(server_config.capability)
         behaviors = {
-            ("mcp", _normalize_operation(operation), server_name): behavior
+            ("mcp", _normalize_operation(operation), None, server_name): behavior
             for operation, behavior in server_config.tools.items()
         }
         resolver = FixtureBehaviorResolver(
@@ -163,6 +163,7 @@ def build_fixture_mcp_runtime(
             tool_overrides[normalized_operation] = MCPToolConfig(
                 capability=capability,
                 description=description,
+                action_kind=ToolActionKind.READ,
             )
 
         server_configs[server_name] = MCPServerConfig(

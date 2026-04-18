@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from redis_sre_agent.agent.models import AgentResponse
-from redis_sre_agent.core.targets import build_bound_target_scope_context
+from redis_sre_agent.core.targets import (
+    TargetCatalogDoc,
+    _confidence_from_score,
+    _parse_query_hints,
+    _score_target_doc,
+    build_bound_target_scope_context,
+    build_public_match_from_doc,
+)
 from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.core.threads import ThreadManager, _build_initial_context
 from redis_sre_agent.core.turn_scope import TurnScope
@@ -23,8 +32,14 @@ from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorState, build_
 from redis_sre_agent.targets import TargetBindingService
 from redis_sre_agent.targets.contracts import (
     DiscoveryCandidate,
+    DiscoveryRequest,
+    DiscoveryResponse,
     PublicTargetBinding,
     PublicTargetMatch,
+)
+from redis_sre_agent.targets.registry import (
+    TargetIntegrationRegistry,
+    get_target_integration_registry,
 )
 
 _REQUESTED_AGENT_TYPES = {
@@ -206,6 +221,193 @@ def _build_catalog_matches(
     return matches, existing_by_subject
 
 
+def _build_eval_target_catalog_doc(entry: Any) -> TargetCatalogDoc:
+    """Translate a scenario target entry into a safe discovery document."""
+
+    public_metadata = dict(entry.public_metadata or {})
+    target_type = public_metadata.get("target_type") or entry.cluster_type
+    aliases = public_metadata.get("aliases") or public_metadata.get("search_aliases") or []
+    if not isinstance(aliases, list):
+        aliases = [aliases]
+
+    search_parts = [
+        entry.display_name,
+        public_metadata.get("environment"),
+        public_metadata.get("usage"),
+        public_metadata.get("status"),
+        public_metadata.get("description"),
+        public_metadata.get("notes"),
+        public_metadata.get("monitoring_identifier"),
+        public_metadata.get("logging_identifier"),
+        *(str(alias) for alias in aliases if alias not in (None, "")),
+    ]
+    search_text = " ".join(str(part) for part in search_parts if part not in (None, ""))
+
+    return TargetCatalogDoc(
+        target_id=entry.handle,
+        target_kind=entry.kind,
+        resource_id=entry.resource_id or entry.handle,
+        display_name=entry.display_name,
+        name=entry.display_name,
+        environment=public_metadata.get("environment"),
+        status=public_metadata.get("status"),
+        target_type=str(target_type) if target_type else None,
+        usage=public_metadata.get("usage"),
+        description=public_metadata.get("description"),
+        notes=public_metadata.get("notes"),
+        repo_url=public_metadata.get("repo_url"),
+        repo_slug=public_metadata.get("repo_slug"),
+        monitoring_identifier=public_metadata.get("monitoring_identifier"),
+        logging_identifier=public_metadata.get("logging_identifier"),
+        cluster_id=public_metadata.get("cluster_id"),
+        redis_cloud_subscription_id=public_metadata.get("redis_cloud_subscription_id"),
+        redis_cloud_database_id=public_metadata.get("redis_cloud_database_id"),
+        redis_cloud_database_name=public_metadata.get("redis_cloud_database_name"),
+        search_text=search_text,
+        search_aliases=[str(alias) for alias in aliases if alias not in (None, "")],
+        capabilities=list(entry.capabilities or []),
+    )
+
+
+class _EvalTargetCatalogDiscoveryBackend:
+    """Scenario-backed discovery backend for eval runs."""
+
+    backend_name = "eval_target_catalog"
+
+    def __init__(
+        self,
+        *,
+        scenario: EvalScenario,
+        binding_strategy: str,
+    ) -> None:
+        self._scenario = scenario
+        self._binding_strategy = binding_strategy
+        self._catalog_docs = {
+            entry.handle: _build_eval_target_catalog_doc(entry)
+            for entry in scenario.scope.target_catalog
+        }
+
+    async def resolve(self, request: DiscoveryRequest) -> DiscoveryResponse:
+        ranked: list[DiscoveryCandidate] = []
+        hints = _parse_query_hints(request.query)
+
+        for entry in self._scenario.scope.target_catalog:
+            doc = self._catalog_docs[entry.handle]
+            score, reasons = _score_target_doc(
+                request.query,
+                doc,
+                preferred_capabilities=request.preferred_capabilities,
+                hints=hints,
+            )
+            if score < 2.5:
+                continue
+
+            public_match = build_public_match_from_doc(
+                doc,
+                confidence=_confidence_from_score(score),
+                match_reasons=reasons,
+                score=score,
+            )
+            ranked.append(
+                DiscoveryCandidate(
+                    public_match=public_match,
+                    binding_strategy=self._binding_strategy,
+                    binding_subject=doc.resource_id,
+                    private_binding_ref=_build_eval_target_private_ref(
+                        entry,
+                        binding_subject=doc.resource_id,
+                    ),
+                    discovery_backend=self.backend_name,
+                    score=score,
+                    confidence=public_match.confidence,
+                )
+            )
+
+        ranked.sort(key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
+        limited = ranked[: max(1, min(request.max_results, 10))]
+        if not limited:
+            return DiscoveryResponse(status="no_match")
+
+        top = limited[0]
+        if request.allow_multiple:
+            selected = [
+                candidate for candidate in limited if candidate.score >= max(3.0, top.score - 1.5)
+            ][: min(3, request.max_results)]
+            return DiscoveryResponse(
+                status="resolved",
+                clarification_required=False,
+                matches=[candidate.public_match for candidate in limited],
+                selected_matches=selected,
+            )
+
+        clarification_required = len(limited) > 1 and limited[1].score >= top.score - 0.75
+        selected = limited[: min(3, request.max_results)] if clarification_required else [top]
+        return DiscoveryResponse(
+            status="clarification_required" if clarification_required else "resolved",
+            clarification_required=clarification_required,
+            matches=[candidate.public_match for candidate in limited],
+            selected_matches=selected,
+        )
+
+
+def _build_eval_target_catalog_docs(scenario: EvalScenario) -> list[TargetCatalogDoc]:
+    """Return scenario-backed catalog docs for eval discovery and inventory tools."""
+
+    return [_build_eval_target_catalog_doc(entry) for entry in scenario.scope.target_catalog]
+
+
+def _build_eval_target_registry(scenario: EvalScenario) -> TargetIntegrationRegistry | None:
+    """Install a scenario-backed discovery backend while reusing production binders."""
+
+    if not scenario.scope.target_catalog:
+        return None
+
+    base_registry = get_target_integration_registry()
+    registry = TargetIntegrationRegistry(
+        default_discovery_backend=_EvalTargetCatalogDiscoveryBackend.backend_name,
+        default_binding_strategy=base_registry.default_binding_strategy,
+    )
+    registry._discovery_backends.update(dict(base_registry._discovery_backends))
+    registry._binding_strategies.update(dict(base_registry._binding_strategies))
+    registry._client_factories.update(dict(base_registry._client_factories))
+    registry.register_discovery_backend(
+        _EvalTargetCatalogDiscoveryBackend(
+            scenario=scenario,
+            binding_strategy=registry.default_binding_strategy,
+        )
+    )
+    return registry
+
+
+def _target_registry_override_scope(
+    scenario: EvalScenario,
+) -> ExitStack | Any:
+    """Patch target-registry call sites for discovery-first eval scenarios."""
+
+    registry = _build_eval_target_registry(scenario)
+    if registry is None:
+        return nullcontext()
+
+    catalog_docs = _build_eval_target_catalog_docs(scenario)
+
+    async def _get_eval_target_catalog(*, user_id: str | None = None) -> list[TargetCatalogDoc]:
+        if not user_id:
+            return list(catalog_docs)
+        return [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+
+    stack = ExitStack()
+    for target in (
+        "redis_sre_agent.targets.services.get_target_integration_registry",
+        "redis_sre_agent.tools.manager.get_target_integration_registry",
+        "redis_sre_agent.core.targets.get_target_integration_registry",
+    ):
+        stack.enter_context(patch(target, return_value=registry))
+    stack.enter_context(
+        patch("redis_sre_agent.core.targets.get_target_catalog", new=_get_eval_target_catalog)
+    )
+    return stack
+
+
 async def build_full_turn_context(
     scenario: EvalScenario,
     *,
@@ -339,77 +541,78 @@ async def run_full_turn_scenario(
     mcp_servers = effective_overrides.mcp_servers
     if mcp_servers is None:
         mcp_servers = mcp_runtime.get_server_configs() if mcp_runtime is not None else {}
-    with eval_injection_scope(
-        knowledge_backend=knowledge_backend,
-        mcp_servers=mcp_servers,
-        mcp_runtime=mcp_runtime,
-        tool_runtime=tool_runtime,
-    ):
-        thread_manager = ThreadManager(redis_client=redis_client)
-        task_manager = TaskManager(redis_client=redis_client)
-        initial_context = await _build_initial_context(
-            query=scenario.execution.query,
-            base_context={
-                **_scenario_runtime_context(scenario),
-                **dict(context_overrides or {}),
-            },
-        )
-        thread_id = await thread_manager.create_thread(
-            user_id=user_id,
-            session_id=session_id,
-            initial_context=initial_context,
-        )
-        await thread_manager.set_thread_subject(thread_id, scenario.execution.query)
-
-        task_id = await task_manager.create_task(
-            thread_id=thread_id,
-            user_id=user_id,
-            subject=scenario.execution.query,
-        )
-        effective_session_id = session_id or thread_id
-        turn_context, _ = await build_full_turn_context(
-            scenario,
-            thread_id=thread_id,
-            task_id=task_id,
-            session_id=effective_session_id,
-            target_binding_service=target_binding_service,
-            context_overrides=initial_context,
-        )
-        await thread_manager.update_thread_context(thread_id, turn_context, merge=False)
-
-        active_turn_processor = turn_processor or _default_turn_processor
-        turn_result = await active_turn_processor(
-            thread_id=thread_id,
-            message=scenario.execution.query,
-            context=turn_context,
-            task_id=task_id,
-            redis_client=redis_client,
-        )
-        assistant_message_id = str(turn_result.get("message_id") or "").strip()
-        if assistant_message_id:
-            message_trace = await thread_manager.get_message_trace(assistant_message_id)
-            turn_result = _enrich_turn_result_from_trace(turn_result, message_trace)
-
-        task_state = await task_manager.get_task_state(task_id)
-        task_status = None
-        if task_state is not None:
-            status = getattr(task_state, "status", None)
-            task_status = (
-                status.value if hasattr(status, "value") else str(status) if status else None
+    with _target_registry_override_scope(scenario):
+        with eval_injection_scope(
+            knowledge_backend=knowledge_backend,
+            mcp_servers=mcp_servers,
+            mcp_runtime=mcp_runtime,
+            tool_runtime=tool_runtime,
+        ):
+            thread_manager = ThreadManager(redis_client=redis_client)
+            task_manager = TaskManager(redis_client=redis_client)
+            initial_context = await _build_initial_context(
+                query=scenario.execution.query,
+                base_context={
+                    **_scenario_runtime_context(scenario),
+                    **dict(context_overrides or {}),
+                },
             )
+            thread_id = await thread_manager.create_thread(
+                user_id=user_id,
+                session_id=session_id,
+                initial_context=initial_context,
+            )
+            await thread_manager.set_thread_subject(thread_id, scenario.execution.query)
 
-        return EvalFullTurnResult(
-            scenario_id=scenario.id,
-            scenario_name=scenario.name,
-            scenario_provenance=scenario.provenance.model_dump(mode="json"),
-            execution_lane=scenario.execution.lane,
-            thread_id=thread_id,
-            task_id=task_id,
-            task_status=task_status,
-            initial_context=initial_context,
-            turn_context=turn_context,
-            turn_result=turn_result,
-        )
+            task_id = await task_manager.create_task(
+                thread_id=thread_id,
+                user_id=user_id,
+                subject=scenario.execution.query,
+            )
+            effective_session_id = session_id or thread_id
+            turn_context, _ = await build_full_turn_context(
+                scenario,
+                thread_id=thread_id,
+                task_id=task_id,
+                session_id=effective_session_id,
+                target_binding_service=target_binding_service,
+                context_overrides=initial_context,
+            )
+            await thread_manager.update_thread_context(thread_id, turn_context, merge=False)
+
+            active_turn_processor = turn_processor or _default_turn_processor
+            turn_result = await active_turn_processor(
+                thread_id=thread_id,
+                message=scenario.execution.query,
+                context=turn_context,
+                task_id=task_id,
+                redis_client=redis_client,
+            )
+            assistant_message_id = str(turn_result.get("message_id") or "").strip()
+            if assistant_message_id:
+                message_trace = await thread_manager.get_message_trace(assistant_message_id)
+                turn_result = _enrich_turn_result_from_trace(turn_result, message_trace)
+
+            task_state = await task_manager.get_task_state(task_id)
+            task_status = None
+            if task_state is not None:
+                status = getattr(task_state, "status", None)
+                task_status = (
+                    status.value if hasattr(status, "value") else str(status) if status else None
+                )
+
+            return EvalFullTurnResult(
+                scenario_id=scenario.id,
+                scenario_name=scenario.name,
+                scenario_provenance=scenario.provenance.model_dump(mode="json"),
+                execution_lane=scenario.execution.lane,
+                thread_id=thread_id,
+                task_id=task_id,
+                task_status=task_status,
+                initial_context=initial_context,
+                turn_context=turn_context,
+                turn_result=turn_result,
+            )
 
 
 class EvalRuntime:

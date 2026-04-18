@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 import yaml
 from dotenv import load_dotenv
@@ -17,7 +17,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from redis_sre_agent.tools.models import ToolCapability
+from redis_sre_agent.tools.models import ToolActionKind, ToolCapability
 
 if TYPE_CHECKING:
     pass
@@ -45,6 +45,11 @@ class MCPToolConfig(BaseModel):
         default=None,
         description="Alternative description for this tool. "
         "If provided, the agent sees this instead of the MCP server's description.",
+    )
+    action_kind: Optional[ToolActionKind] = Field(
+        default=None,
+        description="Optional approval action override for the tool. "
+        "If omitted, MCP tools remain unknown by default.",
     )
 
 
@@ -398,6 +403,15 @@ class Settings(BaseSettings):
         default=100, description="LangGraph recursion limit for complex workflows"
     )
     tool_timeout: int = Field(default=60, description="Tool execution timeout")
+    agent_permission_mode: Literal["read_only", "read_write"] = Field(
+        default="read_only",
+        description="Global tool execution mode for HITL enforcement. "
+        "'read_only' blocks mutating tools, 'read_write' requires approval for writes.",
+    )
+    agent_approval_ttl_seconds: int = Field(
+        default=3600,
+        description="Seconds before a pending approval request expires.",
+    )
 
     # Tool Caching
     tool_cache_enabled: bool = Field(

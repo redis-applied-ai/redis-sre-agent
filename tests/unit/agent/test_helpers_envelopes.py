@@ -62,6 +62,23 @@ def test_build_result_envelope_empty_tool_name():
     assert env["name"] == "tool"
 
 
+def test_build_result_envelope_does_not_leak_internal_control_statuses():
+    msg = ToolMessage(
+        content='{"status": "approval_required", "approval_id": "appr-1"}', tool_call_id="xyz"
+    )
+    env = build_result_envelope("unknown.tool", {}, msg, {})
+
+    assert env["status"] == "success"
+    assert env["data"]["status"] == "approval_required"
+
+
+def test_build_result_envelope_preserves_error_status_for_failures():
+    msg = ToolMessage(content='{"status": "error", "detail": "boom"}', tool_call_id="xyz")
+    env = build_result_envelope("unknown.tool", {}, msg, {})
+
+    assert env["status"] == "error"
+
+
 class TestParseJsonMaybeFenced:
     """Test parse_json_maybe_fenced function."""
 

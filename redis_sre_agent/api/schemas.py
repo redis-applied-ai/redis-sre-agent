@@ -6,6 +6,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from redis_sre_agent.core.approvals import (
+    ApprovalDecisionType,
+    ApprovalRecord,
+    PendingApprovalSummary,
+)
 from redis_sre_agent.core.tasks import TaskStatus
 
 
@@ -97,9 +102,23 @@ class TaskResponse(BaseModel):
     result: Optional[Dict[str, Any]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     error_message: Optional[str] = None
+    pending_approval: Optional[PendingApprovalSummary] = None
+    resume_supported: bool = False
     subject: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class TaskResumeRequest(BaseModel):
+    approval_id: str
+    decision: ApprovalDecisionType
+    decision_by: Optional[str] = None
+    decision_comment: Optional[str] = None
+
+
+class TaskApprovalListResponse(BaseModel):
+    task_id: str
+    approvals: List[ApprovalRecord] = Field(default_factory=list)
 
 
 # Thread schemas
@@ -152,3 +171,5 @@ class ThreadResponse(BaseModel):
     result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
     status: Optional[str] = None
+    pending_approval: Optional[PendingApprovalSummary] = None
+    resume_supported: bool = False

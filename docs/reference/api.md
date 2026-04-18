@@ -98,6 +98,8 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `POST` | `/api/v1/tasks` | create_task_endpoint |
 | `DELETE` | `/api/v1/tasks/{task_id}` | delete_task |
 | `GET` | `/api/v1/tasks/{task_id}` | get_task |
+| `GET` | `/api/v1/tasks/{task_id}/approvals` | list_task_approvals |
+| `POST` | `/api/v1/tasks/{task_id}/resume` | resume_task |
 | `GET` | `/api/v1/tasks/{thread_id}/stream-info` | get_task_stream_info |
 | `GET` | `/api/v1/threads` | list_threads |
 | `POST` | `/api/v1/threads` | create_thread |

@@ -864,6 +864,85 @@ async def get_target_catalog(
         return []
 
 
+def build_public_target_inventory_entry(
+    doc: TargetCatalogDoc,
+    *,
+    include_aliases: bool = False,
+) -> Dict[str, Any]:
+    """Render a safe inventory summary for one known target."""
+
+    public_metadata: Dict[str, Any] = {
+        key: value
+        for key, value in {
+            "usage": doc.usage,
+            "status": doc.status,
+        }.items()
+        if value not in (None, "")
+    }
+    if include_aliases and doc.search_aliases:
+        public_metadata["aliases"] = list(doc.search_aliases)
+
+    return {
+        "display_name": doc.display_name,
+        "target_kind": doc.target_kind,
+        "environment": doc.environment,
+        "target_type": doc.target_type,
+        "capabilities": list(doc.capabilities or []),
+        "public_metadata": public_metadata,
+    }
+
+
+async def list_known_targets(
+    *,
+    user_id: Optional[str] = None,
+    target_kind: Optional[str] = None,
+    environment: Optional[str] = None,
+    capability: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    include_aliases: bool = False,
+) -> Dict[str, Any]:
+    """Return a safe inventory listing from the unified target catalog."""
+
+    docs = await get_target_catalog(user_id=user_id)
+    normalized_kind = _normalize(target_kind)
+    normalized_environment = _normalize_environment(environment)
+    normalized_capability = _normalize(capability)
+
+    filtered: List[TargetCatalogDoc] = []
+    for doc in docs:
+        if normalized_kind and _normalize(doc.target_kind) != normalized_kind:
+            continue
+        if (
+            normalized_environment
+            and _normalize_environment(doc.environment) != normalized_environment
+        ):
+            continue
+        if normalized_capability:
+            supported = {_normalize(item) for item in doc.capabilities}
+            if normalized_capability not in supported:
+                continue
+        filtered.append(doc)
+
+    total = len(filtered)
+    bounded_limit = max(1, min(int(limit), 100))
+    bounded_offset = max(0, int(offset))
+    page = filtered[bounded_offset : bounded_offset + bounded_limit]
+
+    return {
+        "status": "ok",
+        "total_known_targets": total,
+        "returned_targets": len(page),
+        "offset": bounded_offset,
+        "limit": bounded_limit,
+        "has_more": (bounded_offset + len(page)) < total,
+        "targets": [
+            build_public_target_inventory_entry(doc, include_aliases=include_aliases)
+            for doc in page
+        ],
+    }
+
+
 def _parse_query_hints(query: str) -> Dict[str, Any]:
     normalized = _normalize(query)
     tokens = set(_tokenize(normalized))

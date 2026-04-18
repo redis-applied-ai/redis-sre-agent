@@ -5,12 +5,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Interrupt
 
+from redis_sre_agent.core.approvals import PendingApprovalSummary
 from redis_sre_agent.core.docket_tasks import (
     _ensure_handle_backed_turn_scope,
     process_agent_turn,
 )
 from redis_sre_agent.core.targets import MaterializedTargetScope, TargetBinding
+from redis_sre_agent.core.tasks import TaskStatus
 from redis_sre_agent.core.threads import (
     Message,
     Thread,
@@ -196,6 +200,86 @@ class TestProcessAgentTurn:
 
             # Verify thread manager saved state
             mock_manager._save_thread_state.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_transitions_to_awaiting_approval_on_graph_interrupt(self):
+        """A LangGraph approval interrupt should pause the turn instead of failing it."""
+        pending_approval = PendingApprovalSummary(
+            approval_id="approval-1",
+            interrupt_id="interrupt-1",
+            tool_name="redis_cloud_deadbeef_update_tags",
+            summary="redis_cloud_deadbeef_update_tags on inst-1",
+            requested_at="2026-04-15T00:00:00+00:00",
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client") as mock_get_redis,
+            patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_thread_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.TaskManager") as mock_task_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.route_to_appropriate_agent") as mock_route,
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent") as mock_get_chat_agent,
+        ):
+            mock_get_redis.return_value = AsyncMock()
+
+            mock_thread_manager = AsyncMock()
+            mock_thread_manager_class.return_value = mock_thread_manager
+            mock_thread_manager.get_thread.return_value = Thread(
+                thread_id="test_thread",
+                messages=[],
+                context={},
+                metadata=ThreadMetadata(),
+            )
+            mock_thread_manager._save_thread_state.return_value = True
+
+            mock_task_manager = AsyncMock()
+            mock_task_manager_class.return_value = mock_task_manager
+            mock_task_manager.create_task.return_value = "task-1"
+            mock_task_manager.get_task_state.return_value = SimpleNamespace(
+                pending_approval=None,
+                resume_supported=False,
+            )
+
+            from redis_sre_agent.agent.router import AgentType
+
+            async def mock_route_func(*args, **kwargs):
+                return AgentType.REDIS_CHAT
+
+            mock_route.side_effect = mock_route_func
+
+            mock_chat_agent = AsyncMock()
+            mock_chat_agent.process_query.side_effect = GraphInterrupt(
+                (
+                    Interrupt(
+                        value={
+                            "kind": "approval_required",
+                            "message": "Approval required before continuing task execution.",
+                            "approval_id": pending_approval.approval_id,
+                            "interrupt_id": pending_approval.interrupt_id,
+                            "tool_name": pending_approval.tool_name,
+                            "pending_approval": pending_approval.model_dump(mode="json"),
+                        },
+                        id=pending_approval.interrupt_id,
+                    ),
+                )
+            )
+            mock_get_chat_agent.return_value = mock_chat_agent
+
+            result = await process_agent_turn(thread_id="test_thread", message="scale the cluster")
+
+        assert result["status"] == TaskStatus.AWAITING_APPROVAL.value
+        assert result["pending_approval"]["approval_id"] == pending_approval.approval_id
+        mock_task_manager.set_task_error.assert_not_awaited()
+        mock_task_manager.set_pending_approval.assert_awaited_once()
+        persisted_pending = mock_task_manager.set_pending_approval.await_args.args[1]
+        assert persisted_pending.approval_id == pending_approval.approval_id
+        assert persisted_pending.interrupt_id == pending_approval.interrupt_id
+        mock_task_manager.set_resume_supported.assert_awaited_once_with("task-1", True)
+        mock_task_manager.set_task_result.assert_awaited_once()
+        mock_task_manager.update_task_status.assert_any_await(
+            "task-1",
+            TaskStatus.AWAITING_APPROVAL,
+        )
+        assert mock_thread_manager.append_messages.await_count == 1
 
     @pytest.mark.asyncio
     async def test_ensure_handle_backed_turn_scope_ignores_conflicting_legacy_ids_when_bindings_exist(

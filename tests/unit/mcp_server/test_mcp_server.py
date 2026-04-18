@@ -42,6 +42,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_get_support_package_info,
     redis_sre_get_support_ticket,
     redis_sre_get_task,
+    redis_sre_get_task_approvals,
     redis_sre_get_task_citations,
     redis_sre_get_task_status,
     redis_sre_get_thread,
@@ -63,6 +64,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_query,
     redis_sre_recreate_indices,
     redis_sre_reindex_threads,
+    redis_sre_resume_task,
     redis_sre_run_pipeline_full,
     redis_sre_run_pipeline_ingest,
     redis_sre_run_pipeline_scrape,
@@ -2885,6 +2887,8 @@ class TestGetTaskStatusTool:
                 {"timestamp": "2024-01-01T00:00:30Z", "message": "Processing", "type": "progress"}
             ],
             "result": {"summary": "Complete"},
+            "pending_approval": {"approval_id": "approval-1"},
+            "resume_supported": True,
             "tool_calls": [{"name": "redis_info", "args": {"section": "memory"}}],
             "error_message": None,
             "metadata": {
@@ -2912,6 +2916,8 @@ class TestGetTaskStatusTool:
             assert result["updated_at"] == "2024-01-01T00:01:00Z"
             assert result["updates"] == mock_task["updates"]
             assert result["result"] == {"summary": "Complete"}
+            assert result["pending_approval"] == {"approval_id": "approval-1"}
+            assert result["resume_supported"] is True
             assert "tool_calls" not in result
 
     @pytest.mark.asyncio
@@ -2927,6 +2933,97 @@ class TestGetTaskStatusTool:
 
             assert result["status"] == "not_found"
             assert "error" in result
+
+
+class TestTaskApprovalTools:
+    """Test MCP tools for task approvals and resume."""
+
+    @pytest.mark.asyncio
+    async def test_get_task_approvals_success(self):
+        mock_task = {"task_id": "task-123"}
+        mock_approval = MagicMock()
+        mock_approval.model_dump.return_value = {
+            "approval_id": "approval-1",
+            "tool_name": "redis_cloud_deadbeef_update_tags",
+        }
+
+        with (
+            patch(
+                "redis_sre_agent.core.tasks.get_task_by_id",
+                new_callable=AsyncMock,
+                return_value=mock_task,
+            ),
+            patch("redis_sre_agent.core.approvals.ApprovalManager") as mock_manager_cls,
+        ):
+            mock_manager_cls.return_value.list_task_approvals = AsyncMock(
+                return_value=[mock_approval]
+            )
+            result = await redis_sre_get_task_approvals(task_id="task-123")
+
+        assert result["task_id"] == "task-123"
+        assert result["approvals"][0]["approval_id"] == "approval-1"
+
+    @pytest.mark.asyncio
+    async def test_resume_task_success(self):
+        mock_task = {
+            "task_id": "task-123",
+            "thread_id": "thread-456",
+            "status": "awaiting_approval",
+            "updates": [],
+            "result": None,
+            "pending_approval": {"approval_id": "approval-1"},
+            "resume_supported": True,
+            "error_message": None,
+            "metadata": {
+                "subject": "Health check",
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:01:00Z",
+            },
+        }
+        resumed_task = dict(mock_task)
+        resumed_task["status"] = "in_progress"
+
+        docket_instance = AsyncMock()
+        docket_instance.__aenter__.return_value = docket_instance
+        docket_instance.__aexit__.return_value = False
+        resume_task = AsyncMock()
+        docket_instance.add = MagicMock(return_value=resume_task)
+
+        with (
+            patch(
+                "redis_sre_agent.core.docket_tasks.validate_task_resume_request",
+                new_callable=AsyncMock,
+            ) as mock_validate,
+            patch(
+                "redis_sre_agent.core.tasks.get_task_by_id",
+                new_callable=AsyncMock,
+                side_effect=[mock_task, resumed_task],
+            ) as mock_get_task,
+            patch("redis_sre_agent.mcp_server.server.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://"),
+            ),
+        ):
+            result = await redis_sre_resume_task(
+                task_id="task-123",
+                approval_id="approval-1",
+                decision="approved",
+                decision_by="reviewer@example.com",
+            )
+
+        mock_validate.assert_awaited_once()
+        assert mock_get_task.await_count == 2
+        resume_task.assert_awaited_once_with(
+            task_id="task-123",
+            approval_id="approval-1",
+            decision="approved",
+            decision_by="reviewer@example.com",
+            decision_comment=None,
+        )
+        assert result["task_id"] == "task-123"
+        assert result["status"] == "in_progress"
+        assert result["result"] is None
 
 
 class TestTaskInspectionTools:
