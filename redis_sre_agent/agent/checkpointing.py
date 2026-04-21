@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import ExitStack, contextmanager
-from typing import Any, Dict, Iterator, Optional
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Any, AsyncIterator, Dict, Optional
 
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.redis import RedisSaver
+from langgraph.checkpoint.redis import AsyncRedisSaver
 
 from redis_sre_agent import __version__
 from redis_sre_agent.core.approvals import ApprovalManager, GraphResumeState, PendingApprovalSummary
@@ -86,15 +86,18 @@ async def resolve_checkpoint_lookup_thread_id(session_id: str) -> str:
         return session_id
 
 
-@contextmanager
-def open_graph_checkpointer(*, durable: bool = True) -> Iterator[Any]:
+@asynccontextmanager
+async def open_graph_checkpointer(*, durable: bool = True) -> AsyncIterator[Any]:
     """Open a Redis-backed LangGraph checkpointer for the current repo config."""
     redis_url = settings.redis_url.get_secret_value()
-    stack = ExitStack()
+    stack = AsyncExitStack()
     try:
-        checkpointer = stack.enter_context(RedisSaver.from_conn_string(redis_url=redis_url))
+        checkpointer = await stack.enter_async_context(
+            AsyncRedisSaver.from_conn_string(redis_url=redis_url)
+        )
+        await checkpointer.asetup()
     except Exception as exc:
-        stack.close()
+        await stack.aclose()
         logger.error(
             "Redis checkpoint connection failed; durable resume is unavailable: %s",
             exc,
@@ -106,13 +109,9 @@ def open_graph_checkpointer(*, durable: bool = True) -> Iterator[Any]:
         return
 
     try:
-        try:
-            checkpointer.setup()
-        except Exception as exc:
-            logger.warning("Redis checkpoint setup failed: %s", exc)
         yield checkpointer
     finally:
-        stack.close()
+        await stack.aclose()
 
 
 async def persist_checkpoint_metadata(
@@ -121,7 +120,7 @@ async def persist_checkpoint_metadata(
     thread_id: Optional[str],
     graph_thread_id: str,
     graph_type: str,
-    checkpointer: RedisSaver,
+    checkpointer: Any,
     config: Dict[str, Any],
     graph_version: str = __version__,
 ) -> None:

@@ -1,7 +1,7 @@
 """Unit tests for SRE LangGraph Agent."""
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -370,8 +370,8 @@ class TestSRELangGraphAgent:
         captured: dict[str, object] = {}
         fake_checkpointer = MagicMock()
 
-        @contextmanager
-        def fake_open_graph_checkpointer(**_kwargs):
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
             yield fake_checkpointer
 
         class _FakeApp:
@@ -447,8 +447,8 @@ class TestSRELangGraphAgent:
                 }
             )
 
-            @contextmanager
-            def fake_open_graph_checkpointer(**_kwargs):
+            @asynccontextmanager
+            async def fake_open_graph_checkpointer(**_kwargs):
                 yield fake_checkpointer
 
             class _FakeApp:
@@ -487,8 +487,8 @@ class TestSRELangGraphAgent:
         mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
         fake_checkpointer = MagicMock()
 
-        @contextmanager
-        def fake_open_graph_checkpointer(**_kwargs):
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
             yield fake_checkpointer
 
         class _FakeApp:

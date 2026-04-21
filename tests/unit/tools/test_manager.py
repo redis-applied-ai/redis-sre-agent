@@ -30,7 +30,11 @@ from redis_sre_agent.targets.fake_integration import (
     FakeTargetBindingStrategy,
 )
 from redis_sre_agent.targets.registry import TargetIntegrationRegistry
-from redis_sre_agent.tools.manager import ToolManager, _command_is_available
+from redis_sre_agent.tools.manager import (
+    ToolManager,
+    _command_is_available,
+    _missing_local_mcp_arg_path,
+)
 from redis_sre_agent.tools.manager import settings as manager_settings
 from redis_sre_agent.tools.models import (
     Tool,
@@ -906,6 +910,37 @@ class TestToolManagerMcpConfigValidation:
         """Absolute/relative command paths should return False when missing."""
         assert _command_is_available("/definitely/not/a/real/command") is False
 
+    def test_missing_local_mcp_arg_path_detects_direct_script_paths(self):
+        """Direct script entrypoints should be validated before provider startup."""
+        missing = _missing_local_mcp_arg_path(["/definitely/not/a/real/index.js"])
+        assert missing == "/definitely/not/a/real/index.js"
+
+    def test_missing_local_mcp_arg_path_ignores_shell_command_strings(self):
+        """Shell command payloads should not be mistaken for direct file args."""
+        assert (
+            _missing_local_mcp_arg_path(
+                ["-lc", "cd /work/re-analyzer && exec node /work/re-analyzer/dist/index.js"]
+            )
+            is None
+        )
+
+    def test_missing_local_mcp_arg_path_ignores_docker_images_and_packages(self):
+        """Docker image refs and npm packages are not direct local entrypoints."""
+        assert (
+            _missing_local_mcp_arg_path(["run", "-i", "--rm", "ghcr.io/github/github-mcp-server"])
+            is None
+        )
+        assert _missing_local_mcp_arg_path(["-y", "@modelcontextprotocol/server-memory"]) is None
+
+    def test_missing_local_mcp_arg_path_detects_relative_script_entrypoints(self):
+        """Relative script paths with file extensions should still be validated."""
+        missing = _missing_local_mcp_arg_path(["vendor/re-analyzer-mcp/dist/src/index.js"])
+        assert missing == "vendor/re-analyzer-mcp/dist/src/index.js"
+
+    def test_missing_local_mcp_arg_path_ignores_script_urls(self):
+        """Remote script URLs should not be mistaken for missing local files."""
+        assert _missing_local_mcp_arg_path(["https://example.com/server.ts"]) is None
+
     @pytest.mark.asyncio
     async def test_load_mcp_providers_skips_missing_command(self, caplog):
         """Missing MCP command should be skipped without raising or stack traces."""
@@ -921,6 +956,31 @@ class TestToolManagerMcpConfigValidation:
 
             assert "mcp:github" not in mgr._loaded_provider_keys
             assert "Skipping MCP provider 'github'" in caplog.text
+        finally:
+            await mgr._stack.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_load_mcp_providers_skips_missing_local_entrypoint(self, caplog):
+        """Missing direct script entrypoints should be skipped before subprocess launch."""
+        mgr = ToolManager()
+        mgr._stack = AsyncExitStack()
+        await mgr._stack.__aenter__()
+        try:
+            with (
+                patch("redis_sre_agent.core.config.settings") as mock_settings,
+                patch("redis_sre_agent.tools.manager._command_is_available", return_value=True),
+            ):
+                mock_settings.mcp_servers = {
+                    "re_analyzer": MCPServerConfig(
+                        command="node",
+                        args=["/definitely/not/a/real/index.js"],
+                    )
+                }
+                await mgr._load_mcp_providers()
+
+            assert "mcp:re_analyzer" not in mgr._loaded_provider_keys
+            assert "Skipping MCP provider 're_analyzer'" in caplog.text
+            assert "/definitely/not/a/real/index.js" in caplog.text
         finally:
             await mgr._stack.__aexit__(None, None, None)
 
