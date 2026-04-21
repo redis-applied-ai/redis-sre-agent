@@ -937,6 +937,10 @@ class TestToolManagerMcpConfigValidation:
         missing = _missing_local_mcp_arg_path(["vendor/re-analyzer-mcp/dist/src/index.js"])
         assert missing == "vendor/re-analyzer-mcp/dist/src/index.js"
 
+    def test_missing_local_mcp_arg_path_ignores_script_urls(self):
+        """Remote script URLs should not be mistaken for missing local files."""
+        assert _missing_local_mcp_arg_path(["https://example.com/server.ts"]) is None
+
     @pytest.mark.asyncio
     async def test_load_mcp_providers_skips_missing_command(self, caplog):
         """Missing MCP command should be skipped without raising or stack traces."""
