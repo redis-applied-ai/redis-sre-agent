@@ -114,10 +114,14 @@ def _missing_local_mcp_arg_path(args: Optional[List[str]]) -> Optional[str]:
         arg = (raw_arg or "").strip()
         if not arg or arg.startswith("-") or any(ch.isspace() for ch in arg):
             continue
-        if "/" not in arg and not arg.startswith(".") and not arg.startswith("~"):
+        if arg.startswith("file://"):
+            candidate = Path(arg.removeprefix("file://")).expanduser()
+        elif arg.startswith(("/", "./", "../", "~")):
+            candidate = Path(arg).expanduser()
+        elif "/" in arg and Path(arg).suffix in {".js", ".mjs", ".cjs", ".ts", ".py", ".sh"}:
+            candidate = Path(arg).expanduser()
+        else:
             continue
-
-        candidate = Path(arg).expanduser()
         if not candidate.exists():
             return str(candidate)
     return None

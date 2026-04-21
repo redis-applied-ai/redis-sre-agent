@@ -924,6 +924,19 @@ class TestToolManagerMcpConfigValidation:
             is None
         )
 
+    def test_missing_local_mcp_arg_path_ignores_docker_images_and_packages(self):
+        """Docker image refs and npm packages are not direct local entrypoints."""
+        assert (
+            _missing_local_mcp_arg_path(["run", "-i", "--rm", "ghcr.io/github/github-mcp-server"])
+            is None
+        )
+        assert _missing_local_mcp_arg_path(["-y", "@modelcontextprotocol/server-memory"]) is None
+
+    def test_missing_local_mcp_arg_path_detects_relative_script_entrypoints(self):
+        """Relative script paths with file extensions should still be validated."""
+        missing = _missing_local_mcp_arg_path(["vendor/re-analyzer-mcp/dist/src/index.js"])
+        assert missing == "vendor/re-analyzer-mcp/dist/src/index.js"
+
     @pytest.mark.asyncio
     async def test_load_mcp_providers_skips_missing_command(self, caplog):
         """Missing MCP command should be skipped without raising or stack traces."""

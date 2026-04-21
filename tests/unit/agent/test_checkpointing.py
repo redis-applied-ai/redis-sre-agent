@@ -41,6 +41,7 @@ def test_build_graph_config_sets_namespace_and_recursion_limit():
 @pytest.mark.asyncio
 async def test_open_graph_checkpointer_uses_async_redis_saver():
     fake_checkpointer = MagicMock()
+    fake_checkpointer.asetup = AsyncMock()
 
     @asynccontextmanager
     async def fake_from_conn_string(**_kwargs):
@@ -52,6 +53,7 @@ async def test_open_graph_checkpointer_uses_async_redis_saver():
     ):
         async with open_graph_checkpointer() as checkpointer:
             assert checkpointer is fake_checkpointer
+    fake_checkpointer.asetup.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -83,6 +85,7 @@ async def test_open_graph_checkpointer_uses_memory_saver_for_non_durable_paths()
 @pytest.mark.asyncio
 async def test_open_graph_checkpointer_does_not_swallow_body_exceptions():
     fake_checkpointer = MagicMock()
+    fake_checkpointer.asetup = AsyncMock()
 
     @asynccontextmanager
     async def fake_from_conn_string(**_kwargs):

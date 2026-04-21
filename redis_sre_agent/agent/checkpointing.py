@@ -95,6 +95,7 @@ async def open_graph_checkpointer(*, durable: bool = True) -> AsyncIterator[Any]
         checkpointer = await stack.enter_async_context(
             AsyncRedisSaver.from_conn_string(redis_url=redis_url)
         )
+        await checkpointer.asetup()
     except Exception as exc:
         await stack.aclose()
         logger.error(
