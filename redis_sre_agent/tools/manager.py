@@ -108,6 +108,27 @@ def _command_is_available(command: Optional[str]) -> bool:
     return shutil.which(cmd) is not None
 
 
+def _missing_local_mcp_arg_path(args: Optional[List[str]]) -> Optional[str]:
+    """Return the first direct local-path argument that does not exist."""
+    for raw_arg in args or []:
+        arg = (raw_arg or "").strip()
+        if not arg or arg.startswith("-") or any(ch.isspace() for ch in arg):
+            continue
+        if arg.startswith("file://"):
+            candidate = Path(arg.removeprefix("file://")).expanduser()
+        elif "://" in arg:
+            continue
+        elif arg.startswith(("/", "./", "../", "~")):
+            candidate = Path(arg).expanduser()
+        elif "/" in arg and Path(arg).suffix in {".js", ".mjs", ".cjs", ".ts", ".py", ".sh"}:
+            candidate = Path(arg).expanduser()
+        else:
+            continue
+        if not candidate.exists():
+            return str(candidate)
+    return None
+
+
 class ToolManager:
     """Manages tool provider lifecycle and routing.
 
@@ -617,6 +638,16 @@ class ToolManager:
                         "Configure a valid command or URL transport instead.",
                         server_name,
                         server_config.command,
+                    )
+                    continue
+
+                missing_arg_path = _missing_local_mcp_arg_path(server_config.args)
+                if missing_arg_path:
+                    logger.warning(
+                        "Skipping MCP provider '%s': local entrypoint '%s' does not exist. "
+                        "Configure a valid artifact path or URL transport instead.",
+                        server_name,
+                        missing_arg_path,
                     )
                     continue
 

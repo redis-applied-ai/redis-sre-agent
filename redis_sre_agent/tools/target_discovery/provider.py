@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, List, Optional
 
 from redis_sre_agent.core.targets import (
@@ -16,6 +17,12 @@ from redis_sre_agent.tools.protocols import ToolProvider
 
 class TargetDiscoveryToolProvider(ToolProvider):
     """Resolve safe Redis targets from natural-language metadata queries."""
+
+    def __init__(self, redis_instance=None, config=None):
+        super().__init__(redis_instance=redis_instance, config=config)
+        # Target discovery is always-on and not instance-scoped, so its tool
+        # names must stay stable across provider instances and processes.
+        self._instance_hash = hashlib.sha256(self.provider_name.encode()).hexdigest()[:6]
 
     @property
     def provider_name(self) -> str:

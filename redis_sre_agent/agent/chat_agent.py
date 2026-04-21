@@ -59,6 +59,16 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+def _format_exception_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return message
+
+    if exc.args:
+        return f"{type(exc).__name__}: {exc.args!r}"
+    return type(exc).__name__
+
+
 CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.
 
 ## Your Approach - ITERATIVE INVESTIGATION
@@ -855,7 +865,7 @@ User Query: {query}"""
 
             try:
                 await emitter.emit("Chat agent processing your question...", "agent_start")
-                with open_graph_checkpointer(durable=bool(task_id)) as checkpointer:
+                async with open_graph_checkpointer(durable=bool(task_id)) as checkpointer:
                     app = workflow.compile(checkpointer=checkpointer)
                     final_state = await app.ainvoke(initial_state, config=thread_config)
                     await persist_checkpoint_metadata(
@@ -896,8 +906,9 @@ User Query: {query}"""
             except GraphInterrupt:
                 raise
             except Exception as e:
-                logger.exception(f"Chat agent error: {e}")
-                return AgentResponse(response=f"Error processing query: {e}")
+                error_message = _format_exception_message(e)
+                logger.exception("Chat agent error: %s", error_message)
+                return AgentResponse(response=f"Error processing query: {error_message}")
 
     async def resume_query(
         self,
@@ -959,7 +970,7 @@ User Query: {query}"""
             thread_config = build_graph_config(graph_thread_id=graph_thread_id)
 
             try:
-                with open_graph_checkpointer(durable=True) as checkpointer:
+                async with open_graph_checkpointer(durable=True) as checkpointer:
                     app = workflow.compile(checkpointer=checkpointer)
                     final_state = await app.ainvoke(
                         Command(resume=resume_payload or {}),
@@ -997,8 +1008,9 @@ User Query: {query}"""
             except GraphInterrupt:
                 raise
             except Exception as e:
-                logger.exception(f"Chat agent resume error: {e}")
-                return AgentResponse(response=f"Error resuming query: {e}")
+                error_message = _format_exception_message(e)
+                logger.exception("Chat agent resume error: %s", error_message)
+                return AgentResponse(response=f"Error resuming query: {error_message}")
 
 
 # Singleton cache keyed by instance name

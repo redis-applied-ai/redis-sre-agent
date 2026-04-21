@@ -1,6 +1,6 @@
 """Tests for shared graph checkpoint helpers."""
 
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,60 +38,65 @@ def test_build_graph_config_sets_namespace_and_recursion_limit():
     assert config["recursion_limit"] == 25
 
 
-def test_open_graph_checkpointer_uses_redis_saver_setup():
+@pytest.mark.asyncio
+async def test_open_graph_checkpointer_uses_async_redis_saver():
     fake_checkpointer = MagicMock()
+    fake_checkpointer.asetup = AsyncMock()
 
-    @contextmanager
-    def fake_from_conn_string(**_kwargs):
+    @asynccontextmanager
+    async def fake_from_conn_string(**_kwargs):
         yield fake_checkpointer
 
     with patch(
-        "redis_sre_agent.agent.checkpointing.RedisSaver.from_conn_string",
+        "redis_sre_agent.agent.checkpointing.AsyncRedisSaver.from_conn_string",
         side_effect=fake_from_conn_string,
     ):
-        with open_graph_checkpointer() as checkpointer:
+        async with open_graph_checkpointer() as checkpointer:
             assert checkpointer is fake_checkpointer
+    fake_checkpointer.asetup.assert_awaited_once()
 
-    fake_checkpointer.setup.assert_called_once_with()
 
-
-def test_open_graph_checkpointer_raises_on_connection_error():
+@pytest.mark.asyncio
+async def test_open_graph_checkpointer_raises_on_connection_error():
     with patch(
-        "redis_sre_agent.agent.checkpointing.RedisSaver.from_conn_string",
+        "redis_sre_agent.agent.checkpointing.AsyncRedisSaver.from_conn_string",
         side_effect=RuntimeError("connection refused"),
     ):
         with pytest.raises(RuntimeError, match="Redis-backed graph checkpoint unavailable"):
-            with open_graph_checkpointer():
+            async with open_graph_checkpointer():
                 pass
 
 
-def test_open_graph_checkpointer_uses_memory_saver_for_non_durable_paths():
+@pytest.mark.asyncio
+async def test_open_graph_checkpointer_uses_memory_saver_for_non_durable_paths():
     fake_memory_saver = MagicMock()
 
     with (
         patch(
-            "redis_sre_agent.agent.checkpointing.RedisSaver.from_conn_string",
+            "redis_sre_agent.agent.checkpointing.AsyncRedisSaver.from_conn_string",
             side_effect=RuntimeError("connection refused"),
         ),
         patch("redis_sre_agent.agent.checkpointing.InMemorySaver", return_value=fake_memory_saver),
     ):
-        with open_graph_checkpointer(durable=False) as checkpointer:
+        async with open_graph_checkpointer(durable=False) as checkpointer:
             assert checkpointer is fake_memory_saver
 
 
-def test_open_graph_checkpointer_does_not_swallow_body_exceptions():
+@pytest.mark.asyncio
+async def test_open_graph_checkpointer_does_not_swallow_body_exceptions():
     fake_checkpointer = MagicMock()
+    fake_checkpointer.asetup = AsyncMock()
 
-    @contextmanager
-    def fake_from_conn_string(**_kwargs):
+    @asynccontextmanager
+    async def fake_from_conn_string(**_kwargs):
         yield fake_checkpointer
 
     with patch(
-        "redis_sre_agent.agent.checkpointing.RedisSaver.from_conn_string",
+        "redis_sre_agent.agent.checkpointing.AsyncRedisSaver.from_conn_string",
         side_effect=fake_from_conn_string,
     ):
         with pytest.raises(RuntimeError, match="resume failed"):
-            with open_graph_checkpointer():
+            async with open_graph_checkpointer():
                 raise RuntimeError("resume failed")
 
 
