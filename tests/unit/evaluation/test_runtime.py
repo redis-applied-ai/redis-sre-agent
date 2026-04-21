@@ -1,5 +1,5 @@
 import json
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -942,8 +942,8 @@ async def test_run_full_turn_scenario_uses_production_turn_path_for_attached_sco
     fake_checkpointer = MagicMock()
     fake_checkpointer.get_tuple.return_value = None
 
-    @contextmanager
-    def fake_open_graph_checkpointer(**_kwargs):
+    @asynccontextmanager
+    async def fake_open_graph_checkpointer(**_kwargs):
         yield fake_checkpointer
 
     with (

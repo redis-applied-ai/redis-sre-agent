@@ -15,6 +15,18 @@ from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.target_discovery.provider import TargetDiscoveryToolProvider
 
 
+def test_target_discovery_tool_names_are_stable_across_provider_instances():
+    provider_a = TargetDiscoveryToolProvider()
+    provider_b = TargetDiscoveryToolProvider()
+
+    tool_names_a = [tool.metadata.name for tool in provider_a.tools()]
+    tool_names_b = [tool.metadata.name for tool in provider_b.tools()]
+
+    assert tool_names_a == tool_names_b
+    assert any(name.endswith("list_known_redis_targets") for name in tool_names_a)
+    assert any(name.endswith("resolve_redis_targets") for name in tool_names_a)
+
+
 @pytest.mark.asyncio
 async def test_resolve_redis_targets_uses_shared_binding_contract():
     provider = TargetDiscoveryToolProvider()
