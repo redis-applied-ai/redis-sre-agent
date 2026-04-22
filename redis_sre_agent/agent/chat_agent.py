@@ -485,6 +485,7 @@ class ChatAgent:
                 "generation": generation,
                 "tooldefs_by_name": {t.name: t for t in tooldefs},
                 "all_adapters": all_adapters,
+                "local_tools": {expand_spec["name"]: expand_spec["func"]},
                 "llm_with_expand": self.llm.bind_tools(all_adapters),
             }
             runtime_tools_by_generation[generation] = runtime
@@ -586,6 +587,7 @@ class ChatAgent:
                 new_tool_messages = await execute_tool_calls_with_gate(
                     tool_manager=tool_mgr,
                     tool_calls=tool_calls,
+                    local_tools=runtime["local_tools"],
                 )
 
                 # Build envelopes and create summarized messages for the LLM
