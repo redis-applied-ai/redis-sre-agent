@@ -91,9 +91,22 @@ async def test_startup_only_knowledge_scenario_materializes_pinned_doc_and_skill
     assert "maintenance-mode-overview" in startup_context
     assert "redis-enterprise-maintenance-checklist" in startup_context
 
-    envelopes = getattr(startup_context, "internal_tool_envelopes", [])
-    assert len(envelopes) == 1
-    assert envelopes[0]["data"]["results"][0]["document_hash"] == "maintenance-mode-overview"
+    envelopes = {
+        envelope["tool_key"]: envelope
+        for envelope in getattr(startup_context, "internal_tool_envelopes", [])
+    }
+    assert set(envelopes) == {
+        "knowledge.pinned_context",
+        "knowledge.startup_skills_check",
+    }
+    assert (
+        envelopes["knowledge.pinned_context"]["data"]["results"][0]["document_hash"]
+        == "maintenance-mode-overview"
+    )
+    assert (
+        envelopes["knowledge.startup_skills_check"]["data"]["results"][0]["document_hash"]
+        == "redis-enterprise-maintenance-checklist"
+    )
 
 
 @pytest.mark.asyncio

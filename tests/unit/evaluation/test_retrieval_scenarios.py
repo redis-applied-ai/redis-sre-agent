@@ -161,6 +161,25 @@ async def test_skills_retrieval_scenario_matches_prompt_and_redis_doc_skills():
 
 
 @pytest.mark.asyncio
+async def test_skills_retrieval_scenario_supports_discover_then_fetch_flow():
+    scenario = load_eval_scenario(scenario_manifest_path("retrieval", "skills-core"))
+    backend = build_fixture_knowledge_backend(scenario)
+
+    discovered = await backend.skills_check(
+        query="Redis Enterprise maintenance failover checklist",
+        version="latest",
+    )
+    discovered_by_name = {skill["name"]: skill for skill in discovered["skills"]}
+    selected_skill = discovered_by_name["redis-enterprise-maintenance-checklist"]
+    fetched = await backend.get_skill(skill_name=selected_skill["name"], version="latest")
+
+    assert "redis-enterprise-maintenance-checklist" in discovered_by_name
+    assert selected_skill["document_hash"] == "redis-enterprise-maintenance-checklist"
+    assert fetched["skill_name"] == selected_skill["name"]
+    assert "replica health" in fetched["full_content"]
+
+
+@pytest.mark.asyncio
 async def test_support_ticket_retrieval_scenario_supports_exact_and_semantic_lookup():
     scenario = load_eval_scenario(scenario_manifest_path("retrieval", "support-ticket-exact-match"))
     backend = build_fixture_knowledge_backend(scenario)

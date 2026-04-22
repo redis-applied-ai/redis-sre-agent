@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 PINNED_CONTEXT_TOOL_KEY = "knowledge.pinned_context"
 PINNED_CONTEXT_RETRIEVAL_KIND = "pinned_context"
 PINNED_CONTEXT_RETRIEVAL_LABEL = "Pinned context"
+STARTUP_SKILLS_TOOL_KEY = "knowledge.startup_skills_check"
+STARTUP_SKILLS_RETRIEVAL_KIND = "startup_skills"
+STARTUP_SKILLS_RETRIEVAL_LABEL = "Startup skills"
 
 
 class StartupKnowledgeContext(str):
@@ -191,6 +194,55 @@ def _build_internal_pinned_context_envelope(
     }
 
 
+def _build_internal_startup_skills_envelope(
+    skills: List[Dict[str, Any]],
+    *,
+    query: str,
+    version: Optional[str],
+    skills_limit: int,
+) -> Optional[Dict[str, Any]]:
+    """Build an internal knowledge envelope for startup skill discovery."""
+    if not skills:
+        return None
+
+    results: List[Dict[str, Any]] = []
+    for skill in skills:
+        title = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
+        document_hash = str(skill.get("document_hash", "")).strip()
+        results.append(
+            {
+                "id": document_hash or title,
+                "title": title or document_hash or "Skill",
+                "source": str(skill.get("source", "")).strip(),
+                "document_hash": document_hash,
+                "doc_type": "skill",
+                "summary": str(skill.get("summary", "")).strip(),
+                "retrieval_kind": STARTUP_SKILLS_RETRIEVAL_KIND,
+                "retrieval_label": STARTUP_SKILLS_RETRIEVAL_LABEL,
+            }
+        )
+
+    return {
+        "tool_key": STARTUP_SKILLS_TOOL_KEY,
+        "name": "skills_check",
+        "description": "Internal startup skill discovery recorded during grounding.",
+        "args": {
+            "query": query,
+            "limit": skills_limit,
+            "offset": 0,
+            "version": version,
+        },
+        "status": "success",
+        "data": {
+            "results": results,
+            "results_count": len(results),
+            "retrieval_kind": STARTUP_SKILLS_RETRIEVAL_KIND,
+            "retrieval_label": STARTUP_SKILLS_RETRIEVAL_LABEL,
+        },
+        "summary": f"Loaded {len(results)} startup skill{'s' if len(results) != 1 else ''} into grounding context.",
+    }
+
+
 async def build_startup_knowledge_context(
     query: str,
     version: Optional[str] = "latest",
@@ -270,6 +322,14 @@ async def build_startup_knowledge_context(
     skills_lines = _skills_toc_lines(skills_result.get("skills") or [])
     if skills_lines:
         sections.append("\n".join(skills_lines))
+        skills_envelope = _build_internal_startup_skills_envelope(
+            skills_result.get("skills") or [],
+            query=query,
+            version=version,
+            skills_limit=skills_limit,
+        )
+        if skills_envelope:
+            internal_tool_envelopes.append(skills_envelope)
 
     tool_lines = _tool_instruction_lines_for_categories(available_tools)
     if tool_lines:

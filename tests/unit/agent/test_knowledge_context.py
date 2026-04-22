@@ -1,10 +1,16 @@
 """Tests for startup knowledge context assembly."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from redis_sre_agent.agent.knowledge_context import build_startup_knowledge_context
+from redis_sre_agent.agent.knowledge_context import (
+    _build_internal_pinned_context_envelope,
+    _build_internal_startup_skills_envelope,
+    build_startup_knowledge_context,
+    merge_internal_tool_envelopes,
+)
 from redis_sre_agent.evaluation.injection import eval_runtime_overrides
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 
@@ -151,6 +157,69 @@ async def test_startup_context_extracts_capability_from_tool_definition():
 
 
 @pytest.mark.asyncio
+async def test_startup_context_extracts_capability_from_tool_metadata_only():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(return_value={"skills": []}),
+        ),
+    ):
+        metadata_only_tool = SimpleNamespace(
+            metadata=SimpleNamespace(capability=ToolCapability.LOGS),
+            definition=SimpleNamespace(capability=None),
+            capability=None,
+        )
+        ignored_tool = SimpleNamespace(metadata=SimpleNamespace(), definition=None, capability=None)
+        context = await build_startup_knowledge_context(
+            query="memory issue",
+            version="latest",
+            available_tools=[metadata_only_tool, ignored_tool],
+        )
+
+    assert "Available tool categories: logs." in context
+
+
+def test_merge_internal_tool_envelopes_deduplicates_dict_entries():
+    existing = [{"tool_key": "knowledge.pinned_context"}]
+    new = [
+        {"tool_key": "knowledge.pinned_context"},
+        {"tool_key": "knowledge.startup_skills_check"},
+    ]
+
+    merged = merge_internal_tool_envelopes(existing, new)
+
+    assert merged == [
+        {"tool_key": "knowledge.pinned_context"},
+        {"tool_key": "knowledge.startup_skills_check"},
+    ]
+
+
+def test_internal_envelope_builders_return_none_for_empty_inputs():
+    assert (
+        _build_internal_pinned_context_envelope(
+            [],
+            version="latest",
+            pinned_limit=20,
+            pinned_content_char_budget=12000,
+        )
+        is None
+    )
+    assert (
+        _build_internal_startup_skills_envelope(
+            [],
+            query="memory issue",
+            version="latest",
+            skills_limit=20,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_startup_context_carries_internal_pinned_context_envelope():
     with (
         patch(
@@ -187,6 +256,107 @@ async def test_startup_context_carries_internal_pinned_context_envelope():
     assert envelope["data"]["retrieval_kind"] == "pinned_context"
     assert envelope["data"]["results"][0]["title"] == "Pinned Runbook"
     assert envelope["data"]["results"][0]["retrieval_kind"] == "pinned_context"
+
+
+@pytest.mark.asyncio
+async def test_startup_context_carries_internal_skill_discovery_envelope():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(
+                return_value={
+                    "skills": [
+                        {
+                            "name": "Iterative Memory Check",
+                            "document_hash": "iterative-memory-check",
+                            "summary": "Check INFO memory before remediation.",
+                            "source": "fixture://skills/iterative-memory-check.md",
+                        },
+                        {
+                            "name": "Failover Investigation Skill",
+                            "document_hash": "failover-investigation-skill",
+                            "summary": "Verify replica health before role changes.",
+                            "source": "fixture://skills/failover-investigation-skill.md",
+                        },
+                    ]
+                }
+            ),
+        ),
+    ):
+        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+
+    envelopes = getattr(context, "internal_tool_envelopes", [])
+    assert len(envelopes) == 1
+    envelope = envelopes[0]
+    assert envelope["tool_key"] == "knowledge.startup_skills_check"
+    assert envelope["name"] == "skills_check"
+    assert envelope["args"] == {
+        "query": "memory issue",
+        "limit": 20,
+        "offset": 0,
+        "version": "latest",
+    }
+    assert envelope["data"]["retrieval_kind"] == "startup_skills"
+    assert envelope["data"]["results"][0]["title"] == "Iterative Memory Check"
+    assert envelope["data"]["results"][0]["document_hash"] == "iterative-memory-check"
+    assert envelope["data"]["results"][0]["retrieval_label"] == "Startup skills"
+
+
+@pytest.mark.asyncio
+async def test_startup_context_continues_when_pinned_document_load_fails():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(side_effect=RuntimeError("pinned backend unavailable")),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(
+                return_value={
+                    "skills": [
+                        {"name": "Iterative Memory Check", "summary": "Use INFO memory first."}
+                    ]
+                }
+            ),
+        ),
+    ):
+        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+
+    assert "Pinned documents:" not in context
+    assert "Iterative Memory Check: Use INFO memory first." in context
+
+
+@pytest.mark.asyncio
+async def test_startup_context_continues_when_skills_check_fails():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(
+                return_value={
+                    "pinned_documents": [
+                        {
+                            "name": "Pinned Runbook",
+                            "priority": "high",
+                            "doc_type": "runbook",
+                            "full_content": "Use evidence-first triage.",
+                        }
+                    ]
+                }
+            ),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(side_effect=RuntimeError("skills index unavailable")),
+        ),
+    ):
+        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+
+    assert "Pinned Runbook" in context
+    assert "Skills you know:" not in context
 
 
 @pytest.mark.asyncio
