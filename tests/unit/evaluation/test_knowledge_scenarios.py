@@ -130,6 +130,16 @@ async def test_startup_only_scenario_materializes_pinned_doc_and_skill_context()
 
     assert "iterative-diagnostics-runbook" in startup_context
     assert "iterative-memory-check" in startup_context
+    skill_envelopes = [
+        envelope
+        for envelope in getattr(startup_context, "internal_tool_envelopes", [])
+        if envelope.get("tool_key") == "knowledge.startup_skills_check"
+    ]
+    assert len(skill_envelopes) == 1
+    assert skill_envelopes[0]["data"]["results_count"] >= 1
+    assert {result["document_hash"] for result in skill_envelopes[0]["data"]["results"]} >= {
+        "iterative-memory-check"
+    }
 
 
 @pytest.mark.asyncio
