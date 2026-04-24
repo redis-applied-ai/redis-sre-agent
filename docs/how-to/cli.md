@@ -106,7 +106,7 @@ For support-ticket IDs such as `RET-4421`, use the ticket workflow instead of ge
 uv run redis-sre-agent query --agent chat "Find support tickets for RET-4421"
 ```
 
-### 6) Inspect formal skill packages
+### 6) Inspect Agent Skills packages
 Use the top-level `skills` commands to inspect formal packages without running a full agent turn.
 
 ```bash

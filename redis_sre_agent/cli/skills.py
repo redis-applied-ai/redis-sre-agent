@@ -1,4 +1,4 @@
-"""CLI commands for formal skill discovery and retrieval."""
+"""CLI commands for Agent Skills discovery and retrieval."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from redis_sre_agent.skills.scaffold import scaffold_skill_package_from_markdown
 
 @click.group()
 def skills():
-    """Inspect and scaffold formal skill packages."""
+    """Inspect and scaffold Agent Skills packages."""
     pass
 
 
@@ -130,7 +130,7 @@ async def _read_resource(skill_name: str, resource_path: str, version: str, as_j
 @click.option("--version", "-v", default="latest", show_default=True, help="Version filter")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON")
 def skills_read_resource(skill_name: str, resource_path: str, version: str, as_json: bool):
-    """Read one resource from a formal skill package."""
+    """Read one resource from an Agent Skills package."""
 
     asyncio.run(_read_resource(skill_name, resource_path, version, as_json))
 
@@ -152,7 +152,7 @@ def skills_read_reference(skill_name: str, resource_path: str, version: str, as_
 @click.option("--force", is_flag=True, help="Allow writing into an existing non-empty directory")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON")
 def skills_scaffold(legacy_skill_path: str, target_dir: str, force: bool, as_json: bool):
-    """Scaffold a formal skill package from a legacy markdown skill."""
+    """Scaffold an Agent Skills package from a legacy markdown skill."""
 
     result = scaffold_skill_package_from_markdown(legacy_skill_path, target_dir, force=force)
     if as_json:

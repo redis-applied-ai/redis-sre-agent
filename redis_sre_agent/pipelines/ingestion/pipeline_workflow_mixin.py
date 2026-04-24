@@ -38,7 +38,7 @@ class PipelineWorkflowMixin:
         return markdown_files
 
     def _configured_skill_roots(self, source_dir: Path) -> List[Path]:
-        """Resolve all roots that should be scanned for formal skill packages."""
+        """Resolve all roots that should be scanned for Agent Skills packages."""
         roots: list[Path] = []
         configured_roots = getattr(self.knowledge_settings, "skill_roots", None) or []
         for configured_root in configured_roots:
@@ -61,7 +61,7 @@ class PipelineWorkflowMixin:
         return unique_roots
 
     def _load_source_documents(self, source_dir: Path, *, action: str) -> List[Any]:
-        """Load markdown source documents plus formal skill package resources."""
+        """Load markdown source documents plus Agent Skills package resources."""
         documents: list[Any] = []
         markdown_files = self._load_source_markdown_files(source_dir, action=action)
         for md_file in markdown_files:
@@ -74,11 +74,11 @@ class PipelineWorkflowMixin:
             try:
                 packages = discover_skill_packages(skill_root)
             except Exception as exc:
-                logger.error("Failed to discover formal skill packages in %s: %s", skill_root, exc)
+                logger.error("Failed to discover Agent Skills packages in %s: %s", skill_root, exc)
                 continue
             if packages:
                 logger.info(
-                    "Found %s formal skill packages to %s in %s", len(packages), action, skill_root
+                    "Found %s Agent Skills packages to %s in %s", len(packages), action, skill_root
                 )
             for package in packages:
                 try:
@@ -90,7 +90,7 @@ class PipelineWorkflowMixin:
                         )
                     )
                 except Exception as exc:
-                    logger.error("Failed to expand formal skill package %s: %s", package.root, exc)
+                    logger.error("Failed to expand Agent Skills package %s: %s", package.root, exc)
 
         if not documents:
             logger.warning("No source documents found in %s", source_dir)
@@ -243,7 +243,7 @@ class PipelineWorkflowMixin:
 
 
 def _is_formal_skill_package_path(path: Path) -> bool:
-    """Return True when a file lives inside a formal skill package directory."""
+    """Return True when a file lives inside an Agent Skills package directory."""
     for parent in (path.parent, *path.parents):
         if (parent / "SKILL.md").is_file():
             return True

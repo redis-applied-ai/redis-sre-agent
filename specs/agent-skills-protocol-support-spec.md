@@ -1,4 +1,4 @@
-# Formal Skills Protocol Support Spec
+# Agent Skills Protocol Support Spec
 
 Status: Proposed
 
@@ -8,7 +8,7 @@ Related:
 
 ## Summary
 
-Add first-class support for directory-backed skills that follow the formal skill protocol:
+Add first-class support for directory-backed skills that follow the Agent Skills specification:
 
 ```text
 skill-name/
@@ -27,7 +27,7 @@ progressive disclosure via `references/`.
 This spec proposes a pluggable skill-backend model with a shipped Redis implementation:
 
 - keep existing document-backed skills for backward compatibility
-- add package discovery and parsing for formal skill directories during ingestion
+- add package discovery and parsing for Agent Skills package directories during ingestion
 - put skill search, discovery, and resource retrieval behind a backend interface so deployments can
   swap Redis for a central skill service
 - ship a default Redis-backed backend that ingests the full text portion of each skill package into
@@ -66,7 +66,7 @@ That means the repo cannot support a skill like:
 ## Goals
 
 - Support discovery of directory-backed skill packages from one or more configured ingestion roots.
-- Keep formal skills searchable through a configurable runtime backend.
+- Keep Agent Skills searchable through a configurable runtime backend.
 - Keep current document-backed skill retrieval working without migration pressure.
 - Make the full text portion of a skill package available through backend-backed retrieval and
   tool calls, not persistent local filesystem reads.
@@ -224,7 +224,7 @@ Search-time ranking should then collapse the resource-level matches back to a si
 - then best-match resource score within the package
 - then stable alphabetical tie-break
 
-This keeps formal skills fully searchable in the shipped Redis backend and aligned with the repo's
+This keeps Agent Skills fully searchable in the shipped Redis backend and aligned with the repo's
 existing "ingest once, retrieve anywhere" model, while still allowing deployments to swap in a
 different runtime backend.
 
@@ -374,7 +374,7 @@ Pros:
 
 Cons:
 
-- formal skills cannot automate deterministic helper flows yet
+- Agent Skills cannot automate deterministic helper flows yet
 
 ### Option B: External executor interface
 
@@ -552,7 +552,7 @@ Expected code touch points:
 - update startup context
 - update eval fixture loading
 
-This phase delivers searchable formal skills through the shipped Redis backend, except for
+This phase delivers searchable Agent Skills through the shipped Redis backend, except for
 execution.
 
 ### Phase 2: Optional non-local execution integration

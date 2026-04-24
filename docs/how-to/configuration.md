@@ -207,7 +207,7 @@ Common settings:
 
 | Setting | Environment Variable | Default | Description |
 |---------|----------------------|---------|-------------|
-| `skill_roots` | `SKILL_ROOTS` | `[]` | Extra filesystem roots to scan for formal skill packages during ingestion |
+| `skill_roots` | `SKILL_ROOTS` | `[]` | Extra filesystem roots to scan for Agent Skills packages during ingestion |
 | `skill_backend_kind` | `SKILL_BACKEND_KIND` | `redis` | Select `redis` for the shipped backend or `custom` for a user-provided backend |
 | `skill_backend_class` | `SKILL_BACKEND_CLASS` | `null` | Import path for a custom backend class when `skill_backend_kind=custom` |
 | `skill_reference_char_budget` | `SKILL_REFERENCE_CHAR_BUDGET` | `12000` | Maximum characters returned by `get_skill_resource` before truncation |

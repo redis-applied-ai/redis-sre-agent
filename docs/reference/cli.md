@@ -57,8 +57,8 @@ Generated from the Click command tree.
 - skills list — List skills from the active skill backend.
 - skills show — Show one skill manifest or legacy skill body.
 - skills read-reference — Alias for reading a reference resource by path.
-- skills read-resource — Read one resource from a formal skill package.
-- skills scaffold — Scaffold a formal skill package from a legacy markdown skill.
+- skills read-resource — Read one resource from an Agent Skills package.
+- skills scaffold — Scaffold an Agent Skills package from a legacy markdown skill.
 - pipeline — Data pipeline commands for scraping and ingestion.
 - pipeline cleanup — Clean up old batch directories.
 - pipeline full — Run the complete pipeline: scraping + ingestion.

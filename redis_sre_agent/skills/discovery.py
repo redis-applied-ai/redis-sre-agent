@@ -1,4 +1,4 @@
-"""Filesystem discovery for formal skill packages."""
+"""Filesystem discovery for Agent Skills packages."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def _iter_resource_paths(directory: Path) -> Iterable[Path]:
 
 
 def load_skill_package(skill_root: Path) -> SkillPackage:
-    """Load a formal skill package rooted at ``skill_root``."""
+    """Load an Agent Skills package rooted at ``skill_root``."""
 
     skill_root = skill_root.resolve()
     entrypoint_path = skill_root / "SKILL.md"
@@ -190,7 +190,7 @@ def load_skill_package(skill_root: Path) -> SkillPackage:
 
 
 def discover_skill_packages(root: Path) -> list[SkillPackage]:
-    """Discover formal skill packages below ``root``."""
+    """Discover Agent Skills packages below ``root``."""
 
     root = root.resolve()
     if not root.exists():
@@ -249,7 +249,7 @@ def skill_package_to_documents(
     source_root: Path,
     source_root_label: str | None = None,
 ) -> list[ScrapedDocument]:
-    """Convert a formal skill package into ``ScrapedDocument`` resources."""
+    """Convert an Agent Skills package into ``ScrapedDocument`` resources."""
 
     source_root = source_root.resolve()
     root_label = str(source_root_label or source_root.name or "skills").strip().strip("/")

@@ -1,4 +1,4 @@
-"""Tests for formal skill discovery and scaffolding."""
+"""Tests for Agent Skills discovery and scaffolding."""
 
 from pathlib import Path
 

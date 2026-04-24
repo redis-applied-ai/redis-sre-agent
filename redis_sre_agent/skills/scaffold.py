@@ -1,4 +1,4 @@
-"""Helpers for scaffolding formal skill packages from legacy markdown skills."""
+"""Helpers for scaffolding Agent Skills packages from legacy markdown skills."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def scaffold_skill_package_from_markdown(
     *,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Create a formal skill package skeleton from a legacy markdown skill."""
+    """Create an Agent Skills package skeleton from a legacy markdown skill."""
 
     source_path = Path(legacy_skill_path).expanduser().resolve()
     if not source_path.is_file():

@@ -521,7 +521,7 @@ class Settings(BaseSettings):
     # Skill backend configuration
     skill_roots: List[str] = Field(
         default_factory=list,
-        description="Additional filesystem roots that contain formal skill packages to ingest.",
+        description="Additional filesystem roots that contain Agent Skills packages to ingest.",
     )
     skill_backend_kind: Literal["redis", "custom"] = Field(
         default="redis",

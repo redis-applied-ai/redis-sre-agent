@@ -1,4 +1,4 @@
-"""Tests for formal skill packages in the fixture-backed eval knowledge backend."""
+"""Tests for Agent Skills packages in the fixture-backed eval knowledge backend."""
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from redis_sre_agent.evaluation.knowledge_backend import build_fixture_knowledge
 from redis_sre_agent.evaluation.scenarios import EvalScenario
 
 
-def _write_scenario_with_formal_skills(tmp_path: Path) -> EvalScenario:
-    corpus_root = tmp_path / "fixtures" / "corpora" / "formal-skills" / "2026-04-22"
+def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
+    corpus_root = tmp_path / "fixtures" / "corpora" / "agent-skills" / "2026-04-22"
     skills_dir = corpus_root / "skills"
     legacy_skill = skills_dir / "legacy-triage.md"
     formal_skill = skills_dir / "redis-maintenance-triage"
@@ -53,7 +53,7 @@ def _write_scenario_with_formal_skills(tmp_path: Path) -> EvalScenario:
                 "name": "Formal skill runtime",
                 "provenance": {
                     "source_kind": "synthetic",
-                    "source_pack": "formal-skills",
+                    "source_pack": "agent-skills",
                     "source_pack_version": "2026-04-22",
                     "golden": {"expectation_basis": "human_authored"},
                 },
@@ -77,7 +77,7 @@ def _write_scenario_with_formal_skills(tmp_path: Path) -> EvalScenario:
 
 @pytest.mark.asyncio
 async def test_fixture_backend_loads_formal_and_legacy_skills(tmp_path: Path):
-    scenario = _write_scenario_with_formal_skills(tmp_path)
+    scenario = _write_scenario_with_agent_skills(tmp_path)
     backend = build_fixture_knowledge_backend(scenario)
 
     skills = await backend.skills_check(query="maintenance", version="latest")

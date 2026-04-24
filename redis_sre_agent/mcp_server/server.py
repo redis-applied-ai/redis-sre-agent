@@ -1376,7 +1376,7 @@ def redis_sre_scaffold_skill_package(
     target_dir: str,
     force: bool = False,
 ) -> Dict[str, Any]:
-    """Scaffold a formal skill package from a legacy markdown skill.
+    """Scaffold an Agent Skills package from a legacy markdown skill.
 
     Args:
         legacy_skill_path: Path to an existing legacy markdown skill file.

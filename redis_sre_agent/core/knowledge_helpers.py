@@ -726,7 +726,7 @@ async def get_skill_resource_helper(
     version: Optional[str] = "latest",
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
-    """Get one named resource from a formal skill package."""
+    """Get one named resource from an Agent Skills package."""
     override_result = await _maybe_call_knowledge_backend(
         "get_skill_resource",
         skill_name=skill_name,

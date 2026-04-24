@@ -1,4 +1,4 @@
-"""Core models for formal skill packages."""
+"""Core models for Agent Skills packages."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class SkillResource:
 
 @dataclass(frozen=True)
 class SkillPackage:
-    """A parsed formal skill package rooted at a directory containing ``SKILL.md``."""
+    """A parsed Agent Skills package rooted at a directory containing ``SKILL.md``."""
 
     name: str
     description: str

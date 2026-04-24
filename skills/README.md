@@ -1,6 +1,6 @@
 # Example Agent Skills
 
-This directory holds repo-local formal skill packages for development, ingestion demos, and tests.
+This directory holds repo-local Agent Skills packages for development, ingestion demos, and tests.
 
 Each package is a directory that contains `SKILL.md` and can optionally include:
 

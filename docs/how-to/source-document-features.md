@@ -50,7 +50,7 @@ When `pinned: true`, document content is injected into startup context for agent
 
 ## Skills
 
-The agent supports both legacy markdown skills and formal skill packages.
+The agent supports both legacy markdown skills and Agent Skills packages.
 
 Legacy skills:
 
