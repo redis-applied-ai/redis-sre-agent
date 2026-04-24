@@ -50,7 +50,23 @@ When `pinned: true`, document content is injected into startup context for agent
 
 ## Skills
 
-Set `doc_type: skill` to create an instruction skill document.
+The agent supports both legacy markdown skills and formal skill packages.
+
+Legacy skills:
+
+- set `doc_type: skill` in a markdown source document
+- retrieve them with `skills_check` and `get_skill`
+
+Formal packages:
+
+- place a directory under a configured skill root that contains `SKILL.md`
+- optional package directories:
+  - `references/`
+  - `scripts/`
+  - `assets/`
+  - `agents/openai.yaml`
+- the shipped runtime uses a Redis-backed `SkillBackend`, but you can swap in a custom backend
+  if you run your own central skill service
 
 At startup, agents receive:
 
@@ -58,13 +74,62 @@ At startup, agents receive:
 - tool instructions for skill retrieval:
   - `skills_check("<query>")`
   - `get_skill("<skill_name>")`
+  - `get_skill_resource("<skill_name>", "<resource_path>")`
 
-`get_skill` returns only:
+Legacy `get_skill` responses stay compact and return only:
 
 - `skill_name`
 - `full_content`
 
-This keeps skill retrieval payloads compact and avoids duplicate fragment/full-content payloads.
+Formal `get_skill` responses return the entrypoint plus a manifest of references, scripts, and text
+assets. Resource bodies remain separate and are fetched explicitly with `get_skill_resource`.
+
+### Formal package example
+
+The repository includes a package example under `skills/redis-maintenance-triage/`.
+
+Example package layout:
+
+```text
+skills/
+  redis-maintenance-triage/
+    SKILL.md
+    references/
+      maintenance-checklist.md
+    scripts/
+      collect_maintenance_context.sh
+    assets/
+      example-query.txt
+    agents/
+      openai.yaml
+```
+
+### Script handling
+
+Formal package scripts are retrieval-only in v1.
+
+- They are indexed and returned through `get_skill` and `get_skill_resource`.
+- They are not executed by this agent runtime.
+- A future execution path must go through a separate executor interface.
+
+### Text assets
+
+V1 resolves the text-asset question as follows:
+
+- text-like assets are indexed by default and can be retrieved explicitly
+- binary assets stay out of model retrieval and are reserved for UI or CLI consumers
+
+### CLI helpers
+
+Use the top-level `skills` CLI for discovery and package scaffolding:
+
+```bash
+uv run redis-sre-agent skills list
+uv run redis-sre-agent skills show redis-maintenance-triage
+uv run redis-sre-agent skills read-resource \
+  redis-maintenance-triage references/maintenance-checklist.md
+uv run redis-sre-agent skills scaffold legacy-skill.md skills/legacy-skill
+```
 
 ---
 

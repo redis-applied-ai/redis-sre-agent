@@ -21,6 +21,10 @@ Task-based tools (require polling redis_sre_get_task_status):
 
 Utility tools (return immediately):
 - redis_sre_knowledge_search: Direct search of knowledge base docs
+- redis_sre_list_skills: List available skills from the active skill backend
+- redis_sre_get_skill: Get one skill manifest or legacy skill body
+- redis_sre_get_skill_resource: Get one named skill resource by relative path
+- redis_sre_scaffold_skill_package: Scaffold a formal skill package from a legacy markdown skill
 - redis_sre_get_knowledge_fragments: Get all chunks for a document hash
 - redis_sre_get_related_knowledge_fragments: Get nearby chunks around a fragment
 - redis_sre_get_pipeline_status: Show pipeline artifacts and recent ingestion state

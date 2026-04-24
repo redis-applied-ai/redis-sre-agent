@@ -8,6 +8,23 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+_INDEXED_OPTIONAL_FIELDS = (
+    "skill_protocol",
+    "resource_kind",
+    "resource_path",
+    "mime_type",
+    "encoding",
+    "package_hash",
+    "entrypoint",
+    "has_references",
+    "has_scripts",
+    "has_assets",
+    "resource_title",
+    "resource_description",
+    "skill_description",
+    "ui_metadata",
+    "skill_manifest",
+)
 
 
 class DocumentDeduplicator:
@@ -417,6 +434,11 @@ class DocumentDeduplicator:
                     "created_at": datetime.now(timezone.utc).timestamp(),
                     "product_labels": product_labels,
                     "product_label_tags": product_label_tags,
+                    **{
+                        field: str(chunk.get(field))
+                        for field in _INDEXED_OPTIONAL_FIELDS
+                        if chunk.get(field) not in (None, "")
+                    },
                     **flattened_metadata,
                 }
                 documents_to_index.append(doc_for_index)
@@ -448,6 +470,11 @@ class DocumentDeduplicator:
                     "source_document_scope": chunks[0].get("source_document_scope", ""),
                     "chunk_count": len(chunks),
                     "total_content_length": sum(len(chunk.get("content", "")) for chunk in chunks),
+                    **{
+                        field: str(chunks[0].get(field))
+                        for field in _INDEXED_OPTIONAL_FIELDS
+                        if chunks[0].get(field) not in (None, "")
+                    },
                 },
             )
 

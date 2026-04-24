@@ -5,11 +5,12 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
+from redis_sre_agent.skills.discovery import discover_skill_packages, skill_package_to_documents
+
 from .processor_indexing_helpers import index_processed_document
 from .processor_source_helpers import (
     create_scraped_document_from_markdown,
     find_markdown_files,
-    resolve_source_document_identity,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,17 +21,83 @@ class PipelineWorkflowMixin:
 
     @staticmethod
     def _load_source_markdown_files(source_dir: Path, *, action: str) -> List[Path]:
-        """Validate a source directory and return its markdown files."""
+        """Validate a source directory and return non-package markdown files."""
         if not source_dir.exists():
             raise ValueError(f"Source directory does not exist: {source_dir}")
 
-        markdown_files = find_markdown_files(source_dir)
+        markdown_files = [
+            path
+            for path in find_markdown_files(source_dir)
+            if not _is_formal_skill_package_path(path)
+        ]
         if not markdown_files:
             logger.warning("No markdown files found in %s", source_dir)
             return []
 
         logger.info("Found %s markdown files to %s", len(markdown_files), action)
         return markdown_files
+
+    def _configured_skill_roots(self, source_dir: Path) -> List[Path]:
+        """Resolve all roots that should be scanned for formal skill packages."""
+        roots: list[Path] = []
+        configured_roots = getattr(self.knowledge_settings, "skill_roots", None) or []
+        for configured_root in configured_roots:
+            candidate = Path(configured_root).resolve()
+            if candidate.exists():
+                roots.append(candidate)
+        nested_skills_root = source_dir / "skills"
+        if nested_skills_root.is_dir():
+            roots.append(nested_skills_root.resolve())
+        elif source_dir.name == "skills":
+            roots.append(source_dir.resolve())
+
+        unique_roots: list[Path] = []
+        seen: set[Path] = set()
+        for root in roots:
+            if root in seen:
+                continue
+            seen.add(root)
+            unique_roots.append(root)
+        return unique_roots
+
+    def _load_source_documents(self, source_dir: Path, *, action: str) -> List[Any]:
+        """Load markdown source documents plus formal skill package resources."""
+        documents: list[Any] = []
+        markdown_files = self._load_source_markdown_files(source_dir, action=action)
+        for md_file in markdown_files:
+            try:
+                documents.append(create_scraped_document_from_markdown(md_file, source_dir))
+            except Exception as exc:
+                logger.error("Failed to load source markdown %s: %s", md_file, exc)
+
+        for skill_root in self._configured_skill_roots(source_dir):
+            try:
+                packages = discover_skill_packages(skill_root)
+            except Exception as exc:
+                logger.error("Failed to discover formal skill packages in %s: %s", skill_root, exc)
+                continue
+            if packages:
+                logger.info(
+                    "Found %s formal skill packages to %s in %s", len(packages), action, skill_root
+                )
+            for package in packages:
+                try:
+                    documents.extend(
+                        skill_package_to_documents(
+                            package,
+                            source_root=skill_root,
+                            source_root_label=skill_root.name,
+                        )
+                    )
+                except Exception as exc:
+                    logger.error("Failed to expand formal skill package %s: %s", package.root, exc)
+
+        if not documents:
+            logger.warning("No source documents found in %s", source_dir)
+            return []
+
+        logger.info("Loaded %s source documents/resources to %s", len(documents), action)
+        return documents
 
     async def list_ingested_batches(self) -> List[Dict[str, Any]]:
         """List all batches that have been ingested."""
@@ -56,8 +123,8 @@ class PipelineWorkflowMixin:
     async def ingest_source_documents(self, source_dir: Path) -> List[Dict[str, Any]]:
         """Ingest markdown files directly from a source_documents tree."""
         logger.info("Ingesting source documents from: %s", source_dir)
-        markdown_files = self._load_source_markdown_files(source_dir, action="process")
-        if not markdown_files:
+        documents = self._load_source_documents(source_dir, action="process")
+        if not documents:
             logger.warning("No markdown files found in %s", source_dir)
             return []
 
@@ -71,16 +138,14 @@ class PipelineWorkflowMixin:
         current_source_paths: set[str] = set()
         scope_prefixes: set[str] = set()
 
-        for md_file in markdown_files:
-            logger.info("Processing: %s", md_file.name)
-            source_document_path, source_document_scope = resolve_source_document_identity(
-                md_file, source_dir
-            )
+        for document in documents:
+            logger.info("Processing: %s", document.title)
+            source_document_path = str(document.metadata.get("source_document_path") or "")
+            source_document_scope = str(document.metadata.get("source_document_scope") or "")
             if source_document_path:
                 current_source_paths.add(source_document_path)
                 scope_prefixes.add(source_document_scope)
             try:
-                document = create_scraped_document_from_markdown(md_file, source_dir)
                 chunks = self.processor.chunk_document(document)
                 indexed = await index_processed_document(
                     document=document,
@@ -93,7 +158,7 @@ class PipelineWorkflowMixin:
 
                 results.append(
                     {
-                        "file": source_document_path or md_file.name,
+                        "file": source_document_path or document.title,
                         "title": document.title,
                         "category": document.category,
                         "severity": document.severity,
@@ -105,15 +170,15 @@ class PipelineWorkflowMixin:
                 )
                 logger.info(
                     "Processed %s: %s chunks, %s indexed",
-                    md_file.name,
+                    document.title,
                     len(chunks),
                     results[-1]["chunks_indexed"],
                 )
             except Exception as e:
-                logger.error("Failed to process %s: %s", md_file.name, e)
+                logger.error("Failed to process %s: %s", document.title, e)
                 results.append(
                     {
-                        "file": source_document_path or md_file.name,
+                        "file": source_document_path or document.title,
                         "status": "error",
                         "error": str(e),
                     }
@@ -144,23 +209,22 @@ class PipelineWorkflowMixin:
     async def prepare_source_artifacts(self, source_dir: Path, batch_date: str) -> int:
         """Convert source markdown files into stored batch artifacts."""
         logger.info("Preparing source artifacts from: %s for batch: %s", source_dir, batch_date)
-        markdown_files = self._load_source_markdown_files(source_dir, action="prepare")
-        if not markdown_files:
+        documents = self._load_source_documents(source_dir, action="prepare")
+        if not documents:
             return 0
 
         prepared_count = 0
         prepared_documents = []
 
-        for md_file in markdown_files:
-            logger.info("Preparing artifact for: %s", md_file.name)
+        for document in documents:
+            logger.info("Preparing artifact for: %s", document.title)
             try:
-                document = create_scraped_document_from_markdown(md_file, source_dir)
                 self.storage.save_document(document)
                 prepared_documents.append(document)
                 prepared_count += 1
-                logger.info("Prepared artifact for %s", md_file.name)
+                logger.info("Prepared artifact for %s", document.title)
             except Exception as e:
-                logger.error("Failed to prepare artifact for %s: %s", md_file.name, e)
+                logger.error("Failed to prepare artifact for %s: %s", document.title, e)
 
         if prepared_documents:
             self.storage.save_batch_manifest(prepared_documents)
@@ -176,3 +240,11 @@ class PipelineWorkflowMixin:
         if batch_result.get("success", False):
             return [{"status": "success", "batch_date": batch_date, **batch_result}]
         return [{"status": "error", "batch_date": batch_date, "error": "Batch ingestion failed"}]
+
+
+def _is_formal_skill_package_path(path: Path) -> bool:
+    """Return True when a file lives inside a formal skill package directory."""
+    for parent in (path.parent, *path.parents):
+        if (parent / "SKILL.md").is_file():
+            return True
+    return False

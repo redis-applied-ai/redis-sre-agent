@@ -106,7 +106,23 @@ For support-ticket IDs such as `RET-4421`, use the ticket workflow instead of ge
 uv run redis-sre-agent query --agent chat "Find support tickets for RET-4421"
 ```
 
-### 6) Schedule recurring checks
+### 6) Inspect formal skill packages
+Use the top-level `skills` commands to inspect formal packages without running a full agent turn.
+
+```bash
+uv run redis-sre-agent skills list --query "maintenance"
+uv run redis-sre-agent skills show redis-maintenance-triage
+uv run redis-sre-agent skills read-resource \
+  redis-maintenance-triage references/maintenance-checklist.md
+```
+
+To scaffold a package from an existing markdown skill:
+
+```bash
+uv run redis-sre-agent skills scaffold legacy-skill.md skills/legacy-skill
+```
+
+### 7) Schedule recurring checks
 Create a schedule that enqueues a triage with optional instance context.
 ```bash
 # Create: run every 24 hours
@@ -130,7 +146,7 @@ uv run redis-sre-agent schedule update <schedule_id> --name "new-name"
 uv run redis-sre-agent schedule delete <schedule_id> -y
 ```
 
-### 7) Analyze support packages
+### 8) Analyze support packages
 Upload and analyze Redis Enterprise support packages (debuginfo archives).
 
 ```bash
@@ -168,7 +184,7 @@ docker compose exec -T sre-agent uv run redis-sre-agent support-package list
 docker compose exec -T sre-agent uv run redis-sre-agent query -p <package_id> "Show database memory usage"
 ```
 
-### 8) See task status and thread contents
+### 9) See task status and thread contents
 Tasks track execution; threads hold the conversation + context.
 ```bash
 # Tasks

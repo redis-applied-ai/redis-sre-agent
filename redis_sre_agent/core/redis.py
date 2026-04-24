@@ -143,6 +143,26 @@ SRE_SUPPORT_TICKETS_SCHEMA = _build_document_schema(
     include_pinned=True,
 )
 
+SRE_SKILLS_SCHEMA["fields"].extend(
+    [
+        {"name": "skill_protocol", "type": "tag"},
+        {"name": "resource_kind", "type": "tag"},
+        {"name": "resource_path", "type": "tag"},
+        {"name": "mime_type", "type": "tag"},
+        {"name": "encoding", "type": "tag"},
+        {"name": "package_hash", "type": "tag"},
+        {"name": "entrypoint", "type": "tag"},
+        {"name": "has_references", "type": "tag"},
+        {"name": "has_scripts", "type": "tag"},
+        {"name": "has_assets", "type": "tag"},
+        {"name": "resource_title", "type": "text"},
+        {"name": "resource_description", "type": "text"},
+        {"name": "skill_description", "type": "text"},
+        {"name": "ui_metadata", "type": "text"},
+        {"name": "skill_manifest", "type": "text"},
+    ]
+)
+
 SRE_SCHEDULES_SCHEMA = {
     "index": {
         "name": SRE_SCHEDULES_INDEX,

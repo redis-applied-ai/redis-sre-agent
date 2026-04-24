@@ -14,6 +14,7 @@ import yaml
 
 from redis_sre_agent.evaluation.injection import EvalKnowledgeBackend
 from redis_sre_agent.evaluation.scenarios import EvalScenario
+from redis_sre_agent.skills.discovery import load_skill_package
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 _PRIORITY_ORDER = {"critical": 0, "high": 1, "normal": 2, "low": 3}
@@ -308,6 +309,18 @@ class FixtureKnowledgeDocument:
     product_labels: list[str]
     index_type: str
     provenance: dict[str, Any]
+    protocol: str = "legacy_markdown"
+    resource_kind: str = "entrypoint"
+    resource_path: str = "SKILL.md"
+    mime_type: str = "text/markdown"
+    has_references: bool = False
+    has_scripts: bool = False
+    has_assets: bool = False
+    resource_title: str = ""
+    resource_description: str = ""
+    skill_description: str = ""
+    ui_metadata: dict[str, Any] | None = None
+    skill_manifest: dict[str, Any] | None = None
 
     def provenance_row(self) -> dict[str, Any]:
         return {
@@ -339,6 +352,18 @@ class FixtureKnowledgeDocument:
             "version": self.version,
             "product_labels": list(self.product_labels),
             "total_chunks": 1,
+            "skill_protocol": self.protocol,
+            "resource_kind": self.resource_kind,
+            "resource_path": self.resource_path,
+            "mime_type": self.mime_type,
+            "has_references": self.has_references,
+            "has_scripts": self.has_scripts,
+            "has_assets": self.has_assets,
+            "resource_title": self.resource_title,
+            "resource_description": self.resource_description,
+            "skill_description": self.skill_description,
+            "ui_metadata": dict(self.ui_metadata or {}),
+            "skill_manifest": dict(self.skill_manifest or {}),
         }
         row.update(self.provenance_row())
         return row
@@ -368,6 +393,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
         }
         default_provenance = _scenario_provenance_defaults(scenario)
         seen_paths: set[Path] = set()
+        seen_skill_roots: set[Path] = set()
         documents: list[FixtureKnowledgeDocument] = []
         for reference in scenario.knowledge.pinned_documents + scenario.knowledge.corpus:
             path = scenario.resolve_fixture_path(reference)
@@ -375,6 +401,20 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 path.resolve(),
                 default_provenance=default_provenance,
             ):
+                package_root = _skill_package_root_for_path(resolved_path)
+                if package_root is not None:
+                    if package_root in seen_skill_roots:
+                        continue
+                    seen_skill_roots.add(package_root)
+                    documents.extend(
+                        _load_fixture_skill_package_documents(
+                            package_root,
+                            pinned=str(reference) in pinned_references,
+                            default_version=scenario.knowledge.version,
+                            default_provenance=provenance,
+                        )
+                    )
+                    continue
                 if resolved_path in seen_paths:
                     continue
                 seen_paths.add(resolved_path)
@@ -521,9 +561,22 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             if not document.pinned
         ]
         if query:
-            ordered_documents = self._rank_documents(skill_documents, query=query)
+            ranked_documents = self._rank_documents(skill_documents, query=query)
         else:
-            ordered_documents = sorted(skill_documents, key=lambda document: document.name.lower())
+            ranked_documents = sorted(skill_documents, key=lambda document: document.name.lower())
+
+        by_skill: dict[str, FixtureKnowledgeDocument] = {}
+        for document in ranked_documents:
+            existing = by_skill.get(document.name)
+            if existing is None:
+                by_skill[document.name] = document
+                continue
+            if query:
+                continue
+            if document.resource_path < existing.resource_path:
+                by_skill[document.name] = document
+
+        ordered_documents = list(by_skill.values())
         paged_documents = ordered_documents[effective_offset : effective_offset + effective_limit]
         return {
             "query": query,
@@ -542,6 +595,13 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                     "priority": document.priority,
                     "summary": document.summary,
                     "index_type": document.index_type,
+                    "backend_kind": "redis",
+                    "protocol": document.protocol,
+                    "has_references": document.has_references,
+                    "has_scripts": document.has_scripts,
+                    "has_assets": document.has_assets,
+                    "matched_resource_kind": document.resource_kind,
+                    "matched_resource_path": document.resource_path,
                 }
                 for document in paged_documents
             ],
@@ -557,15 +617,52 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
         **_: Any,
     ) -> dict[str, Any]:
         normalized_name = _normalize_text(skill_name)
-        for document in self._docs_for_index(index_type="skills", version=version):
-            if (
-                _normalize_text(document.name) == normalized_name
-                or _normalize_text(document.title) == normalized_name
-            ):
+        matching_documents = [
+            document
+            for document in self._docs_for_index(index_type="skills", version=version)
+            if _normalize_text(document.name) == normalized_name
+            or _normalize_text(document.title) == normalized_name
+        ]
+        if matching_documents:
+            matching_documents = sorted(
+                matching_documents,
+                key=lambda document: (
+                    document.resource_kind != "entrypoint",
+                    document.resource_path,
+                ),
+            )
+            entrypoint = matching_documents[0]
+            if entrypoint.protocol == "legacy_markdown":
                 return {
-                    "skill_name": document.name,
-                    "full_content": document.content,
+                    "skill_name": entrypoint.name,
+                    "full_content": entrypoint.content,
                 }
+            return {
+                "skill_name": entrypoint.name,
+                "backend_kind": "redis",
+                "protocol": entrypoint.protocol,
+                "full_content": entrypoint.content,
+                "description": entrypoint.skill_description or entrypoint.summary,
+                "references": [
+                    {
+                        "path": document.resource_path,
+                        "title": document.resource_title or document.title,
+                        "summary": document.resource_description or document.summary,
+                    }
+                    for document in matching_documents
+                    if document.resource_kind == "reference"
+                ],
+                "scripts": [
+                    {
+                        "path": document.resource_path,
+                        "description": document.resource_description or document.summary,
+                    }
+                    for document in matching_documents
+                    if document.resource_kind == "script"
+                ],
+                "assets": list((entrypoint.skill_manifest or {}).get("assets", [])),
+                "ui_metadata": dict(entrypoint.ui_metadata or {}),
+            }
         available_skills = await self.skills_check(query=skill_name, limit=50, version=version)
         return {
             "skill_name": skill_name,
@@ -573,6 +670,37 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             "available_skills": [
                 str(skill.get("name", "")) for skill in available_skills.get("skills", [])[:50]
             ],
+        }
+
+    async def get_skill_resource(
+        self,
+        *,
+        skill_name: str,
+        resource_path: str,
+        version: Optional[str] = "latest",
+        **_: Any,
+    ) -> dict[str, Any]:
+        normalized_name = _normalize_text(skill_name)
+        normalized_resource_path = str(resource_path or "").strip()
+        for document in self._docs_for_index(index_type="skills", version=version):
+            if (
+                _normalize_text(document.name) == normalized_name
+                and document.resource_path == normalized_resource_path
+            ):
+                return {
+                    "skill_name": document.name,
+                    "resource_path": document.resource_path,
+                    "resource_kind": document.resource_kind,
+                    "content": document.content,
+                    "truncated": False,
+                    "mime_type": document.mime_type,
+                    "backend_kind": "redis",
+                    "protocol": document.protocol,
+                }
+        return {
+            "skill_name": skill_name,
+            "resource_path": resource_path,
+            "error": "Skill resource not found",
         }
 
     async def search_support_tickets(
@@ -744,6 +872,18 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                         "pinned": document.pinned,
                         "product_labels": list(document.product_labels),
                         "version": document.version,
+                        "skill_protocol": document.protocol,
+                        "resource_kind": document.resource_kind,
+                        "resource_path": document.resource_path,
+                        "mime_type": document.mime_type,
+                        "has_references": document.has_references,
+                        "has_scripts": document.has_scripts,
+                        "has_assets": document.has_assets,
+                        "resource_title": document.resource_title,
+                        "resource_description": document.resource_description,
+                        "skill_description": document.skill_description,
+                        "ui_metadata": dict(document.ui_metadata or {}),
+                        "skill_manifest": dict(document.skill_manifest or {}),
                         **document.provenance_row(),
                     }
                 return result
@@ -853,6 +993,83 @@ def _load_fixture_document(
         index_type=_infer_index_type(doc_type),
         provenance=provenance,
     )
+
+
+def _skill_package_root_for_path(path: Path) -> Path | None:
+    for candidate in (path.parent, *path.parents):
+        if (candidate / "SKILL.md").is_file():
+            return candidate
+    return None
+
+
+def _load_fixture_skill_package_documents(
+    package_root: Path,
+    *,
+    pinned: bool,
+    default_version: str,
+    default_provenance: dict[str, Any],
+) -> list[FixtureKnowledgeDocument]:
+    package = load_skill_package(package_root)
+    version = (
+        str(package.metadata.get("version") or default_version or "latest").strip() or "latest"
+    )
+    priority = str(package.metadata.get("priority") or "normal").strip().lower() or "normal"
+    manifest = {
+        "assets": [
+            {"path": resource.path, "title": resource.title, "description": resource.description}
+            for resource in package.assets
+        ],
+        "references": [
+            {"path": resource.path, "title": resource.title, "description": resource.description}
+            for resource in package.references
+        ],
+        "scripts": [
+            {"path": resource.path, "title": resource.title, "description": resource.description}
+            for resource in package.scripts
+        ],
+        "ui_metadata": package.ui_metadata,
+    }
+    documents: list[FixtureKnowledgeDocument] = []
+    for resource in package.iter_resources():
+        if resource.content is None or not resource.indexed:
+            continue
+        resource_hash = hashlib.sha1(
+            f"{package.name}:{resource.path}:{resource.content}".encode("utf-8")
+        ).hexdigest()[:16]
+        documents.append(
+            FixtureKnowledgeDocument(
+                document_hash=f"{package.name}:{resource_hash}",
+                title=package.display_title
+                if resource.kind.value == "entrypoint"
+                else (resource.title or f"{package.display_title}: {resource.path}"),
+                name=package.name,
+                content=resource.content,
+                source=resource.full_path.as_posix(),
+                category=str(package.metadata.get("category") or "").strip(),
+                doc_type="skill",
+                severity=str(package.metadata.get("severity") or "").strip(),
+                summary=package.summary or package.description,
+                priority=priority,
+                pinned=bool(pinned),
+                version=version,
+                product_labels=[],
+                index_type="skills",
+                provenance=dict(default_provenance),
+                protocol=package.protocol.value,
+                resource_kind=resource.kind.value,
+                resource_path=resource.path,
+                mime_type=resource.mime_type,
+                has_references=package.has_references,
+                has_scripts=package.has_scripts,
+                has_assets=package.has_assets,
+                resource_title=resource.title or "",
+                resource_description=resource.description or "",
+                skill_description=package.description,
+                ui_metadata=package.ui_metadata,
+                skill_manifest=manifest,
+            )
+        )
+    return documents
 
 
 def build_fixture_knowledge_backend(scenario: EvalScenario) -> FixtureKnowledgeBackend:
