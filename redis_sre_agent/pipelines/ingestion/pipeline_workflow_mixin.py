@@ -28,7 +28,7 @@ class PipelineWorkflowMixin:
         markdown_files = [
             path
             for path in find_markdown_files(source_dir)
-            if not _is_formal_skill_package_path(path)
+            if not _is_agent_skills_package_path(path)
         ]
         if not markdown_files:
             logger.warning("No markdown files found in %s", source_dir)
@@ -242,7 +242,7 @@ class PipelineWorkflowMixin:
         return [{"status": "error", "batch_date": batch_date, "error": "Batch ingestion failed"}]
 
 
-def _is_formal_skill_package_path(path: Path) -> bool:
+def _is_agent_skills_package_path(path: Path) -> bool:
     """Return True when a file lives inside an Agent Skills package directory."""
     for parent in (path.parent, *path.parents):
         if (parent / "SKILL.md").is_file():

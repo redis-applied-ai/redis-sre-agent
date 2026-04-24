@@ -68,7 +68,7 @@ def _make_document(**overrides):
     return base
 
 
-def _write_formal_skill_package(root: Path, name: str = "redis-maintenance-triage") -> Path:
+def _write_agent_skills_package(root: Path, name: str = "redis-maintenance-triage") -> Path:
     package_dir = root / name
     (package_dir / "references").mkdir(parents=True)
     (package_dir / "scripts").mkdir()
@@ -664,10 +664,10 @@ def test_load_source_documents_discovers_nested_and_configured_skill_roots(pipel
     shared_dir = source_root / "shared"
     shared_dir.mkdir(parents=True)
     (shared_dir / "guide.md").write_text("# Guide\n\nBody", encoding="utf-8")
-    _write_formal_skill_package(source_root / "skills", "local-skill")
+    _write_agent_skills_package(source_root / "skills", "local-skill")
 
     external_root = tmp_path / "company-skills"
-    _write_formal_skill_package(external_root, "external-skill")
+    _write_agent_skills_package(external_root, "external-skill")
     pipeline.knowledge_settings = SimpleNamespace(skill_roots=[str(external_root)])
 
     documents = pipeline._load_source_documents(source_root, action="process")
@@ -685,7 +685,7 @@ def test_load_source_documents_discovers_nested_and_configured_skill_roots(pipel
 @pytest.mark.asyncio
 async def test_ingest_source_documents_marks_unchanged_skill_resources(pipeline, tmp_path):
     source_root = tmp_path / "source_documents"
-    _write_formal_skill_package(source_root / "skills")
+    _write_agent_skills_package(source_root / "skills")
 
     def _chunk_document(document):
         return [
@@ -733,7 +733,7 @@ async def test_ingest_source_documents_marks_unchanged_skill_resources(pipeline,
 @pytest.mark.asyncio
 async def test_ingest_source_documents_deletes_removed_skill_resources(pipeline, tmp_path):
     source_root = tmp_path / "source_documents"
-    _write_formal_skill_package(source_root / "skills")
+    _write_agent_skills_package(source_root / "skills")
 
     def _chunk_document(document):
         return [

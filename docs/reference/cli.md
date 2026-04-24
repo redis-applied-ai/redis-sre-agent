@@ -53,7 +53,7 @@ Generated from the Click command tree.
 - knowledge fragments — Fetch all fragments for a document by document hash.
 - knowledge related — Fetch related fragments around a chunk index for a document.
 - knowledge search — Search the knowledge base (query helpers group).
-- skills — Formal skill discovery and scaffolding commands.
+- skills — Agent Skills discovery and scaffolding commands.
 - skills list — List skills from the active skill backend.
 - skills show — Show one skill manifest or legacy skill body.
 - skills read-reference — Alias for reading a reference resource by path.

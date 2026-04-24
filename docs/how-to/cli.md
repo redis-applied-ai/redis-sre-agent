@@ -107,7 +107,7 @@ uv run redis-sre-agent query --agent chat "Find support tickets for RET-4421"
 ```
 
 ### 6) Inspect Agent Skills packages
-Use the top-level `skills` commands to inspect formal packages without running a full agent turn.
+Use the top-level `skills` commands to inspect Agent Skills packages without running a full agent turn.
 
 ```bash
 uv run redis-sre-agent skills list --query "maintenance"

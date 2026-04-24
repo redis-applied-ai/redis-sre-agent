@@ -201,7 +201,7 @@ export TOOL_PROVIDERS='[
 
 ### Skill backend settings
 
-Formal skill retrieval is controlled through the skill backend configuration.
+Agent Skills retrieval is controlled through the skill backend configuration.
 
 Common settings:
 
@@ -230,7 +230,7 @@ skill_backend_kind: custom
 skill_backend_class: my_company.skills.backend.CompanySkillBackend
 ```
 
-The shipped runtime keeps execution separate from retrieval. Even with a custom backend, formal
+The shipped runtime keeps execution separate from retrieval. Even with a custom backend, Agent Skills
 skill scripts are not executed by this agent in v1.
 
 ### Custom LLM providers

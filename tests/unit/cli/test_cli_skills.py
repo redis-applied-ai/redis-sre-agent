@@ -28,7 +28,7 @@ def test_skills_list_json_uses_backend(cli_runner):
     backend.list_skills = AsyncMock(
         return_value={
             "results_count": 1,
-            "skills": [{"name": "redis-maintenance-triage", "protocol": "formal_v1"}],
+            "skills": [{"name": "redis-maintenance-triage", "protocol": "agent_skills_v1"}],
         }
     )
 
@@ -46,7 +46,7 @@ def test_skills_show_renders_manifest_sections(cli_runner):
     backend.get_skill = AsyncMock(
         return_value={
             "skill_name": "redis-maintenance-triage",
-            "protocol": "formal_v1",
+            "protocol": "agent_skills_v1",
             "description": "Investigate maintenance mode first.",
             "references": [
                 {
@@ -65,7 +65,7 @@ def test_skills_show_renders_manifest_sections(cli_runner):
         result = cli_runner.invoke(skills, ["show", "redis-maintenance-triage"])
 
     assert result.exit_code == 0, result.output
-    assert "Protocol: formal_v1" in result.output
+    assert "Protocol: agent_skills_v1" in result.output
     assert "references/maintenance-checklist.md" in result.output
     assert "scripts/collect_context.sh" in result.output
     assert "assets/example-query.txt" in result.output

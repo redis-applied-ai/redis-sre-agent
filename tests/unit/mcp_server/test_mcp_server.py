@@ -224,7 +224,7 @@ class TestSkillTools:
 
     @pytest.mark.asyncio
     async def test_get_skill_success(self):
-        expected = {"skill_name": "redis-maintenance-triage", "protocol": "formal"}
+        expected = {"skill_name": "redis-maintenance-triage", "protocol": "agent_skills_v1"}
 
         with patch(
             "redis_sre_agent.core.knowledge_helpers.get_skill_helper",

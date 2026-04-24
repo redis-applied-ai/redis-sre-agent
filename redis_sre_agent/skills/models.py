@@ -12,7 +12,7 @@ class SkillProtocol(str, Enum):
     """Supported skill packaging protocols."""
 
     LEGACY_MARKDOWN = "legacy_markdown"
-    FORMAL_V1 = "formal_v1"
+    AGENT_SKILLS_V1 = "agent_skills_v1"
 
 
 class SkillResourceKind(str, Enum):
@@ -52,7 +52,7 @@ class SkillPackage:
     scripts: tuple[SkillResource, ...] = ()
     assets: tuple[SkillResource, ...] = ()
     ui_metadata: dict[str, Any] = field(default_factory=dict)
-    protocol: SkillProtocol = SkillProtocol.FORMAL_V1
+    protocol: SkillProtocol = SkillProtocol.AGENT_SKILLS_V1
     title: str | None = None
     summary: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

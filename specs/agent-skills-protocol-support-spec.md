@@ -114,7 +114,7 @@ treated as ordinary documents unless the loader becomes skill-package-aware.
 ### 3. The agent has no script execution primitive or sandbox for skills
 
 Even if we could discover a `scripts/` directory, the current tool surface gives the model no
-safe way to invoke a packaged script. Supporting the formal protocol requires more than parsing
+safe way to invoke a packaged script. Supporting the Agent Skills protocol requires more than parsing
 `SKILL.md`; it requires a runtime contract for package resources and, if execution is desired, a
 separate execution environment. The current repo has approval plumbing and tool action
 classification, but approval is not isolation and does not create a sandbox.
@@ -140,7 +140,7 @@ Core models:
 - `SkillReference`
 - `SkillScript`
 - `SkillAsset`
-- `SkillProtocol = "formal_v1" | "legacy_markdown"`
+- `SkillProtocol = "agent_skills_v1" | "legacy_markdown"`
 - `SkillResourceKind = "entrypoint" | "reference" | "script" | "asset"`
 
 Discovery rules for a package skill:
@@ -162,7 +162,7 @@ skill backend serves", which may be Redis or a deployment-specific central skill
 
 ## 2. Ingest the full skill package into `sre_skills`
 
-Formal skill packages should be expanded into Redis documents during ingestion.
+Agent Skills packages should be expanded into Redis documents during ingestion.
 
 Model each package as a grouped set of skill resources:
 
@@ -186,7 +186,7 @@ best matching resource within the package.
 
 Extend `SRE_SKILLS_SCHEMA` in `redis_sre_agent/core/redis.py` with skill-package metadata fields:
 
-- `skill_protocol`: `legacy_markdown | formal_v1`
+- `skill_protocol`: `legacy_markdown | agent_skills_v1`
 - `resource_kind`: `entrypoint | reference | script | asset`
 - `resource_path`
 - `mime_type`
@@ -272,7 +272,7 @@ configured skill backend.
 Extend the result shape with package metadata:
 
 - `backend_kind`: `redis | custom`
-- `protocol`: `formal_v1 | legacy_markdown`
+- `protocol`: `agent_skills_v1 | legacy_markdown`
 - `has_references`
 - `has_scripts`
 - `has_assets`
@@ -291,7 +291,7 @@ resources belonging to the package. Return a compact manifest plus optional inli
 {
   "skill_name": "iterative-redis-triage",
   "backend_kind": "redis",
-  "protocol": "formal_v1",
+  "protocol": "agent_skills_v1",
   "full_content": "...SKILL.md body...",
   "description": "Use a diagnostic sequence that narrows the problem before changing configuration.",
   "references": [
@@ -312,7 +312,7 @@ resources belonging to the package. Return a compact manifest plus optional inli
 For legacy markdown skills, return the same payload shape but with empty `references`, `scripts`,
 and `assets`.
 
-Important: formal package resources should be retrievable from the configured backend even if the
+Important: Agent Skills package resources should be retrievable from the configured backend even if the
 original filesystem package is no longer mounted.
 
 ### Add `get_skill_resource`
@@ -363,7 +363,7 @@ That executor must be optional, default-disabled, and distinct from skill retrie
 
 ### Option A: Retrieval only
 
-Do not execute scripts in this agent. Formal skills remain searchable, inspectable, and
+Do not execute scripts in this agent. Agent Skills remain searchable, inspectable, and
 retrievable, but execution is out of scope.
 
 Pros:
@@ -458,7 +458,7 @@ This preserves the current compact startup prompt shape while making package ski
 Extend `evals/corpora/<pack>/<version>/skills/` to support both:
 
 - legacy: `skills/<name>.md`
-- formal: `skills/<skill-name>/SKILL.md`
+- Agent Skills package: `skills/<skill-name>/SKILL.md`
 
 Eval loader changes:
 
@@ -517,7 +517,7 @@ Expected code touch points:
   "title": "Iterative Redis Triage",
   "summary": "Use a diagnostic sequence that narrows the problem before changing configuration.",
   "backend_kind": "redis",
-  "protocol": "formal_v1",
+  "protocol": "agent_skills_v1",
   "has_references": true,
   "has_scripts": true,
   "has_assets": false,
@@ -597,7 +597,7 @@ Add or update tests in these areas:
 
 ## Recommendation
 
-Implement Phase 1 first. It is the smallest change that actually supports the formal protocol:
+Implement Phase 1 first. It is the smallest change that actually supports the Agent Skills protocol:
 
 - package directory discovery
 - package-to-Redis ingestion

@@ -23,7 +23,7 @@ async def test_list_skills_collapses_package_resource_matches_by_skill():
                 "title": "Redis Maintenance Triage",
                 "source": "file://skills/redis-maintenance-triage/SKILL.md",
                 "version": "latest",
-                "skill_protocol": "formal_v1",
+                "skill_protocol": "agent_skills_v1",
                 "resource_kind": "entrypoint",
                 "resource_path": "SKILL.md",
                 "skill_description": "Investigate maintenance mode first.",
@@ -37,7 +37,7 @@ async def test_list_skills_collapses_package_resource_matches_by_skill():
                 "title": "Redis Maintenance Triage",
                 "source": "file://skills/redis-maintenance-triage/references/maintenance-checklist.md",
                 "version": "latest",
-                "skill_protocol": "formal_v1",
+                "skill_protocol": "agent_skills_v1",
                 "resource_kind": "reference",
                 "resource_path": "references/maintenance-checklist.md",
                 "skill_description": "Investigate maintenance mode first.",
@@ -51,7 +51,7 @@ async def test_list_skills_collapses_package_resource_matches_by_skill():
                 "title": "Memory Pressure Triage",
                 "source": "file://skills/memory-pressure-triage/SKILL.md",
                 "version": "latest",
-                "skill_protocol": "formal_v1",
+                "skill_protocol": "agent_skills_v1",
                 "resource_kind": "entrypoint",
                 "resource_path": "SKILL.md",
                 "skill_description": "Check workload and memory headroom.",
@@ -86,7 +86,7 @@ async def test_list_skills_collapses_package_resource_matches_by_skill():
 
 
 @pytest.mark.asyncio
-async def test_get_skill_returns_manifest_for_formal_package():
+async def test_get_skill_returns_manifest_for_agent_skills_package():
     backend = RedisSkillBackend(config=SimpleNamespace(skill_reference_char_budget=12000))
     rows = [
         {"document_hash": "entry", "name": "redis-maintenance-triage", "resource_path": "SKILL.md"},
@@ -127,7 +127,7 @@ async def test_get_skill_returns_manifest_for_formal_package():
                         "fragments": [{"chunk_index": 0, "content": "Entrypoint body"}],
                         "metadata": {
                             "name": "redis-maintenance-triage",
-                            "skill_protocol": "formal_v1",
+                            "skill_protocol": "agent_skills_v1",
                             "resource_kind": "entrypoint",
                             "resource_path": "SKILL.md",
                             "resource_title": "Redis Maintenance Triage",
@@ -142,7 +142,7 @@ async def test_get_skill_returns_manifest_for_formal_package():
                         "fragments": [{"chunk_index": 0, "content": "Checklist body"}],
                         "metadata": {
                             "name": "redis-maintenance-triage",
-                            "skill_protocol": "formal_v1",
+                            "skill_protocol": "agent_skills_v1",
                             "resource_kind": "reference",
                             "resource_path": "references/maintenance-checklist.md",
                             "resource_title": "Maintenance Checklist",
@@ -155,7 +155,7 @@ async def test_get_skill_returns_manifest_for_formal_package():
                         "fragments": [{"chunk_index": 0, "content": "echo collect"}],
                         "metadata": {
                             "name": "redis-maintenance-triage",
-                            "skill_protocol": "formal_v1",
+                            "skill_protocol": "agent_skills_v1",
                             "resource_kind": "script",
                             "resource_path": "scripts/collect_context.sh",
                             "resource_description": "Collect maintenance context.",
@@ -167,7 +167,7 @@ async def test_get_skill_returns_manifest_for_formal_package():
     ):
         result = await backend.get_skill(skill_name="redis-maintenance-triage", version="latest")
 
-    assert result["protocol"] == "formal_v1"
+    assert result["protocol"] == "agent_skills_v1"
     assert result["backend_kind"] == "redis"
     assert result["references"] == [
         {
@@ -235,7 +235,7 @@ async def test_get_skill_resource_applies_char_budget():
                     "fragments": [{"chunk_index": 0, "content": "123456789012345"}],
                     "metadata": {
                         "name": "redis-maintenance-triage",
-                        "skill_protocol": "formal_v1",
+                        "skill_protocol": "agent_skills_v1",
                         "resource_kind": "reference",
                         "resource_path": "references/maintenance-checklist.md",
                         "mime_type": "text/markdown",

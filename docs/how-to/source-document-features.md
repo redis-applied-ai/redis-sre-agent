@@ -57,7 +57,7 @@ Legacy skills:
 - set `doc_type: skill` in a markdown source document
 - retrieve them with `skills_check` and `get_skill`
 
-Formal packages:
+Agent Skills packages:
 
 - place a directory under a configured skill root that contains `SKILL.md`
 - optional package directories:
@@ -81,10 +81,10 @@ Legacy `get_skill` responses stay compact and return only:
 - `skill_name`
 - `full_content`
 
-Formal `get_skill` responses return the entrypoint plus a manifest of references, scripts, and text
+Agent Skills `get_skill` responses return the entrypoint plus a manifest of references, scripts, and text
 assets. Resource bodies remain separate and are fetched explicitly with `get_skill_resource`.
 
-### Formal package example
+### Agent Skills package example
 
 The repository includes a package example under `skills/redis-maintenance-triage/`.
 
@@ -106,7 +106,7 @@ skills/
 
 ### Script handling
 
-Formal package scripts are retrieval-only in v1.
+Agent Skills package scripts are retrieval-only in v1.
 
 - They are indexed and returned through `get_skill` and `get_skill_resource`.
 - They are not executed by this agent runtime.
