@@ -570,6 +570,15 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
     ) -> dict[str, Any]:
         effective_limit = _coerce_positive_int(limit, default=20)
         effective_offset = _coerce_non_negative_int(offset, default=0)
+
+        def _representative_rank(
+            document: FixtureKnowledgeDocument,
+        ) -> tuple[int, str]:
+            return (
+                0 if document.resource_kind == "entrypoint" else 1,
+                document.resource_path,
+            )
+
         skill_documents = [
             document
             for document in self._docs_for_index(index_type="skills", version=version)
@@ -591,7 +600,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 if ranker(document) < ranker(existing):
                     by_skill[document.name] = document
                 continue
-            if document.resource_path < existing.resource_path:
+            if _representative_rank(document) < _representative_rank(existing):
                 by_skill[document.name] = document
 
         ordered_documents = sorted(

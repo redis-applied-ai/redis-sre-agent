@@ -683,8 +683,6 @@ async def skills_check_helper(
     if override_result is not None:
         return override_result
 
-    limit = _coerce_positive_int(limit, default=20)
-    offset = _coerce_non_negative_int(offset, default=0)
     logger.info(
         "Listing skills (query=%s, version=%s, offset=%s, limit=%s)",
         bool(query),
