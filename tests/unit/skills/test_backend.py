@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from redis_sre_agent.skills.backend import RedisSkillBackend
+from redis_sre_agent.skills import backend as skill_backend_module
+from redis_sre_agent.skills.backend import RedisSkillBackend, get_skill_backend
 
 
 @pytest.mark.asyncio
@@ -261,6 +262,27 @@ async def test_get_skill_preserves_legacy_markdown_shape():
 
 
 @pytest.mark.asyncio
+async def test_get_skill_returns_not_found_when_loaded_resources_are_empty():
+    backend = RedisSkillBackend(config=SimpleNamespace(skill_reference_char_budget=12000))
+
+    with (
+        patch.object(
+            backend,
+            "_query_skill_rows",
+            new=AsyncMock(return_value=[{"document_hash": "legacy", "name": "legacy-skill"}]),
+        ),
+        patch.object(backend, "_load_skill_resources", new=AsyncMock(return_value=[])),
+    ):
+        result = await backend.get_skill(skill_name="legacy-skill", version="latest")
+
+    assert result == {
+        "skill_name": "legacy-skill",
+        "error": "Skill not found",
+        "available_skills": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_get_skill_resource_applies_char_budget():
     backend = RedisSkillBackend(config=SimpleNamespace(skill_reference_char_budget=10))
 
@@ -305,3 +327,52 @@ async def test_get_skill_resource_applies_char_budget():
     assert result["char_budget"] == 10
     assert result["content_length"] == 15
     assert result["content"] == "1234567..."
+
+
+@pytest.mark.asyncio
+async def test_get_skill_resource_returns_not_found_when_loaded_resources_are_empty():
+    backend = RedisSkillBackend(config=SimpleNamespace(skill_reference_char_budget=12000))
+
+    with (
+        patch.object(
+            backend,
+            "_query_skill_rows",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "document_hash": "ref",
+                        "name": "redis-maintenance-triage",
+                        "resource_path": "references/maintenance-checklist.md",
+                    }
+                ]
+            ),
+        ),
+        patch.object(backend, "_load_skill_resources", new=AsyncMock(return_value=[])),
+    ):
+        result = await backend.get_skill_resource(
+            skill_name="redis-maintenance-triage",
+            resource_path="references/maintenance-checklist.md",
+            version="latest",
+        )
+
+    assert result == {
+        "skill_name": "redis-maintenance-triage",
+        "resource_path": "references/maintenance-checklist.md",
+        "error": "Skill resource not found",
+    }
+
+
+def test_get_skill_backend_caches_default_backend_instance():
+    skill_backend_module._DEFAULT_BACKEND_CACHE = None
+    config = SimpleNamespace(
+        skill_backend_kind="redis",
+        skill_backend_class="",
+        skill_reference_char_budget=12000,
+    )
+
+    with patch.object(skill_backend_module, "settings", config):
+        first = get_skill_backend()
+        second = get_skill_backend()
+
+    assert first is second
+    skill_backend_module._DEFAULT_BACKEND_CACHE = None

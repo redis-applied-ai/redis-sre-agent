@@ -270,6 +270,12 @@ class RedisSkillBackend:
             }
 
         resources = await self._load_skill_resources(rows=rows, version=version)
+        if not resources:
+            return {
+                "skill_name": skill_name,
+                "error": "Skill not found",
+                "available_skills": [],
+            }
         if resources and resources[0].get("_error"):
             error_resource = resources[0]
             return {
@@ -358,6 +364,12 @@ class RedisSkillBackend:
             }
 
         resources = await self._load_skill_resources(rows=rows, version=version)
+        if not resources:
+            return {
+                "skill_name": skill_name,
+                "resource_path": resource_path,
+                "error": "Skill resource not found",
+            }
         resource = resources[0]
         if resource.get("_error"):
             return {
@@ -528,7 +540,15 @@ class RedisSkillBackend:
 
     @staticmethod
     def _extract_ui_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-        raw = metadata.get("ui_metadata")
+        return RedisSkillBackend._extract_metadata_dict(metadata, "ui_metadata")
+
+    @staticmethod
+    def _extract_skill_manifest(metadata: dict[str, Any]) -> dict[str, Any]:
+        return RedisSkillBackend._extract_metadata_dict(metadata, "skill_manifest")
+
+    @staticmethod
+    def _extract_metadata_dict(metadata: dict[str, Any], key: str) -> dict[str, Any]:
+        raw = metadata.get(key)
         if isinstance(raw, dict):
             return dict(raw)
         if isinstance(raw, str) and raw.strip():
@@ -540,19 +560,8 @@ class RedisSkillBackend:
                 return payload
         return {}
 
-    @staticmethod
-    def _extract_skill_manifest(metadata: dict[str, Any]) -> dict[str, Any]:
-        raw = metadata.get("skill_manifest")
-        if isinstance(raw, dict):
-            return dict(raw)
-        if isinstance(raw, str) and raw.strip():
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                return {}
-            if isinstance(payload, dict):
-                return payload
-        return {}
+
+_DEFAULT_BACKEND_CACHE: tuple[tuple[str, str], SkillBackend] | None = None
 
 
 def _load_custom_backend(config: Settings) -> SkillBackend:
@@ -579,6 +588,22 @@ def get_skill_backend(config: Settings | None = None) -> SkillBackend:
     """Return the active runtime skill backend."""
 
     active_config = config or settings
+    if config is not None:
+        if active_config.skill_backend_kind == "custom":
+            return _load_custom_backend(active_config)
+        return RedisSkillBackend(config=active_config)
+
+    global _DEFAULT_BACKEND_CACHE
+    cache_key = (
+        str(active_config.skill_backend_kind or "redis"),
+        str(active_config.skill_backend_class or ""),
+    )
+    if _DEFAULT_BACKEND_CACHE and _DEFAULT_BACKEND_CACHE[0] == cache_key:
+        return _DEFAULT_BACKEND_CACHE[1]
+
     if active_config.skill_backend_kind == "custom":
-        return _load_custom_backend(active_config)
-    return RedisSkillBackend(config=active_config)
+        backend = _load_custom_backend(active_config)
+    else:
+        backend = RedisSkillBackend(config=active_config)
+    _DEFAULT_BACKEND_CACHE = (cache_key, backend)
+    return backend
