@@ -204,3 +204,16 @@ def test_scaffold_skill_package_from_markdown_creates_package_skeleton(tmp_path:
     assert "Confirm maintenance mode before failover." in (package_dir / "SKILL.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_scaffold_skill_package_from_markdown_allows_dotted_directory_names(tmp_path: Path):
+    legacy_skill = tmp_path / "legacy-skill.md"
+    legacy_skill.write_text(
+        "# Legacy Triage\n\nConfirm maintenance mode before failover.\n", encoding="utf-8"
+    )
+
+    package_dir = tmp_path / "legacy-triage.v2"
+    result = scaffold_skill_package_from_markdown(legacy_skill, package_dir)
+
+    assert result["package_dir"] == str(package_dir.resolve())
+    assert (package_dir / "SKILL.md").is_file()

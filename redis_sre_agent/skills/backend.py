@@ -276,7 +276,7 @@ class RedisSkillBackend:
                 "error": "Skill not found",
                 "available_skills": [],
             }
-        if resources and resources[0].get("_error"):
+        if resources[0].get("_error"):
             error_resource = resources[0]
             return {
                 "skill_name": str(error_resource.get("skill_name") or normalized_name),

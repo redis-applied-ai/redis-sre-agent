@@ -60,8 +60,6 @@ def scaffold_skill_package_from_markdown(
         description = _guess_description(body)
 
     package_dir = Path(target_dir).expanduser()
-    if package_dir.suffix:
-        raise ValueError("Target directory must be a directory path, not a file path")
     if package_dir.exists() and not package_dir.is_dir():
         raise ValueError(f"Target directory is not a directory: {package_dir}")
     if package_dir.exists() and any(package_dir.iterdir()) and not force:
