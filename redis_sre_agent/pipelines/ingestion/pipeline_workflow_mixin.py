@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
+from redis_sre_agent.core.config import settings as app_settings
 from redis_sre_agent.skills.discovery import (
     discover_skill_packages,
     find_skill_package_root,
@@ -44,7 +45,11 @@ class PipelineWorkflowMixin:
     def _configured_skill_roots(self, source_dir: Path) -> List[Path]:
         """Resolve all roots that should be scanned for Agent Skills packages."""
         roots: list[Path] = []
-        configured_roots = getattr(self.knowledge_settings, "skill_roots", None) or []
+        configured_roots: list[str] = []
+        pipeline_settings = getattr(self, "settings", None)
+        configured_roots.extend(getattr(pipeline_settings, "skill_roots", None) or [])
+        configured_roots.extend(getattr(app_settings, "skill_roots", None) or [])
+        configured_roots.extend(getattr(self.knowledge_settings, "skill_roots", None) or [])
         for configured_root in configured_roots:
             candidate = Path(configured_root).resolve()
             if candidate.exists():

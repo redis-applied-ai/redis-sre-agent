@@ -488,9 +488,7 @@ class RedisSkillBackend:
                 or "legacy_markdown"
             )
             resource_kind = str(
-                metadata.get("resource_kind")
-                or row.get("resource_kind")
-                or ("entrypoint" if protocol == "legacy_markdown" else "entrypoint")
+                metadata.get("resource_kind") or row.get("resource_kind") or "entrypoint"
             )
             resources.append(
                 {

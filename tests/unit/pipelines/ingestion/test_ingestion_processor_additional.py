@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from redis_sre_agent.pipelines.ingestion import pipeline_workflow_mixin
 from redis_sre_agent.pipelines.ingestion.processor import (
     DocumentProcessor,
     IngestionPipeline,
@@ -668,9 +669,8 @@ def test_load_source_documents_discovers_nested_and_configured_skill_roots(pipel
 
     external_root = tmp_path / "company-skills"
     _write_agent_skills_package(external_root, "external-skill")
-    pipeline.knowledge_settings = SimpleNamespace(skill_roots=[str(external_root)])
-
-    documents = pipeline._load_source_documents(source_root, action="process")
+    with patch.object(pipeline_workflow_mixin.app_settings, "skill_roots", [str(external_root)]):
+        documents = pipeline._load_source_documents(source_root, action="process")
     paths = [str(document.metadata.get("source_document_path") or "") for document in documents]
 
     assert "shared/guide.md" in paths
