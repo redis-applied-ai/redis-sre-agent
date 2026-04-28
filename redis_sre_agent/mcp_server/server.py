@@ -10,6 +10,7 @@ This allows Claude to connect to an already-running agent via:
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from docket import Docket
@@ -153,6 +154,19 @@ while True:
 - Use `redis_sre_test_instance()` and `redis_sre_test_redis_url()` for connectivity checks
 - Check the `updates` array to show users what the agent is doing""",
 )
+
+
+def _resolve_workspace_path(path_value: str) -> Path:
+    """Resolve a user-supplied path and confine it to the server workspace."""
+    workspace_root = Path.cwd().resolve()
+    resolved = Path(path_value).expanduser().resolve()
+    try:
+        resolved.relative_to(workspace_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Path must stay within the MCP server workspace: {workspace_root}"
+        ) from exc
+    return resolved
 
 
 def _build_mcp_query_context(
@@ -1396,6 +1410,8 @@ def redis_sre_scaffold_skill_package(
     )
 
     try:
+        _resolve_workspace_path(legacy_skill_path)
+        _resolve_workspace_path(target_dir)
         return scaffold_skill_package_from_markdown(
             legacy_skill_path=legacy_skill_path,
             target_dir=target_dir,

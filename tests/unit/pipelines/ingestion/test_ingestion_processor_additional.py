@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from redis_sre_agent.pipelines.ingestion import pipeline_workflow_mixin
+from redis_sre_agent.pipelines.ingestion.deduplication import _normalize_indexed_optional_field
 from redis_sre_agent.pipelines.ingestion.processor import (
     DocumentProcessor,
     IngestionPipeline,
@@ -162,6 +163,13 @@ def test_document_processor_knowledge_settings_and_helpers():
 
     broken = BrokenText()
     assert processor._strip_yaml_front_matter(broken) == (broken, False)
+
+
+def test_normalize_indexed_optional_field_omits_false_booleans():
+    assert _normalize_indexed_optional_field("has_references", False) is None
+    assert _normalize_indexed_optional_field("entrypoint", "false") is None
+    assert _normalize_indexed_optional_field("has_assets", True) == "true"
+    assert _normalize_indexed_optional_field("resource_kind", "reference") == "reference"
 
 
 def test_chunk_document_special_cases_and_empty_body():

@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import yaml
 
@@ -456,9 +456,22 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
         *,
         query: str,
     ) -> list[FixtureKnowledgeDocument]:
+        return sorted(documents, key=self._make_document_ranker(query))
+
+    def _make_document_ranker(
+        self,
+        query: str,
+    ) -> Callable[[FixtureKnowledgeDocument], tuple[int, int, int, str, int, str]]:
         normalized_query = _normalize_text(query)
         if not normalized_query:
-            return sorted(documents, key=lambda document: document.name.lower())
+            return lambda document: (
+                0,
+                0,
+                _PRIORITY_ORDER.get(document.priority, _PRIORITY_ORDER["normal"]),
+                document.name.lower(),
+                document.resource_kind != "entrypoint",
+                document.resource_path,
+            )
 
         quoted_query = (
             normalized_query[1:-1]
@@ -467,7 +480,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
         )
         query_tokens = [token for token in normalized_query.replace('"', "").split() if token]
 
-        def _rank(document: FixtureKnowledgeDocument) -> tuple[int, int, int, str]:
+        def _rank(document: FixtureKnowledgeDocument) -> tuple[int, int, int, str, int, str]:
             name = _normalize_text(document.name)
             title = _normalize_text(document.title)
             source = _normalize_text(document.source)
@@ -489,9 +502,11 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 -token_hits,
                 _PRIORITY_ORDER.get(document.priority, _PRIORITY_ORDER["normal"]),
                 document.name.lower(),
+                document.resource_kind != "entrypoint",
+                document.resource_path,
             )
 
-        return sorted(documents, key=_rank)
+        return _rank
 
     async def search_knowledge_base(
         self,
@@ -560,8 +575,9 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             for document in self._docs_for_index(index_type="skills", version=version)
             if not document.pinned
         ]
+        ranker = self._make_document_ranker(query or "")
         if query:
-            ranked_documents = self._rank_documents(skill_documents, query=query)
+            ranked_documents = sorted(skill_documents, key=ranker)
         else:
             ranked_documents = sorted(skill_documents, key=lambda document: document.name.lower())
 
@@ -572,6 +588,8 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 by_skill[document.name] = document
                 continue
             if query:
+                if ranker(document) < ranker(existing):
+                    by_skill[document.name] = document
                 continue
             if document.resource_path < existing.resource_path:
                 by_skill[document.name] = document

@@ -274,16 +274,26 @@ class TestSkillTools:
         ) as mock_scaffold:
             result = redis_sre_scaffold_skill_package(
                 "skills/legacy.md",
-                "/tmp/redis-maintenance-triage",
+                "tmp/redis-maintenance-triage",
                 force=True,
             )
 
         assert result == expected
         mock_scaffold.assert_called_once_with(
             legacy_skill_path="skills/legacy.md",
-            target_dir="/tmp/redis-maintenance-triage",
+            target_dir="tmp/redis-maintenance-triage",
             force=True,
         )
+
+    def test_scaffold_skill_package_rejects_paths_outside_workspace(self):
+        result = redis_sre_scaffold_skill_package(
+            "skills/legacy.md",
+            "/tmp/redis-maintenance-triage",
+            force=True,
+        )
+
+        assert result["status"] == "failed"
+        assert "Path must stay within the MCP server workspace" in result["error"]
 
 
 class TestDeepTriageTool:

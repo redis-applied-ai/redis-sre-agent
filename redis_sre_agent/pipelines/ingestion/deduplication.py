@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from .processor_source_helpers import parse_bool
+
 logger = logging.getLogger(__name__)
 _INDEXED_OPTIONAL_FIELDS = (
     "skill_protocol",
@@ -25,6 +27,21 @@ _INDEXED_OPTIONAL_FIELDS = (
     "ui_metadata",
     "skill_manifest",
 )
+_BOOLEAN_INDEXED_OPTIONAL_FIELDS = {
+    "entrypoint",
+    "has_references",
+    "has_scripts",
+    "has_assets",
+}
+
+
+def _normalize_indexed_optional_field(field: str, value: Any) -> str | None:
+    """Normalize optional indexed metadata before it is written to Redis."""
+    if value in (None, ""):
+        return None
+    if field in _BOOLEAN_INDEXED_OPTIONAL_FIELDS:
+        return "true" if parse_bool(value, default=False) else None
+    return str(value)
 
 
 class DocumentDeduplicator:
@@ -435,9 +452,14 @@ class DocumentDeduplicator:
                     "product_labels": product_labels,
                     "product_label_tags": product_label_tags,
                     **{
-                        field: str(chunk.get(field))
+                        field: normalized_value
                         for field in _INDEXED_OPTIONAL_FIELDS
-                        if chunk.get(field) not in (None, "")
+                        if (
+                            normalized_value := _normalize_indexed_optional_field(
+                                field, chunk.get(field)
+                            )
+                        )
+                        is not None
                     },
                     **flattened_metadata,
                 }
@@ -471,9 +493,14 @@ class DocumentDeduplicator:
                     "chunk_count": len(chunks),
                     "total_content_length": sum(len(chunk.get("content", "")) for chunk in chunks),
                     **{
-                        field: str(chunks[0].get(field))
+                        field: normalized_value
                         for field in _INDEXED_OPTIONAL_FIELDS
-                        if chunks[0].get(field) not in (None, "")
+                        if (
+                            normalized_value := _normalize_indexed_optional_field(
+                                field, chunks[0].get(field)
+                            )
+                        )
+                        is not None
                     },
                 },
             )

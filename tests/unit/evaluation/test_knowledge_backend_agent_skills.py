@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from redis_sre_agent.evaluation.knowledge_backend import build_fixture_knowledge_backend
+from redis_sre_agent.evaluation.knowledge_backend import (
+    FixtureKnowledgeBackend,
+    FixtureKnowledgeDocument,
+    build_fixture_knowledge_backend,
+)
 from redis_sre_agent.evaluation.scenarios import EvalScenario
 
 
@@ -168,3 +172,61 @@ async def test_fixture_backend_ignores_skill_markers_above_corpus_root(tmp_path:
 
     assert result["title"] == "ops-guide"
     assert result["fragments"][0]["content"] == "Check the dashboard first."
+
+
+@pytest.mark.asyncio
+async def test_fixture_backend_skills_check_keeps_best_matching_resource_for_query():
+    backend = FixtureKnowledgeBackend(
+        [
+            FixtureKnowledgeDocument(
+                document_hash="entrypoint-doc",
+                title="Redis Maintenance Triage",
+                name="redis-maintenance-triage",
+                content="General maintenance overview.",
+                source="file://skills/redis-maintenance-triage/SKILL.md",
+                category="shared",
+                doc_type="skill",
+                severity="medium",
+                summary="General maintenance guidance.",
+                priority="normal",
+                pinned=False,
+                version="latest",
+                product_labels=[],
+                index_type="skills",
+                provenance={},
+                protocol="agent_skills_v1",
+                resource_kind="entrypoint",
+                resource_path="SKILL.md",
+                has_references=True,
+            ),
+            FixtureKnowledgeDocument(
+                document_hash="reference-doc",
+                title="Maintenance Checklist",
+                name="redis-maintenance-triage",
+                content="Checklist body includes failover prechecks and owner confirmation.",
+                source=(
+                    "file://skills/redis-maintenance-triage/references/maintenance-checklist.md"
+                ),
+                category="shared",
+                doc_type="skill",
+                severity="medium",
+                summary="Detailed failover prechecks.",
+                priority="normal",
+                pinned=False,
+                version="latest",
+                product_labels=[],
+                index_type="skills",
+                provenance={},
+                protocol="agent_skills_v1",
+                resource_kind="reference",
+                resource_path="references/maintenance-checklist.md",
+                has_references=True,
+            ),
+        ]
+    )
+
+    result = await backend.skills_check(query="failover prechecks", version="latest")
+
+    assert result["skills"][0]["name"] == "redis-maintenance-triage"
+    assert result["skills"][0]["matched_resource_kind"] == "reference"
+    assert result["skills"][0]["matched_resource_path"] == "references/maintenance-checklist.md"
