@@ -96,8 +96,10 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
     agent_skill_row = next(
         skill for skill in skills["skills"] if skill["name"] == "redis-maintenance-triage"
     )
+    legacy_skill_row = next(skill for skill in skills["skills"] if skill["name"] == "legacy-triage")
     assert agent_skill_row["protocol"] == "agent_skills_v1"
     assert agent_skill_row["has_references"] is True
+    assert legacy_skill_row["matched_resource_path"] == ""
     assert agent_skill["references"] == [
         {
             "path": "references/maintenance-checklist.md",

@@ -311,7 +311,7 @@ class FixtureKnowledgeDocument:
     provenance: dict[str, Any]
     protocol: str = "legacy_markdown"
     resource_kind: str = "entrypoint"
-    resource_path: str = "SKILL.md"
+    resource_path: str = ""
     mime_type: str = "text/markdown"
     has_references: bool = False
     has_scripts: bool = False
@@ -401,7 +401,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 path.resolve(),
                 default_provenance=default_provenance,
             ):
-                package_root = _skill_package_root_for_path(resolved_path, boundary=path.resolve())
+                package_root = find_skill_package_root(resolved_path, boundary=path.resolve())
                 if package_root is not None:
                     if package_root in seen_skill_roots:
                         continue
@@ -993,10 +993,6 @@ def _load_fixture_document(
         index_type=_infer_index_type(doc_type),
         provenance=provenance,
     )
-
-
-def _skill_package_root_for_path(path: Path, *, boundary: Path | None = None) -> Path | None:
-    return find_skill_package_root(path, boundary=boundary)
 
 
 def _load_fixture_skill_package_documents(
