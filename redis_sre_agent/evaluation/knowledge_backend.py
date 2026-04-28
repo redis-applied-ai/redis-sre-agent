@@ -594,7 +594,10 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             if document.resource_path < existing.resource_path:
                 by_skill[document.name] = document
 
-        ordered_documents = list(by_skill.values())
+        ordered_documents = sorted(
+            by_skill.values(),
+            key=ranker if query else lambda document: document.name.lower(),
+        )
         paged_documents = ordered_documents[effective_offset : effective_offset + effective_limit]
         return {
             "query": query,

@@ -161,6 +161,7 @@ def load_skill_package(skill_root: Path) -> SkillPackage:
         resource_metadata: dict[str, Any] | None = None,
         default_title: str | None = None,
         default_description: str = "",
+        parse_frontmatter: bool = True,
     ) -> SkillResource:
         rel_path = _normalize_relpath(path, skill_root)
         parsed_metadata = dict(resource_metadata or {})
@@ -169,10 +170,10 @@ def load_skill_package(skill_root: Path) -> SkillPackage:
         indexed = resource_content is not None and (
             kind != SkillResourceKind.ASSET or _is_text_asset(path)
         )
-        if path.suffix.lower() in {".md", ".markdown"} and resource_content:
+        if parse_frontmatter and path.suffix.lower() in {".md", ".markdown"} and resource_content:
             frontmatter_metadata, stripped_content = _parse_frontmatter(resource_content)
             if frontmatter_metadata:
-                parsed_metadata = frontmatter_metadata
+                parsed_metadata = {**parsed_metadata, **frontmatter_metadata}
             resource_content = stripped_content
         return SkillResource(
             path=rel_path,
@@ -196,6 +197,7 @@ def load_skill_package(skill_root: Path) -> SkillPackage:
         resource_metadata=metadata,
         default_title=title,
         default_description=description,
+        parse_frontmatter=False,
     )
     references = tuple(
         _build_resource(path, SkillResourceKind.REFERENCE, resource_content=resource_content)

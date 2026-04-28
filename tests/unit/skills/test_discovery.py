@@ -128,6 +128,36 @@ def test_load_skill_package_reads_each_resource_file_once(tmp_path: Path, monkey
     assert read_counts["example-query.txt"] == 1
 
 
+def test_load_skill_package_preserves_entrypoint_metadata_when_body_starts_with_rule(
+    tmp_path: Path,
+):
+    package_dir = _write_skill_package(tmp_path)
+    (package_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: redis-maintenance-triage",
+                "title: Redis Maintenance Triage",
+                "description: Investigate maintenance mode before failover.",
+                "---",
+                "",
+                "---",
+                "example: keep-this-body",
+                "---",
+                "",
+                "Entrypoint body",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    package = load_skill_package(package_dir)
+
+    assert package.entrypoint.title == "Redis Maintenance Triage"
+    assert package.entrypoint.description == "Investigate maintenance mode before failover."
+    assert package.entrypoint.content.startswith("---\nexample: keep-this-body\n---")
+
+
 def test_find_skill_package_root_respects_boundary(tmp_path: Path):
     (tmp_path / "SKILL.md").write_text(
         "---\nname: top-level\ndescription: outer package\n---\n",
