@@ -114,3 +114,55 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
     assert agent_skill_resource["resource_kind"] == "reference"
     assert agent_skill_resource["content"] == "Checklist body"
     assert legacy == {"skill_name": "legacy-triage", "full_content": "Legacy body"}
+
+
+@pytest.mark.asyncio
+async def test_fixture_backend_ignores_skill_markers_above_corpus_root(tmp_path: Path):
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: outer-skill\ndescription: outer package\n---\n",
+        encoding="utf-8",
+    )
+    corpus_root = tmp_path / "fixtures" / "corpora" / "shared" / "2026-04-22"
+    corpus_root.mkdir(parents=True)
+    (corpus_root / "ops-guide.md").write_text(
+        "---\nsummary: Shared ops guide.\n---\n\nCheck the dashboard first.\n",
+        encoding="utf-8",
+    )
+
+    scenario_path = tmp_path / "scenario.yaml"
+    scenario_path.write_text(
+        yaml.safe_dump(
+            {
+                "id": "shared-doc-runtime",
+                "name": "Shared doc runtime",
+                "provenance": {
+                    "source_kind": "synthetic",
+                    "source_pack": "shared",
+                    "source_pack_version": "2026-04-22",
+                    "golden": {"expectation_basis": "human_authored"},
+                },
+                "execution": {
+                    "lane": "full_turn",
+                    "query": "Check the dashboard first.",
+                    "route_via_router": True,
+                },
+                "knowledge": {
+                    "mode": "full",
+                    "version": "latest",
+                    "corpus": [str(corpus_root / "ops-guide.md")],
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    backend = build_fixture_knowledge_backend(EvalScenario.from_file(scenario_path))
+
+    result = await backend.get_all_document_fragments(
+        document_hash="ops-guide",
+        index_type="knowledge",
+        version="latest",
+    )
+
+    assert result["title"] == "ops-guide"
+    assert result["fragments"][0]["content"] == "Check the dashboard first."

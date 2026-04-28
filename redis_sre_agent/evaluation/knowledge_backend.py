@@ -14,7 +14,7 @@ import yaml
 
 from redis_sre_agent.evaluation.injection import EvalKnowledgeBackend
 from redis_sre_agent.evaluation.scenarios import EvalScenario
-from redis_sre_agent.skills.discovery import load_skill_package
+from redis_sre_agent.skills.discovery import find_skill_package_root, load_skill_package
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 _PRIORITY_ORDER = {"critical": 0, "high": 1, "normal": 2, "low": 3}
@@ -401,7 +401,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 path.resolve(),
                 default_provenance=default_provenance,
             ):
-                package_root = _skill_package_root_for_path(resolved_path)
+                package_root = _skill_package_root_for_path(resolved_path, boundary=path.resolve())
                 if package_root is not None:
                     if package_root in seen_skill_roots:
                         continue
@@ -995,11 +995,8 @@ def _load_fixture_document(
     )
 
 
-def _skill_package_root_for_path(path: Path) -> Path | None:
-    for candidate in (path.parent, *path.parents):
-        if (candidate / "SKILL.md").is_file():
-            return candidate
-    return None
+def _skill_package_root_for_path(path: Path, *, boundary: Path | None = None) -> Path | None:
+    return find_skill_package_root(path, boundary=boundary)
 
 
 def _load_fixture_skill_package_documents(

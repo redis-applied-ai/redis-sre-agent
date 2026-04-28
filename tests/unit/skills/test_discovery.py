@@ -2,7 +2,13 @@
 
 from pathlib import Path
 
-from redis_sre_agent.skills.discovery import discover_skill_packages, skill_package_to_documents
+import redis_sre_agent.skills.discovery as discovery
+from redis_sre_agent.skills.discovery import (
+    discover_skill_packages,
+    find_skill_package_root,
+    load_skill_package,
+    skill_package_to_documents,
+)
 from redis_sre_agent.skills.scaffold import scaffold_skill_package_from_markdown
 
 
@@ -101,6 +107,39 @@ def test_skill_package_to_documents_emits_entrypoint_and_resources(tmp_path: Pat
         by_path["references/maintenance-checklist.md"].metadata["source_document_path"]
         == "skills/redis-maintenance-triage/references/maintenance-checklist.md"
     )
+
+
+def test_load_skill_package_reads_each_resource_file_once(tmp_path: Path, monkeypatch):
+    package_dir = _write_skill_package(tmp_path)
+    read_counts: dict[str, int] = {}
+    original_safe_read_text = discovery._safe_read_text
+
+    def _counted_safe_read_text(path: Path) -> str | None:
+        read_counts[path.name] = read_counts.get(path.name, 0) + 1
+        return original_safe_read_text(path)
+
+    monkeypatch.setattr(discovery, "_safe_read_text", _counted_safe_read_text)
+
+    package = load_skill_package(package_dir)
+
+    assert package.references[0].content == "- maintenance mode\n- owner"
+    assert read_counts["maintenance-checklist.md"] == 1
+    assert read_counts["collect_context.sh"] == 1
+    assert read_counts["example-query.txt"] == 1
+
+
+def test_find_skill_package_root_respects_boundary(tmp_path: Path):
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: top-level\ndescription: outer package\n---\n",
+        encoding="utf-8",
+    )
+    corpus_root = tmp_path / "fixtures" / "corpora" / "shared"
+    corpus_root.mkdir(parents=True)
+    document_path = corpus_root / "guide.md"
+    document_path.write_text("# Guide\n\nBody", encoding="utf-8")
+
+    assert find_skill_package_root(document_path) == tmp_path.resolve()
+    assert find_skill_package_root(document_path, boundary=corpus_root) is None
 
 
 def test_scaffold_skill_package_from_markdown_creates_package_skeleton(tmp_path: Path):

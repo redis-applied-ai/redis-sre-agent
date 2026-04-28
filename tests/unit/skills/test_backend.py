@@ -86,6 +86,57 @@ async def test_list_skills_collapses_package_resource_matches_by_skill():
 
 
 @pytest.mark.asyncio
+async def test_list_skills_without_query_prefers_entrypoint_for_package_representative():
+    backend = RedisSkillBackend(config=SimpleNamespace(skill_reference_char_budget=12000))
+    mock_index = AsyncMock()
+    mock_index.query = AsyncMock(
+        return_value=[
+            {
+                "id": "chunk-ref",
+                "document_hash": "hash-ref",
+                "chunk_index": 0,
+                "name": "redis-maintenance-triage",
+                "title": "Redis Maintenance Triage",
+                "source": "file://skills/redis-maintenance-triage/references/maintenance-checklist.md",
+                "version": "latest",
+                "skill_protocol": "agent_skills_v1",
+                "resource_kind": "reference",
+                "resource_path": "references/maintenance-checklist.md",
+                "skill_description": "Investigate maintenance mode first.",
+            },
+            {
+                "id": "chunk-entry",
+                "document_hash": "hash-entry",
+                "chunk_index": 0,
+                "name": "redis-maintenance-triage",
+                "title": "Redis Maintenance Triage",
+                "source": "file://skills/redis-maintenance-triage/SKILL.md",
+                "version": "latest",
+                "skill_protocol": "agent_skills_v1",
+                "resource_kind": "entrypoint",
+                "resource_path": "SKILL.md",
+                "skill_description": "Investigate maintenance mode first.",
+            },
+        ]
+    )
+
+    with patch(
+        "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+        new=AsyncMock(return_value=mock_index),
+    ):
+        result = await backend.list_skills(
+            query=None,
+            limit=10,
+            offset=0,
+            version="latest",
+        )
+
+    assert result["results_count"] == 1
+    assert result["skills"][0]["matched_resource_path"] == "SKILL.md"
+    assert result["skills"][0]["matched_resource_kind"] == "entrypoint"
+
+
+@pytest.mark.asyncio
 async def test_get_skill_returns_manifest_for_agent_skills_package():
     backend = RedisSkillBackend(config=SimpleNamespace(skill_reference_char_budget=12000))
     rows = [

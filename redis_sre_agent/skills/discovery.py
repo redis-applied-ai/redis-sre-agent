@@ -38,8 +38,7 @@ _TEXT_SUFFIXES = {
 }
 
 
-def _load_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
-    raw_text = path.read_text(encoding="utf-8")
+def _parse_frontmatter(raw_text: str) -> tuple[dict[str, Any], str]:
     match = _FRONTMATTER_RE.match(raw_text)
     if match is None:
         return {}, raw_text.strip()
@@ -47,6 +46,11 @@ def _load_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     if not isinstance(metadata, dict):
         metadata = {}
     return metadata, match.group(2).strip()
+
+
+def _load_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
+    raw_text = path.read_text(encoding="utf-8")
+    return _parse_frontmatter(raw_text)
 
 
 def _safe_read_text(path: Path) -> str | None:
@@ -91,6 +95,40 @@ def _iter_resource_paths(directory: Path) -> Iterable[Path]:
     return sorted(path for path in directory.rglob("*") if path.is_file())
 
 
+def _readable_resource_paths(
+    directory: Path, *, include: callable[[Path], bool] | None = None
+) -> Iterable[tuple[Path, str]]:
+    for path in _iter_resource_paths(directory):
+        if include is not None and not include(path):
+            continue
+        resource_content = _safe_read_text(path)
+        if resource_content is None:
+            continue
+        yield path, resource_content
+
+
+def find_skill_package_root(path: Path, *, boundary: Path | None = None) -> Path | None:
+    """Return the package root containing ``path``, limited to ``boundary`` when provided."""
+
+    resolved_path = path.resolve()
+    boundary_path = None
+    if boundary is not None:
+        resolved_boundary = boundary.resolve()
+        boundary_path = (
+            resolved_boundary if resolved_boundary.is_dir() else resolved_boundary.parent
+        )
+
+    for candidate in (resolved_path.parent, *resolved_path.parents):
+        if boundary_path is not None:
+            try:
+                candidate.relative_to(boundary_path)
+            except ValueError:
+                break
+        if (candidate / "SKILL.md").is_file():
+            return candidate
+    return None
+
+
 def load_skill_package(skill_root: Path) -> SkillPackage:
     """Load an Agent Skills package rooted at ``skill_root``."""
 
@@ -119,20 +157,23 @@ def load_skill_package(skill_root: Path) -> SkillPackage:
         path: Path,
         kind: SkillResourceKind,
         *,
+        resource_content: str | None = None,
+        resource_metadata: dict[str, Any] | None = None,
         default_title: str | None = None,
         default_description: str = "",
     ) -> SkillResource:
         rel_path = _normalize_relpath(path, skill_root)
-        resource_metadata: dict[str, Any] = {}
-        resource_content = _safe_read_text(path)
+        parsed_metadata = dict(resource_metadata or {})
+        if resource_content is None:
+            resource_content = _safe_read_text(path)
         indexed = resource_content is not None and (
             kind != SkillResourceKind.ASSET or _is_text_asset(path)
         )
         if path.suffix.lower() in {".md", ".markdown"} and resource_content:
-            parsed_metadata, stripped_content = _load_frontmatter(path)
-            if parsed_metadata:
-                resource_metadata = parsed_metadata
-                resource_content = stripped_content
+            frontmatter_metadata, stripped_content = _parse_frontmatter(resource_content)
+            if frontmatter_metadata:
+                parsed_metadata = frontmatter_metadata
+            resource_content = stripped_content
         return SkillResource(
             path=rel_path,
             kind=kind,
@@ -140,38 +181,40 @@ def load_skill_package(skill_root: Path) -> SkillPackage:
             content=resource_content,
             mime_type=_guess_mime_type(path),
             indexed=indexed,
-            title=str(resource_metadata.get("title") or default_title or path.stem).strip()
+            title=str(parsed_metadata.get("title") or default_title or path.stem).strip()
             or path.stem,
             description=_resource_description(
-                rel_path, resource_metadata, fallback=default_description
+                rel_path, parsed_metadata, fallback=default_description
             ),
-            metadata=resource_metadata,
+            metadata=parsed_metadata,
         )
 
     entrypoint = _build_resource(
         entrypoint_path,
         SkillResourceKind.ENTRYPOINT,
+        resource_content=content,
+        resource_metadata=metadata,
         default_title=title,
         default_description=description,
     )
     references = tuple(
-        _build_resource(path, SkillResourceKind.REFERENCE)
-        for path in _iter_resource_paths(skill_root / "references")
-        if _safe_read_text(path) is not None
+        _build_resource(path, SkillResourceKind.REFERENCE, resource_content=resource_content)
+        for path, resource_content in _readable_resource_paths(skill_root / "references")
     )
     scripts = tuple(
         _build_resource(
             path,
             SkillResourceKind.SCRIPT,
+            resource_content=resource_content,
             default_description=f"Script resource at {path.name}",
         )
-        for path in _iter_resource_paths(skill_root / "scripts")
-        if _safe_read_text(path) is not None
+        for path, resource_content in _readable_resource_paths(skill_root / "scripts")
     )
     assets = tuple(
-        _build_resource(path, SkillResourceKind.ASSET)
-        for path in _iter_resource_paths(skill_root / "assets")
-        if _is_text_asset(path) and _safe_read_text(path) is not None
+        _build_resource(path, SkillResourceKind.ASSET, resource_content=resource_content)
+        for path, resource_content in _readable_resource_paths(
+            skill_root / "assets", include=_is_text_asset
+        )
     )
 
     return SkillPackage(

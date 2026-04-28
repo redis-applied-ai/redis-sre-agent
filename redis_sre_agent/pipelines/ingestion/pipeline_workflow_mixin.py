@@ -5,7 +5,11 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
-from redis_sre_agent.skills.discovery import discover_skill_packages, skill_package_to_documents
+from redis_sre_agent.skills.discovery import (
+    discover_skill_packages,
+    find_skill_package_root,
+    skill_package_to_documents,
+)
 
 from .processor_indexing_helpers import index_processed_document
 from .processor_source_helpers import (
@@ -28,7 +32,7 @@ class PipelineWorkflowMixin:
         markdown_files = [
             path
             for path in find_markdown_files(source_dir)
-            if not _is_agent_skills_package_path(path)
+            if not _is_agent_skills_package_path(path, boundary=source_dir)
         ]
         if not markdown_files:
             logger.warning("No markdown files found in %s", source_dir)
@@ -242,9 +246,6 @@ class PipelineWorkflowMixin:
         return [{"status": "error", "batch_date": batch_date, "error": "Batch ingestion failed"}]
 
 
-def _is_agent_skills_package_path(path: Path) -> bool:
+def _is_agent_skills_package_path(path: Path, *, boundary: Path | None = None) -> bool:
     """Return True when a file lives inside an Agent Skills package directory."""
-    for parent in (path.parent, *path.parents):
-        if (parent / "SKILL.md").is_file():
-            return True
-    return False
+    return find_skill_package_root(path, boundary=boundary) is not None

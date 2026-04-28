@@ -154,6 +154,16 @@ class RedisSkillBackend:
                         continue
             return float("inf")
 
+        def _representative_rank(doc: dict[str, Any]) -> tuple[int, str, int, str]:
+            resource_kind = str(doc.get("resource_kind") or "").strip().lower()
+            resource_path = str(doc.get("resource_path") or "").strip().lower()
+            return (
+                0 if resource_kind == "entrypoint" else 1,
+                resource_path,
+                helpers._doc_chunk_index(doc),
+                str(doc.get("document_hash") or ""),
+            )
+
         by_skill: dict[str, dict[str, Any]] = {}
         for doc in candidates:
             skill_key = _skill_key(doc)
@@ -169,7 +179,7 @@ class RedisSkillBackend:
                     str(existing.get("resource_path") or ""),
                 ):
                     by_skill[skill_key] = doc
-            elif helpers._doc_chunk_index(doc) < helpers._doc_chunk_index(existing):
+            elif _representative_rank(doc) < _representative_rank(existing):
                 by_skill[skill_key] = doc
 
         ordered_docs = sorted(
