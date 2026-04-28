@@ -63,8 +63,6 @@ class RedisSkillBackend:
     ) -> dict[str, Any]:
         from redis_sre_agent.core import knowledge_helpers as helpers
 
-        limit = helpers._coerce_positive_int(limit, default=20)
-        offset = helpers._coerce_non_negative_int(offset, default=0)
         index = await helpers.get_skills_index(config=self.settings)
 
         fetch_limit = min(max(limit + offset, 1) * 8, 1000)

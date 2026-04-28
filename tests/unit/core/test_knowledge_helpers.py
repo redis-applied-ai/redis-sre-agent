@@ -1729,7 +1729,7 @@ class TestSkillHelpers:
         assert result["results_count"] == 0
 
     @pytest.mark.asyncio
-    async def test_skills_check_helper_defers_limit_offset_validation_to_backend(self):
+    async def test_skills_check_helper_normalizes_limit_offset_before_backend(self):
         backend = MagicMock()
         backend.list_skills = AsyncMock(return_value={"results_count": 0, "skills": []})
 
@@ -1741,8 +1741,8 @@ class TestSkillHelpers:
 
         backend.list_skills.assert_awaited_once_with(
             query=None,
-            limit="7",
-            offset="-2",
+            limit=7,
+            offset=0,
             version="latest",
             distance_threshold=0.8,
         )

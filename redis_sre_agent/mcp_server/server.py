@@ -1410,11 +1410,11 @@ def redis_sre_scaffold_skill_package(
     )
 
     try:
-        _resolve_workspace_path(legacy_skill_path)
-        _resolve_workspace_path(target_dir)
+        resolved_legacy_skill_path = _resolve_workspace_path(legacy_skill_path)
+        resolved_target_dir = _resolve_workspace_path(target_dir)
         return scaffold_skill_package_from_markdown(
-            legacy_skill_path=legacy_skill_path,
-            target_dir=target_dir,
+            legacy_skill_path=str(resolved_legacy_skill_path),
+            target_dir=str(resolved_target_dir),
             force=force,
         )
     except Exception as e:

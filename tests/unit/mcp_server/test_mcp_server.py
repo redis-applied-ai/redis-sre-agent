@@ -1,5 +1,6 @@
 """Tests for MCP server tools."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -267,6 +268,9 @@ class TestSkillTools:
             "package_dir": "/tmp/redis-maintenance-triage",
             "files_created": ["SKILL.md"],
         }
+        workspace = Path.cwd().resolve()
+        expected_legacy_path = str((workspace / "skills/legacy.md").resolve())
+        expected_target_dir = str((workspace / "tmp/redis-maintenance-triage").resolve())
 
         with patch(
             "redis_sre_agent.skills.scaffold.scaffold_skill_package_from_markdown",
@@ -280,8 +284,8 @@ class TestSkillTools:
 
         assert result == expected
         mock_scaffold.assert_called_once_with(
-            legacy_skill_path="skills/legacy.md",
-            target_dir="tmp/redis-maintenance-triage",
+            legacy_skill_path=expected_legacy_path,
+            target_dir=expected_target_dir,
             force=True,
         )
 

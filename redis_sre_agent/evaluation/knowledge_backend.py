@@ -461,7 +461,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
     def _make_document_ranker(
         self,
         query: str,
-    ) -> Callable[[FixtureKnowledgeDocument], tuple[int, int, int, str, int, str]]:
+    ) -> Callable[[FixtureKnowledgeDocument], tuple[int, int, int, str, bool, str]]:
         normalized_query = _normalize_text(query)
         if not normalized_query:
             return lambda document: (
@@ -480,7 +480,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
         )
         query_tokens = [token for token in normalized_query.replace('"', "").split() if token]
 
-        def _rank(document: FixtureKnowledgeDocument) -> tuple[int, int, int, str, int, str]:
+        def _rank(document: FixtureKnowledgeDocument) -> tuple[int, int, int, str, bool, str]:
             name = _normalize_text(document.name)
             title = _normalize_text(document.title)
             source = _normalize_text(document.source)
@@ -596,11 +596,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             if existing is None:
                 by_skill[document.name] = document
                 continue
-            if query:
-                if ranker(document) < ranker(existing):
-                    by_skill[document.name] = document
-                continue
-            if _representative_rank(document) < _representative_rank(existing):
+            if not query and _representative_rank(document) < _representative_rank(existing):
                 by_skill[document.name] = document
 
         ordered_documents = sorted(
