@@ -240,13 +240,23 @@ class RedisSkillBackend:
 
         rows = await self._query_skill_rows(skill_name=normalized_name, version=version)
         if not rows:
-            related = await self.list_skills(query=skill_name, limit=50, offset=0, version=version)
+            related_skills: list[str] = []
+            try:
+                related = await self.list_skills(
+                    query=skill_name,
+                    limit=50,
+                    offset=0,
+                    version=version,
+                )
+                related_skills = [
+                    str(skill.get("name", "")) for skill in related.get("skills", [])[:50]
+                ]
+            except Exception:
+                related_skills = []
             return {
                 "skill_name": skill_name,
                 "error": "Skill not found",
-                "available_skills": [
-                    str(skill.get("name", "")) for skill in related.get("skills", [])[:50]
-                ],
+                "available_skills": related_skills,
             }
 
         resources = await self._load_skill_resources(rows=rows, version=version)
