@@ -134,7 +134,7 @@ class PipelineWorkflowMixin:
         logger.info("Ingesting source documents from: %s", source_dir)
         documents = self._load_source_documents(source_dir, action="process")
         if not documents:
-            logger.warning("No markdown files found in %s", source_dir)
+            logger.warning("No source documents or Agent Skills resources found in %s", source_dir)
             return []
 
         deduplicators = await self._build_deduplicators()

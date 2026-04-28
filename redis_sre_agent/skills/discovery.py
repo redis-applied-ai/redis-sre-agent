@@ -7,7 +7,7 @@ import json
 import mimetypes
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import yaml
 
@@ -96,7 +96,7 @@ def _iter_resource_paths(directory: Path) -> Iterable[Path]:
 
 
 def _readable_resource_paths(
-    directory: Path, *, include: callable[[Path], bool] | None = None
+    directory: Path, *, include: Callable[[Path], bool] | None = None
 ) -> Iterable[tuple[Path, str]]:
     for path in _iter_resource_paths(directory):
         if include is not None and not include(path):
