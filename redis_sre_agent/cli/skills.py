@@ -9,7 +9,11 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from redis_sre_agent.skills import get_skill_backend
+from redis_sre_agent.core.knowledge_helpers import (
+    get_skill_helper,
+    get_skill_resource_helper,
+    skills_check_helper,
+)
 from redis_sre_agent.skills.scaffold import scaffold_skill_package_from_markdown
 
 
@@ -29,7 +33,7 @@ def skills_list(query: str | None, limit: int, offset: int, version: str, as_jso
     """List skills from the active skill backend."""
 
     async def _run():
-        result = await get_skill_backend().list_skills(
+        result = await skills_check_helper(
             query=query,
             limit=limit,
             offset=offset,
@@ -67,7 +71,7 @@ def skills_show(skill_name: str, version: str, as_json: bool):
     """Show one skill manifest or legacy skill body."""
 
     async def _run():
-        result = await get_skill_backend().get_skill(skill_name=skill_name, version=version)
+        result = await get_skill_helper(skill_name=skill_name, version=version)
         if as_json:
             click.echo(json.dumps(result, indent=2))
             return
@@ -101,7 +105,7 @@ def skills_show(skill_name: str, version: str, as_json: bool):
 
 
 async def _read_resource(skill_name: str, resource_path: str, version: str, as_json: bool):
-    result = await get_skill_backend().get_skill_resource(
+    result = await get_skill_resource_helper(
         skill_name=skill_name,
         resource_path=resource_path,
         version=version,

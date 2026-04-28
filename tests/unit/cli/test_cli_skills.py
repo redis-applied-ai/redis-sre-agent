@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -24,26 +24,24 @@ def test_main_help_lists_skills_command(cli_runner):
 
 
 def test_skills_list_json_uses_backend(cli_runner):
-    backend = MagicMock()
-    backend.list_skills = AsyncMock(
+    helper = AsyncMock(
         return_value={
             "results_count": 1,
             "skills": [{"name": "redis-maintenance-triage", "protocol": "agent_skills_v1"}],
         }
     )
 
-    with patch("redis_sre_agent.cli.skills.get_skill_backend", return_value=backend):
+    with patch("redis_sre_agent.cli.skills.skills_check_helper", helper):
         result = cli_runner.invoke(skills, ["list", "--query", "maintenance", "--json"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["skills"][0]["name"] == "redis-maintenance-triage"
-    backend.list_skills.assert_awaited_once()
+    helper.assert_awaited_once()
 
 
 def test_skills_show_renders_manifest_sections(cli_runner):
-    backend = MagicMock()
-    backend.get_skill = AsyncMock(
+    helper = AsyncMock(
         return_value={
             "skill_name": "redis-maintenance-triage",
             "protocol": "agent_skills_v1",
@@ -61,7 +59,7 @@ def test_skills_show_renders_manifest_sections(cli_runner):
         }
     )
 
-    with patch("redis_sre_agent.cli.skills.get_skill_backend", return_value=backend):
+    with patch("redis_sre_agent.cli.skills.get_skill_helper", helper):
         result = cli_runner.invoke(skills, ["show", "redis-maintenance-triage"])
 
     assert result.exit_code == 0, result.output
@@ -73,8 +71,7 @@ def test_skills_show_renders_manifest_sections(cli_runner):
 
 
 def test_skills_read_resource_reports_truncation(cli_runner):
-    backend = MagicMock()
-    backend.get_skill_resource = AsyncMock(
+    helper = AsyncMock(
         return_value={
             "skill_name": "redis-maintenance-triage",
             "resource_path": "references/maintenance-checklist.md",
@@ -86,7 +83,7 @@ def test_skills_read_resource_reports_truncation(cli_runner):
         }
     )
 
-    with patch("redis_sre_agent.cli.skills.get_skill_backend", return_value=backend):
+    with patch("redis_sre_agent.cli.skills.get_skill_resource_helper", helper):
         result = cli_runner.invoke(
             skills,
             ["read-resource", "redis-maintenance-triage", "references/maintenance-checklist.md"],
