@@ -619,7 +619,11 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                     "source": document.source,
                     "version": document.version,
                     "priority": document.priority,
-                    "summary": document.summary,
+                    "summary": (
+                        document.skill_description
+                        or document.summary
+                        or _summarize_content(document.content)
+                    ),
                     "index_type": document.index_type,
                     "backend_kind": "redis",
                     "protocol": document.protocol,

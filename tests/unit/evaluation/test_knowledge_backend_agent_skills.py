@@ -286,3 +286,37 @@ async def test_fixture_backend_skills_check_without_query_prefers_entrypoint_rep
     assert result["skills"][0]["name"] == "redis-maintenance-triage"
     assert result["skills"][0]["matched_resource_kind"] == "entrypoint"
     assert result["skills"][0]["matched_resource_path"] == "SKILL.md"
+
+
+@pytest.mark.asyncio
+async def test_fixture_backend_skills_check_prefers_skill_description_for_summary():
+    backend = FixtureKnowledgeBackend(
+        [
+            FixtureKnowledgeDocument(
+                document_hash="entrypoint-doc",
+                title="Redis Maintenance Triage",
+                name="redis-maintenance-triage",
+                content="General maintenance overview.",
+                source="file://skills/redis-maintenance-triage/SKILL.md",
+                category="shared",
+                doc_type="skill",
+                severity="medium",
+                summary="Summary field that should not win.",
+                priority="normal",
+                pinned=False,
+                version="latest",
+                product_labels=[],
+                index_type="skills",
+                provenance={},
+                protocol="agent_skills_v1",
+                resource_kind="entrypoint",
+                resource_path="SKILL.md",
+                has_references=True,
+                skill_description="Description field that should win.",
+            )
+        ]
+    )
+
+    result = await backend.skills_check(version="latest")
+
+    assert result["skills"][0]["summary"] == "Description field that should win."
