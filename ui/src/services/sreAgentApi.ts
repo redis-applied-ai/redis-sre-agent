@@ -1343,13 +1343,13 @@ class SREAgentAPI {
     return {
       status: data.status ?? "unknown",
       components: {
+        ...components,
         redis_connection: components.redis_connection ?? "unknown",
         vectorizer: components.vectorizer ?? "unknown",
         indices_created: components.indices_created ?? "unknown",
         vector_search: components.vector_search ?? "unknown",
         task_system: components.task_system ?? "unknown",
         workers: components.workers ?? "unknown",
-        ...components,
       },
       timestamp: data.timestamp ?? new Date().toISOString(),
       version: data.version ?? "unknown",

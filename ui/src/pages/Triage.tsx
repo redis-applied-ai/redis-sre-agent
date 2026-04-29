@@ -139,6 +139,14 @@ const Triage = () => {
 
   const userId = "sre-user-1"; // In a real app, this would come from auth
 
+  const resetApprovalState = () => {
+    setActiveTaskId(null);
+    setPendingApproval(null);
+    setResumeSupported(false);
+    setApprovalHistory([]);
+    setApprovalComment("");
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -488,11 +496,7 @@ const Triage = () => {
     setError("");
     setShowNewConversation(true);
     setShowWebSocketMonitor(false);
-    setActiveTaskId(null);
-    setPendingApproval(null);
-    setResumeSupported(false);
-    setApprovalHistory([]);
-    setApprovalComment("");
+    resetApprovalState();
 
     // Clear any `thread` query parameter from the URL so that the page
     // no longer treats an existing thread as selected. Without this, the
@@ -545,11 +549,7 @@ const Triage = () => {
     setShowNewConversation(false);
     setLiveModeLocked(sidebarActive);
     setShowWebSocketMonitor(sidebarActive);
-    setActiveTaskId(null);
-    setPendingApproval(null);
-    setResumeSupported(false);
-    setApprovalHistory([]);
-    setApprovalComment("");
+    resetApprovalState();
 
     // On mobile only, switch to chat view
     if (window.innerWidth < 768) {
@@ -618,10 +618,7 @@ const Triage = () => {
     } catch (err) {
       console.warn("Could not load thread status:", err);
       setIsThreadBusy(false);
-      setActiveTaskId(null);
-      setPendingApproval(null);
-      setResumeSupported(false);
-      setApprovalHistory([]);
+      resetApprovalState();
     }
   };
 
@@ -710,11 +707,7 @@ const Triage = () => {
         sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
-        setActiveTaskId(null);
-        setPendingApproval(null);
-        setResumeSupported(false);
-        setApprovalHistory([]);
-        setApprovalComment("");
+        resetApprovalState();
 
         // Add new thread to the list
         const resolvedInstanceName = selectedInstanceId
@@ -760,11 +753,7 @@ const Triage = () => {
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
         setLiveModeLocked(true);
-        setActiveTaskId(null);
-        setPendingApproval(null);
-        setResumeSupported(false);
-        setApprovalHistory([]);
-        setApprovalComment("");
+        resetApprovalState();
       }
 
       // WebSocket will handle updates - reset loading state after API call succeeds
@@ -800,11 +789,7 @@ const Triage = () => {
         setMessages([]);
         setError("");
         setIsPolling(false);
-        setActiveTaskId(null);
-        setPendingApproval(null);
-        setResumeSupported(false);
-        setApprovalHistory([]);
-        setApprovalComment("");
+        resetApprovalState();
 
         // Stop polling
         if (pollingIntervalRef.current) {
@@ -1167,11 +1152,7 @@ const Triage = () => {
                         setIsThreadBusy(false);
                         setLiveModeLocked(false);
                         setShowWebSocketMonitor(false);
-                        setActiveTaskId(null);
-                        setPendingApproval(null);
-                        setResumeSupported(false);
-                        setApprovalHistory([]);
-                        setApprovalComment("");
+                        resetApprovalState();
                         await loadThreads();
                         if (activeThreadId) {
                           await selectThread(activeThreadId);
