@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib
 import inspect
 import json
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langgraph.errors import GraphInterrupt
 
 try:
     from redis_agent_kit import AgentKit, RuntimeAgent, TaskEmitter
@@ -216,6 +218,31 @@ def _bootstrap_runtime_environment() -> None:
                 os.environ["REDIS_URL"] = candidate
                 break
 
+    config_module = sys.modules.get("redis_sre_agent.core.config")
+    if config_module is not None:
+        settings_cls = getattr(config_module, "Settings", None)
+        if settings_cls is not None:
+            config_module.settings = settings_cls()
+
+
+def _apply_context_secret_env(task_input: Mapping[str, Any]) -> None:
+    secret_env_raw = task_input.get("secret_env")
+    if not isinstance(secret_env_raw, Mapping):
+        secret_env_raw = task_input.get("secretEnv")
+    if not isinstance(secret_env_raw, Mapping):
+        return
+    for key, value in secret_env_raw.items():
+        normalized_key = str(key).strip()
+        normalized_value = str(value).strip()
+        if not normalized_key or not normalized_value:
+            continue
+        os.environ[normalized_key] = normalized_value
+
+
+def _refresh_runtime_agent_surface() -> None:
+    runtime_agent.mcp_tools = _build_runtime_mcp_tools()
+    runtime_agent.mcp_capabilities = _build_mcp_capabilities()
+
 
 _bootstrap_runtime_environment()
 
@@ -350,6 +377,10 @@ async def _dispatch_chat_query(
     from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 
     context, instance, cluster = await _resolve_agent_context(task_input)
+    context = dict(context)
+    context.setdefault("task_id", task_run_id)
+    context.setdefault("thread_id", context_id)
+    context.setdefault("session_id", context_id)
     conversation_history = _load_conversation_history(context_id)
 
     requested_agent = str(task_input.get("agent", "auto")).strip().lower()
@@ -376,14 +407,37 @@ async def _dispatch_chat_query(
         selected_agent = get_knowledge_agent()
         agent_label = "knowledge"
 
-    response = await selected_agent.process_query(
-        message,
-        session_id=context_id,
-        user_id=user_id,
-        context=context or None,
-        progress_emitter=runtime_progress,
-        conversation_history=conversation_history or None,
-    )
+    try:
+        response = await selected_agent.process_query(
+            message,
+            session_id=context_id,
+            user_id=user_id,
+            context=context or None,
+            progress_emitter=runtime_progress,
+            conversation_history=conversation_history or None,
+        )
+    except GraphInterrupt as exc:
+        approval_payload = _extract_approval_interrupt_payload(exc)
+        if approval_payload is None:
+            raise
+        await _emit_approval_interrupt(
+            emitter,
+            approval_payload,
+        )
+        await _persist_pending_approval_state(
+            task_id=task_run_id,
+            thread_id=context_id,
+            approval_payload=approval_payload,
+            agent_label=agent_label,
+            user_id=user_id,
+            thread_context=context,
+        )
+        return _build_awaiting_approval_response(
+            approval_payload,
+            agent_label=agent_label,
+            context_id=context_id,
+            task_id=task_run_id,
+        )
     await _emit_tool_envelopes(emitter, response.tool_envelopes)
     _append_conversation_history(
         context_id,
@@ -402,20 +456,221 @@ async def _dispatch_chat_query(
     }
 
 
+def _extract_approval_interrupt_payload(error: GraphInterrupt) -> dict[str, Any] | None:
+    if not error.args:
+        return None
+
+    interrupts = error.args[0]
+    if not isinstance(interrupts, (list, tuple)):
+        interrupts = [interrupts]
+
+    for item in interrupts:
+        payload = getattr(item, "value", None)
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("kind") == "approval_required":
+            return payload
+    return None
+
+
+def _build_auth_required_metadata(
+    approval_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "kind": "tool-authorization",
+        "required_action": "decision",
+        "allowed_decisions": ["approved", "rejected"],
+        "approval_id": approval_payload.get("approval_id"),
+        "interrupt_id": approval_payload.get("interrupt_id"),
+        "tool_name": approval_payload.get("tool_name"),
+        "resume_supported": True,
+        "resume_mode": "api-or-message",
+    }
+    tool_args_preview = approval_payload.get("tool_args_preview")
+    if isinstance(tool_args_preview, Mapping):
+        metadata["tool_args_preview"] = dict(tool_args_preview)
+    expires_at = approval_payload.get("expires_at")
+    if isinstance(expires_at, str) and expires_at.strip():
+        metadata["expires_at"] = expires_at.strip()
+    return {"x-redis-authz-v1": metadata}
+
+
+async def _emit_approval_interrupt(
+    emitter: TaskEmitter,
+    approval_payload: Mapping[str, Any],
+) -> None:
+    auth_required_metadata = _build_auth_required_metadata(approval_payload)
+    tool_name = str(approval_payload.get("tool_name") or "approval_required")
+    interrupt_id = str(
+        approval_payload.get("interrupt_id")
+        or approval_payload.get("approval_id")
+        or "approval_required"
+    )
+    arguments = approval_payload.get("tool_args_preview")
+    if not isinstance(arguments, dict):
+        arguments = None
+    await emitter.emit_tool_call_async(
+        tool_name,
+        call_id=interrupt_id,
+        status="approval_required",
+        arguments=arguments,
+        error_summary=str(
+            approval_payload.get("message")
+            or "Approval required before continuing task execution."
+        ),
+    )
+    await emitter.emit_async(
+        str(
+            approval_payload.get("message")
+            or "Approval required before continuing task execution."
+        ),
+        update_type="pending_approval",
+        metadata={
+            "approval_id": approval_payload.get("approval_id"),
+            "interrupt_id": approval_payload.get("interrupt_id"),
+            "tool_name": approval_payload.get("tool_name"),
+            "pending_approval": approval_payload.get("pending_approval") or {},
+            **auth_required_metadata,
+        },
+    )
+async def _persist_pending_approval_state(
+    *,
+    task_id: str,
+    thread_id: str,
+    approval_payload: Mapping[str, Any],
+    agent_label: str,
+    user_id: str = DEFAULT_USER_ID,
+    thread_context: Mapping[str, Any] | None = None,
+) -> None:
+    try:
+        from redis_sre_agent.core.approvals import PendingApprovalSummary
+        from redis_sre_agent.core.keys import RedisKeys
+        from redis_sre_agent.core.redis import get_redis_client
+        from redis_sre_agent.core.tasks import TaskManager, TaskStatus
+        from redis_sre_agent.core.threads import Thread, ThreadManager, ThreadMetadata
+
+        pending_approval = None
+        pending_payload = approval_payload.get("pending_approval")
+        if isinstance(pending_payload, dict):
+            try:
+                pending_approval = PendingApprovalSummary(**pending_payload)
+            except Exception:
+                pending_approval = None
+
+        redis_client = get_redis_client()
+        task_manager = TaskManager(redis_client=redis_client)
+        thread_manager = ThreadManager(redis_client=redis_client)
+        existing_thread = await thread_manager.get_thread(thread_id)
+        if existing_thread is None:
+            synthesized_context = {
+                "task_id": task_id,
+                "thread_id": thread_id,
+                "session_id": thread_id,
+            }
+            if thread_context:
+                synthesized_context.update(dict(thread_context))
+            await thread_manager._save_thread_state(
+                Thread(
+                    thread_id=thread_id,
+                    context=synthesized_context,
+                    metadata=ThreadMetadata(
+                        user_id=user_id,
+                        session_id=thread_id,
+                    ),
+                )
+            )
+        await task_manager._redis.hset(
+            RedisKeys.task_metadata(task_id),
+            mapping={"thread_id": thread_id},
+        )
+        await task_manager.set_pending_approval(task_id, pending_approval)
+        await task_manager.set_resume_supported(task_id, True)
+        await task_manager.set_task_result(
+            task_id,
+            _build_awaiting_approval_response(
+                approval_payload,
+                agent_label=agent_label,
+                context_id=thread_id,
+                task_id=task_id,
+            ),
+        )
+        await task_manager.update_task_status(task_id, TaskStatus.AWAITING_APPROVAL)
+        await task_manager.add_task_update(
+            task_id,
+            str(
+                approval_payload.get("message")
+                or "Approval required before continuing task execution."
+            ),
+            "pending_approval",
+            metadata={"pending_approval": pending_payload or {}},
+        )
+    except Exception:
+        return
+
+
+def _build_awaiting_approval_response(
+    approval_payload: Mapping[str, Any],
+    *,
+    agent_label: str,
+    context_id: str,
+    task_id: str,
+) -> dict[str, Any]:
+    message = str(
+        approval_payload.get("message")
+        or "Approval required before continuing task execution."
+    )
+    metadata = _build_auth_required_metadata(approval_payload)
+    return {
+        "ok": True,
+        "mode": "a2a",
+        "agent": agent_label,
+        "status": "auth-required",
+        "reply": message,
+        "response": message,
+        "message": {
+            "role": "agent",
+            "parts": [{"text": message}],
+            "metadata": metadata,
+        },
+        "metadata": metadata,
+        "contextId": context_id,
+        "task_id": task_id,
+        "thread_id": context_id,
+        "resume_supported": True,
+        "pending_approval": approval_payload.get("pending_approval"),
+        "approval_id": approval_payload.get("approval_id"),
+        "interrupt_id": approval_payload.get("interrupt_id"),
+        "tool_name": approval_payload.get("tool_name"),
+    }
+
+
 def _load_mcp_tool_registry() -> dict[str, Any]:
+    return {
+        name: spec["fn"]
+        for name, spec in _load_runtime_mcp_tool_specs().items()
+    }
+
+
+def _load_runtime_mcp_tool_specs() -> dict[str, dict[str, Any]]:
     module = importlib.import_module("redis_sre_agent.mcp_server.server")
     mcp_server = getattr(module, "mcp", None)
     tool_manager = getattr(mcp_server, "_tool_manager", None)
     registered_tools = getattr(tool_manager, "_tools", {})
 
-    registry: dict[str, Any] = {}
+    registry: dict[str, dict[str, Any]] = {}
     for name, tool in registered_tools.items():
         tool_fn = getattr(tool, "fn", None)
         if not callable(tool_fn):
             continue
         if getattr(tool, "context_kwarg", None):
             continue
-        registry[str(name)] = tool_fn
+        parameters = getattr(tool, "parameters", None)
+        registry[str(name)] = {
+            "fn": tool_fn,
+            "description": getattr(tool, "description", None)
+            or (inspect.getdoc(tool_fn) or str(name)),
+            "parameters": copy.deepcopy(parameters) if isinstance(parameters, Mapping) else None,
+        }
 
     try:
         from redis_sre_agent.tools.target_discovery.provider import TargetDiscoveryToolProvider
@@ -440,17 +695,39 @@ def _load_mcp_tool_registry() -> dict[str, Any]:
 
         _invoke_runtime_tool.__name__ = operation_name
         _invoke_runtime_tool.__doc__ = schema.description
-        registry.setdefault(operation_name, _invoke_runtime_tool)
+        registry.setdefault(
+            operation_name,
+            {
+                "fn": _invoke_runtime_tool,
+                "description": schema.description,
+                "parameters": copy.deepcopy(schema.parameters),
+            },
+        )
     return registry
 
 
 def _load_configured_external_mcp_tools() -> dict[str, dict[str, str]]:
     from redis_sre_agent.core.config import MCPServerConfig, settings
 
+    def _declared_url(server_config: MCPServerConfig) -> str | None:
+        server_url = getattr(server_config, "url", None)
+        if not isinstance(server_url, str):
+            return None
+        declared = server_url.strip()
+        if not declared:
+            return None
+        return declared
+
     tools: dict[str, dict[str, str]] = {}
     for server_name, server_config in settings.mcp_servers.items():
         if isinstance(server_config, dict):
             server_config = MCPServerConfig.model_validate(server_config)
+        command = getattr(server_config, "command", None)
+        has_command = isinstance(command, str) and bool(command.strip())
+        # Keep URL-backed tools visible even when the URL resolves later from
+        # task-scoped secret injection. Invocation still validates the resolved URL.
+        if not has_command and _declared_url(server_config) is None:
+            continue
         if not server_config.tools:
             continue
         for tool_name, tool_config in server_config.tools.items():
@@ -487,6 +764,19 @@ async def _invoke_configured_external_mcp_tool(
         )
     if isinstance(server_config, dict):
         server_config = MCPServerConfig.model_validate(server_config)
+    resolved_command = getattr(server_config, "command", None)
+    resolved_url = getattr(server_config, "url", None)
+    if not (
+        (isinstance(resolved_command, str) and resolved_command.strip())
+        or (
+            isinstance(resolved_url, str)
+            and os.path.expandvars(resolved_url).strip()
+            and "${" not in os.path.expandvars(resolved_url)
+        )
+    ):
+        raise RuntimeError(
+            f"Configured external MCP tool '{tool_name}' references server '{server_name}' without a resolved command or URL"
+        )
 
     provider = MCPToolProvider(
         server_name=server_name,
@@ -540,10 +830,8 @@ def _build_mcp_capabilities() -> dict[str, list[dict[str, Any]]]:
     from redis_sre_agent.mcp_server.task_contract import tool_execution_contract
 
     tools: list[dict[str, Any]] = []
-    for name, tool in sorted(_load_mcp_tool_registry().items()):
-        description = (
-            (inspect.getdoc(tool) or "").strip().splitlines()[0] if inspect.getdoc(tool) else name
-        )
+    for name, spec in sorted(_load_runtime_mcp_tool_specs().items()):
+        description = str(spec.get("description") or name).strip().splitlines()[0]
         tools.append(
             {
                 "name": name,
@@ -570,14 +858,42 @@ def _build_mcp_capabilities() -> dict[str, list[dict[str, Any]]]:
 
 
 async def runtime_sre_agent(task_input: Mapping[str, Any], emitter: TaskEmitter) -> dict[str, Any]:
+    _apply_context_secret_env(task_input)
     _bootstrap_runtime_environment()
+    _refresh_runtime_agent_surface()
     await _ensure_runtime_redis_ready()
     if isinstance(task_input.get("tool"), str) and str(task_input.get("tool")).strip():
         return await _dispatch_mcp_tool(task_input)
     return await _dispatch_chat_query(task_input, emitter)
 
 
+class _NoopTaskEmitter:
+    async def emit_async(
+        self,
+        message: str,
+        *,
+        update_type: str = "info",
+        stage: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        del message, update_type, stage, metadata
+
+    async def emit_tool_call_async(
+        self,
+        name: str,
+        *,
+        call_id: str,
+        status: str,
+        arguments: dict[str, Any] | None = None,
+        output_summary: str | None = None,
+        error_summary: str | None = None,
+    ) -> None:
+        del name, call_id, status, arguments, output_summary, error_summary
+
+
 async def _runtime_chat_handler(ctx: Any) -> dict[str, Any]:
+    if isinstance(ctx, Mapping):
+        return await runtime_sre_agent(dict(ctx), _NoopTaskEmitter())
     task_input = dict(ctx.context)
     task_input["message"] = ctx.message
     task_input["contextId"] = ctx.session_id
@@ -586,10 +902,12 @@ async def _runtime_chat_handler(ctx: Any) -> dict[str, Any]:
 
 def _build_runtime_mcp_tools() -> list[Tool]:
     descriptions: dict[str, str] = {}
-    for name, tool in sorted(_load_mcp_tool_registry().items()):
-        descriptions[name] = (
-            (inspect.getdoc(tool) or "").strip().splitlines()[0] if inspect.getdoc(tool) else name
-        )
+    parameters_by_name: dict[str, dict[str, Any]] = {}
+    for name, spec in sorted(_load_runtime_mcp_tool_specs().items()):
+        descriptions[name] = str(spec.get("description") or name).strip().splitlines()[0]
+        parameters = spec.get("parameters")
+        if isinstance(parameters, Mapping):
+            parameters_by_name[name] = copy.deepcopy(dict(parameters))
     for name, tool_spec in sorted(_load_configured_external_mcp_tools().items()):
         descriptions.setdefault(name, tool_spec["description"])
 
@@ -612,11 +930,14 @@ def _build_runtime_mcp_tools() -> list[Tool]:
                 definition=ToolDefinition(
                     name=name,
                     description=description,
-                    parameters={
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": True,
-                    },
+                    parameters=parameters_by_name.get(
+                        name,
+                        {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": True,
+                        },
+                    ),
                     capability=ToolCapability.CUSTOM,
                 ),
                 invoke=_invoke,
