@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import mimetypes
 import re
 from pathlib import Path
@@ -36,6 +37,8 @@ _TEXT_SUFFIXES = {
     ".js",
     ".ts",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_frontmatter(raw_text: str) -> tuple[dict[str, Any], str]:
@@ -253,7 +256,10 @@ def discover_skill_packages(root: Path) -> list[SkillPackage]:
         if resolved in seen:
             continue
         seen.add(resolved)
-        packages.append(load_skill_package(resolved))
+        try:
+            packages.append(load_skill_package(resolved))
+        except Exception as exc:
+            logger.warning("Skipping invalid Agent Skills package at %s: %s", resolved, exc)
     return packages
 
 

@@ -83,6 +83,21 @@ def test_discover_skill_packages_parses_resources_and_ui_metadata(tmp_path: Path
     assert [resource.path for resource in package.assets] == ["assets/example-query.txt"]
 
 
+def test_discover_skill_packages_skips_invalid_package_and_keeps_valid_ones(tmp_path: Path, caplog):
+    _write_skill_package(tmp_path, "valid-skill")
+    invalid_dir = _write_skill_package(tmp_path, "invalid-skill")
+    (invalid_dir / "SKILL.md").write_text(
+        "---\nname: invalid-skill\n---\n\n# Invalid\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        packages = discover_skill_packages(tmp_path)
+
+    assert [package.name for package in packages] == ["valid-skill"]
+    assert "Skipping invalid Agent Skills package" in caplog.text
+
+
 def test_skill_package_to_documents_emits_entrypoint_and_resources(tmp_path: Path):
     _write_skill_package(tmp_path)
     package = discover_skill_packages(tmp_path)[0]
