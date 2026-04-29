@@ -8,20 +8,10 @@ from typing import Any
 
 import yaml
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
+from .discovery import _load_frontmatter
+
 _HEADER_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
-
-
-def _load_legacy_skill(path: Path) -> tuple[dict[str, Any], str]:
-    raw_text = path.read_text(encoding="utf-8")
-    match = _FRONTMATTER_RE.match(raw_text)
-    if match is None:
-        return {}, raw_text.strip()
-    metadata = yaml.safe_load(match.group(1)) or {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-    return metadata, match.group(2).strip()
 
 
 def _guess_description(body: str) -> str:
@@ -50,7 +40,7 @@ def scaffold_skill_package_from_markdown(
     if not source_path.is_file():
         raise ValueError(f"Legacy skill does not exist: {source_path}")
 
-    metadata, body = _load_legacy_skill(source_path)
+    metadata, body = _load_frontmatter(source_path)
     body_title_match = _HEADER_RE.search(body)
     inferred_title = body_title_match.group(1) if body_title_match else ""
     title = str(metadata.get("title") or inferred_title or "").strip()
