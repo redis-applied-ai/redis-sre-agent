@@ -40,7 +40,7 @@ def _normalize_indexed_optional_field(field: str, value: Any) -> str | None:
     if value in (None, ""):
         return None
     if field in _BOOLEAN_INDEXED_OPTIONAL_FIELDS:
-        return "true" if parse_bool(value, default=False) else None
+        return "true" if parse_bool(value, default=False) else "false"
     return str(value)
 
 

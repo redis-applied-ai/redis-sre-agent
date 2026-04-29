@@ -165,10 +165,11 @@ def test_document_processor_knowledge_settings_and_helpers():
     assert processor._strip_yaml_front_matter(broken) == (broken, False)
 
 
-def test_normalize_indexed_optional_field_omits_false_booleans():
-    assert _normalize_indexed_optional_field("has_references", False) is None
-    assert _normalize_indexed_optional_field("entrypoint", "false") is None
+def test_normalize_indexed_optional_field_preserves_boolean_values():
+    assert _normalize_indexed_optional_field("has_references", False) == "false"
+    assert _normalize_indexed_optional_field("entrypoint", "false") == "false"
     assert _normalize_indexed_optional_field("has_assets", True) == "true"
+    assert _normalize_indexed_optional_field("has_scripts", "") is None
     assert _normalize_indexed_optional_field("resource_kind", "reference") == "reference"
 
 
