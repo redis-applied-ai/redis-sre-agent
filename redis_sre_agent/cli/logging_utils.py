@@ -7,6 +7,7 @@ import os
 from typing import Optional
 
 _LOGGING_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+_CLI_LOGGED_ATTR = "_redis_sre_cli_logged"
 
 
 def _requested_log_level() -> Optional[int]:
@@ -31,6 +32,16 @@ def configure_cli_logging() -> Optional[int]:
     return level
 
 
+def mark_cli_exception_logged(exc: BaseException) -> None:
+    """Mark an exception as already emitted through CLI logging."""
+    setattr(exc, _CLI_LOGGED_ATTR, True)
+
+
+def was_cli_exception_logged(exc: BaseException) -> bool:
+    """Return whether the CLI has already logged this exception."""
+    return bool(getattr(exc, _CLI_LOGGED_ATTR, False))
+
+
 def log_cli_exception(logger_name: str, message: str, exc: BaseException) -> None:
     """Emit CLI exception details when LOG_LEVEL requests logging."""
     level = configure_cli_logging()
@@ -38,7 +49,9 @@ def log_cli_exception(logger_name: str, message: str, exc: BaseException) -> Non
         return
 
     logger = logging.getLogger(logger_name)
+    exc_info = (type(exc), exc, exc.__traceback__)
     if logger.isEnabledFor(logging.DEBUG):
-        logger.exception(message)
+        logger.error(message, exc_info=exc_info)
     else:
         logger.error("%s: %s", message, exc)
+    mark_cli_exception_logged(exc)

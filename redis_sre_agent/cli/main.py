@@ -5,7 +5,11 @@ import importlib
 import click
 
 from redis_sre_agent import __version__
-from redis_sre_agent.cli.logging_utils import configure_cli_logging, log_cli_exception
+from redis_sre_agent.cli.logging_utils import (
+    configure_cli_logging,
+    log_cli_exception,
+    was_cli_exception_logged,
+)
 
 configure_cli_logging()
 
@@ -70,7 +74,8 @@ class LazyGroup(click.MultiCommand):
         except (click.ClickException, click.Abort, SystemExit):
             raise
         except Exception as exc:
-            log_cli_exception(__name__, "CLI command failed", exc)
+            if not was_cli_exception_logged(exc):
+                log_cli_exception(__name__, "CLI command failed", exc)
             raise
 
 
