@@ -1,5 +1,6 @@
 """Tests for MCP server tools."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -39,6 +40,8 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_get_pipeline_status,
     redis_sre_get_related_knowledge_fragments,
     redis_sre_get_schedule,
+    redis_sre_get_skill,
+    redis_sre_get_skill_resource,
     redis_sre_get_support_package_info,
     redis_sre_get_support_ticket,
     redis_sre_get_task,
@@ -55,6 +58,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_list_instances,
     redis_sre_list_schedule_runs,
     redis_sre_list_schedules,
+    redis_sre_list_skills,
     redis_sre_list_support_packages,
     redis_sre_list_tasks,
     redis_sre_list_threads,
@@ -69,6 +73,7 @@ from redis_sre_agent.mcp_server.server import (
     redis_sre_run_pipeline_ingest,
     redis_sre_run_pipeline_scrape,
     redis_sre_run_schedule_now,
+    redis_sre_scaffold_skill_package,
     redis_sre_search_support_tickets,
     redis_sre_sync_index_schemas,
     redis_sre_test_instance,
@@ -100,6 +105,10 @@ class TestMCPServerSetup:
         assert "redis_sre_general_chat" in tool_names
         assert "redis_sre_database_chat" in tool_names
         assert "redis_sre_knowledge_search" in tool_names
+        assert "redis_sre_list_skills" in tool_names
+        assert "redis_sre_get_skill" in tool_names
+        assert "redis_sre_get_skill_resource" in tool_names
+        assert "redis_sre_scaffold_skill_package" in tool_names
         assert "redis_sre_get_knowledge_fragments" in tool_names
         assert "redis_sre_get_related_knowledge_fragments" in tool_names
         assert "redis_sre_get_pipeline_status" in tool_names
@@ -191,6 +200,104 @@ class TestCliMcpParityAuditTool:
             result = redis_sre_audit_cli_mcp_parity()
 
         assert result == {"error": "boom", "status": "failed"}
+
+
+class TestSkillTools:
+    """Test the skill MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_list_skills_success(self):
+        expected = {"skills": [{"name": "redis-maintenance-triage"}], "total": 1}
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+            new=AsyncMock(return_value=expected),
+        ) as mock_helper:
+            result = await redis_sre_list_skills(query="maintenance", limit=5, offset=1)
+
+        assert result == expected
+        mock_helper.assert_awaited_once_with(
+            query="maintenance",
+            limit=5,
+            offset=1,
+            version="latest",
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_skill_success(self):
+        expected = {"skill_name": "redis-maintenance-triage", "protocol": "agent_skills_v1"}
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_skill_helper",
+            new=AsyncMock(return_value=expected),
+        ) as mock_helper:
+            result = await redis_sre_get_skill("redis-maintenance-triage")
+
+        assert result == expected
+        mock_helper.assert_awaited_once_with(
+            skill_name="redis-maintenance-triage",
+            version="latest",
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_skill_resource_success(self):
+        expected = {
+            "skill_name": "redis-maintenance-triage",
+            "resource_path": "references/maintenance-checklist.md",
+            "content": "checklist",
+        }
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_skill_resource_helper",
+            new=AsyncMock(return_value=expected),
+        ) as mock_helper:
+            result = await redis_sre_get_skill_resource(
+                "redis-maintenance-triage",
+                "references/maintenance-checklist.md",
+            )
+
+        assert result == expected
+        mock_helper.assert_awaited_once_with(
+            skill_name="redis-maintenance-triage",
+            resource_path="references/maintenance-checklist.md",
+            version="latest",
+        )
+
+    def test_scaffold_skill_package_success(self):
+        expected = {
+            "package_dir": "/tmp/redis-maintenance-triage",
+            "files_created": ["SKILL.md"],
+        }
+        workspace = Path.cwd().resolve()
+        expected_legacy_path = str((workspace / "skills/legacy.md").resolve())
+        expected_target_dir = str((workspace / "tmp/redis-maintenance-triage").resolve())
+
+        with patch(
+            "redis_sre_agent.skills.scaffold.scaffold_skill_package_from_markdown",
+            return_value=expected,
+        ) as mock_scaffold:
+            result = redis_sre_scaffold_skill_package(
+                "skills/legacy.md",
+                "tmp/redis-maintenance-triage",
+                force=True,
+            )
+
+        assert result == expected
+        mock_scaffold.assert_called_once_with(
+            legacy_skill_path=expected_legacy_path,
+            target_dir=expected_target_dir,
+            force=True,
+        )
+
+    def test_scaffold_skill_package_rejects_paths_outside_workspace(self):
+        result = redis_sre_scaffold_skill_package(
+            "skills/legacy.md",
+            "/tmp/redis-maintenance-triage",
+            force=True,
+        )
+
+        assert result["status"] == "failed"
+        assert "Path must stay within the MCP server workspace" in result["error"]
 
 
 class TestDeepTriageTool:

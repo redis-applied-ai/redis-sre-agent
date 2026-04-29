@@ -10,6 +10,7 @@ This allows Claude to connect to an already-running agent via:
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from docket import Docket
@@ -153,6 +154,19 @@ while True:
 - Use `redis_sre_test_instance()` and `redis_sre_test_redis_url()` for connectivity checks
 - Check the `updates` array to show users what the agent is doing""",
 )
+
+
+def _resolve_workspace_path(path_value: str) -> Path:
+    """Resolve a user-supplied path and confine it to the server workspace."""
+    workspace_root = Path.cwd().resolve()
+    resolved = Path(path_value).expanduser().resolve()
+    try:
+        resolved.relative_to(workspace_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Path must stay within the MCP server workspace: {workspace_root}"
+        ) from exc
+    return resolved
 
 
 def _build_mcp_query_context(
@@ -1249,6 +1263,168 @@ async def redis_sre_get_related_knowledge_fragments(
             "document_hash": document_hash,
             "error": str(e),
             "related_fragments": [],
+        }
+
+
+@mcp.tool()
+async def redis_sre_list_skills(
+    query: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    version: Optional[str] = "latest",
+) -> Dict[str, Any]:
+    """List skills from the active skill backend.
+
+    Args:
+        query: Optional search query for relevance-ranked matching.
+        limit: Maximum number of skills to return.
+        offset: Number of skills to skip for pagination.
+        version: Optional version filter. Defaults to "latest".
+
+    Returns:
+        Skill listing payload from the active backend.
+    """
+    from redis_sre_agent.core.knowledge_helpers import skills_check_helper
+
+    logger.info(
+        "MCP list_skills: query=%s limit=%s offset=%s version=%s",
+        bool(query),
+        limit,
+        offset,
+        version,
+    )
+
+    try:
+        return await skills_check_helper(
+            query=query,
+            limit=limit,
+            offset=offset,
+            version=version,
+        )
+    except Exception as e:
+        logger.error("List skills failed: %s", e)
+        return {
+            "error": str(e),
+            "skills": [],
+            "total": 0,
+            "query": query,
+            "limit": limit,
+            "offset": offset,
+            "version": version,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_skill(
+    skill_name: str,
+    version: Optional[str] = "latest",
+) -> Dict[str, Any]:
+    """Get one skill manifest or legacy skill body.
+
+    Args:
+        skill_name: Skill name returned by list_skills or skills_check.
+        version: Optional version filter. Defaults to "latest".
+
+    Returns:
+        Skill manifest or legacy markdown payload.
+    """
+    from redis_sre_agent.core.knowledge_helpers import get_skill_helper
+
+    logger.info("MCP get_skill: skill_name=%s version=%s", skill_name, version)
+
+    try:
+        return await get_skill_helper(skill_name=skill_name, version=version)
+    except Exception as e:
+        logger.error("Get skill failed: %s", e)
+        return {
+            "error": str(e),
+            "skill_name": skill_name,
+            "version": version,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_skill_resource(
+    skill_name: str,
+    resource_path: str,
+    version: Optional[str] = "latest",
+) -> Dict[str, Any]:
+    """Get one named skill resource by relative path.
+
+    Args:
+        skill_name: Skill name returned by list_skills or get_skill.
+        resource_path: Relative resource path such as `references/foo.md`.
+        version: Optional version filter. Defaults to "latest".
+
+    Returns:
+        Resource payload including content and truncation metadata.
+    """
+    from redis_sre_agent.core.knowledge_helpers import get_skill_resource_helper
+
+    logger.info(
+        "MCP get_skill_resource: skill_name=%s resource_path=%s version=%s",
+        skill_name,
+        resource_path,
+        version,
+    )
+
+    try:
+        return await get_skill_resource_helper(
+            skill_name=skill_name,
+            resource_path=resource_path,
+            version=version,
+        )
+    except Exception as e:
+        logger.error("Get skill resource failed: %s", e)
+        return {
+            "error": str(e),
+            "skill_name": skill_name,
+            "resource_path": resource_path,
+            "version": version,
+        }
+
+
+@mcp.tool()
+def redis_sre_scaffold_skill_package(
+    legacy_skill_path: str,
+    target_dir: str,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Scaffold an Agent Skills package from a legacy markdown skill.
+
+    Args:
+        legacy_skill_path: Path to an existing legacy markdown skill file.
+        target_dir: Directory where the new package should be written.
+        force: Allow writing into an existing non-empty directory.
+
+    Returns:
+        Scaffold result including created files and package directory.
+    """
+    from redis_sre_agent.skills.scaffold import scaffold_skill_package_from_markdown
+
+    logger.info(
+        "MCP scaffold_skill_package: legacy_skill_path=%s target_dir=%s force=%s",
+        legacy_skill_path,
+        target_dir,
+        force,
+    )
+
+    try:
+        resolved_legacy_skill_path = _resolve_workspace_path(legacy_skill_path)
+        resolved_target_dir = _resolve_workspace_path(target_dir)
+        return scaffold_skill_package_from_markdown(
+            legacy_skill_path=str(resolved_legacy_skill_path),
+            target_dir=str(resolved_target_dir),
+            force=force,
+        )
+    except Exception as e:
+        logger.error("Scaffold skill package failed: %s", e)
+        return {
+            "error": str(e),
+            "legacy_skill_path": legacy_skill_path,
+            "target_dir": target_dir,
+            "force": force,
+            "status": "failed",
         }
 
 

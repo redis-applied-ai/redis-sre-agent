@@ -23,7 +23,7 @@ def test_knowledge_provider_tool_schemas():
     schemas = provider.create_tool_schemas()
 
     # Should have all knowledge tools
-    assert len(schemas) == 8
+    assert len(schemas) == 9
 
     # All should be ToolDefinition objects with correct capabilities
     for schema in schemas:
@@ -39,6 +39,7 @@ def test_knowledge_provider_tool_schemas():
     assert any("ingest" in name for name in tool_names)
     assert any("skills_check" in name for name in tool_names)
     assert any("get_skill" in name for name in tool_names)
+    assert any("get_skill_resource" in name for name in tool_names)
     assert any("search_support_tickets" in name for name in tool_names)
     assert any("get_support_ticket" in name for name in tool_names)
 
@@ -111,7 +112,7 @@ async def test_knowledge_provider_context_manager():
 
         # Should be able to create schemas
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 8
+        assert len(schemas) == 9
 
 
 class TestKnowledgeProviderProperties:
@@ -196,6 +197,14 @@ class TestKnowledgeProviderSkillSchemas:
         schema = next(s for s in schemas if "get_skill" in s.name)
         assert "skill_name" in schema.parameters["required"]
 
+    def test_get_skill_resource_schema_requires_resource_path(self):
+        provider = KnowledgeBaseToolProvider()
+        schemas = provider.create_tool_schemas()
+
+        schema = next(s for s in schemas if "get_skill_resource" in s.name)
+        assert "skill_name" in schema.parameters["required"]
+        assert "resource_path" in schema.parameters["required"]
+
 
 class TestKnowledgeProviderToolCapabilities:
     """Test knowledge tool capabilities."""
@@ -211,11 +220,11 @@ class TestKnowledgeProviderToolCapabilities:
             else:
                 assert schema.capability == ToolCapability.KNOWLEDGE
 
-    def test_tool_count_is_eight(self):
-        """Test there are exactly 8 tools."""
+    def test_tool_count_is_nine(self):
+        """Test there are exactly 9 tools."""
         provider = KnowledgeBaseToolProvider()
         schemas = provider.create_tool_schemas()
-        assert len(schemas) == 8
+        assert len(schemas) == 9
 
 
 @pytest.mark.asyncio

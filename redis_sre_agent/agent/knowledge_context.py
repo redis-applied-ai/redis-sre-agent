@@ -57,7 +57,7 @@ def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
     lines = ["Skills you know:"]
     for skill in skills:
         name = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
-        summary = str(skill.get("summary", "")).strip()
+        summary = str(skill.get("summary", "")).strip() or str(skill.get("description", "")).strip()
         lines.append(f"- {name}: {summary}")
     return lines
 

@@ -402,3 +402,35 @@ async def test_startup_context_uses_eval_scoped_knowledge_backend():
     assert "Scoped Pinned Doc" in context
     assert "Pinned eval content" in context
     assert "Scoped Skill: Use the scenario fixture backend." in context
+
+
+@pytest.mark.asyncio
+async def test_startup_context_keeps_skill_listing_compact():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(
+                return_value={
+                    "skills": [
+                        {
+                            "name": "Redis Maintenance Triage",
+                            "description": "Investigate maintenance mode before failover.",
+                            "summary": "",
+                            "has_references": True,
+                            "has_scripts": True,
+                            "matched_resource_path": "references/maintenance-checklist.md",
+                        }
+                    ]
+                }
+            ),
+        ),
+    ):
+        context = await build_startup_knowledge_context(query="maintenance", version="latest")
+
+    assert "Redis Maintenance Triage: Investigate maintenance mode before failover." in context
+    assert "references/maintenance-checklist.md" not in context
+    assert "Scripts:" not in context

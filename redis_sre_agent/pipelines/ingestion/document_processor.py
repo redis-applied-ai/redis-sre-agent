@@ -8,6 +8,23 @@ from ...pipelines.scraper.base import ScrapedDocument
 from .processor_source_helpers import parse_bool, strip_yaml_front_matter
 
 logger = logging.getLogger(__name__)
+_PASSTHROUGH_TOP_LEVEL_FIELDS = (
+    "skill_protocol",
+    "resource_kind",
+    "resource_path",
+    "mime_type",
+    "encoding",
+    "package_hash",
+    "entrypoint",
+    "has_references",
+    "has_scripts",
+    "has_assets",
+    "resource_title",
+    "resource_description",
+    "skill_description",
+    "ui_metadata",
+    "skill_manifest",
+)
 
 
 class DocumentProcessor:
@@ -147,6 +164,11 @@ class DocumentProcessor:
             "chunk_index": chunk_index,
             "source_document_path": str(document.metadata.get("source_document_path") or ""),
             "source_document_scope": str(document.metadata.get("source_document_scope") or ""),
+            **{
+                field: document.metadata.get(field, "")
+                for field in _PASSTHROUGH_TOP_LEVEL_FIELDS
+                if document.metadata.get(field) not in (None, "")
+            },
             "metadata": {
                 **document.metadata,
                 "original_title": document.title,

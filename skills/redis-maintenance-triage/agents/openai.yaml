@@ -1,0 +1,5 @@
+display_name: Redis Maintenance Triage
+preferred_entrypoint: SKILL.md
+recommended_queries:
+  - maintenance mode enabled
+  - recent failover during maintenance

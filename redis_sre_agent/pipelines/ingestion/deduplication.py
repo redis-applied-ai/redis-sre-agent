@@ -7,7 +7,41 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from .processor_source_helpers import parse_bool
+
 logger = logging.getLogger(__name__)
+_INDEXED_OPTIONAL_FIELDS = (
+    "skill_protocol",
+    "resource_kind",
+    "resource_path",
+    "mime_type",
+    "encoding",
+    "package_hash",
+    "entrypoint",
+    "has_references",
+    "has_scripts",
+    "has_assets",
+    "resource_title",
+    "resource_description",
+    "skill_description",
+    "ui_metadata",
+    "skill_manifest",
+)
+_BOOLEAN_INDEXED_OPTIONAL_FIELDS = {
+    "entrypoint",
+    "has_references",
+    "has_scripts",
+    "has_assets",
+}
+
+
+def _normalize_indexed_optional_field(field: str, value: Any) -> str | None:
+    """Normalize optional indexed metadata before it is written to Redis."""
+    if value in (None, ""):
+        return None
+    if field in _BOOLEAN_INDEXED_OPTIONAL_FIELDS:
+        return "true" if parse_bool(value, default=False) else "false"
+    return str(value)
 
 
 class DocumentDeduplicator:
@@ -417,6 +451,16 @@ class DocumentDeduplicator:
                     "created_at": datetime.now(timezone.utc).timestamp(),
                     "product_labels": product_labels,
                     "product_label_tags": product_label_tags,
+                    **{
+                        field: normalized_value
+                        for field in _INDEXED_OPTIONAL_FIELDS
+                        if (
+                            normalized_value := _normalize_indexed_optional_field(
+                                field, chunk.get(field)
+                            )
+                        )
+                        is not None
+                    },
                     **flattened_metadata,
                 }
                 documents_to_index.append(doc_for_index)
@@ -448,6 +492,16 @@ class DocumentDeduplicator:
                     "source_document_scope": chunks[0].get("source_document_scope", ""),
                     "chunk_count": len(chunks),
                     "total_content_length": sum(len(chunk.get("content", "")) for chunk in chunks),
+                    **{
+                        field: normalized_value
+                        for field in _INDEXED_OPTIONAL_FIELDS
+                        if (
+                            normalized_value := _normalize_indexed_optional_field(
+                                field, chunks[0].get(field)
+                            )
+                        )
+                        is not None
+                    },
                 },
             )
 

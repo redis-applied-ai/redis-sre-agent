@@ -44,7 +44,7 @@ class TestKnowledgeAgent:
 
             # Verify knowledge tools are present
             knowledge_tools = [n for n in tool_names if "knowledge_" in n]
-            assert len(knowledge_tools) == 8
+            assert len(knowledge_tools) == 9
 
             # Verify specific tools are present
             assert any("search" in n for n in knowledge_tools)
@@ -53,6 +53,7 @@ class TestKnowledgeAgent:
             assert any("get_related_fragments" in n for n in knowledge_tools)
             assert any("skills_check" in n for n in knowledge_tools)
             assert any("get_skill" in n for n in knowledge_tools)
+            assert any("get_skill_resource" in n for n in knowledge_tools)
             assert any("search_support_tickets" in n for n in knowledge_tools)
             assert any("get_support_ticket" in n for n in knowledge_tools)
 
