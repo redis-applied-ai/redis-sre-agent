@@ -684,7 +684,7 @@ const Triage = () => {
 
       if (activeThreadId && approvalBlocked) {
         setError(
-          "This task is waiting for human approval. Resume through the API until UI approval actions are added.",
+          "This task is waiting for human approval. Use the approval controls above to approve or reject it before continuing.",
         );
         setIsLoading(false);
         return;
