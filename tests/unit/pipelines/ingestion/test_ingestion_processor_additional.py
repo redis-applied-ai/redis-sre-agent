@@ -690,6 +690,23 @@ def test_load_source_documents_discovers_nested_and_configured_skill_roots(pipel
     assert paths.count("skills/local-skill/references/maintenance-checklist.md") == 1
 
 
+def test_load_source_documents_discovers_skill_packages_directly_under_source_root(
+    pipeline, tmp_path
+):
+    source_root = tmp_path / "source_documents"
+    shared_dir = source_root / "shared"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "guide.md").write_text("# Guide\n\nBody", encoding="utf-8")
+    _write_agent_skills_package(source_root, "my-skill")
+
+    documents = pipeline._load_source_documents(source_root, action="process")
+    paths = [str(document.metadata.get("source_document_path") or "") for document in documents]
+
+    assert "shared/guide.md" in paths
+    assert "source_documents/my-skill/SKILL.md" in paths
+    assert "source_documents/my-skill/references/maintenance-checklist.md" in paths
+
+
 def test_load_source_documents_ignores_skill_markers_above_source_root(pipeline, tmp_path):
     (tmp_path / "SKILL.md").write_text(
         "---\nname: outer-skill\ndescription: outer package\n---\n",

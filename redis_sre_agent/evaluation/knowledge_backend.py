@@ -584,9 +584,9 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             for document in self._docs_for_index(index_type="skills", version=version)
             if not document.pinned
         ]
-        ranker = self._make_document_ranker(query or "")
-        if query:
-            ranked_documents = sorted(skill_documents, key=ranker)
+        query_ranker = self._make_document_ranker(query) if query else None
+        if query_ranker is not None:
+            ranked_documents = sorted(skill_documents, key=query_ranker)
         else:
             ranked_documents = sorted(skill_documents, key=lambda document: document.name.lower())
 
@@ -601,7 +601,9 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
 
         ordered_documents = sorted(
             by_skill.values(),
-            key=ranker if query else lambda document: document.name.lower(),
+            key=query_ranker
+            if query_ranker is not None
+            else lambda document: document.name.lower(),
         )
         paged_documents = ordered_documents[effective_offset : effective_offset + effective_limit]
         return {

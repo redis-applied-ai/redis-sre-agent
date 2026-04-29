@@ -59,6 +59,8 @@ class PipelineWorkflowMixin:
             roots.append(nested_skills_root.resolve())
         elif source_dir.name == "skills":
             roots.append(source_dir.resolve())
+        elif any(path.is_file() for path in source_dir.rglob("SKILL.md")):
+            roots.append(source_dir.resolve())
 
         unique_roots: list[Path] = []
         seen: set[Path] = set()
