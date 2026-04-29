@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 from ulid import ULID
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core import instances as core_instances
 from redis_sre_agent.core.redis import test_redis_connection
@@ -69,6 +70,7 @@ def instances_list(as_json: bool, limit: int):
         try:
             items = await core_instances.get_instances()
         except Exception as e:
+            log_cli_exception(__name__, "instance CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -148,6 +150,7 @@ def instances_get(instance_id: str, as_json: bool):
 
             console.print(table)
         except Exception as e:
+            log_cli_exception(__name__, "instance CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": instance_id}))
             else:
@@ -341,6 +344,7 @@ def instances_create(
             else:
                 click.echo(f"✅ Created instance {new_inst.id}")
         except Exception as e:
+            log_cli_exception(__name__, "instance CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -557,6 +561,7 @@ def instances_update(
             else:
                 click.echo(f"✅ Updated instance {updated.id}")
         except Exception as e:
+            log_cli_exception(__name__, "instance CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": instance_id}))
             else:
@@ -601,6 +606,7 @@ def instances_delete(instance_id: str, yes: bool, as_json: bool):
             else:
                 click.echo(f"✅ Deleted instance {instance_id}")
         except Exception as e:
+            log_cli_exception(__name__, "instance CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": instance_id}))
             else:
@@ -629,6 +635,7 @@ def instances_test_url(connection_url: str, as_json: bool):
             else:
                 click.echo(("✅ " if ok else "❌ ") + payload["message"] + f" to {host_info}")
         except Exception as e:
+            log_cli_exception(__name__, "instance CLI command failed", e)
             if as_json:
                 print(_json.dumps({"success": False, "error": str(e)}))
             else:
@@ -664,6 +671,7 @@ def instances_test(instance_id: str, as_json: bool):
             else:
                 click.echo(("✅ " if ok else "❌ ") + payload["message"] + f" to {inst.name}")
         except Exception as e:
+            log_cli_exception(__name__, "instance CLI command failed", e)
             if as_json:
                 print(_json.dumps({"success": False, "error": str(e), "id": instance_id}))
             else:

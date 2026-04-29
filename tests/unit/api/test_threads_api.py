@@ -188,6 +188,7 @@ class TestThreadsAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["pending_approval"]["approval_id"] == "approval-1"
+        assert data["task_id"] == "task-1"
         assert data["resume_supported"] is True
 
     def test_update_thread_not_found(self, client):

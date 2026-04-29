@@ -11,6 +11,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.tools.support_package.manager import SupportPackageManager
 from redis_sre_agent.tools.support_package.storage import LocalStorage, S3Storage
@@ -61,6 +62,7 @@ def upload(path: Path, package_id: Optional[str], as_json: bool):
             else:
                 click.echo(f"✅ Uploaded support package: {result_id}")
         except Exception as e:
+            log_cli_exception(__name__, "support package CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -106,6 +108,7 @@ def list_packages(as_json: bool, limit: int):
 
             console.print(table)
         except Exception as e:
+            log_cli_exception(__name__, "support package CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -147,6 +150,7 @@ def extract(package_id: str, as_json: bool):
             else:
                 click.echo(f"✅ Extracted to: {extract_path}")
         except Exception as e:
+            log_cli_exception(__name__, "support package CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "package_id": package_id}))
             else:
@@ -177,6 +181,7 @@ def delete(package_id: str, yes: bool, as_json: bool):
             else:
                 click.echo(f"✅ Deleted package: {package_id}")
         except Exception as e:
+            log_cli_exception(__name__, "support package CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "package_id": package_id}))
             else:
@@ -226,6 +231,7 @@ def info(package_id: str, as_json: bool):
 
             console.print(table)
         except Exception as e:
+            log_cli_exception(__name__, "support package CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "package_id": package_id}))
             else:

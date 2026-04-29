@@ -12,6 +12,7 @@ import click
 import psutil
 from docket import Docket, Worker
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import register_sre_tasks
 from redis_sre_agent.observability.tracing import setup_tracing
@@ -159,6 +160,7 @@ def start(concurrency: int):
             else:
                 logger.warning("⚠️ Failed to create some Redis indices")
         except Exception as e:
+            log_cli_exception(__name__, "worker CLI command failed", e)
             logger.error(f"Failed to initialize Redis indices: {e}")
             # Continue anyway - some functionality may still work
 
@@ -171,6 +173,7 @@ def start(concurrency: int):
             migration_summary = await run_instances_to_clusters_migration(source="worker_startup")
             logger.info("Instance-cluster backfill summary: %s", migration_summary.to_dict())
         except Exception as e:
+            log_cli_exception(__name__, "worker CLI command failed", e)
             logger.warning("Instance-cluster startup migration failed (continuing): %s", e)
 
         try:
@@ -190,6 +193,7 @@ def start(concurrency: int):
                 tasks=["redis_sre_agent.core.docket_tasks:SRE_TASK_COLLECTION"],
             )
         except Exception as e:
+            log_cli_exception(__name__, "worker CLI command failed", e)
             logger.error(f"\u274c Worker error: {e}")
             raise
 
@@ -198,6 +202,7 @@ def start(concurrency: int):
     except KeyboardInterrupt:
         click.echo("\nSRE worker stopped by user")
     except Exception as e:
+        log_cli_exception(__name__, "worker CLI command failed", e)
         click.echo(f"Unexpected worker error: {e}")
         raise
 
@@ -224,6 +229,7 @@ def status(verbose: bool):
             click.echo("✗ Workers: No active workers found")
 
     except Exception as e:
+        log_cli_exception(__name__, "worker CLI command failed", e)
         click.echo(f"✗ Redis: Failed to connect ({e})")
         click.echo("  Worker cannot run without Redis")
         sys.exit(1)
@@ -268,5 +274,6 @@ def stop():
                 click.echo(f"✗ Permission denied to stop process {pid}")
 
     except Exception as e:
+        log_cli_exception(__name__, "worker CLI command failed", e)
         click.echo(f"✗ Error: {e}", err=True)
         sys.exit(1)

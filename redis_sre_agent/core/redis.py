@@ -764,7 +764,7 @@ async def test_redis_connection(
         await client.aclose()
         return True
     except Exception as e:
-        logger.error(f"Redis connection test failed: {e}")
+        logger.exception(f"Redis connection test failed: {e}")
         return False
 
 
@@ -784,7 +784,7 @@ async def test_vector_search(config: Optional[Settings] = None) -> bool:
         exists = await index.exists()
         return exists
     except Exception as e:
-        logger.error(f"Vector search test failed: {e}")
+        logger.exception(f"Vector search test failed: {e}")
         return False
 
 
@@ -923,7 +923,7 @@ async def create_indices(config: Optional[Settings] = None) -> bool:
                 logger.debug("Index already exists: %s", idx_name)
         return True
     except Exception as e:
-        logger.error(f"Failed to create indices: {e}")
+        logger.exception(f"Failed to create indices: {e}")
         return False
 
 
@@ -971,7 +971,7 @@ async def recreate_indices(
             result["indices"][name] = "recreated"
 
         except Exception as e:
-            logger.error(f"Failed to recreate index {name}: {e}")
+            logger.exception(f"Failed to recreate index {name}: {e}")
             result["indices"][name] = f"error: {e}"
             result["success"] = False
 
@@ -1004,7 +1004,7 @@ async def initialize_redis(config: Optional[Settings] = None) -> dict:
             vectorizer = get_vectorizer(config=cfg)
             status["vectorizer"] = "available" if vectorizer else "unavailable"
     except Exception as e:
-        logger.error(f"Vectorizer initialization failed: {e}")
+        logger.exception(f"Vectorizer initialization failed: {e}")
         status["vectorizer"] = "unavailable"
 
     # Create indices if Redis is available
@@ -1059,5 +1059,5 @@ async def initialize_docket(config: Optional[Settings] = None) -> bool:
         logger.warning("Docket not available - task queue functionality will be limited")
         return False
     except Exception as e:
-        logger.error(f"Failed to initialize: {e}")
+        logger.exception(f"Failed to initialize: {e}")
         return False

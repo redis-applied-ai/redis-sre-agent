@@ -161,6 +161,7 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     result = None
     error_message = None
     task_status = None
+    latest_task_id = None
     pending_approval = None
     resume_supported = False
 
@@ -188,6 +189,7 @@ async def get_thread(thread_id: str) -> ThreadResponse:
 
     return ThreadResponse(
         thread_id=thread_id,
+        task_id=latest_task_id,
         user_id=(metadata.get("user_id") if metadata else None),
         priority=(metadata.get("priority", 0) if metadata else 0),
         tags=(metadata.get("tags", []) if metadata else []),

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import sreAgentApi from "../services/sreAgentApi";
+import sreAgentApi, {
+  PendingApprovalSummary,
+} from "../services/sreAgentApi";
 
 interface TaskUpdate {
   timestamp: string;
@@ -25,6 +27,10 @@ interface TaskMonitorProps {
   initialQuery?: string;
   onStatusChange?: (status: string) => void;
   onCompleted?: (info: { status: string; response?: string }) => void;
+  onApprovalStateChange?: (
+    pendingApproval: PendingApprovalSummary | null,
+    resumeSupported: boolean,
+  ) => void;
 }
 
 const TaskMonitor: React.FC<TaskMonitorProps> = ({
@@ -32,6 +38,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
   initialQuery,
   onStatusChange,
   onCompleted,
+  onApprovalStateChange,
 }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -41,7 +48,9 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
 
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const lastMessageIdRef = useRef<string | null>(null);
   const lastRenderTimeRef = useRef<number>(0);
   const isIntentionalCloseRef = useRef<boolean>(false);
@@ -205,12 +214,21 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
             : "in_progress";
       }
 
+      onApprovalStateChange?.(
+        taskStatus.pending_approval || null,
+        Boolean(taskStatus.resume_supported),
+      );
       setCurrentStatus(derivedStatus);
       onStatusChange?.(derivedStatus);
       const inProgress = ["queued", "in_progress", "running"].includes(
         derivedStatus,
       );
       setIsThinking(inProgress);
+
+      if (derivedStatus === "awaiting_approval") {
+        disconnect();
+        return;
+      }
 
       // If complete, notify parent and disconnect
       if (

@@ -12,11 +12,50 @@ export interface TaskUpdate {
   metadata: Record<string, any>;
 }
 
+export interface PendingApprovalSummary {
+  approval_id: string;
+  interrupt_id: string;
+  tool_name: string;
+  summary: string;
+  requested_at: string;
+  expires_at?: string | null;
+  status: "pending" | "approved" | "rejected" | "expired" | "superseded";
+}
+
+export interface ApprovalDecision {
+  decision: "approved" | "rejected";
+  decision_by?: string;
+  decision_comment?: string;
+  decision_at: string;
+}
+
+export interface ApprovalRecord {
+  approval_id: string;
+  task_id: string;
+  thread_id: string;
+  graph_thread_id: string;
+  interrupt_id: string;
+  graph_type: string;
+  graph_version: string;
+  tool_name: string;
+  tool_args: Record<string, any>;
+  tool_args_preview: Record<string, any>;
+  action_kind: string;
+  action_hash: string;
+  target_handles: string[];
+  status: "pending" | "approved" | "rejected" | "expired" | "superseded";
+  requested_at: string;
+  expires_at?: string | null;
+  decision?: ApprovalDecision | null;
+}
+
 export interface TaskStatusResponse {
   thread_id: string;
+  task_id?: string;
   status:
     | "queued"
     | "in_progress"
+    | "awaiting_approval"
     | "completed"
     | "done"
     | "failed"
@@ -31,6 +70,8 @@ export interface TaskStatusResponse {
   updates: TaskUpdate[];
   result?: Record<string, any>;
   error_message?: string;
+  pending_approval?: PendingApprovalSummary | null;
+  resume_supported: boolean;
   metadata: {
     created_at: string;
     updated_at: string;
@@ -63,6 +104,13 @@ export interface ThreadSummary {
   cluster_id?: string;
   // Optional count of user/assistant messages, provided by backend when available
   message_count?: number;
+}
+
+export interface TaskResumeRequest {
+  approval_id: string;
+  decision: "approved" | "rejected";
+  decision_by?: string;
+  decision_comment?: string;
 }
 
 export interface RedisInstance {
@@ -216,6 +264,30 @@ export interface ClusterListResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface KnowledgeStatsResponse {
+  total_documents: number;
+  total_chunks: number;
+  last_ingestion: string | null;
+  ingestion_status: "idle" | "running" | "error";
+  document_types: Record<string, number>;
+  storage_size_mb: number;
+}
+
+export interface SystemHealthResponse {
+  status: string;
+  components: {
+    redis_connection: string;
+    vectorizer: string;
+    indices_created: string;
+    vector_search: string;
+    task_system: string;
+    workers: string;
+    [key: string]: string;
+  };
+  timestamp: string;
+  version: string;
 }
 
 export interface CreateClusterRequest {
@@ -439,6 +511,7 @@ class SREAgentAPI {
 
     return {
       thread_id: thread.thread_id,
+      task_id: thread.task_id,
       status,
       messages: messages.map((m: any) => ({
         role: m.role,
@@ -456,6 +529,8 @@ class SREAgentAPI {
         : [],
       result: thread.result,
       error_message: thread.error_message,
+      pending_approval: thread.pending_approval || null,
+      resume_supported: Boolean(thread.resume_supported),
       metadata: {
         created_at: thread?.metadata?.created_at,
         updated_at: thread?.metadata?.updated_at,
@@ -467,6 +542,64 @@ class SREAgentAPI {
       },
       context: thread.context || {},
     } as TaskStatusResponse;
+  }
+
+  async getTaskApprovals(taskId: string): Promise<ApprovalRecord[]> {
+    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}/approvals`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data.approvals) ? data.approvals : [];
+  }
+
+  async resumeTask(
+    taskId: string,
+    request: TaskResumeRequest,
+  ): Promise<TaskStatusResponse> {
+    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}/resume`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const task = await response.json();
+    return {
+      thread_id: task.thread_id,
+      task_id: task.task_id,
+      status: task.status,
+      messages: [],
+      updates: Array.isArray(task.updates)
+        ? task.updates.map((u: any) => ({
+            timestamp: u.timestamp,
+            message: u.message,
+            type: u.update_type || u.type,
+            metadata: u.metadata || {},
+          }))
+        : [],
+      result: task.result,
+      error_message: task.error_message,
+      pending_approval: task.pending_approval || null,
+      resume_supported: Boolean(task.resume_supported),
+      metadata: {
+        created_at: task.created_at,
+        updated_at: task.updated_at,
+        priority: 0,
+        tags: [],
+        subject: task.subject,
+      },
+      context: {},
+    };
   }
 
   async listTasks(
@@ -1113,16 +1246,20 @@ class SREAgentAPI {
   }
 
   // Knowledge Base Methods
-  async getKnowledgeStats(): Promise<{
-    total_documents: number;
-    total_chunks: number;
-    last_ingestion: string | null;
-  }> {
+  async getKnowledgeStats(): Promise<KnowledgeStatsResponse> {
     const response = await fetch(`${this.tasksBaseUrl}/knowledge/stats`);
     if (!response.ok) {
       throw new Error(`Failed to get knowledge stats: ${response.statusText}`);
     }
-    return response.json();
+    const data = await response.json();
+    return {
+      total_documents: data.total_documents ?? 0,
+      total_chunks: data.total_chunks ?? 0,
+      last_ingestion: data.last_ingestion ?? null,
+      ingestion_status: data.ingestion_status ?? "idle",
+      document_types: data.document_types ?? {},
+      storage_size_mb: data.storage_size_mb ?? 0,
+    };
   }
 
   async getKnowledgeJobs(): Promise<any[]> {
@@ -1196,16 +1333,27 @@ class SREAgentAPI {
   }
 
   // System Health Methods
-  async getSystemHealth(): Promise<{
-    status: string;
-    components: Record<string, string>;
-    version?: string;
-  }> {
+  async getSystemHealth(): Promise<SystemHealthResponse> {
     const response = await fetch(`${this.tasksBaseUrl}/health`);
     if (!response.ok) {
       throw new Error(`Failed to get system health: ${response.statusText}`);
     }
-    return response.json();
+    const data = await response.json();
+    const components = data.components || {};
+    return {
+      status: data.status ?? "unknown",
+      components: {
+        redis_connection: components.redis_connection ?? "unknown",
+        vectorizer: components.vectorizer ?? "unknown",
+        indices_created: components.indices_created ?? "unknown",
+        vector_search: components.vector_search ?? "unknown",
+        task_system: components.task_system ?? "unknown",
+        workers: components.workers ?? "unknown",
+        ...components,
+      },
+      timestamp: data.timestamp ?? new Date().toISOString(),
+      version: data.version ?? "unknown",
+    };
   }
 
   // Schedule Methods

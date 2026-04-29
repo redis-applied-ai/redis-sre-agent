@@ -169,6 +169,38 @@ curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   }' | jq
 ```
 
+#### Natural-language target discovery and comparison
+If your deployment has target discovery configured, you can omit `instance_id` and `cluster_id`
+and let the agent resolve targets from the message text.
+
+```bash
+# Let the agent discover one target from natural language
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "Check whether the production checkout cache is under memory pressure"
+  }' | jq
+
+# Ask for a comparison across multiple discovered targets
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "Compare checkout cache and session cache for memory pressure and evictions"
+  }' | jq
+```
+
+If the reference is ambiguous, the task should stay discovery-first and request clarification
+instead of making live claims. Continue the same thread with the narrowed target description:
+
+```bash
+curl -fsS -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "thread_id": "<thread_id>",
+    "message": "Use the prod checkout cache in us-east-1"
+  }' | jq
+```
+
 ### 5) Prepare knowledge and validate what the agent knows
 Run an ingestion job, then search to confirm content is available.
 ```bash
@@ -227,6 +259,54 @@ curl -fsS http://localhost:8080/api/v1/schedules/<schedule_id>/runs | jq
 - Tasks: `GET /api/v1/tasks/{task_id}`
 - Threads: `GET /api/v1/threads`, `GET /api/v1/threads/{thread_id}`
 - WebSocket: `ws://localhost:8080/api/v1/ws/tasks/{thread_id}`
+
+#### Approval-driven tasks
+Some write actions pause a task in `awaiting_approval`. When that happens:
+
+- `GET /api/v1/tasks/<task_id>` can include `pending_approval`.
+- `GET /api/v1/threads/<thread_id>` can also surface `task_id`, `pending_approval`, and `resume_supported`.
+- `GET /api/v1/tasks/<task_id>/approvals` lists the full approval history for the task.
+- `POST /api/v1/tasks/<task_id>/resume` records an `approved` or `rejected` decision and resumes
+  execution when the task is waiting on that approval.
+
+If you use the web UI triage page, the same approval flow is available there: the conversation
+view shows the pending approval summary, loads approval history for the latest task on the thread,
+and can submit approve/reject decisions directly from the browser.
+
+Inspect approval history:
+
+```bash
+curl -fsS http://localhost:8080/api/v1/tasks/<task_id>/approvals | jq
+```
+
+Approve a pending action:
+
+```bash
+curl -fsS -X POST http://localhost:8080/api/v1/tasks/<task_id>/resume \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "approval_id": "<approval_id>",
+    "decision": "approved",
+    "decision_by": "oncall@example.com",
+    "decision_comment": "Confirmed during incident review"
+  }' | jq
+```
+
+Reject a pending action:
+
+```bash
+curl -fsS -X POST http://localhost:8080/api/v1/tasks/<task_id>/resume \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "approval_id": "<approval_id>",
+    "decision": "rejected",
+    "decision_by": "oncall@example.com",
+    "decision_comment": "Do not run this action on production"
+  }' | jq
+```
+
+The current CLI does not yet expose approvals listing or resume commands, so use the API for
+human-in-the-loop decision handling.
 
 ### 8) Observability
 - Prometheus scrape: `GET /api/v1/metrics`
