@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import threading
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -560,6 +561,7 @@ class RedisSkillBackend:
 
 
 _DEFAULT_BACKEND_CACHE: tuple[tuple[str, str], SkillBackend] | None = None
+_DEFAULT_BACKEND_CACHE_LOCK = threading.Lock()
 
 
 def _load_custom_backend(config: Settings) -> SkillBackend:
@@ -585,23 +587,24 @@ def _load_custom_backend(config: Settings) -> SkillBackend:
 def get_skill_backend(config: Settings | None = None) -> SkillBackend:
     """Return the active runtime skill backend."""
 
+    global _DEFAULT_BACKEND_CACHE
     active_config = config or settings
     if config is not None:
         if active_config.skill_backend_kind == "custom":
             return _load_custom_backend(active_config)
         return RedisSkillBackend(config=active_config)
 
-    global _DEFAULT_BACKEND_CACHE
     cache_key = (
         str(active_config.skill_backend_kind or "redis"),
         str(active_config.skill_backend_class or ""),
     )
-    if _DEFAULT_BACKEND_CACHE and _DEFAULT_BACKEND_CACHE[0] == cache_key:
-        return _DEFAULT_BACKEND_CACHE[1]
+    with _DEFAULT_BACKEND_CACHE_LOCK:
+        if _DEFAULT_BACKEND_CACHE and _DEFAULT_BACKEND_CACHE[0] == cache_key:
+            return _DEFAULT_BACKEND_CACHE[1]
 
-    if active_config.skill_backend_kind == "custom":
-        backend = _load_custom_backend(active_config)
-    else:
-        backend = RedisSkillBackend(config=active_config)
-    _DEFAULT_BACKEND_CACHE = (cache_key, backend)
-    return backend
+        if active_config.skill_backend_kind == "custom":
+            backend = _load_custom_backend(active_config)
+        else:
+            backend = RedisSkillBackend(config=active_config)
+        _DEFAULT_BACKEND_CACHE = (cache_key, backend)
+        return backend
