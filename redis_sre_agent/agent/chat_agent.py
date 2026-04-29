@@ -933,6 +933,13 @@ User Query: {query}"""
         normalized_context["turn_scope"] = turn_scope.model_dump(mode="json")
 
         emitter = progress_emitter if progress_emitter is not None else self._emitter
+        prepared_memory = await prepare_agent_turn_memory(
+            query=str(normalized_context.get("query") or ""),
+            session_id=session_id,
+            user_id=user_id,
+            context=normalized_context,
+            emitter=emitter,
+        )
         cache_client = None
         if settings.tool_cache_enabled and self.redis_instance:
             cache_client = get_redis_client()
@@ -995,14 +1002,17 @@ User Query: {query}"""
                     if messages:
                         last_message = messages[-1]
                         if isinstance(last_message, AIMessage):
-                            return AgentResponse(
+                            response = AgentResponse(
                                 response=last_message.content,
                                 tool_envelopes=tool_envelopes,
                             )
-                        return AgentResponse(
-                            response=str(last_message.content),
-                            tool_envelopes=tool_envelopes,
-                        )
+                        else:
+                            response = AgentResponse(
+                                response=str(last_message.content),
+                                tool_envelopes=tool_envelopes,
+                            )
+                        await prepared_memory.persist_response_fail_open(response.response)
+                        return response
 
                     return AgentResponse(
                         response="I couldn't resume that query. Please try again.",
