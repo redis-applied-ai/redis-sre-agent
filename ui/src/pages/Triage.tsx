@@ -4,7 +4,12 @@ import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
 import { ConfirmDialog } from "../components/Modal";
 import ReactMarkdown from "react-markdown";
 import TaskMonitor from "../components/TaskMonitor";
-import sreAgentApi, { RedisCluster, RedisInstance } from "../services/sreAgentApi";
+import sreAgentApi, {
+  ApprovalRecord,
+  PendingApprovalSummary,
+  RedisCluster,
+  RedisInstance,
+} from "../services/sreAgentApi";
 
 // Simple fallback components for missing UI kit components
 const Loader = ({ size = "md" }: { size?: "sm" | "md" | "lg" }) => (
@@ -86,6 +91,13 @@ const Triage = () => {
   const [isThinking, setIsThinking] = useState(false);
   const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
   const [isThreadBusy, setIsThreadBusy] = useState(false);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] =
+    useState<PendingApprovalSummary | null>(null);
+  const [resumeSupported, setResumeSupported] = useState(false);
+  const [approvalHistory, setApprovalHistory] = useState<ApprovalRecord[]>([]);
+  const [approvalComment, setApprovalComment] = useState("");
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
 
   const [liveModeLocked, setLiveModeLocked] = useState(false);
   const [expandedCitations, setExpandedCitations] = useState<Set<string>>(
@@ -120,9 +132,20 @@ const Triage = () => {
       /^\*\*(Sources for previous response|Discovered context|Startup context loaded)\*\*\n?/,
       "",
     );
-  const pollingIntervalRef = useRef<number | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const approvalBlocked = Boolean(pendingApproval && resumeSupported);
 
   const userId = "sre-user-1"; // In a real app, this would come from auth
+
+  const resetApprovalState = () => {
+    setActiveTaskId(null);
+    setPendingApproval(null);
+    setResumeSupported(false);
+    setApprovalHistory([]);
+    setApprovalComment("");
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -473,6 +496,7 @@ const Triage = () => {
     setError("");
     setShowNewConversation(true);
     setShowWebSocketMonitor(false);
+    resetApprovalState();
 
     // Clear any `thread` query parameter from the URL so that the page
     // no longer treats an existing thread as selected. Without this, the
@@ -525,6 +549,7 @@ const Triage = () => {
     setShowNewConversation(false);
     setLiveModeLocked(sidebarActive);
     setShowWebSocketMonitor(sidebarActive);
+    resetApprovalState();
 
     // On mobile only, switch to chat view
     if (window.innerWidth < 768) {
@@ -580,10 +605,52 @@ const Triage = () => {
         status.status as any,
       );
       setIsThreadBusy(active);
+      setActiveTaskId(status.task_id || null);
+      setPendingApproval(status.pending_approval || null);
+      setResumeSupported(Boolean(status.resume_supported));
+      if (status.task_id) {
+        const approvals = await sreAgentApi.getTaskApprovals(status.task_id);
+        setApprovalHistory(approvals);
+      } else {
+        setApprovalHistory([]);
+      }
       if (!liveModeLocked) setShowWebSocketMonitor(active);
     } catch (err) {
       console.warn("Could not load thread status:", err);
       setIsThreadBusy(false);
+      resetApprovalState();
+    }
+  };
+
+  const handleApprovalDecision = async (decision: "approved" | "rejected") => {
+    if (!activeTaskId || !pendingApproval || !resumeSupported) {
+      return;
+    }
+
+    setIsSubmittingApproval(true);
+    setError("");
+
+    try {
+      await sreAgentApi.resumeTask(activeTaskId, {
+        approval_id: pendingApproval.approval_id,
+        decision,
+        decision_by: userId,
+        decision_comment: approvalComment.trim() || undefined,
+      });
+
+      setPendingApproval(null);
+      setResumeSupported(false);
+      setApprovalComment("");
+      await loadThreads();
+      if (activeThreadId) {
+        await selectThread(activeThreadId);
+      }
+    } catch (err) {
+      setError(
+        `Failed to submit approval decision: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    } finally {
+      setIsSubmittingApproval(false);
     }
   };
 
@@ -612,6 +679,14 @@ const Triage = () => {
         return;
       }
 
+      if (activeThreadId && approvalBlocked) {
+        setError(
+          "This task is waiting for human approval. Use the approval controls above to approve or reject it before continuing.",
+        );
+        setIsLoading(false);
+        return;
+      }
+
       // If no active thread, create a new one
       if (!activeThreadId) {
         const triageResponse = await sreAgentApi.startNewConversation(
@@ -632,6 +707,7 @@ const Triage = () => {
         sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
+        resetApprovalState();
 
         // Add new thread to the list
         const resolvedInstanceName = selectedInstanceId
@@ -677,6 +753,7 @@ const Triage = () => {
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
         setLiveModeLocked(true);
+        resetApprovalState();
       }
 
       // WebSocket will handle updates - reset loading state after API call succeeds
@@ -712,6 +789,7 @@ const Triage = () => {
         setMessages([]);
         setError("");
         setIsPolling(false);
+        resetApprovalState();
 
         // Stop polling
         if (pollingIntervalRef.current) {
@@ -1048,12 +1126,33 @@ const Triage = () => {
                         if (active) {
                           setShowWebSocketMonitor(true);
                           setLiveModeLocked(true);
+                        } else if (status === "awaiting_approval") {
+                          setIsThreadBusy(false);
+                          setShowWebSocketMonitor(false);
+                          setLiveModeLocked(false);
+                        }
+                      }}
+                      onApprovalStateChange={async (
+                        nextPendingApproval,
+                        nextResumeSupported,
+                      ) => {
+                        setPendingApproval(nextPendingApproval);
+                        setResumeSupported(nextResumeSupported);
+                        if (nextPendingApproval && nextResumeSupported) {
+                          setIsThreadBusy(false);
+                          setShowWebSocketMonitor(false);
+                          setLiveModeLocked(false);
+                          await loadThreads();
+                          if (activeThreadId) {
+                            await selectThread(activeThreadId);
+                          }
                         }
                       }}
                       onCompleted={async () => {
                         setIsThreadBusy(false);
                         setLiveModeLocked(false);
                         setShowWebSocketMonitor(false);
+                        resetApprovalState();
                         await loadThreads();
                         if (activeThreadId) {
                           await selectThread(activeThreadId);
@@ -1062,6 +1161,110 @@ const Triage = () => {
                     />
                   ) : (
                     <div className="h-full overflow-y-auto p-4 space-y-4">
+                      {approvalBlocked && pendingApproval && (
+                        <div className="rounded-redis-md border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950">
+                          <div className="text-redis-sm font-semibold">
+                            Approval required
+                          </div>
+                          <div className="mt-1 text-redis-sm">
+                            This task is paused waiting for human approval to
+                            continue: {pendingApproval.summary}
+                          </div>
+                          <div className="mt-2 text-redis-xs text-amber-900">
+                            Requested{" "}
+                            {new Date(
+                              pendingApproval.requested_at,
+                            ).toLocaleString()}
+                            {pendingApproval.expires_at
+                              ? ` • Expires ${new Date(
+                                  pendingApproval.expires_at,
+                                ).toLocaleString()}`
+                              : ""}
+                          </div>
+                          <div className="mt-2 text-redis-xs text-amber-900">
+                            Review the pending action, optionally add a comment,
+                            then approve or reject it here to resume the task.
+                          </div>
+                          {activeTaskId && (
+                            <>
+                              {approvalHistory.length > 0 && (
+                                <div className="mt-3 rounded-redis-sm border border-amber-200 bg-white/60 p-3">
+                                  <div className="text-redis-xs font-semibold uppercase tracking-wide text-amber-900">
+                                    Approval history
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {approvalHistory.map((approval) => (
+                                      <div
+                                        key={approval.approval_id}
+                                        className="text-redis-xs text-amber-950"
+                                      >
+                                        <div className="font-medium">
+                                          {approval.tool_name}
+                                        </div>
+                                        <div>
+                                          Status: {approval.status}
+                                          {approval.decision?.decision_by
+                                            ? ` • By ${approval.decision.decision_by}`
+                                            : ""}
+                                        </div>
+                                        <div>
+                                          Requested{" "}
+                                          {new Date(
+                                            approval.requested_at,
+                                          ).toLocaleString()}
+                                        </div>
+                                        {approval.decision?.decision_comment && (
+                                          <div>
+                                            Comment:{" "}
+                                            {approval.decision.decision_comment}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              <div className="mt-3 space-y-2">
+                                <label className="block text-redis-xs font-semibold uppercase tracking-wide text-amber-900">
+                                  Decision comment
+                                </label>
+                                <textarea
+                                  value={approvalComment}
+                                  onChange={(e) =>
+                                    setApprovalComment(e.target.value)
+                                  }
+                                  placeholder="Optional comment for the approval record"
+                                  className="w-full rounded-redis-sm border border-amber-300 bg-white px-3 py-2 text-redis-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                  rows={3}
+                                  disabled={isSubmittingApproval}
+                                />
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="primary"
+                                    onClick={() =>
+                                      handleApprovalDecision("approved")
+                                    }
+                                    disabled={isSubmittingApproval}
+                                  >
+                                    {isSubmittingApproval
+                                      ? "Submitting..."
+                                      : "Approve and Resume"}
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    onClick={() =>
+                                      handleApprovalDecision("rejected")
+                                    }
+                                    disabled={isSubmittingApproval}
+                                  >
+                                    Reject
+                                  </Button>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {messages.length === 0 ? (
                         <div className="text-redis-sm text-redis-dusk-04">
                           No messages yet for this conversation.
@@ -1226,10 +1429,16 @@ const Triage = () => {
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
                       onKeyPress={handleKeyPress}
-                      placeholder="Continue the conversation..."
+                      placeholder={
+                        approvalBlocked
+                          ? "Approval required before this conversation can continue"
+                          : "Continue the conversation..."
+                      }
                       className="flex-1 p-3 border border-redis-dusk-06 rounded-redis-sm resize-none focus:outline-none focus:ring-2 focus:ring-redis-blue-03 focus:border-transparent min-h-[60px]"
                       rows={2}
-                      disabled={isLoading || agentStatus !== "available"}
+                      disabled={
+                        isLoading || agentStatus !== "available" || approvalBlocked
+                      }
                     />
                     {isThreadBusy ? (
                       <Button
@@ -1238,6 +1447,10 @@ const Triage = () => {
                         className="self-end"
                       >
                         Stop
+                      </Button>
+                    ) : approvalBlocked ? (
+                      <Button variant="outline" disabled className="self-end">
+                        Use Approval Controls Above
                       </Button>
                     ) : (
                       <Button
@@ -1255,7 +1468,9 @@ const Triage = () => {
                     )}
                   </div>
                   <div className="text-redis-xs text-redis-dusk-04 mt-2">
-                    {isThreadBusy
+                    {approvalBlocked
+                      ? "This task is paused for approval. Use the approval controls above to approve or reject it."
+                      : isThreadBusy
                       ? "Task is running — press Stop to cancel before sending a new message."
                       : agentStatus === "available"
                         ? "Press Enter to send, Shift+Enter for new line"

@@ -11,33 +11,12 @@ import {
 } from "@radar/ui-kit";
 import {
   sreAgentApi,
+  type KnowledgeStatsResponse,
   type TaskStatusResponse,
   type RedisInstance,
+  type SystemHealthResponse,
 } from "../services/sreAgentApi";
 import { maskRedisUrl } from "../utils/urlMasking";
-
-interface KnowledgeStats {
-  total_documents: number;
-  total_chunks: number;
-  last_ingestion: string | null;
-  ingestion_status: "idle" | "running" | "error";
-  document_types: Record<string, number>;
-  storage_size_mb: number;
-}
-
-interface SystemHealth {
-  status: string;
-  components: {
-    redis_connection: string;
-    vectorizer: string;
-    indices_created: string;
-    vector_search: string;
-    task_system: string;
-    workers: string;
-  };
-  timestamp: string;
-  version: string;
-}
 
 interface ConversationThread {
   id: string;
@@ -57,10 +36,10 @@ const Dashboard = () => {
   // Data states
   const [conversations, setConversations] = useState<ConversationThread[]>([]);
   const [instances, setInstances] = useState<RedisInstance[]>([]);
-  const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStats | null>(
+  const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStatsResponse | null>(
     null,
   );
-  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null);
 
   const loadDashboardData = async () => {
     setError("");

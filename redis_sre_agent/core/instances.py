@@ -394,10 +394,10 @@ async def get_instances() -> List[RedisInstance]:
                     inst_data["admin_password"] = get_secret_value(inst_data["admin_password"])
                 out.append(RedisInstance(**inst_data))
             except Exception as e:
-                logger.error("Failed to load instance from search result: %s. Skipping.", e)
+                logger.exception("Failed to load instance from search result: %s. Skipping.", e)
         return out
     except Exception as e:
-        logger.error("Failed to get instances from Redis: %s", e)
+        logger.exception("Failed to get instances from Redis: %s", e)
         return []
 
 
@@ -513,7 +513,7 @@ async def query_instances(
                     inst_data["admin_password"] = get_secret_value(inst_data["admin_password"])
                 instances.append(RedisInstance(**inst_data))
             except Exception as e:
-                logger.error("Failed to load instance from query result: %s. Skipping.", e)
+                logger.exception("Failed to load instance from query result: %s. Skipping.", e)
 
         return InstanceQueryResult(
             instances=instances,
@@ -523,7 +523,7 @@ async def query_instances(
         )
 
     except Exception as e:
-        logger.error("Failed to query instances: %s", e)
+        logger.exception("Failed to query instances: %s", e)
         return InstanceQueryResult(instances=[], total=0, limit=limit, offset=offset)
 
 
@@ -719,7 +719,7 @@ async def get_session_instances(thread_id: str) -> List[RedisInstance]:
             out.append(RedisInstance(**inst_data))
         return out
     except Exception as e:
-        logger.error("Failed to get session instances for %s: %s", thread_id, e)
+        logger.exception("Failed to get session instances for %s: %s", thread_id, e)
         return []
 
 
@@ -745,7 +745,7 @@ async def add_session_instance(thread_id: str, instance: RedisInstance) -> bool:
         await redis_client.set(RedisKeys.thread_instances(thread_id), json.dumps(items), ex=3600)
         return True
     except Exception as e:
-        logger.error("Failed to add session instance for %s: %s", thread_id, e)
+        logger.exception("Failed to add session instance for %s: %s", thread_id, e)
         return False
 
 
@@ -805,7 +805,7 @@ async def create_instance(
             raise ValueError("Failed to save instance to storage")
         return new_inst
     except Exception as e:
-        logger.error("Failed to create instance programmatically: %s", e)
+        logger.exception("Failed to create instance programmatically: %s", e)
         raise
 
 
@@ -835,7 +835,7 @@ async def get_instance_by_id(instance_id: str) -> Optional[RedisInstance]:
 
         return RedisInstance(**inst_data)
     except Exception as e:
-        logger.error("Failed to get instance by ID %s: %s", instance_id, e)
+        logger.exception("Failed to get instance by ID %s: %s", instance_id, e)
         return None
 
 
@@ -876,7 +876,7 @@ async def get_instance_by_name(instance_name: str) -> Optional[RedisInstance]:
 
         return RedisInstance(**inst_data)
     except Exception as e:
-        logger.error("Failed to get instance by name %s: %s", instance_name, e)
+        logger.exception("Failed to get instance by name %s: %s", instance_name, e)
         return None
 
 

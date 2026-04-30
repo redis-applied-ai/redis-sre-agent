@@ -10,6 +10,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
@@ -113,6 +114,7 @@ def knowledge_fragments(document_hash: str, as_json: bool, include_metadata: boo
                 document_hash, include_metadata=include_metadata
             )
         except Exception as e:
+            log_cli_exception(__name__, "knowledge CLI command failed", e)
             payload = {"error": str(e), "document_hash": document_hash}
             if as_json:
                 print(_json.dumps(payload))
@@ -179,6 +181,7 @@ def knowledge_related(document_hash: str, chunk_index: int, window: int, as_json
                 document_hash, current_chunk_index=chunk_index, context_window=window
             )
         except Exception as e:
+            log_cli_exception(__name__, "knowledge CLI command failed", e)
             payload = {"error": str(e), "document_hash": document_hash}
             if as_json:
                 print(_json.dumps(payload))

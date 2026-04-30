@@ -185,7 +185,7 @@ Subject:"""
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update thread {thread_id} subject: {e}")
+            logger.exception(f"Failed to update thread {thread_id} subject: {e}")
             return False
 
     async def set_thread_subject(self, thread_id: str, subject: str) -> bool:
@@ -204,7 +204,7 @@ Subject:"""
             logger.info(f"Set thread {thread_id} subject: {subject}")
             return True
         except Exception as e:
-            logger.error(f"Failed to set thread {thread_id} subject: {e}")
+            logger.exception(f"Failed to set thread {thread_id} subject: {e}")
             return False
 
     async def _upsert_thread_search_doc(self, thread_id: str) -> bool:
@@ -315,7 +315,7 @@ Subject:"""
             return True
 
         except Exception as e:
-            logger.error(f"Failed to remove thread {thread_id} from index: {e}")
+            logger.exception(f"Failed to remove thread {thread_id} from index: {e}")
             return False
 
     async def list_threads(
@@ -486,7 +486,7 @@ Subject:"""
             )
 
         except Exception as e:
-            logger.error(f"Failed to get thread state {thread_id}: {e}")
+            logger.exception(f"Failed to get thread state {thread_id}: {e}")
             return None
 
     async def update_thread_context(
@@ -554,7 +554,7 @@ Subject:"""
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update context for thread {thread_id}: {e}")
+            logger.exception(f"Failed to update context for thread {thread_id}: {e}")
             return False
 
     async def append_messages(self, thread_id: str, messages: List[Dict[str, Any]]) -> bool:
@@ -603,7 +603,7 @@ Subject:"""
             return True
 
         except Exception as e:
-            logger.error(f"Failed to append messages for thread {thread_id}: {e}")
+            logger.exception(f"Failed to append messages for thread {thread_id}: {e}")
             return False
 
     async def _save_thread_state(self, thread_state: Thread) -> bool:
@@ -659,7 +659,7 @@ Subject:"""
             return True
 
         except Exception as e:
-            logger.error(f"Failed to save thread state {thread_state.thread_id}: {e}")
+            logger.exception(f"Failed to save thread state {thread_state.thread_id}: {e}")
             return False
 
     async def delete_thread(self, thread_id: str) -> bool:
@@ -689,7 +689,7 @@ Subject:"""
             return True
 
         except Exception as e:
-            logger.error(f"Failed to delete thread {thread_id}: {e}")
+            logger.exception(f"Failed to delete thread {thread_id}: {e}")
             return False
 
     async def set_message_trace(
@@ -731,7 +731,7 @@ Subject:"""
             logger.debug(f"Stored decision trace for message {message_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to store message trace {message_id}: {e}")
+            logger.exception(f"Failed to store message trace {message_id}: {e}")
             return False
 
     async def get_message_trace(self, message_id: str) -> Optional[Dict[str, Any]]:
@@ -750,7 +750,7 @@ Subject:"""
                 return None
             return json.loads(data if isinstance(data, str) else data.decode())
         except Exception as e:
-            logger.error(f"Failed to get message trace {message_id}: {e}")
+            logger.exception(f"Failed to get message trace {message_id}: {e}")
             return None
 
 

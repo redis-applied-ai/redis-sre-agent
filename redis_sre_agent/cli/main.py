@@ -5,6 +5,13 @@ import importlib
 import click
 
 from redis_sre_agent import __version__
+from redis_sre_agent.cli.logging_utils import (
+    configure_cli_logging,
+    log_cli_exception,
+    was_cli_exception_logged,
+)
+
+configure_cli_logging()
 
 # Map command names to their module:attribute for lazy import
 _COMMANDS = {
@@ -49,6 +56,7 @@ class LazyGroup(click.MultiCommand):
         return list(_COMMANDS.keys()) + list(_BUILTIN_COMMANDS)
 
     def get_command(self, ctx, name):
+        configure_cli_logging()
         # Handle built-in commands
         if name == "version":
             return version
@@ -59,6 +67,16 @@ class LazyGroup(click.MultiCommand):
         module_path, attr = target.split(":", 1)
         mod = importlib.import_module(module_path)
         return getattr(mod, attr)
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except (click.ClickException, click.Abort, SystemExit):
+            raise
+        except Exception as exc:
+            if not was_cli_exception_logged(exc):
+                log_cli_exception(__name__, "CLI command failed", exc)
+            raise
 
 
 @click.command(cls=LazyGroup)

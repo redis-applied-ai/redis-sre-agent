@@ -11,6 +11,7 @@ from typing import Optional
 import click
 
 from redis_sre_agent.agent.runbook_generator import RunbookGenerator
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ def generate(
                 return 1
 
         except Exception as e:
+            log_cli_exception(__name__, "runbook CLI command failed", e)
             click.echo(f"❌ Error generating runbook: {e}")
             logger.exception("Runbook generation failed")
             return 1
@@ -218,6 +220,7 @@ def evaluate(input_dir: str, output_file: Optional[str]):
                 )
 
             except Exception as e:
+                log_cli_exception(__name__, "runbook CLI command failed", e)
                 click.echo(f"   ❌ Failed to evaluate {md_file.name}: {e}")
 
         # Summary

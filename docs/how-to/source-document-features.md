@@ -19,6 +19,7 @@ name: example-skill
 summary: Short summary shown in skills TOC.
 priority: high
 pinned: true
+url: https://example.com/docs/example-document
 version: latest
 product_labels: redis-enterprise,redis-cloud
 ---
@@ -33,6 +34,7 @@ Supported common fields:
 - `summary`: short summary used in listings/TOC
 - `priority`: `high`, `normal`, `low`
 - `pinned`: whether to inject into startup context
+- `url`: canonical external URL to publish as `source_url` during ingestion
 - `version`: version tag for retrieval filtering
 - `product_labels`: comma-separated product labels
 

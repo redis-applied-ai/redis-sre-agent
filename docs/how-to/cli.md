@@ -56,6 +56,42 @@ uv run redis-sre-agent instance test <id>
   ```
   - For diagnostic prompts, cluster-scoped queries are auto-upgraded to triage.
 
+#### Natural-language target discovery
+When target-discovery integrations are configured, you can ask for a target in natural language
+instead of supplying `-r` or `-c` up front.
+
+```bash
+uv run redis-sre-agent query \
+  "Check whether the production checkout cache is under memory pressure"
+```
+
+If the reference is ambiguous, the agent should ask for clarification instead of making live
+claims. Continue the same thread with the narrower identifier:
+
+```bash
+uv run redis-sre-agent query -t <thread_id> \
+  "Use the prod checkout cache in us-east-1"
+```
+
+#### Multi-target comparison
+When the prompt clearly asks for a comparison, the agent can keep more than one discovered target
+in scope and compare them in one conversation.
+
+```bash
+uv run redis-sre-agent query \
+  "Compare checkout cache and session cache for memory pressure and evictions"
+```
+
+You can continue the thread to narrow or reshape the comparison set:
+
+```bash
+uv run redis-sre-agent query -t <thread_id> \
+  "Keep only the production caches and summarize which one needs attention first"
+```
+
+These discovery-first flows depend on your configured target catalog and bindings. If discovery is
+not configured, use explicit `-r <instance_id>` or `-c <cluster_id>` flags instead.
+
 ### 4) Prepare knowledge for better answers (ingest a batch)
 Load docs so the agent can cite internal knowledge.
 ```bash
@@ -198,6 +234,15 @@ uv run redis-sre-agent thread get <thread_id>
 uv run redis-sre-agent thread trace <message_id_or_decision_trace_id>
 uv run redis-sre-agent thread sources <thread_id>
 ```
+
+#### Approval-driven tasks
+Some write actions can pause a task in `awaiting_approval`. The current CLI lets you inspect the
+task or thread state, but approval history and resume actions are not exposed as CLI commands.
+
+- `task get <task_id>` shows the latest status and can include `pending_approval`.
+- `thread get <thread_id>` can also surface `task_id`, `pending_approval`, and `resume_supported`.
+- Use the HTTP API or the web UI triage page to list approval records and submit `approved` or
+  `rejected` decisions.
 
 #### Citations in thread history
 Use these commands together when you want citation-level provenance for an answer:

@@ -1,5 +1,7 @@
 """Tests for the `instance` CLI command group."""
 
+import logging
+import os
 from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
@@ -50,6 +52,43 @@ def test_instances_list_json_with_item():
     assert result.exit_code == 0
     assert "redis-dev-123" in result.output
     assert "dev-cache" in result.output
+
+
+def test_instances_create_logs_exception_trace_when_debug_enabled(caplog):
+    runner = CliRunner()
+
+    with (
+        patch.dict(os.environ, {"LOG_LEVEL": "DEBUG"}, clear=False),
+        patch.object(
+            core_instances,
+            "get_instances",
+            new=AsyncMock(side_effect=RuntimeError("Connection failed")),
+        ),
+        caplog.at_level(logging.DEBUG),
+    ):
+        result = runner.invoke(
+            instance,
+            [
+                "create",
+                "--name",
+                "dev-cache",
+                "--connection-url",
+                "redis://localhost:6380/0",
+                "--environment",
+                "development",
+                "--usage",
+                "cache",
+                "--description",
+                "Dev cache",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "❌ Error: Connection failed" in result.output
+    assert any(
+        record.getMessage() == "instance CLI command failed" and record.exc_info
+        for record in caplog.records
+    )
 
 
 def test_instance_update_set_extension_data():
