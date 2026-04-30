@@ -1,6 +1,7 @@
 """Unit tests for SRE LangGraph Agent."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -117,6 +118,33 @@ class TestSRELangGraphAgent:
             assert history[0]["content"] == "Hello"
             assert history[1]["role"] == "assistant"
             assert history[1]["content"] == "Hi there!"
+
+    @pytest.mark.asyncio
+    async def test_get_conversation_history_uses_resolved_checkpoint_thread_id(
+        self, mock_settings, mock_llm
+    ):
+        """History lookup should follow the persisted checkpoint thread id."""
+        with (
+            patch.object(SRELangGraphAgent, "__init__", lambda self: None),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.resolve_checkpoint_lookup_thread_id",
+                new=AsyncMock(return_value="task-123"),
+            ),
+        ):
+            agent = SRELangGraphAgent()
+
+            mock_state = MagicMock()
+            mock_state.values = {"messages": []}
+
+            mock_app = AsyncMock()
+            mock_app.aget_state = AsyncMock(return_value=mock_state)
+            agent.app = mock_app
+
+            await agent.get_conversation_history("thread-abc")
+
+            mock_app.aget_state.assert_awaited_once()
+            _, kwargs = mock_app.aget_state.await_args
+            assert kwargs["config"]["configurable"]["thread_id"] == "task-123"
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
@@ -326,6 +354,174 @@ class TestSRELangGraphAgent:
             mock_prepare_memory.await_args.kwargs["context"]["turn_scope"]["session_id"]
             == "session-123"
         )
+
+    @pytest.mark.asyncio
+    async def test_process_query_uses_redis_checkpointing_and_persists_metadata(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        captured: dict[str, object] = {}
+        fake_checkpointer = MagicMock()
+
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
+            yield fake_checkpointer
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["config"] = config
+                return {
+                    "messages": [AIMessage(content="done")],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                captured["checkpointer"] = checkpointer
+                return _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context",
+                AsyncMock(return_value=""),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.persist_checkpoint_metadata",
+                AsyncMock(),
+            ) as mock_persist_checkpoint_metadata,
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            response = await agent._process_query(
+                query="basic question",
+                session_id="session-1",
+                user_id="user-1",
+                context={"task_id": "task-123"},
+            )
+
+        assert response.response == "done"
+        assert captured["checkpointer"] is fake_checkpointer
+        assert captured["config"]["configurable"]["thread_id"] == "task-123"
+        assert captured["config"]["configurable"]["checkpoint_ns"] == "agent_turn"
+        assert mock_persist_checkpoint_metadata.await_args.kwargs["task_id"] == "task-123"
+        assert mock_persist_checkpoint_metadata.await_args.kwargs["graph_thread_id"] == "task-123"
+        assert (
+            mock_persist_checkpoint_metadata.await_args.kwargs["checkpointer"] is fake_checkpointer
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_conversation_history_reopens_redis_checkpoint_state(
+        self, mock_settings, mock_llm
+    ):
+        with patch.object(SRELangGraphAgent, "__init__", lambda self: None):
+            agent = SRELangGraphAgent()
+            agent.settings = MagicMock(recursion_limit=25)
+
+            captured: dict[str, object] = {}
+            fake_checkpointer = MagicMock()
+            fake_state = MagicMock(
+                values={
+                    "messages": [
+                        HumanMessage(content="Hello"),
+                        AIMessage(content="Hi there!"),
+                    ]
+                }
+            )
+
+            @asynccontextmanager
+            async def fake_open_graph_checkpointer(**_kwargs):
+                yield fake_checkpointer
+
+            class _FakeApp:
+                async def aget_state(self, config=None):
+                    captured["config"] = config
+                    return fake_state
+
+            class _FakeWorkflow:
+                def compile(self, checkpointer=None):
+                    captured["checkpointer"] = checkpointer
+                    return _FakeApp()
+
+            agent.workflow = _FakeWorkflow()
+
+            with patch(
+                "redis_sre_agent.agent.langgraph_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ):
+                history = await agent.get_conversation_history("test-session")
+
+            assert len(history) == 2
+            assert captured["checkpointer"] is fake_checkpointer
+            assert captured["config"]["configurable"]["thread_id"] == "test-session"
+            assert captured["config"]["configurable"]["checkpoint_ns"] == "agent_turn"
+
+    @pytest.mark.asyncio
+    async def test_resume_query_returns_error_response_on_runtime_failure(
+        self, mock_settings, mock_llm
+    ):
+        agent = SRELangGraphAgent()
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+        fake_checkpointer = MagicMock()
+
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
+            yield fake_checkpointer
+
+        class _FakeApp:
+            async def ainvoke(self, *_args, **_kwargs):
+                raise RuntimeError("resume failed")
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            response = await agent.resume_query(
+                session_id="session-1",
+                user_id="user-1",
+                context={"task_id": "task-123"},
+                resume_payload={"decision": "approved"},
+            )
+
+        assert response.response == "Error resuming query: resume failed"
 
     @pytest.mark.asyncio
     async def test_process_query_constructs_turn_scope_once(self, mock_settings, mock_llm):

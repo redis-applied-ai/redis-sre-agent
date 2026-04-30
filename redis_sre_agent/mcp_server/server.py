@@ -12,6 +12,7 @@ This allows Claude to connect to an already-running agent via:
 import logging
 from typing import Any, Dict, List, Optional
 
+from docket import Docket
 from mcp.server.fastmcp import FastMCP
 from ulid import ULID
 
@@ -2290,6 +2291,8 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
             "updated_at": metadata.get("updated_at"),
             "updates": task.get("updates", []),
             "result": task.get("result"),
+            "pending_approval": task.get("pending_approval"),
+            "resume_supported": task.get("resume_supported", False),
             "error_message": task.get("error_message"),
         }
 
@@ -2301,6 +2304,129 @@ async def redis_sre_get_task_status(task_id: str) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Get task status failed: {e}")
+        return {
+            "error": str(e),
+            "task_id": task_id,
+        }
+
+
+@mcp.tool()
+async def redis_sre_get_task_approvals(task_id: str) -> Dict[str, Any]:
+    """Get approval history for a task.
+
+    Args:
+        task_id: Task identifier.
+
+    Returns:
+        task_id: Requested task id
+        approvals: Approval history in newest-first order
+    """
+    from redis_sre_agent.core.approvals import ApprovalManager
+    from redis_sre_agent.core.tasks import get_task_by_id
+
+    logger.info(f"MCP get_task_approvals: {task_id}")
+
+    try:
+        await get_task_by_id(task_id=task_id)
+        approvals = await ApprovalManager().list_task_approvals(task_id)
+        return {
+            "task_id": task_id,
+            "approvals": [approval.model_dump(mode="json") for approval in approvals],
+        }
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "task_id": task_id,
+            "status": "not_found",
+            "approvals": [],
+        }
+    except Exception as e:
+        logger.error(f"Get task approvals failed: {e}")
+        return {
+            "error": str(e),
+            "task_id": task_id,
+            "approvals": [],
+        }
+
+
+@mcp.tool()
+async def redis_sre_resume_task(
+    task_id: str,
+    approval_id: str,
+    decision: str,
+    decision_by: Optional[str] = None,
+    decision_comment: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record a human decision and resume a paused task.
+
+    Args:
+        task_id: Task identifier
+        approval_id: Approval identifier to resolve
+        decision: approved or rejected
+        decision_by: Optional reviewer identity
+        decision_comment: Optional reviewer comment
+
+    Returns:
+        task_id: Requested task id
+        status: Latest task status after resume attempt
+        result: Latest task result payload when available
+        pending_approval: Next pending approval if the task paused again
+    """
+    from redis_sre_agent.core.docket_tasks import (
+        get_redis_url,
+        resume_task_after_approval,
+        validate_task_resume_request,
+    )
+    from redis_sre_agent.core.tasks import get_task_by_id
+
+    logger.info(f"MCP resume_task: {task_id} approval={approval_id} decision={decision}")
+
+    try:
+        task = await get_task_by_id(task_id=task_id)
+        if task is None:
+            raise ValueError(f"Task {task_id} not found")
+        if task.get("status") == "awaiting_approval":
+            await validate_task_resume_request(
+                task_id=task_id,
+                approval_id=approval_id,
+                decision=decision,
+                decision_by=decision_by,
+                decision_comment=decision_comment,
+            )
+            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+                task_func = docket.add(resume_task_after_approval, key=task_id)
+                await task_func(
+                    task_id=task_id,
+                    approval_id=approval_id,
+                    decision=decision,
+                    decision_by=decision_by,
+                    decision_comment=decision_comment,
+                )
+        task = await get_task_by_id(task_id=task_id)
+        if task is None:
+            raise ValueError(f"Task {task_id} not found")
+        metadata = task.get("metadata", {}) or {}
+        return {
+            "task_id": task_id,
+            "thread_id": task.get("thread_id"),
+            "status": task.get("status"),
+            "subject": metadata.get("subject"),
+            "created_at": metadata.get("created_at"),
+            "updated_at": metadata.get("updated_at"),
+            "updates": task.get("updates", []),
+            "result": task.get("result"),
+            "pending_approval": task.get("pending_approval"),
+            "resume_supported": task.get("resume_supported", False),
+            "error_message": task.get("error_message"),
+        }
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "task_id": task_id,
+            "status": "invalid_request",
+        }
+    except Exception as e:
+        logger.error(f"Resume task failed: {e}")
         return {
             "error": str(e),
             "task_id": task_id,

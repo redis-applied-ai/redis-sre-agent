@@ -1,5 +1,6 @@
 """Unit tests for the lightweight Chat Agent."""
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -240,6 +241,14 @@ class TestChatAgentSystemPrompt:
     def test_system_prompt_mentions_tools(self):
         """Test that the system prompt mentions tool usage."""
         assert "tool" in CHAT_SYSTEM_PROMPT.lower()
+
+    def test_system_prompt_guides_target_discovery_inventory_and_comparison(self):
+        """Test that the prompt guides listing, resolution, and multi-target comparisons."""
+        prompt_lower = CHAT_SYSTEM_PROMPT.lower()
+        assert "list_known_redis_targets" in CHAT_SYSTEM_PROMPT
+        assert "resolve_redis_targets" in CHAT_SYSTEM_PROMPT
+        assert "allow_multiple=true" in CHAT_SYSTEM_PROMPT
+        assert "what redis targets you know about" in prompt_lower
 
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
@@ -963,6 +972,101 @@ class TestChatAgentStartupContext:
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_uses_redis_checkpointing_and_persists_metadata(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="session-1",
+            user_id="user-1",
+            query="Who runs AOP?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        captured: dict[str, object] = {}
+        fake_checkpointer = MagicMock()
+
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
+            yield fake_checkpointer
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                captured["config"] = config
+                return {
+                    "messages": [AIMessage(content="final answer")],
+                    "signals_envelopes": [],
+                }
+
+        fake_workflow = MagicMock()
+        fake_workflow.compile.side_effect = lambda checkpointer=None: (
+            captured.update({"checkpointer": checkpointer}) or _FakeApp()
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.persist_checkpoint_metadata",
+                AsyncMock(),
+            ) as mock_persist_checkpoint_metadata,
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Who runs AOP?",
+                session_id="session-1",
+                user_id="user-1",
+                context={"task_id": "task-123"},
+            )
+
+        assert response.response == "final answer"
+        assert captured["checkpointer"] is fake_checkpointer
+        assert captured["config"]["configurable"]["thread_id"] == "task-123"
+        assert captured["config"]["configurable"]["checkpoint_ns"] == "agent_turn"
+        assert mock_persist_checkpoint_metadata.await_args.kwargs["task_id"] == "task-123"
+        assert mock_persist_checkpoint_metadata.await_args.kwargs["graph_thread_id"] == "task-123"
+        assert (
+            mock_persist_checkpoint_metadata.await_args.kwargs["checkpointer"] is fake_checkpointer
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
     async def test_process_query_includes_memory_prompt_and_repo_url_for_instance_scope(
         self, mock_create_mini_llm, mock_create_llm
     ):
@@ -1109,6 +1213,209 @@ class TestChatAgentStartupContext:
 
         assert response.response == "I couldn't process that query. Please try rephrasing."
         prepared_memory.persist_response_fail_open.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_surfaces_blank_exception_types(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="test-session",
+            user_id=None,
+            query="Who runs AOP?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+        fake_checkpointer = MagicMock()
+
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
+            yield fake_checkpointer
+
+        class _FailingApp:
+            async def ainvoke(self, *_args, **_kwargs):
+                raise NotImplementedError
+
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = _FailingApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Who runs AOP?",
+                session_id="test-session",
+                user_id=None,
+            )
+
+        assert response.response == "Error processing query: NotImplementedError"
+        prepared_memory.persist_response_fail_open.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_resume_query_surfaces_blank_exception_types(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+        fake_checkpointer = MagicMock()
+
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
+            yield fake_checkpointer
+
+        class _FailingApp:
+            async def ainvoke(self, *_args, **_kwargs):
+                raise NotImplementedError
+
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = _FailingApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.resume_query(
+                session_id="session-1",
+                user_id="user-1",
+                context={"task_id": "task-123"},
+                resume_payload={"decision": "approved"},
+            )
+
+        assert response.response == "Error resuming query: NotImplementedError"
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_resume_query_persists_resumed_response_to_memory(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="session-1",
+            user_id="user-1",
+            query="Approve the write",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+        fake_checkpointer = MagicMock()
+
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
+            yield fake_checkpointer
+
+        class _FakeApp:
+            async def ainvoke(self, *_args, **_kwargs):
+                return {"messages": [AIMessage(content="resumed")], "signals_envelopes": []}
+
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ) as mock_prepare_memory,
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.persist_checkpoint_metadata",
+                new=AsyncMock(),
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.resume_query(
+                session_id="session-1",
+                user_id="user-1",
+                context={"task_id": "task-123", "query": "Approve the write"},
+                resume_payload={"decision": "approved"},
+            )
+
+        assert response.response == "resumed"
+        mock_prepare_memory.assert_awaited_once()
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with("resumed")
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
@@ -1880,14 +2187,17 @@ class TestChatAgentStartupContext:
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
     @patch("redis_sre_agent.agent.chat_agent.build_startup_knowledge_context")
-    @patch("redis_sre_agent.agent.chat_agent.LGToolNode")
+    @patch(
+        "redis_sre_agent.agent.chat_agent.execute_tool_calls_with_gate",
+        new_callable=AsyncMock,
+    )
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
     async def test_tool_node_uses_agent_generation_when_toolset_changes_mid_turn(
         self,
         mock_create_mini_llm,
         mock_create_llm,
-        mock_tool_node_class,
+        mock_execute_tool_calls,
         mock_build_startup_context,
         mock_build_adapters,
     ):
@@ -1903,14 +2213,9 @@ class TestChatAgentStartupContext:
         mock_create_mini_llm.return_value = mock_llm
         mock_build_startup_context.return_value = "CTX"
         mock_build_adapters.return_value = []
-
-        cached_tool_node = MagicMock()
-        cached_tool_node.ainvoke = AsyncMock(
-            return_value={
-                "messages": [ToolMessage(content="ok", tool_call_id="call-1", name="demo")]
-            }
-        )
-        mock_tool_node_class.return_value = cached_tool_node
+        mock_execute_tool_calls.return_value = [
+            ToolMessage(content="ok", tool_call_id="call-1", name="demo")
+        ]
 
         agent = ChatAgent()
         mock_tool_mgr = MagicMock()
@@ -1934,6 +2239,12 @@ class TestChatAgentStartupContext:
         tool_state = await compiled.nodes["tools"].ainvoke(agent_state)
 
         assert agent_state["toolset_generation"] == 1
-        cached_tool_node.ainvoke.assert_awaited_once()
-        assert mock_tool_node_class.call_count == 1
+        mock_execute_tool_calls.assert_awaited_once()
+        assert mock_execute_tool_calls.await_args.kwargs["tool_manager"] is mock_tool_mgr
+        assert mock_execute_tool_calls.await_args.kwargs["tool_calls"] == [
+            {"id": "call-1", "name": "demo", "args": {}, "type": "tool_call"}
+        ]
+        local_tools = mock_execute_tool_calls.await_args.kwargs["local_tools"]
+        assert list(local_tools.keys()) == ["expand_evidence"]
+        assert callable(local_tools["expand_evidence"])
         assert tool_state["toolset_generation"] == 1

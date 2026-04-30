@@ -1,0 +1,9 @@
+source_kind: mixed
+source_pack: retrieval-curated
+source_pack_version: 2026-04-14
+derived_from:
+  - synthetic-retrieval-matrix-2026-04-14
+review_status: reviewed
+reviewed_by: sre-evals
+exemplar_sources:
+  - human-reviewed-retrieval-baseline-v1

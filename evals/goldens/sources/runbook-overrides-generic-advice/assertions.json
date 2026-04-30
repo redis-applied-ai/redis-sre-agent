@@ -1,0 +1,15 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "use the runbook and evidence steps before configuration changes",
+    "explain why generic tuning advice should wait"
+  ],
+  "forbidden_claims": [
+    "change maxmemory-policy immediately"
+  ],
+  "required_sources": [
+    "runbook-overrides-generic-advice",
+    "memory-pressure-runbook"
+  ]
+}

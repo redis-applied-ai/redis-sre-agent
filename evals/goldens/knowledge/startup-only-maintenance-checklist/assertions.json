@@ -1,0 +1,14 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "check maintenance mode before deeper failover triage"
+  ],
+  "forbidden_claims": [
+    "maintenance mode is already enabled"
+  ],
+  "required_sources": [
+    "maintenance-mode-overview",
+    "redis-enterprise-maintenance-checklist"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "section": "stats",
+  "instantaneous_ops_per_sec": 23874,
+  "instantaneous_input_kbps": 9821.4,
+  "instantaneous_output_kbps": 14422.7,
+  "keyspace_hits": 9812301,
+  "keyspace_misses": 413201,
+  "expired_keys": 928442,
+  "evicted_keys": 18421,
+  "latest_fork_usec": 0
+}

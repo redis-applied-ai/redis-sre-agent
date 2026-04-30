@@ -1,0 +1,9 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [],
+  "forbidden_claims": [],
+  "required_sources": [
+    "memory-policy-latest"
+  ]
+}

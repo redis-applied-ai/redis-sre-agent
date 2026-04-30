@@ -1,0 +1,18 @@
+{
+  "status": "success",
+  "section": "replication",
+  "data": {
+    "role": "master",
+    "connected_slaves": 2,
+    "slave0": {
+      "ip": "10.0.1.11",
+      "state": "online",
+      "lag": 0
+    },
+    "slave1": {
+      "ip": "10.0.1.12",
+      "state": "online",
+      "lag": 1
+    }
+  }
+}

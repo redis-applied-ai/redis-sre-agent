@@ -1,0 +1,12 @@
+scenario_id: prompt/target-discovery-instance-evictions
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - Prefer a discovery-first flow instead of generic live-access disclaimers.
+  - After discovery, use attached Redis diagnostics to confirm whether evictions are occurring.

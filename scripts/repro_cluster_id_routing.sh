@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/.ai/out/cluster_id_routing}"
+OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/tmp/cluster_id_routing}"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$OUT_ROOT/$RUN_ID"
 

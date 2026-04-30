@@ -1,0 +1,7 @@
+{
+  "cluster_name": "checkout-global",
+  "cluster_state": "active",
+  "maintenance_mode": false,
+  "node_health": "ok",
+  "failover_state": "stable"
+}

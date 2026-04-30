@@ -123,6 +123,31 @@ class RedisKeys:
         return f"sre:task:{task_id}:metadata"
 
     @staticmethod
+    def task_approvals(task_id: str) -> str:
+        """Sorted set of approval_ids for a task (score=requested timestamp)."""
+        return f"sre:task:{task_id}:approvals"
+
+    @staticmethod
+    def task_resume_state(task_id: str) -> str:
+        """Key for persisted graph resume state for a task."""
+        return f"sre:task:{task_id}:resume_state"
+
+    @staticmethod
+    def approval(approval_id: str) -> str:
+        """Key for a serialized approval record."""
+        return f"sre:approval:{approval_id}"
+
+    @staticmethod
+    def approvals_pending() -> str:
+        """Sorted set of pending approval_ids (score=requested timestamp)."""
+        return "sre:approvals:pending"
+
+    @staticmethod
+    def approval_execution(approval_id: str, action_hash: str) -> str:
+        """Key for the execution ledger entry of an approved action."""
+        return f"sre:approval_execution:{approval_id}:{action_hash}"
+
+    @staticmethod
     def message_decision_trace(message_id: str) -> str:
         """Key for message decision trace (tool calls for a specific message).
 

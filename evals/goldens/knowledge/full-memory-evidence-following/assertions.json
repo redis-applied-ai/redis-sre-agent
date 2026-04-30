@@ -1,0 +1,14 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "use INFO evidence before changing memory policy"
+  ],
+  "forbidden_claims": [
+    "set maxmemory-policy immediately"
+  ],
+  "required_sources": [
+    "memory-pressure-runbook",
+    "evidence-first-triage"
+  ]
+}

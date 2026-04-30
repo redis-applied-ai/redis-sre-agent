@@ -1,0 +1,48 @@
+id: knowledge/full-memory-evidence-following
+name: Full knowledge mode combines pinned runbook and retrieval skill
+description: Full mode should combine pinned memory guidance with the evidence-first retrieval skill.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - memory-pressure-runbook
+    - evidence-first-triage
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/knowledge/full-memory-evidence-following/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: The orders cache is evicting keys. What evidence should guide the next step before any config changes?
+  max_tool_steps: 4
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../../corpora/redis-docs-curated/2026-04-01/documents/memory-pressure-runbook.md
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01/skills/evidence-first-triage.md
+
+expectations:
+  required_findings:
+    - use INFO evidence before changing memory policy
+  forbidden_claims:
+    - set maxmemory-policy immediately
+  required_sources:
+    - memory-pressure-runbook
+    - evidence-first-triage

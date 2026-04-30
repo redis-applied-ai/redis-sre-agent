@@ -28,6 +28,9 @@ on:
       - "ui/**"
       - "ui/.dockerignore"
 
+permissions:
+  contents: read
+
 jobs:
   backend-image:
     name: Build backend image

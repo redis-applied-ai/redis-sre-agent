@@ -19,6 +19,8 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
+from redis_sre_agent.core.runtime_overrides import get_active_mcp_servers
+
 if TYPE_CHECKING:
     from redis_sre_agent.core.config import MCPServerConfig
 
@@ -82,13 +84,14 @@ class MCPConnectionPool:
             logger.warning("MCPConnectionPool already started")
             return {name: True for name in self._connections}
 
-        if not settings.mcp_servers:
+        mcp_servers = get_active_mcp_servers(settings.mcp_servers)
+        if not mcp_servers:
             logger.info("No MCP servers configured - pool is empty")
             self._started = True
             return {}
 
         results: Dict[str, bool] = {}
-        for server_name, server_config in settings.mcp_servers.items():
+        for server_name, server_config in mcp_servers.items():
             if isinstance(server_config, dict):
                 server_config = MCPServerConfig.model_validate(server_config)
             self._configs[server_name] = server_config

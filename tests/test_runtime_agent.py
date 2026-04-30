@@ -7,9 +7,13 @@ import os
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
+from unittest.mock import AsyncMock
 
 import pytest
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Interrupt
 
 
 def _load_module():
@@ -76,6 +80,8 @@ async def test_runtime_sre_agent_dispatches_mcp_tools(monkeypatch: pytest.Monkey
     async def _fake_tool(*, query: str) -> dict[str, Any]:
         return {"query": query, "hits": 1}
 
+    refreshed: list[bool] = []
+    monkeypatch.setattr(module, "_refresh_runtime_agent_surface", lambda: refreshed.append(True))
     monkeypatch.setattr(
         module,
         "_load_mcp_tool_registry",
@@ -96,6 +102,71 @@ async def test_runtime_sre_agent_dispatches_mcp_tools(monkeypatch: pytest.Monkey
         "tool": "redis_sre_knowledge_search",
         "result": {"query": "memory pressure", "hits": 1},
     }
+    assert refreshed == [True]
+
+
+@pytest.mark.asyncio
+async def test_runtime_chat_handler_accepts_raw_task_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    emitter = _FakeTaskEmitter()
+    payload = {"tool": "redis_sre_resume_task", "arguments": {"task_id": "task_72"}}
+    captured: dict[str, Any] = {}
+
+    async def _fake_runtime_sre_agent(task_input: Mapping[str, Any], seen_emitter: Any) -> dict[str, Any]:
+        captured["task_input"] = dict(task_input)
+        captured["emitter"] = seen_emitter
+        return {"ok": True}
+
+    monkeypatch.setattr(module, "runtime_sre_agent", _fake_runtime_sre_agent)
+
+    result = await module._runtime_chat_handler(payload)
+
+    assert result == {"ok": True}
+    assert captured["task_input"] == payload
+    assert isinstance(captured["emitter"], module._NoopTaskEmitter)
+    await captured["emitter"].emit_async("ignored")
+    await captured["emitter"].emit_tool_call_async(
+        "ignored",
+        call_id="call-1",
+        status="completed",
+    )
+    assert emitter.messages == []
+    assert emitter.tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_chat_handler_adapts_structured_runtime_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    emitter = _FakeTaskEmitter()
+    captured: dict[str, Any] = {}
+
+    async def _fake_runtime_sre_agent(task_input: Mapping[str, Any], seen_emitter: Any) -> dict[str, Any]:
+        captured["task_input"] = dict(task_input)
+        captured["emitter"] = seen_emitter
+        return {"ok": True}
+
+    monkeypatch.setattr(module, "runtime_sre_agent", _fake_runtime_sre_agent)
+
+    ctx = SimpleNamespace(
+        context={"contextId": "stale", "foo": "bar"},
+        message={"role": "user", "parts": [{"type": "text", "text": "resume"}]},
+        session_id="task_72",
+        emitter=emitter,
+    )
+
+    result = await module._runtime_chat_handler(ctx)
+
+    assert result == {"ok": True}
+    assert captured["task_input"] == {
+        "contextId": "task_72",
+        "foo": "bar",
+        "message": {"role": "user", "parts": [{"type": "text", "text": "resume"}]},
+    }
+    assert captured["emitter"] is emitter
 
 
 def test_runtime_sre_agent_builds_execution_contract_metadata(
@@ -211,6 +282,16 @@ def test_build_mcp_capabilities_includes_configured_external_mcp_tools(
         "nativeResultKind": "final_result",
         "runtimeResultKind": "final_result",
     }
+
+
+def test_runtime_agent_exposes_registered_mcp_tool_parameters() -> None:
+    module = _load_module()
+
+    tools = {tool.definition.name: tool for tool in module.agent.mcp_tools}
+    schema = tools["redis_sre_get_task_approvals"].definition.parameters
+
+    assert schema["properties"]["task_id"]["type"] == "string"
+    assert schema["required"] == ["task_id"]
 
 
 @pytest.mark.asyncio
@@ -579,6 +660,56 @@ def test_bootstrap_runtime_environment_sets_config_and_target_redis(
     assert os.environ["REDIS_URL"] == "redis://target/0"
 
 
+def test_bootstrap_runtime_environment_refreshes_imported_config_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    runtime_config = tmp_path / "config.runtime.yaml"
+    runtime_config.write_text("{}", encoding="utf-8")
+    monkeypatch.delenv("SRE_AGENT_CONFIG", raising=False)
+    monkeypatch.setattr(module, "_runtime_config_path", lambda: runtime_config)
+
+    created_settings: list[object] = []
+
+    class _Settings:
+        def __call__(self) -> object:
+            instance = object()
+            created_settings.append(instance)
+            return instance
+
+    fake_config_module = types.SimpleNamespace(Settings=_Settings(), settings="stale-settings")
+    monkeypatch.setitem(sys.modules, "redis_sre_agent.core.config", fake_config_module)
+
+    module._bootstrap_runtime_environment()
+
+    assert os.environ["SRE_AGENT_CONFIG"] == str(runtime_config)
+    assert fake_config_module.settings is created_settings[-1]
+
+
+def test_apply_context_secret_env_sets_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.delenv("RAR_RUNTIME_AFS_MCP_URL", raising=False)
+    monkeypatch.delenv("RAR_RUNTIME_AFS_MCP_TOKEN", raising=False)
+    monkeypatch.delenv("BLANK", raising=False)
+
+    module._apply_context_secret_env(
+        {
+            "secret_env": {
+                "RAR_RUNTIME_AFS_MCP_URL": "http://gateway.internal/mcp",
+                "RAR_RUNTIME_AFS_MCP_TOKEN": "secret-token",
+                "BLANK": "   ",
+            }
+        }
+    )
+
+    assert os.environ["RAR_RUNTIME_AFS_MCP_URL"] == "http://gateway.internal/mcp"
+    assert os.environ["RAR_RUNTIME_AFS_MCP_TOKEN"] == "secret-token"
+    assert "BLANK" not in os.environ
+
+
 @pytest.mark.asyncio
 async def test_ensure_runtime_redis_ready_handles_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -743,6 +874,7 @@ async def test_dispatch_chat_query_selects_requested_agents(
     module = _load_module()
     monkeypatch.setenv("RAK_APP_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("RAR_TASK_RUN_ID", "task-run-2")
+    captured_process_kwargs: list[dict[str, Any]] = []
 
     class _AgentResponse:
         def __init__(self, label: str) -> None:
@@ -756,6 +888,7 @@ async def test_dispatch_chat_query_selects_requested_agents(
 
         async def process_query(self, query: str, **kwargs: Any) -> _AgentResponse:
             assert query == "hello"
+            captured_process_kwargs.append(dict(kwargs))
             return _AgentResponse(self.label)
 
     captured_chat_args: list[tuple[Any, Any]] = []
@@ -807,8 +940,275 @@ async def test_dispatch_chat_query_selects_requested_agents(
 
     assert result["agent"] == expected_label
     assert result["reply"] == f"{expected_label}:reply"
+    assert captured_process_kwargs
+    assert captured_process_kwargs[0]["context"]["task_id"] == "task-run-2"
+    assert captured_process_kwargs[0]["context"]["thread_id"] == "ctx-explicit"
+    assert captured_process_kwargs[0]["context"]["session_id"] == "ctx-explicit"
     if requested_agent == "chat":
         assert captured_chat_args == [({"id": "instance"}, {"id": "cluster"})]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_chat_query_returns_auth_required_on_graph_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    emitter = _FakeTaskEmitter()
+    monkeypatch.setenv("RAK_APP_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("RAR_TASK_RUN_ID", "task-run-approval")
+
+    approval_payload = {
+        "kind": "approval_required",
+        "message": "Approval required before executing mcp_afs_gateway_deadbeef_file_write.",
+        "approval_id": "approval-1",
+        "interrupt_id": "interrupt-1",
+        "tool_name": "mcp_afs_gateway_deadbeef_file_write",
+        "tool_args_preview": {
+            "path": "/live-proof.txt",
+            "content": "proof",
+            "workspace": "ws-1",
+        },
+        "pending_approval": {
+            "approval_id": "approval-1",
+            "interrupt_id": "interrupt-1",
+            "tool_name": "mcp_afs_gateway_deadbeef_file_write",
+            "summary": "mcp_afs_gateway_deadbeef_file_write",
+            "requested_at": "2026-04-29T00:00:00+00:00",
+            "status": "pending",
+        },
+    }
+    persisted: list[dict[str, Any]] = []
+
+    async def _fake_resolve_agent_context(task_input: Mapping[str, Any]):
+        return {"user_id": "runtime-user"}, None, None
+
+    async def _fake_route(*_: Any, **__: Any):
+        return "chat"
+
+    async def _fake_emit(*_: Any, **__: Any) -> None:
+        return None
+
+    async def _fake_persist_pending_approval_state(**kwargs: Any) -> None:
+        persisted.append(dict(kwargs))
+
+    class _ApprovalAgent:
+        async def process_query(self, query: str, **kwargs: Any) -> Any:
+            assert query == "write the proof file"
+            raise GraphInterrupt((Interrupt(value=approval_payload, id="interrupt-1"),))
+
+    monkeypatch.setattr(module, "_resolve_agent_context", _fake_resolve_agent_context)
+    monkeypatch.setattr(module, "_emit_tool_envelopes", _fake_emit)
+    monkeypatch.setattr(
+        module,
+        "_persist_pending_approval_state",
+        _fake_persist_pending_approval_state,
+    )
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.agent.chat_agent",
+        get_chat_agent=lambda *_, **__: _ApprovalAgent(),
+    )
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.agent.knowledge_agent",
+        get_knowledge_agent=lambda: _ApprovalAgent(),
+    )
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.agent.langgraph_agent",
+        get_sre_agent=lambda: _ApprovalAgent(),
+    )
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.agent.router",
+        AgentType=type(
+            "AgentType",
+            (),
+            {"REDIS_TRIAGE": "triage", "REDIS_CHAT": "chat", "KNOWLEDGE_ONLY": "knowledge"},
+        ),
+        route_to_appropriate_agent=_fake_route,
+    )
+
+    result = await module._dispatch_chat_query(
+        {"message": "write the proof file", "contextId": "ctx-approval"},
+        emitter,
+    )
+
+    assert result["status"] == "auth-required"
+    assert result["approval_id"] == "approval-1"
+    assert result["interrupt_id"] == "interrupt-1"
+    assert result["tool_name"] == "mcp_afs_gateway_deadbeef_file_write"
+    assert result["pending_approval"] == approval_payload["pending_approval"]
+    assert result["reply"] == approval_payload["message"]
+    assert result["message"] == {
+        "role": "agent",
+        "parts": [{"text": approval_payload["message"]}],
+        "metadata": {
+            "x-redis-authz-v1": {
+                "kind": "tool-authorization",
+                "required_action": "decision",
+                "allowed_decisions": ["approved", "rejected"],
+                "approval_id": "approval-1",
+                "interrupt_id": "interrupt-1",
+                "tool_name": "mcp_afs_gateway_deadbeef_file_write",
+                "tool_args_preview": approval_payload["tool_args_preview"],
+                "resume_supported": True,
+                "resume_mode": "api-or-message",
+            }
+        },
+    }
+    assert result["metadata"] == result["message"]["metadata"]
+    assert persisted == [
+        {
+            "task_id": "task-run-approval",
+            "thread_id": "ctx-approval",
+            "approval_payload": approval_payload,
+            "agent_label": "chat",
+            "user_id": "runtime-user",
+            "thread_context": {
+                "user_id": "runtime-user",
+                "task_id": "task-run-approval",
+                "thread_id": "ctx-approval",
+                "session_id": "ctx-approval",
+            },
+        }
+    ]
+    assert emitter.tool_calls == [
+        {
+            "name": "mcp_afs_gateway_deadbeef_file_write",
+            "call_id": "interrupt-1",
+            "status": "approval_required",
+            "arguments": approval_payload["tool_args_preview"],
+            "output_summary": None,
+            "error_summary": approval_payload["message"],
+        }
+    ]
+    assert emitter.messages == [
+        {
+            "message": approval_payload["message"],
+            "update_type": "pending_approval",
+            "stage": None,
+            "metadata": {
+                "approval_id": "approval-1",
+                "interrupt_id": "interrupt-1",
+                "tool_name": "mcp_afs_gateway_deadbeef_file_write",
+                "pending_approval": approval_payload["pending_approval"],
+                "x-redis-authz-v1": result["metadata"]["x-redis-authz-v1"],
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persist_pending_approval_state_backfills_task_thread_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+
+    fake_redis = SimpleNamespace(hset=AsyncMock())
+    fake_thread_manager = SimpleNamespace(
+        get_thread=AsyncMock(return_value=None),
+        _save_thread_state=AsyncMock(),
+    )
+    fake_task_manager = SimpleNamespace(
+        _redis=fake_redis,
+        set_pending_approval=AsyncMock(),
+        set_resume_supported=AsyncMock(),
+        set_task_result=AsyncMock(),
+        update_task_status=AsyncMock(),
+        add_task_update=AsyncMock(),
+    )
+
+    class _PendingApprovalSummary:
+        def __init__(self, **kwargs: Any) -> None:
+            self._payload = dict(kwargs)
+
+        def model_dump(self, mode: str = "json") -> dict[str, Any]:
+            assert mode == "json"
+            return dict(self._payload)
+
+    fake_task_status = SimpleNamespace(AWAITING_APPROVAL="awaiting_approval")
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.core.keys",
+        types.SimpleNamespace(RedisKeys=types.SimpleNamespace(task_metadata=lambda task_id: f"meta:{task_id}")),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.core.redis",
+        types.SimpleNamespace(get_redis_client=lambda: object()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.core.approvals",
+        types.SimpleNamespace(PendingApprovalSummary=_PendingApprovalSummary),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.core.tasks",
+        types.SimpleNamespace(
+            TaskManager=lambda redis_client=None: fake_task_manager,
+            TaskStatus=fake_task_status,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "redis_sre_agent.core.threads",
+        types.SimpleNamespace(
+            ThreadManager=lambda redis_client=None: fake_thread_manager,
+            Thread=lambda **kwargs: SimpleNamespace(**kwargs),
+            ThreadMetadata=lambda **kwargs: SimpleNamespace(**kwargs),
+        ),
+    )
+
+    await module._persist_pending_approval_state(
+        task_id="task-run-approval",
+        thread_id="ctx-approval",
+        approval_payload={
+            "message": "Approval required",
+            "pending_approval": {
+                "approval_id": "approval-1",
+                "interrupt_id": "interrupt-1",
+                "tool_name": "mcp_afs_gateway_deadbeef_file_write",
+                "summary": "mcp_afs_gateway_deadbeef_file_write",
+                "requested_at": "2026-04-29T00:00:00+00:00",
+                "status": "pending",
+            },
+        },
+        agent_label="chat",
+    )
+
+    fake_redis.hset.assert_awaited_once_with(
+        "meta:task-run-approval",
+        mapping={"thread_id": "ctx-approval"},
+    )
+    fake_thread_manager.get_thread.assert_awaited_once_with("ctx-approval")
+    fake_thread_manager._save_thread_state.assert_awaited_once()
+    saved_thread = fake_thread_manager._save_thread_state.await_args.args[0]
+    assert saved_thread.thread_id == "ctx-approval"
+    assert saved_thread.context["task_id"] == "task-run-approval"
+    assert saved_thread.context["thread_id"] == "ctx-approval"
+    assert saved_thread.context["session_id"] == "ctx-approval"
+    assert saved_thread.metadata.user_id == module.DEFAULT_USER_ID
+    assert saved_thread.metadata.session_id == "ctx-approval"
+    fake_task_manager.set_pending_approval.assert_awaited_once()
+    fake_task_manager.set_resume_supported.assert_awaited_once_with("task-run-approval", True)
+    fake_task_manager.add_task_update.assert_awaited_once_with(
+        "task-run-approval",
+        "Approval required",
+        "pending_approval",
+        metadata={
+            "pending_approval": {
+                "approval_id": "approval-1",
+                "interrupt_id": "interrupt-1",
+                "tool_name": "mcp_afs_gateway_deadbeef_file_write",
+                "summary": "mcp_afs_gateway_deadbeef_file_write",
+                "requested_at": "2026-04-29T00:00:00+00:00",
+                "status": "pending",
+            }
+        },
+    )
 
 
 def test_load_configured_external_mcp_tools_maps_descriptions(
@@ -821,18 +1221,36 @@ def test_load_configured_external_mcp_tools_maps_descriptions(
             self.description = description
 
     class _ServerConfig:
-        def __init__(self, tools: dict[str, Any] | None = None) -> None:
+        def __init__(
+            self,
+            tools: dict[str, Any] | None = None,
+            *,
+            command: str | None = None,
+            url: str | None = None,
+        ) -> None:
             self.tools = tools or {}
+            self.command = command
+            self.url = url
 
         @classmethod
         def model_validate(cls, payload: dict[str, Any]) -> "_ServerConfig":
-            return cls(tools=payload.get("tools"))
+            return cls(
+                tools=payload.get("tools"),
+                command=payload.get("command"),
+                url=payload.get("url"),
+            )
 
     settings = types.SimpleNamespace(
         mcp_servers={
-            "re_analyzer": {"tools": {"analyzer_list_accounts": _ToolConfig()}},
-            "other": _ServerConfig(tools={"custom_tool": _ToolConfig("Custom description")}),
-            "empty": _ServerConfig(),
+            "re_analyzer": {
+                "command": "node",
+                "tools": {"analyzer_list_accounts": _ToolConfig()},
+            },
+            "other": _ServerConfig(
+                command="node",
+                tools={"custom_tool": _ToolConfig("Custom description")},
+            ),
+            "empty": _ServerConfig(command="node"),
         }
     )
     _set_fake_module(
@@ -853,6 +1271,67 @@ def test_load_configured_external_mcp_tools_maps_descriptions(
     }
 
 
+def test_load_configured_external_mcp_tools_keeps_url_servers_visible_before_env_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+
+    class _ToolConfig:
+        def __init__(self, description: str | None = None) -> None:
+            self.description = description
+
+    class _ServerConfig:
+        def __init__(
+            self,
+            *,
+            tools: dict[str, Any] | None = None,
+            url: str | None = None,
+            command: str | None = None,
+        ) -> None:
+            self.tools = tools or {}
+            self.url = url
+            self.command = command
+
+        @classmethod
+        def model_validate(cls, payload: dict[str, Any]) -> "_ServerConfig":
+            return cls(
+                tools=payload.get("tools"),
+                url=payload.get("url"),
+                command=payload.get("command"),
+            )
+
+    settings = types.SimpleNamespace(
+        mcp_servers={
+            "afs_gateway": {
+                "url": "${RAR_RUNTIME_AFS_MCP_URL}",
+                "tools": {"file_read": _ToolConfig("Read AFS content")},
+            },
+            "re_analyzer": {
+                "command": "node",
+                "tools": {"analyzer_list_accounts": _ToolConfig()},
+            },
+        }
+    )
+    _set_fake_module(
+        monkeypatch, "redis_sre_agent.core.config", MCPServerConfig=_ServerConfig, settings=settings
+    )
+
+    monkeypatch.delenv("RAR_RUNTIME_AFS_MCP_URL", raising=False)
+    tools = module._load_configured_external_mcp_tools()
+    assert tools["file_read"] == {
+        "server_name": "afs_gateway",
+        "description": "Read AFS content",
+    }
+    assert "analyzer_list_accounts" in tools
+
+    monkeypatch.setenv("RAR_RUNTIME_AFS_MCP_URL", "http://127.0.0.1:8092/mcp")
+    tools = module._load_configured_external_mcp_tools()
+    assert tools["file_read"] == {
+        "server_name": "afs_gateway",
+        "description": "Read AFS content",
+    }
+
+
 @pytest.mark.asyncio
 async def test_invoke_configured_external_mcp_tool_handles_errors_and_success(
     monkeypatch: pytest.MonkeyPatch,
@@ -863,12 +1342,24 @@ async def test_invoke_configured_external_mcp_tool_handles_errors_and_success(
         await module._invoke_configured_external_mcp_tool("missing", {})
 
     class _ServerConfig:
-        def __init__(self, tools: dict[str, Any] | None = None) -> None:
+        def __init__(
+            self,
+            tools: dict[str, Any] | None = None,
+            *,
+            command: str | None = None,
+            url: str | None = None,
+        ) -> None:
             self.tools = tools or {}
+            self.command = command
+            self.url = url
 
         @classmethod
         def model_validate(cls, payload: dict[str, Any]) -> "_ServerConfig":
-            return cls(tools=payload.get("tools"))
+            return cls(
+                tools=payload.get("tools"),
+                command=payload.get("command"),
+                url=payload.get("url"),
+            )
 
     settings = types.SimpleNamespace(mcp_servers={})
     _set_fake_module(
@@ -900,7 +1391,10 @@ async def test_invoke_configured_external_mcp_tool_handles_errors_and_success(
         async def _call_mcp_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return {"tool": tool_name, "arguments": arguments}
 
-    settings.mcp_servers["re_analyzer"] = {"tools": {"analyzer_list_accounts": object()}}
+    settings.mcp_servers["re_analyzer"] = {
+        "command": "node",
+        "tools": {"analyzer_list_accounts": object()},
+    }
     _set_fake_module(
         monkeypatch, "redis_sre_agent.tools.mcp.provider", MCPToolProvider=_FakeProvider
     )

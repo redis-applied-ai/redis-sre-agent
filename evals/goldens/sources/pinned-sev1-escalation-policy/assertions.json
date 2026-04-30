@@ -1,0 +1,15 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "escalate immediately",
+    "page the incident commander"
+  ],
+  "forbidden_claims": [
+    "wait until tomorrow",
+    "wait until business hours"
+  ],
+  "required_sources": [
+    "sev1-escalation-policy"
+  ]
+}

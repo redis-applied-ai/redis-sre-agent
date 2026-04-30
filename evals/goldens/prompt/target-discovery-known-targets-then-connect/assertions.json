@@ -1,0 +1,29 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "target_discovery",
+      "operation": "list_known_redis_targets"
+    },
+    {
+      "provider_family": "target_discovery",
+      "operation": "resolve_redis_targets"
+    },
+    {
+      "provider_family": "redis_enterprise_admin",
+      "operation": "list_databases",
+      "target_handle": "tgt_payments_east_cluster"
+    }
+  ],
+  "required_findings": [
+    "prod checkout cache",
+    "prod session cache",
+    "payments east enterprise cluster",
+    "payments-cache-prod",
+    "payments-ledger-prod"
+  ],
+  "required_sources": [
+    "live-system-boundary",
+    "target-discovery-before-live-access"
+  ],
+  "expected_routing_decision": "chat"
+}

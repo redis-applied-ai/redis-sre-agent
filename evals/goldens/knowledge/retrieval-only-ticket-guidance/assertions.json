@@ -1,0 +1,13 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "verify replica health before maintenance work"
+  ],
+  "forbidden_claims": [],
+  "required_sources": [
+    "maintenance-mode-guidance",
+    "redis-enterprise-maintenance-checklist",
+    "RET-5032"
+  ]
+}

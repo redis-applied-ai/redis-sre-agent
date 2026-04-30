@@ -17,7 +17,14 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
-from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
+from redis_sre_agent.core.runtime_overrides import get_active_mcp_runtime
+from redis_sre_agent.tools.models import (
+    Tool,
+    ToolActionKind,
+    ToolCapability,
+    ToolDefinition,
+    ToolMetadata,
+)
 from redis_sre_agent.tools.protocols import ToolProvider
 
 if TYPE_CHECKING:
@@ -79,6 +86,7 @@ class MCPToolProvider(ToolProvider):
         self._tool_cache: List[Tool] = []
         self._use_pool = use_pool
         self._using_pooled_connection = False
+        self._using_eval_runtime = False
 
     @property
     def provider_name(self) -> str:
@@ -100,6 +108,22 @@ class MCPToolProvider(ToolProvider):
         This method first tries to use a pooled connection if available.
         Falls back to creating a new connection if pool is empty or disabled.
         """
+        eval_runtime = get_active_mcp_runtime()
+        if eval_runtime is not None:
+            eval_session = eval_runtime.get_server_session(self._server_name)
+            if eval_session is not None:
+                self._session = eval_session
+                tools_result = await eval_session.list_tools()
+                self._mcp_tools = tools_result.tools
+                self._tool_cache = []
+                self._using_eval_runtime = True
+                logger.info(
+                    "Using eval fake MCP runtime for server '%s' (%s tools)",
+                    self._server_name,
+                    len(self._mcp_tools),
+                )
+                return
+
         # Try to use pooled connection first
         if self._use_pool:
             try:
@@ -220,6 +244,12 @@ class MCPToolProvider(ToolProvider):
             self._using_pooled_connection = False
             return
 
+        if self._using_eval_runtime:
+            logger.debug(f"Releasing eval fake MCP runtime session for '{self._server_name}'")
+            self._session = None
+            self._using_eval_runtime = False
+            return
+
         try:
             if self._exit_stack:
                 logger.info(f"Disconnecting from MCP server '{self._server_name}'")
@@ -278,6 +308,13 @@ class MCPToolProvider(ToolProvider):
                 return config.description.replace("{original}", mcp_description)
             return config.description
         return mcp_description
+
+    def _get_action_kind(self, tool_name: str) -> ToolActionKind:
+        """Get the approval action kind for a tool, with config override support."""
+        config = self._get_tool_config(tool_name)
+        if config and config.action_kind is not None:
+            return config.action_kind
+        return ToolActionKind.UNKNOWN
 
     def create_tool_schemas(self) -> List[ToolDefinition]:
         """Create tool schemas from the MCP server's tools.
@@ -343,6 +380,7 @@ class MCPToolProvider(ToolProvider):
                 capability=schema.capability,
                 provider_name=self.provider_name,
                 requires_instance=False,  # MCP tools typically don't require Redis instance
+                action_kind=self._get_action_kind(mcp_tool_name),
             )
 
             # Create the invoke closure that calls the MCP server

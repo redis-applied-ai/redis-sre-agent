@@ -114,6 +114,7 @@ RUN useradd --create-home --shell /bin/bash app && \
 # Copy the application and virtual environment from the builder stage with
 # correct ownership. This avoids an extra  chown -R layer over /app.
 COPY --from=builder --chown=app:app /app /app
+RUN chown app:app /app
 
 # Add the virtual environment and uv tools to PATH
 # This allows us to run "uvicorn" or "python" directly without "uv run"

@@ -1,0 +1,11 @@
+document_hash: RET-5032
+name: RET-5032
+title: Enterprise maintenance churn during node drain
+doc_type: support_ticket
+priority: high
+summary: Prior Redis Enterprise incident where maintenance mode explained failover churn.
+source: fixture://corpora/redis-docs-curated/2026-04-01/tickets/RET-5032.yaml
+content: |
+  During a planned maintenance window, one node was draining and not accepting
+  servers. Cluster-admin evidence showed maintenance posture, and replica health
+  checks were used before changing maintenance state.

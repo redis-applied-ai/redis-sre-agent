@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "id": 91,
+      "duration_usec": 18422,
+      "command": "ZRANGE checkout:sessions 0 2000 WITHSCORES"
+    },
+    {
+      "id": 92,
+      "duration_usec": 17311,
+      "command": "HGETALL checkout:session:9c1f"
+    }
+  ]
+}

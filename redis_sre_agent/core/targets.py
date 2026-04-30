@@ -103,6 +103,28 @@ def _format_public_metadata_text(public_metadata: Optional[dict[str, Any]]) -> s
     )
 
 
+def _build_metadata_backed_target_line(
+    *,
+    display_name: str,
+    handle: str,
+    target_kind: str,
+    capability_text: str,
+    metadata_text: str,
+) -> str:
+    """Render a target line when only binding metadata is available.
+
+    Eval bindings often carry enough public metadata to ground the model even
+    when there is no backing instance or cluster record in the runtime store.
+    In that case, prefer the metadata over a hard "state=missing" warning.
+    """
+
+    return (
+        "- "
+        f"{display_name} [handle={handle}, kind={target_kind}, "
+        f"capabilities={capability_text}, metadata={metadata_text}]"
+    )
+
+
 def build_single_attached_binding_prompt(binding: TargetBinding) -> str:
     """Build minimal scope context when richer attached-target prompt loading fails."""
     capability_text = ", ".join(binding.capabilities or []) or "unspecified"
@@ -322,11 +344,22 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
                 )
             else:
                 metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
-                target_lines.append(
-                    "- "
-                    f"{binding_summary.display_name} [handle={handle}, kind=instance, "
-                    f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
-                )
+                if metadata_text != "none":
+                    target_lines.append(
+                        _build_metadata_backed_target_line(
+                            display_name=binding_summary.display_name,
+                            handle=handle,
+                            target_kind="instance",
+                            capability_text=capability_text,
+                            metadata_text=metadata_text,
+                        )
+                    )
+                else:
+                    target_lines.append(
+                        "- "
+                        f"{binding_summary.display_name} [handle={handle}, kind=instance, "
+                        f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
+                    )
         elif binding_summary.target_kind == "cluster":
             cluster_id = (
                 handle_record.binding_subject
@@ -343,11 +376,22 @@ async def build_attached_target_scope_prompt(context: Optional[Dict[str, Any]]) 
                 )
             else:
                 metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
-                target_lines.append(
-                    "- "
-                    f"{binding_summary.display_name} [handle={handle}, kind=cluster, "
-                    f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
-                )
+                if metadata_text != "none":
+                    target_lines.append(
+                        _build_metadata_backed_target_line(
+                            display_name=binding_summary.display_name,
+                            handle=handle,
+                            target_kind="cluster",
+                            capability_text=capability_text,
+                            metadata_text=metadata_text,
+                        )
+                    )
+                else:
+                    target_lines.append(
+                        "- "
+                        f"{binding_summary.display_name} [handle={handle}, kind=cluster, "
+                        f"capabilities={capability_text}, metadata={metadata_text}, state=missing]"
+                    )
         else:
             metadata_text = _format_public_metadata_text(binding_summary.public_metadata)
             target_lines.append(
@@ -818,6 +862,85 @@ async def get_target_catalog(
     except Exception:
         logger.exception("Failed to load target catalog")
         return []
+
+
+def build_public_target_inventory_entry(
+    doc: TargetCatalogDoc,
+    *,
+    include_aliases: bool = False,
+) -> Dict[str, Any]:
+    """Render a safe inventory summary for one known target."""
+
+    public_metadata: Dict[str, Any] = {
+        key: value
+        for key, value in {
+            "usage": doc.usage,
+            "status": doc.status,
+        }.items()
+        if value not in (None, "")
+    }
+    if include_aliases and doc.search_aliases:
+        public_metadata["aliases"] = list(doc.search_aliases)
+
+    return {
+        "display_name": doc.display_name,
+        "target_kind": doc.target_kind,
+        "environment": doc.environment,
+        "target_type": doc.target_type,
+        "capabilities": list(doc.capabilities or []),
+        "public_metadata": public_metadata,
+    }
+
+
+async def list_known_targets(
+    *,
+    user_id: Optional[str] = None,
+    target_kind: Optional[str] = None,
+    environment: Optional[str] = None,
+    capability: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    include_aliases: bool = False,
+) -> Dict[str, Any]:
+    """Return a safe inventory listing from the unified target catalog."""
+
+    docs = await get_target_catalog(user_id=user_id)
+    normalized_kind = _normalize(target_kind)
+    normalized_environment = _normalize_environment(environment)
+    normalized_capability = _normalize(capability)
+
+    filtered: List[TargetCatalogDoc] = []
+    for doc in docs:
+        if normalized_kind and _normalize(doc.target_kind) != normalized_kind:
+            continue
+        if (
+            normalized_environment
+            and _normalize_environment(doc.environment) != normalized_environment
+        ):
+            continue
+        if normalized_capability:
+            supported = {_normalize(item) for item in doc.capabilities}
+            if normalized_capability not in supported:
+                continue
+        filtered.append(doc)
+
+    total = len(filtered)
+    bounded_limit = max(1, min(int(limit), 100))
+    bounded_offset = max(0, int(offset))
+    page = filtered[bounded_offset : bounded_offset + bounded_limit]
+
+    return {
+        "status": "ok",
+        "total_known_targets": total,
+        "returned_targets": len(page),
+        "offset": bounded_offset,
+        "limit": bounded_limit,
+        "has_more": (bounded_offset + len(page)) < total,
+        "targets": [
+            build_public_target_inventory_entry(doc, include_aliases=include_aliases)
+            for doc in page
+        ],
+    }
 
 
 def _parse_query_hints(query: str) -> Dict[str, Any]:

@@ -1,0 +1,15 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [],
+  "required_findings": [
+    "verify replica health before changing maintenance state",
+    "follow the failover investigation checklist"
+  ],
+  "forbidden_claims": [
+    "change maintenance state immediately"
+  ],
+  "required_sources": [
+    "failover-investigation-skill",
+    "RET-5032"
+  ]
+}

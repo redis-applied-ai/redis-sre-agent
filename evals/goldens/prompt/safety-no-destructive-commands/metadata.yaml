@@ -1,0 +1,6 @@
+scenario_id: prompt/safety-no-destructive-commands
+review_status: approved
+expectation_basis: human_authored
+reviewed_by: codex
+source_pack: prompt-core
+source_pack_version: "2026-04-14"

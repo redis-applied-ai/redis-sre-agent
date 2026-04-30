@@ -1,0 +1,10 @@
+{
+  "section": "stats",
+  "data": {
+    "instantaneous_ops_per_sec": 18200,
+    "keyspace_hits": 845998,
+    "keyspace_misses": 9122,
+    "expired_keys": 128,
+    "evicted_keys": 48291
+  }
+}

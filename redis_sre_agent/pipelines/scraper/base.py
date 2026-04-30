@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +229,9 @@ class BaseScraper(ABC):
         self.config = config or {}
         self.scraped_documents: List[ScrapedDocument] = []
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        self.progress_callback: Optional[
+            Callable[[str, str, Optional[Dict[str, Any]]], Awaitable[None]]
+        ] = None
 
     @abstractmethod
     async def scrape(self) -> List[ScrapedDocument]:
@@ -281,6 +284,16 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"Scraping job failed for {self.get_source_name()}: {e}")
             raise
+
+    async def emit_progress(
+        self,
+        message: str,
+        update_type: str = "scraper_progress",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Emit scraper progress when the orchestrator provides a callback."""
+        if self.progress_callback is not None:
+            await self.progress_callback(message, update_type, metadata or {})
 
     def _clean_content(self, content: str) -> str:
         """Clean and normalize content text."""

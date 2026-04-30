@@ -1,0 +1,34 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "redis_enterprise_admin",
+      "operation": "get_cluster_info",
+      "target_handle": "tgt_cluster_payments_east"
+    },
+    {
+      "provider_family": "redis_enterprise_admin",
+      "operation": "list_nodes",
+      "target_handle": "tgt_cluster_payments_east"
+    }
+  ],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "info"
+    }
+  ],
+  "required_findings": [
+    "maintenance mode explains the failover churn",
+    "verify replica health before changing maintenance state"
+  ],
+  "forbidden_claims": [
+    "this is a generic oss redis failover problem"
+  ],
+  "required_sources": [
+    "maintenance-mode-overview",
+    "maintenance-mode-guidance",
+    "redis-enterprise-maintenance-checklist",
+    "RET-5032"
+  ],
+  "expected_routing_decision": "triage"
+}

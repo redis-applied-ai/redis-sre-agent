@@ -1,0 +1,86 @@
+id: redis/enterprise-maintenance-mode
+name: Redis Enterprise maintenance mode explains churn
+description: Exercise the production full_turn triage lane against a Redis Enterprise cluster where maintenance mode, not generic OSS behavior, explains failover churn.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - evals/corpora/redis-docs-curated/2026-04-01/documents/maintenance-mode-overview.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/redis/enterprise-maintenance-mode/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: full_turn
+  agent: redis_triage
+  route_via_router: false
+  query: >
+    The attached Redis Enterprise cluster has failover churn during a maintenance window.
+    Tell me what you would verify first and keep the explanation grounded in cluster-admin evidence.
+  max_tool_steps: 5
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: require_target
+    automation_mode: interactive
+  target_catalog:
+    - handle: tgt_cluster_payments_east
+      kind: cluster
+      display_name: payments-east enterprise cluster
+      resource_id: re-cluster-payments-east
+      cluster_type: redis_enterprise
+      capabilities: [admin, diagnostics, knowledge]
+      public_metadata:
+        environment: production
+        deployment: redis_enterprise
+  bound_targets:
+    - tgt_cluster_payments_east
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../../corpora/redis-docs-curated/2026-04-01/documents/maintenance-mode-overview.md
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01
+
+tools:
+  redis_enterprise_admin:
+    get_cluster_info:
+      description: Fetch cluster-wide status and maintenance posture.
+      result: fixtures/tools/get-cluster-info.json
+    list_nodes:
+      description: Fetch Redis Enterprise node inventory and status.
+      result: fixtures/tools/list-nodes.json
+
+expectations:
+  required_tool_calls:
+    - provider_family: redis_enterprise_admin
+      operation: get_cluster_info
+      target_handle: tgt_cluster_payments_east
+    - provider_family: redis_enterprise_admin
+      operation: list_nodes
+      target_handle: tgt_cluster_payments_east
+  forbidden_tool_calls:
+    - provider_family: redis_command
+      operation: info
+  required_findings:
+    - maintenance mode explains the failover churn
+    - verify replica health before changing maintenance state
+  forbidden_claims:
+    - this is a generic oss redis failover problem
+  required_sources:
+    - maintenance-mode-overview
+    - maintenance-mode-guidance
+    - redis-enterprise-maintenance-checklist
+    - RET-5032
+  expected_routing_decision: triage

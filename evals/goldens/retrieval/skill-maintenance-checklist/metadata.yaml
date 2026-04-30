@@ -1,0 +1,6 @@
+scenario_id: retrieval/skill-maintenance-checklist
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: redis-docs-curated
+source_pack_version: 2026-04-01

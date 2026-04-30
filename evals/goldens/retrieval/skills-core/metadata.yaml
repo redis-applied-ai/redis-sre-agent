@@ -1,0 +1,6 @@
+scenario_id: retrieval/skills-core
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: retrieval-core
+source_pack_version: "2026-04-14"

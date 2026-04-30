@@ -15,6 +15,18 @@ from redis_sre_agent.targets.registry import TargetIntegrationRegistry
 from redis_sre_agent.tools.target_discovery.provider import TargetDiscoveryToolProvider
 
 
+def test_target_discovery_tool_names_are_stable_across_provider_instances():
+    provider_a = TargetDiscoveryToolProvider()
+    provider_b = TargetDiscoveryToolProvider()
+
+    tool_names_a = [tool.metadata.name for tool in provider_a.tools()]
+    tool_names_b = [tool.metadata.name for tool in provider_b.tools()]
+
+    assert tool_names_a == tool_names_b
+    assert any(name.endswith("list_known_redis_targets") for name in tool_names_a)
+    assert any(name.endswith("resolve_redis_targets") for name in tool_names_a)
+
+
 @pytest.mark.asyncio
 async def test_resolve_redis_targets_uses_shared_binding_contract():
     provider = TargetDiscoveryToolProvider()
@@ -154,6 +166,57 @@ async def test_resolve_redis_targets_without_attachment_uses_existing_toolset_ge
     mock_resolve.assert_awaited_once()
     mock_bind.assert_not_awaited()
     assert payload["attached_target_handles"] == []
+    assert payload["toolset_generation"] == 4
+
+
+@pytest.mark.asyncio
+async def test_list_known_redis_targets_uses_catalog_listing_contract():
+    provider = TargetDiscoveryToolProvider()
+    manager = MagicMock()
+    manager.user_id = "user-1"
+    manager.get_toolset_generation.return_value = 4
+    provider._manager = manager
+
+    with patch(
+        "redis_sre_agent.tools.target_discovery.provider.list_known_targets",
+        new=AsyncMock(
+            return_value={
+                "status": "ok",
+                "total_known_targets": 2,
+                "returned_targets": 2,
+                "offset": 0,
+                "limit": 20,
+                "has_more": False,
+                "targets": [
+                    {
+                        "display_name": "prod checkout cache",
+                        "target_kind": "instance",
+                        "environment": "production",
+                        "target_type": "oss_single",
+                        "capabilities": ["diagnostics"],
+                        "public_metadata": {"usage": "cache", "status": "healthy"},
+                    }
+                ],
+            }
+        ),
+    ) as mock_list:
+        payload = await provider.list_known_redis_targets(
+            target_kind="instance",
+            environment="production",
+            capability="diagnostics",
+            include_aliases=True,
+        )
+
+    mock_list.assert_awaited_once_with(
+        user_id="user-1",
+        target_kind="instance",
+        environment="production",
+        capability="diagnostics",
+        limit=20,
+        offset=0,
+        include_aliases=True,
+    )
+    assert payload["targets"][0]["display_name"] == "prod checkout cache"
     assert payload["toolset_generation"] == 4
 
 

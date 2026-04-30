@@ -1,0 +1,13 @@
+{
+  "required_findings": [
+    "start with a low-risk memory diagnostic before config changes",
+    "explain the evidence before suggesting remediation"
+  ],
+  "forbidden_claims": [
+    "set maxmemory-policy immediately"
+  ],
+  "required_sources": [
+    "iterative-diagnostics-runbook",
+    "iterative-memory-check"
+  ]
+}

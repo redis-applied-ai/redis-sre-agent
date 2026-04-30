@@ -1,0 +1,88 @@
+id: prompt/target-discovery-ambiguous-cache
+name: Target discovery ambiguous cache
+description: Exercise discovery-first behavior when a natural-language target reference is ambiguous and should trigger clarification instead of live claims.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - specs/natural-language-target-discovery-spec.md
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/target-discovery-ambiguous-cache/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: full_turn
+  agent: redis_chat
+  route_via_router: false
+  query: >
+    Can you check the prod cache and tell me whether it is healthy right now?
+    Resolve the target if you can, but do not guess if more than one cache fits.
+  max_tool_steps: 5
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+  target_catalog:
+    - handle: tgt_checkout_cache_prod
+      kind: instance
+      display_name: prod checkout cache
+      resource_id: redis-prod-checkout-cache
+      capabilities:
+        - diagnostics
+      public_metadata:
+        environment: production
+        usage: cache
+        status: healthy
+        target_type: oss_single
+        aliases:
+          - prod cache
+          - checkout cache
+    - handle: tgt_session_cache_prod
+      kind: instance
+      display_name: prod session cache
+      resource_id: redis-prod-session-cache
+      capabilities:
+        - diagnostics
+      public_metadata:
+        environment: production
+        usage: cache
+        status: healthy
+        target_type: oss_single
+        aliases:
+          - prod cache
+          - session cache
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../_shared/startup/live-system-boundary.md
+    - ../../_shared/startup/policies/target-discovery-before-live-access.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+
+expectations:
+  required_tool_calls:
+    - provider_family: target_discovery
+      operation: resolve_redis_targets
+  forbidden_tool_calls:
+    - provider_family: redis_command
+      operation: info
+    - provider_family: redis_enterprise_admin
+      operation: list_databases
+  required_findings:
+    - clarify
+    - which cache
+  required_sources:
+    - live-system-boundary
+    - target-discovery-before-live-access
+  expected_routing_decision: chat

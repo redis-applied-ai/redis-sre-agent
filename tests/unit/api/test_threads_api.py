@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from redis_sre_agent.api.app import app
+from redis_sre_agent.core.approvals import ApprovalStatus, PendingApprovalSummary
 
 
 @pytest.fixture
@@ -141,6 +142,53 @@ class TestThreadsAPI:
         data = resp.json()
         assert data["thread_id"] == "th1"
         assert data["messages"] and data["messages"][0]["role"] == "user"
+
+    def test_get_thread_includes_pending_approval_and_resume_supported(self, client):
+        """GET /api/v1/threads/{id} includes latest approval state from the newest task."""
+        from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
+
+        pending = PendingApprovalSummary(
+            approval_id="approval-1",
+            interrupt_id="interrupt-1",
+            tool_name="redis_cloud_deadbeef_update_tags",
+            summary="redis_cloud_deadbeef_update_tags on inst-1",
+            requested_at="2024-01-01T00:00:00Z",
+            status=ApprovalStatus.PENDING,
+        )
+
+        class TaskState:
+            updates = []
+            result = None
+            error_message = None
+            status = "awaiting_approval"
+            pending_approval = pending
+            resume_supported = True
+
+        mock_thread = Thread(
+            thread_id="th1",
+            messages=[Message(role="user", content="hi")],
+            context={},
+            metadata=ThreadMetadata(user_id="u"),
+        )
+
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=mock_thread)
+        mock_task_manager = MagicMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=TaskState())
+        mock_redis = AsyncMock()
+        mock_redis.zrevrange.return_value = ["task-1"]
+
+        with (
+            patch("redis_sre_agent.api.threads.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm),
+            patch("redis_sre_agent.core.tasks.TaskManager", return_value=mock_task_manager),
+        ):
+            resp = client.get("/api/v1/threads/th1")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pending_approval"]["approval_id"] == "approval-1"
+        assert data["resume_supported"] is True
 
     def test_update_thread_not_found(self, client):
         """PATCH /api/v1/threads/{id} returns 404 when no state."""

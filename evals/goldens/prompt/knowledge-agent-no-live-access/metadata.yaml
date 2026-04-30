@@ -1,0 +1,12 @@
+scenario_id: prompt/knowledge-agent-no-live-access
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - Verify that the answer states the live-access boundary before giving advice.
+  - Prefer a handoff recommendation plus one runbook and one prior incident reference.

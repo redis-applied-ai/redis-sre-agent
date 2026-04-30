@@ -1,0 +1,12 @@
+scenario_id: prompt/target-discovery-ambiguous-cache
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - The resolver should be used even though the request is ambiguous.
+  - If discovery cannot safely choose one cache, the answer should ask the user which cache they mean.

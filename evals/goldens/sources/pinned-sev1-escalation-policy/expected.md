@@ -1,0 +1,1 @@
+This should not wait until tomorrow. The pinned Sev1 policy says customer-visible failovers across more than one region require immediate escalation, so the right action is to page the incident commander and the on-call engineering manager now.

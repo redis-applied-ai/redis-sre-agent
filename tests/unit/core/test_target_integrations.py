@@ -28,7 +28,11 @@ from redis_sre_agent.targets.handle_store import (
     get_target_handle_store,
     reset_target_handle_store,
 )
-from redis_sre_agent.targets.redis_binding import RedisDataClientFactory, RedisTargetBindingStrategy
+from redis_sre_agent.targets.redis_binding import (
+    RedisDataClientFactory,
+    RedisEnterpriseAdminClientFactory,
+    RedisTargetBindingStrategy,
+)
 from redis_sre_agent.targets.registry import (
     TargetIntegrationRegistry,
     get_target_integration_registry,
@@ -413,6 +417,90 @@ async def test_redis_data_client_factory_builds_handle_scoped_instance():
     assert built is not None
     assert built.id == "tgt_01"
     assert built.connection_url == instance.connection_url
+
+
+@pytest.mark.asyncio
+async def test_redis_data_client_factory_uses_eval_seed_without_catalog_instance():
+    handle_record = TargetHandleRecord(
+        target_handle="tgt_01",
+        discovery_backend="redis_catalog",
+        binding_strategy="redis_default",
+        binding_subject="redis-prod-checkout-cache",
+        private_binding_ref={
+            "target_kind": "instance",
+            "eval_target_seed": {
+                "seed_kind": "instance",
+                "id": "redis-prod-checkout-cache",
+                "name": "checkout-cache-prod",
+                "connection_url": "redis://eval-target.invalid:6379/0",
+                "environment": "production",
+                "usage": "custom",
+                "description": "Eval target seed for checkout-cache-prod",
+                "instance_type": "oss_single",
+            },
+        },
+        public_summary=PublicTargetBinding(
+            target_handle="tgt_01",
+            target_kind="instance",
+            display_name="checkout-cache-prod",
+            capabilities=["redis"],
+        ),
+    )
+
+    with patch(
+        "redis_sre_agent.targets.redis_binding.get_instance_by_id",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        built = await RedisDataClientFactory().build(handle_record)
+
+    assert built is not None
+    assert built.id == "tgt_01"
+    assert built.name == "checkout-cache-prod"
+    assert built.instance_type.value == "oss_single"
+
+
+@pytest.mark.asyncio
+async def test_redis_enterprise_admin_client_factory_uses_eval_cluster_seed():
+    handle_record = TargetHandleRecord(
+        target_handle="tgt_cluster_01",
+        discovery_backend="redis_catalog",
+        binding_strategy="redis_default",
+        binding_subject="re-cluster-payments-east",
+        private_binding_ref={
+            "target_kind": "cluster",
+            "eval_target_seed": {
+                "seed_kind": "cluster",
+                "id": "re-cluster-payments-east",
+                "name": "payments-east cluster",
+                "cluster_type": "redis_enterprise",
+                "environment": "production",
+                "description": "Eval target seed for payments-east cluster",
+                "admin_url": "https://eval-target.invalid:9443",
+                "admin_username": "eval",
+                "admin_password": "eval-password",
+            },
+        },
+        public_summary=PublicTargetBinding(
+            target_handle="tgt_cluster_01",
+            target_kind="cluster",
+            display_name="payments-east cluster",
+            capabilities=["admin"],
+        ),
+    )
+
+    with patch(
+        "redis_sre_agent.targets.redis_binding.core_clusters.get_cluster_by_id",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        built = await RedisEnterpriseAdminClientFactory().build(handle_record)
+
+    assert built is not None
+    assert built.id == "tgt_cluster_01"
+    assert built.cluster_id == "re-cluster-payments-east"
+    assert built.instance_type.value == "redis_enterprise"
+    assert built.admin_username == "eval"
 
 
 @pytest.mark.asyncio

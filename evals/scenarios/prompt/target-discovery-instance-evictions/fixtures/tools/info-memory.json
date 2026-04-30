@@ -1,0 +1,10 @@
+{
+  "section": "memory",
+  "data": {
+    "used_memory_human": "7.7G",
+    "maxmemory_human": "8.0G",
+    "maxmemory_policy": "allkeys-lru",
+    "evicted_keys": 48291,
+    "mem_fragmentation_ratio": 1.06
+  }
+}

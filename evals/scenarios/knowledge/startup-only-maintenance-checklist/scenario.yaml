@@ -1,0 +1,48 @@
+id: knowledge/startup-only-maintenance-checklist
+name: Startup-only maintenance checklist follows pinned guidance
+description: Startup-only mode should expose only pinned maintenance guidance and startup skill content.
+
+provenance:
+  source_kind: mixed
+  source_pack: redis-docs-curated
+  source_pack_version: 2026-04-01
+  derived_from:
+    - maintenance-mode-overview
+    - redis-enterprise-maintenance-checklist
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/knowledge/startup-only-maintenance-checklist/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: agent_only
+  agent: knowledge
+  query: Before I touch maintenance mode on payments-east, what documented checklist should I start with?
+  max_tool_steps: 4
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: startup_only
+  version: latest
+  pinned_documents:
+    - ../../../corpora/redis-docs-curated/2026-04-01/documents/maintenance-mode-overview.md
+  corpus:
+    - ../../../corpora/redis-docs-curated/2026-04-01/skills/redis-enterprise-maintenance-checklist.md
+
+expectations:
+  required_findings:
+    - check maintenance mode before deeper failover triage
+  forbidden_claims:
+    - maintenance mode is already enabled
+  required_sources:
+    - maintenance-mode-overview
+    - redis-enterprise-maintenance-checklist

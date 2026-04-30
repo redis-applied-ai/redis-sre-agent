@@ -1,0 +1,7 @@
+{
+  "section": "clients",
+  "connected_clients": 1842,
+  "blocked_clients": 3,
+  "client_recent_max_input_buffer": 131072,
+  "client_recent_max_output_buffer": 4194304
+}

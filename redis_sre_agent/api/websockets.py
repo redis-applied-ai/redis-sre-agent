@@ -226,6 +226,8 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
         updates = []
         result = None
         error_message = None
+        pending_approval = None
+        resume_supported = False
 
         if latest_task_ids:
             latest_task_id = latest_task_ids[0]
@@ -236,6 +238,8 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
                 updates = task_state.updates[-10:] if task_state.updates else []
                 result = task_state.result
                 error_message = task_state.error_message
+                pending_approval = task_state.pending_approval
+                resume_supported = task_state.resume_supported
 
         # Send current state immediately
         initial_event = InitialStateEvent(
@@ -244,6 +248,8 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
             updates=updates,
             result=result,
             error_message=error_message,
+            pending_approval=pending_approval,
+            resume_supported=resume_supported,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
         await websocket.send_text(initial_event.model_dump_json())
