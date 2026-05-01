@@ -208,8 +208,6 @@ async def _persist_staged_session_instance_for_resume(
         if session_instance.id != instance_id:
             continue
         snapshot = _serialize_session_instance_snapshot(session_instance)
-        if resume_state.staged_session_instance == snapshot:
-            return
         await approval_manager.save_resume_state(
             resume_state.model_copy(update={"staged_session_instance": snapshot})
         )
@@ -532,6 +530,11 @@ async def _transition_task_to_awaiting_approval_from_interrupt(
     await task_manager.set_task_result(task_id, result)
     await task_manager.update_task_status(task_id, TaskStatus.AWAITING_APPROVAL)
     try:
+        await _persist_staged_session_instance_for_resume(
+            task_id=task_id,
+            thread_id=thread_id,
+            redis_client=task_manager._redis,
+        )
         await task_manager._publish_stream_update(
             thread_id,
             "awaiting_approval",

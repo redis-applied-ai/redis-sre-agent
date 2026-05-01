@@ -2872,10 +2872,19 @@ class TestResumeTaskAfterApproval:
 
         task_state = _build_awaiting_task_state(initial_error.pending_approval)
         resumed_task_state = _build_awaiting_task_state(next_error.pending_approval)
+        staged_instance = RedisInstance(
+            id="redis-session-instance",
+            name="session-instance",
+            connection_url="redis://localhost:6379",
+            environment="development",
+            usage="cache",
+            description="Session-scoped instance",
+            instance_type="oss_single",
+        )
         thread = Thread(
             thread_id="thread-456",
             messages=[],
-            context={},
+            context={"instance_id": staged_instance.id},
             metadata=ThreadMetadata(session_id="session-1", user_id="user-1"),
         )
         resume_state = _build_resume_state(initial_error.approval_record)
@@ -2931,6 +2940,10 @@ class TestResumeTaskAfterApproval:
                 "redis_sre_agent.core.docket_tasks.ApprovalManager",
                 return_value=mock_approval_manager,
             ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_session_instances",
+                new=AsyncMock(return_value=[staged_instance]),
+            ),
             patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_chat_agent),
             patch(
                 "redis_sre_agent.agent.checkpointing.persist_approval_wait_state",
@@ -2958,6 +2971,16 @@ class TestResumeTaskAfterApproval:
         mock_persist_wait_state.assert_awaited_once_with(
             task_id="task-123",
             pending_approval=resumed_task_state.pending_approval,
+        )
+        saved_resume_states = [
+            call.args[0] for call in mock_approval_manager.save_resume_state.await_args_list
+        ]
+        assert saved_resume_states
+        assert any(
+            isinstance(saved_resume_state, GraphResumeState)
+            and saved_resume_state.staged_session_instance is not None
+            and saved_resume_state.staged_session_instance["id"] == staged_instance.id
+            for saved_resume_state in saved_resume_states
         )
         mock_approval_manager.delete_resume_state.assert_not_awaited()
 
