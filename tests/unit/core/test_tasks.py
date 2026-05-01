@@ -2557,7 +2557,7 @@ class TestProcessAgentTurn:
         assert kwargs["context"]["target_bindings"]
 
     @pytest.mark.asyncio
-    async def test_process_agent_turn_created_instance_clears_stale_attached_scope(self):
+    async def test_process_agent_turn_staged_session_instance_clears_stale_attached_scope(self):
         mock_redis = AsyncMock()
         mock_thread = MagicMock()
         mock_thread.context = {
@@ -2630,7 +2630,7 @@ class TestProcessAgentTurn:
                 },
             ),
             patch(
-                "redis_sre_agent.core.docket_tasks.create_instance",
+                "redis_sre_agent.core.docket_tasks._stage_session_instance_from_message",
                 new=AsyncMock(return_value=new_instance),
             ),
             patch(
@@ -2638,7 +2638,7 @@ class TestProcessAgentTurn:
                 return_value=mock_chat_agent,
             ),
             patch(
-                "redis_sre_agent.core.docket_tasks.get_instance_by_id",
+                "redis_sre_agent.core.docket_tasks._resolve_instance_for_thread",
                 new=AsyncMock(return_value=new_instance),
             ),
             patch(
@@ -2663,6 +2663,196 @@ class TestProcessAgentTurn:
         assert update_call.args[1]["target_bindings"] == []
         assert update_call.args[1]["target_toolset_generation"] == 0
         assert update_call.args[1]["turn_scope"] == ""
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_staged_session_instance_can_pause_for_approval(self):
+        approval_error = _build_approval_required_error()
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.context = {}
+        mock_thread.messages = []
+        mock_thread.metadata.user_id = "test-user"
+        mock_thread.metadata.session_id = "session-1"
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_message = AsyncMock()
+        mock_thread_manager.update_thread = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.set_pending_approval = AsyncMock()
+        mock_task_manager.set_resume_supported = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(
+            return_value=_build_awaiting_task_state(approval_error.pending_approval)
+        )
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        new_instance = RedisInstance(
+            id="redis-session-instance",
+            name="session-instance",
+            connection_url="redis://localhost:6379",
+            environment="development",
+            usage="cache",
+            description="Session-scoped instance",
+            instance_type="oss_single",
+        )
+
+        mock_chat_agent = MagicMock()
+        mock_chat_agent.process_query = AsyncMock(side_effect=approval_error)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_CHAT),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value={
+                    "name": "session-instance",
+                    "connection_url": "redis://localhost:6379",
+                    "environment": "development",
+                    "usage": "cache",
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._stage_session_instance_from_message",
+                new=AsyncMock(return_value=new_instance),
+            ) as mock_stage_instance,
+            patch(
+                "redis_sre_agent.core.docket_tasks._resolve_instance_for_thread",
+                new=AsyncMock(return_value=new_instance),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            result = await process_agent_turn(
+                thread_id="thread-123",
+                message="register qa-approval-live at redis://localhost:6379/0",
+                task_id="provided-task-123",
+            )
+
+        assert result["status"] == TaskStatus.AWAITING_APPROVAL.value
+        assert result["pending_approval"]["approval_id"] == "approval-1"
+        mock_stage_instance.assert_awaited_once()
+        mock_task_manager.set_pending_approval.assert_awaited()
+        assert all(
+            len(call.args) < 3 or call.args[2] != "instance_created"
+            for call in mock_task_manager.add_task_update.await_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_uses_freshly_staged_instance_without_redis_round_trip(self):
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.context = {}
+        mock_thread.messages = []
+        mock_thread.metadata.user_id = "test-user"
+        mock_thread.metadata.session_id = "session-1"
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_message = AsyncMock()
+        mock_thread_manager.update_thread = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        staged_instance = RedisInstance(
+            id="redis-session-instance",
+            name="session-instance",
+            connection_url="redis://localhost:6379",
+            environment="development",
+            usage="cache",
+            description="Session-scoped instance",
+            instance_type="oss_single",
+        )
+
+        mock_chat_agent = MagicMock()
+        mock_chat_agent.process_query = AsyncMock(
+            return_value=AgentResponse(
+                response="Chat response",
+                search_results=[],
+                tool_envelopes=[],
+            )
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_CHAT),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value={
+                    "name": "session-instance",
+                    "connection_url": "redis://localhost:6379",
+                    "environment": "development",
+                    "usage": "cache",
+                },
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._stage_session_instance_from_message",
+                new=AsyncMock(return_value=staged_instance),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._resolve_instance_for_thread",
+                new=AsyncMock(return_value=None),
+            ) as mock_resolve_instance,
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ) as mock_get_chat_agent,
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            await process_agent_turn(
+                thread_id="thread-123",
+                message="redis://localhost:6379 environment: development usage: cache",
+                task_id="provided-task-123",
+            )
+
+        mock_resolve_instance.assert_not_awaited()
+        assert mock_get_chat_agent.call_args.kwargs["redis_instance"] == staged_instance
 
 
 class TestResumeTaskAfterApproval:
@@ -2770,6 +2960,99 @@ class TestResumeTaskAfterApproval:
             pending_approval=resumed_task_state.pending_approval,
         )
         mock_approval_manager.delete_resume_state.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_resume_task_after_approval_uses_thread_scoped_instance_resolution(self):
+        approval_error = _build_approval_required_error()
+        assert approval_error.approval_record is not None
+
+        task_state = _build_awaiting_task_state(approval_error.pending_approval)
+        thread = Thread(
+            thread_id="thread-456",
+            messages=[],
+            context={"instance_id": "redis-session-instance"},
+            metadata=ThreadMetadata(session_id="session-1", user_id="user-1"),
+        )
+        resume_state = _build_resume_state(approval_error.approval_record)
+        decided_record = approval_error.approval_record.model_copy(
+            update={
+                "status": ApprovalStatus.APPROVED,
+                "decision": ApprovalDecision(decision=ApprovalDecisionType.APPROVED),
+            }
+        )
+
+        resolved_instance = RedisInstance(
+            id="redis-session-instance",
+            name="session-instance",
+            connection_url="redis://localhost:6379",
+            environment="development",
+            usage="cache",
+            description="Session-scoped instance",
+            instance_type="oss_single",
+        )
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(
+            side_effect=[task_state, MagicMock(status=TaskStatus.IN_PROGRESS)]
+        )
+        mock_task_manager.set_pending_approval = AsyncMock()
+        mock_task_manager.set_resume_supported = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=thread)
+        mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager.set_message_trace = AsyncMock()
+
+        mock_approval_manager = AsyncMock()
+        mock_approval_manager.get_resume_state = AsyncMock(return_value=resume_state)
+        mock_approval_manager.get_approval = AsyncMock(return_value=approval_error.approval_record)
+        mock_approval_manager.record_decision = AsyncMock(return_value=decided_record)
+        mock_approval_manager.save_resume_state = AsyncMock()
+        mock_approval_manager.delete_resume_state = AsyncMock()
+
+        mock_response = AgentResponse(
+            response="approved and completed",
+            search_results=[],
+            tool_envelopes=[],
+        )
+        mock_chat_agent = MagicMock()
+        mock_chat_agent.resume_query = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager",
+                return_value=mock_thread_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ApprovalManager",
+                return_value=mock_approval_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._resolve_instance_for_thread",
+                new=AsyncMock(return_value=resolved_instance),
+            ) as mock_resolve_instance,
+            patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_chat_agent),
+            patch(
+                "redis_sre_agent.agent.checkpointing.persist_approval_wait_state",
+                new=AsyncMock(),
+            ),
+        ):
+            result = await resume_task_after_approval(
+                task_id="task-123",
+                approval_id=approval_error.approval_record.approval_id,
+                decision="approved",
+                redis_client=MagicMock(),
+            )
+
+        assert result["response"]["response"] == "approved and completed"
+        mock_resolve_instance.assert_awaited_once_with("redis-session-instance", "thread-456")
+        mock_chat_agent.resume_query.assert_awaited_once()
+        mock_approval_manager.delete_resume_state.assert_awaited_once_with("task-123")
 
 
 class TestRunAgentWithProgress:
