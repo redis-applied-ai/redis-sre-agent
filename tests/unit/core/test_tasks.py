@@ -3173,6 +3173,94 @@ class TestResumeTaskAfterApproval:
         assert rehydrated_instance.connection_url.get_secret_value() == "redis://localhost:6379"
         assert mock_chat_agent.resume_query.await_count == 1
 
+    @pytest.mark.asyncio
+    async def test_resume_task_after_approval_raises_when_rehydrate_cache_restore_fails(self):
+        approval_error = _build_approval_required_error()
+        assert approval_error.approval_record is not None
+
+        staged_instance = RedisInstance(
+            id="redis-session-instance",
+            name="session-instance",
+            connection_url="redis://localhost:6379",
+            environment="development",
+            usage="cache",
+            description="Session-scoped instance",
+            instance_type="oss_single",
+        )
+
+        task_state = _build_awaiting_task_state(approval_error.pending_approval)
+        thread = Thread(
+            thread_id="thread-456",
+            messages=[],
+            context={"instance_id": "redis-session-instance"},
+            metadata=ThreadMetadata(session_id="session-1", user_id="user-1"),
+        )
+        resume_state = _build_resume_state(approval_error.approval_record).model_copy(
+            update={
+                "staged_session_instance": {
+                    **staged_instance.model_dump(mode="json"),
+                    "connection_url": "redis://localhost:6379",
+                }
+            }
+        )
+        decided_record = approval_error.approval_record.model_copy(
+            update={
+                "status": ApprovalStatus.APPROVED,
+                "decision": ApprovalDecision(decision=ApprovalDecisionType.APPROVED),
+            }
+        )
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=task_state)
+        mock_task_manager.set_pending_approval = AsyncMock()
+        mock_task_manager.set_resume_supported = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=thread)
+
+        mock_approval_manager = AsyncMock()
+        mock_approval_manager.get_resume_state = AsyncMock(return_value=resume_state)
+        mock_approval_manager.get_approval = AsyncMock(return_value=approval_error.approval_record)
+        mock_approval_manager.record_decision = AsyncMock(return_value=decided_record)
+        mock_approval_manager.save_resume_state = AsyncMock()
+        mock_approval_manager.delete_resume_state = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager",
+                return_value=mock_thread_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ApprovalManager",
+                return_value=mock_approval_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._resolve_instance_for_thread",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.add_session_instance",
+                new=AsyncMock(return_value=False),
+            ) as mock_add_session_instance,
+        ):
+            with pytest.raises(
+                ValueError, match="Failed to restore staged session instance for resume"
+            ):
+                await resume_task_after_approval(
+                    task_id="task-123",
+                    approval_id=approval_error.approval_record.approval_id,
+                    decision="approved",
+                    redis_client=MagicMock(),
+                )
+
+        mock_add_session_instance.assert_awaited_once()
+        mock_approval_manager.delete_resume_state.assert_not_awaited()
+
 
 class TestApprovalTransitions:
     @pytest.mark.asyncio

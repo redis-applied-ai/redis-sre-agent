@@ -233,7 +233,8 @@ async def _resolve_instance_for_resume(
     if instance_id and restored.id != instance_id:
         return None
 
-    await add_session_instance(thread_id, restored)
+    if not await add_session_instance(thread_id, restored):
+        raise ValueError("Failed to restore staged session instance for resume")
     return restored
 
 
