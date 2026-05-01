@@ -201,6 +201,7 @@ def test_runtime_sre_agent_builds_execution_contract_metadata(
     assert tools["redis_sre_general_chat"]["executionContract"]["runtimeMode"] == "inline"
     assert tools["redis_sre_general_chat"]["executionContract"]["nativeResultKind"] == "task_receipt"
     assert tools["redis_sre_general_chat"]["executionContract"]["runtimeResultKind"] == "final_result"
+    assert tools["redis_sre_general_chat"]["category"] == "Agent Tasks"
     assert (
         tools["redis_sre_general_chat"]["executionContract"]["statusTool"]
         == "redis_sre_get_task_status"
@@ -217,6 +218,7 @@ def test_runtime_sre_agent_builds_execution_contract_metadata(
         "nativeResultKind": "final_result",
         "runtimeResultKind": "final_result",
     }
+    assert tools["redis_sre_knowledge_search"]["category"] == "Knowledge"
 
 
 def test_load_mcp_tool_registry_includes_pipeline_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -307,6 +309,7 @@ def test_build_mcp_capabilities_includes_configured_external_mcp_tools(
         "nativeResultKind": "final_result",
         "runtimeResultKind": "final_result",
     }
+    assert tools["analyzer_list_accounts"]["category"] == "Analyzer"
     assert tools["analyzer_list_accounts"]["inputSchema"] == {
         "type": "object",
         "properties": {"account_id": {"type": "string"}},
@@ -324,6 +327,7 @@ def test_build_mcp_capabilities_includes_registered_input_schemas() -> None:
         == "string"
     )
     assert tools["redis_sre_get_task_approvals"]["inputSchema"]["required"] == ["task_id"]
+    assert tools["redis_sre_get_task_approvals"]["category"] == "Tasks"
 
 
 def test_runtime_agent_exposes_registered_mcp_tool_parameters() -> None:

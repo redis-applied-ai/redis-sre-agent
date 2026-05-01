@@ -775,6 +775,129 @@ def _load_configured_external_mcp_tools() -> dict[str, dict[str, str]]:
     return tools
 
 
+def _mcp_tool_category(tool_name: str) -> str:
+    if tool_name.startswith("analyzer_"):
+        return "Analyzer"
+    if tool_name.startswith("afs_"):
+        return "AFS"
+    if tool_name.startswith("jira_"):
+        return "Jira"
+    if tool_name.startswith("confluence_"):
+        return "Confluence"
+    if not tool_name.startswith("redis_sre_"):
+        return "External"
+
+    suffix = tool_name[len("redis_sre_") :]
+    if suffix in {"deep_triage", "general_chat", "database_chat", "knowledge_query", "query"}:
+        return "Agent Tasks"
+    if suffix.startswith(
+        (
+            "get_task",
+            "list_tasks",
+            "delete_task",
+            "purge_tasks",
+            "resume_task",
+        )
+    ):
+        return "Tasks"
+    if suffix.startswith(
+        (
+            "list_threads",
+            "get_thread",
+            "purge_threads",
+            "backfill_threads",
+            "backfill_empty_thread_subjects",
+            "backfill_scheduled",
+        )
+    ):
+        return "Threads"
+    if suffix.startswith(("knowledge_", "get_knowledge", "search_support_tickets", "get_support_ticket")):
+        return "Knowledge"
+    if suffix.startswith(
+        (
+            "get_pipeline",
+            "prepare_source_documents",
+            "run_pipeline",
+            "generate_pipeline_runbooks",
+            "cleanup_pipeline_batches",
+            "evaluate_runbooks",
+            "generate_runbook",
+        )
+    ):
+        return "Pipeline"
+    if suffix.startswith(
+        (
+            "list_instances",
+            "get_instance",
+            "create_instance",
+            "update_instance",
+            "delete_instance",
+            "test_instance",
+            "test_redis_url",
+            "backfill_instance_links",
+        )
+    ):
+        return "Instances"
+    if suffix.startswith(
+        (
+            "list_clusters",
+            "get_cluster",
+            "create_cluster",
+            "update_cluster",
+            "delete_cluster",
+        )
+    ):
+        return "Clusters"
+    if suffix.startswith(
+        (
+            "list_schedules",
+            "get_schedule",
+            "create_schedule",
+            "update_schedule",
+            "delete_schedule",
+            "enable_schedule",
+            "disable_schedule",
+            "run_schedule_now",
+            "list_schedule_runs",
+        )
+    ):
+        return "Schedules"
+    if suffix.startswith(
+        (
+            "get_skill",
+            "list_skills",
+            "get_skill_resource",
+            "scaffold_skill_package",
+        )
+    ):
+        return "Skills"
+    if suffix.startswith(
+        (
+            "list_support_packages",
+            "get_support_package_info",
+            "upload_support_package",
+            "extract_support_package",
+            "delete_support_package",
+        )
+    ):
+        return "Support Packages"
+    if suffix.startswith(("cache_",)):
+        return "Cache"
+    if suffix.startswith(
+        (
+            "list_indices",
+            "get_index_schema_status",
+            "recreate_indices",
+            "sync_index_schemas",
+            "reindex_threads",
+        )
+    ):
+        return "Indices"
+    if suffix in {"audit_cli_mcp_parity", "version"}:
+        return "Operations"
+    return "General"
+
+
 def _configured_external_mcp_schema_cache_key(
     *,
     server_name: str,
@@ -950,6 +1073,7 @@ async def _build_mcp_capabilities_async() -> dict[str, list[dict[str, Any]]]:
         entry: dict[str, Any] = {
             "name": name,
             "description": description,
+            "category": _mcp_tool_category(name),
             "executionContract": tool_execution_contract(name),
         }
         parameters = spec.get("parameters")
@@ -962,6 +1086,7 @@ async def _build_mcp_capabilities_async() -> dict[str, list[dict[str, Any]]]:
         entry = {
             "name": name,
             "description": tool_spec["description"],
+            "category": _mcp_tool_category(name),
             "executionContract": {
                 "nativeMode": "inline",
                 "runtimeMode": "inline",
