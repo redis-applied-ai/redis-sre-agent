@@ -81,7 +81,10 @@ async def test_runtime_sre_agent_dispatches_mcp_tools(monkeypatch: pytest.Monkey
         return {"query": query, "hits": 1}
 
     refreshed: list[bool] = []
-    monkeypatch.setattr(module, "_refresh_runtime_agent_surface", lambda: refreshed.append(True))
+    async def _fake_refresh() -> None:
+        refreshed.append(True)
+
+    monkeypatch.setattr(module, "_refresh_runtime_agent_surface_async", _fake_refresh)
     monkeypatch.setattr(
         module,
         "_load_mcp_tool_registry",
@@ -182,6 +185,14 @@ def test_runtime_sre_agent_builds_execution_contract_metadata(
         "_load_mcp_tool_registry",
         lambda: {"redis_sre_general_chat": _fake_tool, "redis_sre_knowledge_search": _fake_tool},
     )
+    async def _fake_external_parameters() -> dict[str, dict[str, Any]]:
+        return {}
+
+    monkeypatch.setattr(
+        module,
+        "_load_configured_external_mcp_tool_parameters",
+        _fake_external_parameters,
+    )
 
     capabilities = module._build_mcp_capabilities()
     tools = {entry["name"]: entry for entry in capabilities["tools"]}
@@ -261,6 +272,15 @@ def test_build_mcp_capabilities_includes_configured_external_mcp_tools(
     module = _load_module()
 
     monkeypatch.setattr(module, "_load_mcp_tool_registry", lambda: {})
+    async def _fake_external_parameters() -> dict[str, dict[str, Any]]:
+        return {
+            "analyzer_list_accounts": {
+                "type": "object",
+                "properties": {"account_id": {"type": "string"}},
+                "required": ["account_id"],
+            }
+        }
+
     monkeypatch.setattr(
         module,
         "_load_configured_external_mcp_tools",
@@ -270,6 +290,11 @@ def test_build_mcp_capabilities_includes_configured_external_mcp_tools(
                 "description": "List known Analyzer accounts.",
             }
         },
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_configured_external_mcp_tool_parameters",
+        _fake_external_parameters,
     )
 
     capabilities = module._build_mcp_capabilities()
@@ -282,6 +307,23 @@ def test_build_mcp_capabilities_includes_configured_external_mcp_tools(
         "nativeResultKind": "final_result",
         "runtimeResultKind": "final_result",
     }
+    assert tools["analyzer_list_accounts"]["inputSchema"] == {
+        "type": "object",
+        "properties": {"account_id": {"type": "string"}},
+        "required": ["account_id"],
+    }
+
+
+def test_build_mcp_capabilities_includes_registered_input_schemas() -> None:
+    module = _load_module()
+
+    tools = {entry["name"]: entry for entry in module._build_mcp_capabilities()["tools"]}
+
+    assert (
+        tools["redis_sre_get_task_approvals"]["inputSchema"]["properties"]["task_id"]["type"]
+        == "string"
+    )
+    assert tools["redis_sre_get_task_approvals"]["inputSchema"]["required"] == ["task_id"]
 
 
 def test_runtime_agent_exposes_registered_mcp_tool_parameters() -> None:
@@ -334,6 +376,22 @@ async def test_runtime_sre_agent_dispatches_configured_external_mcp_tools(
         "mode": "mcp",
         "tool": "analyzer_list_accounts",
         "result": {"status": "error", "error": "401 Unauthorized"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_sre_agent_dispatches_internal_capability_sync_tool() -> None:
+    module = _load_module()
+
+    result = await module._dispatch_mcp_tool(
+        {"tool": "__rar_runtime_capabilities__", "arguments": {}}
+    )
+
+    assert result == {
+        "ok": True,
+        "mode": "mcp",
+        "tool": "__rar_runtime_capabilities__",
+        "result": module.runtime_agent.mcp_capabilities,
     }
 
 
@@ -1333,6 +1391,126 @@ def test_load_configured_external_mcp_tools_keeps_url_servers_visible_before_env
 
 
 @pytest.mark.asyncio
+async def test_load_configured_external_mcp_tool_parameters_skips_when_env_flag_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+
+    settings = types.SimpleNamespace(
+        mcp_servers={
+            "re_analyzer": {
+                "command": "node",
+                "args": ["vendor/re-analyzer-mcp/dist/src/index.js"],
+                "tools": {"analyzer_list_accounts": {}},
+            }
+        }
+    )
+
+    class _ServerConfig:
+        def __init__(self, **payload: Any) -> None:
+            self.command = payload.get("command")
+            self.args = payload.get("args")
+            self.tools = payload.get("tools") or {}
+            self.url = payload.get("url")
+
+        @classmethod
+        def model_validate(cls, payload: dict[str, Any]) -> "_ServerConfig":
+            return cls(**payload)
+
+    class _Provider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise AssertionError("provider should not be constructed when schema discovery is skipped")
+
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.core.config",
+        MCPServerConfig=_ServerConfig,
+        settings=settings,
+    )
+    _set_fake_module(monkeypatch, "redis_sre_agent.tools.mcp.provider", MCPToolProvider=_Provider)
+    monkeypatch.setenv("RAR_SKIP_CONFIGURED_EXTERNAL_MCP_SCHEMA_DISCOVERY", "1")
+
+    result = await module._load_configured_external_mcp_tool_parameters()
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_load_configured_external_mcp_tool_parameters_uses_raw_input_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+
+    settings = types.SimpleNamespace(
+        mcp_servers={
+            "re_analyzer": {
+                "command": "node",
+                "args": ["vendor/re-analyzer-mcp/dist/src/index.js"],
+                "tools": {"analyzer_list_accounts": {}},
+            }
+        }
+    )
+
+    class _ServerConfig:
+        def __init__(self, **payload: Any) -> None:
+            self.command = payload.get("command")
+            self.args = payload.get("args")
+            self.tools = payload.get("tools") or {}
+            self.url = payload.get("url")
+
+        @classmethod
+        def model_validate(cls, payload: dict[str, Any]) -> "_ServerConfig":
+            return cls(**payload)
+
+    class _Provider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.entered = False
+
+        async def __aenter__(self) -> "_Provider":
+            self.entered = True
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
+        def get_input_schemas(self) -> dict[str, dict[str, Any]]:
+            assert self.entered is True
+            return {
+                "analyzer_list_accounts": {
+                    "title": "AnalyzerListAccountsArguments",
+                    "type": "object",
+                    "properties": {
+                        "account_id": {"type": "string", "title": "Account Id"},
+                    },
+                    "required": ["account_id"],
+                    "additionalProperties": False,
+                }
+            }
+
+    _set_fake_module(
+        monkeypatch,
+        "redis_sre_agent.core.config",
+        MCPServerConfig=_ServerConfig,
+        settings=settings,
+    )
+    _set_fake_module(monkeypatch, "redis_sre_agent.tools.mcp.provider", MCPToolProvider=_Provider)
+
+    result = await module._load_configured_external_mcp_tool_parameters()
+
+    assert result == {
+        "analyzer_list_accounts": {
+            "title": "AnalyzerListAccountsArguments",
+            "type": "object",
+            "properties": {
+                "account_id": {"type": "string", "title": "Account Id"},
+            },
+            "required": ["account_id"],
+            "additionalProperties": False,
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_invoke_configured_external_mcp_tool_handles_errors_and_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1493,6 +1671,14 @@ def test_build_mcp_capabilities_skips_duplicate_external_tools(
             "dup_tool": {"server_name": "re_analyzer", "description": "duplicate"},
             "extra_tool": {"server_name": "re_analyzer", "description": "extra"},
         },
+    )
+    async def _fake_external_parameters() -> dict[str, dict[str, Any]]:
+        return {}
+
+    monkeypatch.setattr(
+        module,
+        "_load_configured_external_mcp_tool_parameters",
+        _fake_external_parameters,
     )
     _set_fake_module(
         monkeypatch,

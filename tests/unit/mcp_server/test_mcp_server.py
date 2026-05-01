@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from redis_sre_agent.core.tasks import TaskStatus
 from redis_sre_agent.mcp_server.server import (
     mcp,
     redis_sre_audit_cli_mcp_parity,
@@ -3090,27 +3091,20 @@ class TestTaskApprovalTools:
         resumed_task = dict(mock_task)
         resumed_task["status"] = "in_progress"
 
-        docket_instance = AsyncMock()
-        docket_instance.__aenter__.return_value = docket_instance
-        docket_instance.__aexit__.return_value = False
-        resume_task = AsyncMock()
-        docket_instance.add = MagicMock(return_value=resume_task)
-
         with (
             patch(
                 "redis_sre_agent.core.docket_tasks.validate_task_resume_request",
                 new_callable=AsyncMock,
             ) as mock_validate,
             patch(
+                "redis_sre_agent.core.docket_tasks.resume_task_after_approval",
+                new_callable=AsyncMock,
+            ) as mock_resume,
+            patch(
                 "redis_sre_agent.core.tasks.get_task_by_id",
                 new_callable=AsyncMock,
                 side_effect=[mock_task, resumed_task],
             ) as mock_get_task,
-            patch("redis_sre_agent.mcp_server.server.Docket", return_value=docket_instance),
-            patch(
-                "redis_sre_agent.core.docket_tasks.get_redis_url",
-                new=AsyncMock(return_value="redis://"),
-            ),
         ):
             result = await redis_sre_resume_task(
                 task_id="task-123",
@@ -3121,7 +3115,7 @@ class TestTaskApprovalTools:
 
         mock_validate.assert_awaited_once()
         assert mock_get_task.await_count == 2
-        resume_task.assert_awaited_once_with(
+        mock_resume.assert_awaited_once_with(
             task_id="task-123",
             approval_id="approval-1",
             decision="approved",
@@ -3131,6 +3125,60 @@ class TestTaskApprovalTools:
         assert result["task_id"] == "task-123"
         assert result["status"] == "in_progress"
         assert result["result"] is None
+
+    @pytest.mark.asyncio
+    async def test_resume_task_retries_pretransitioned_in_progress_state(self):
+        stale_task = {
+            "task_id": "task-123",
+            "thread_id": "thread-456",
+            "status": TaskStatus.IN_PROGRESS,
+            "updates": [],
+            "result": {
+                "status": "awaiting_approval",
+                "pending_approval": {"approval_id": "approval-1"},
+            },
+            "pending_approval": None,
+            "resume_supported": True,
+            "error_message": None,
+            "metadata": {
+                "subject": "Health check",
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:01:00Z",
+            },
+        }
+        resumed_task = dict(stale_task)
+        resumed_task["result"] = {"response": {"response": "Applied the change."}}
+
+        with (
+            patch(
+                "redis_sre_agent.core.docket_tasks.validate_task_resume_request",
+                new_callable=AsyncMock,
+            ) as mock_validate,
+            patch(
+                "redis_sre_agent.core.docket_tasks.resume_task_after_approval",
+                new_callable=AsyncMock,
+            ) as mock_resume,
+            patch(
+                "redis_sre_agent.core.tasks.get_task_by_id",
+                new_callable=AsyncMock,
+                side_effect=[stale_task, resumed_task],
+            ),
+        ):
+            result = await redis_sre_resume_task(
+                task_id="task-123",
+                approval_id="approval-1",
+                decision="approved",
+            )
+
+        mock_validate.assert_awaited_once()
+        mock_resume.assert_awaited_once_with(
+            task_id="task-123",
+            approval_id="approval-1",
+            decision="approved",
+            decision_by=None,
+            decision_comment=None,
+        )
+        assert result["result"] == {"response": {"response": "Applied the change."}}
 
 
 class TestTaskInspectionTools:

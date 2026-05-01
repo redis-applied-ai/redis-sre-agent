@@ -1,0 +1,7 @@
+{
+  "expected_initial_task_status": "awaiting_approval",
+  "resume_decision": "approved",
+  "expected_final_task_status": "done",
+  "expected_final_response_contains": "Applied the change.",
+  "expected_provider_call_count_before_resume": 0
+}

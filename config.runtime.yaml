@@ -13,26 +13,73 @@ mcp_servers:
       ANALYZER_BASE_URL: https://analyzerqa.cs.redislabs.com
       ANALYZER_API_TOKEN: xAwPdOqvsl+nhqBuhOpEM9+Y4a83rpm2XKPpZ+sjuvs=
     tools:
-      analyzer_list_accounts: {}
-      analyzer_search_accounts: {}
-      analyzer_get_account: {}
-      analyzer_list_clusters: {}
-      analyzer_get_cluster: {}
-      analyzer_list_packages: {}
-      analyzer_get_package_by_hash: {}
-      analyzer_get_package: {}
-      analyzer_resolve_package: {}
-      analyzer_get_package_messages: {}
-      analyzer_get_cluster_packages: {}
-      analyzer_get_latest_cluster_package: {}
-      analyzer_get_package_overview: {}
-      analyzer_get_package_alerts: {}
-      analyzer_get_package_health_checks: {}
-      analyzer_get_package_events: {}
-      analyzer_get_package_databases: {}
-      analyzer_get_database_slowlog: {}
-      analyzer_get_database_commands: {}
-      analyzer_get_package_nodes: {}
-      analyzer_get_package_topology: {}
-      analyzer_get_package_time_series: {}
-      analyzer_export_package_json: {}
+      analyzer_list_accounts: &analyzer_read_tool
+        capability: diagnostics
+        action_kind: read
+      analyzer_search_accounts: *analyzer_read_tool
+      analyzer_get_account: *analyzer_read_tool
+      analyzer_list_clusters: *analyzer_read_tool
+      analyzer_get_cluster: *analyzer_read_tool
+      analyzer_list_packages: *analyzer_read_tool
+      analyzer_get_package_by_hash: *analyzer_read_tool
+      analyzer_get_package: *analyzer_read_tool
+      analyzer_resolve_package: *analyzer_read_tool
+      analyzer_get_package_messages: *analyzer_read_tool
+      analyzer_get_cluster_packages: *analyzer_read_tool
+      analyzer_get_latest_cluster_package: *analyzer_read_tool
+      analyzer_get_package_overview: *analyzer_read_tool
+      analyzer_get_package_alerts: *analyzer_read_tool
+      analyzer_get_package_health_checks: *analyzer_read_tool
+      analyzer_get_package_events: *analyzer_read_tool
+      analyzer_get_package_databases: *analyzer_read_tool
+      analyzer_get_database_slowlog: *analyzer_read_tool
+      analyzer_get_database_commands: *analyzer_read_tool
+      analyzer_get_package_nodes: *analyzer_read_tool
+      analyzer_get_package_topology: *analyzer_read_tool
+      analyzer_get_package_time_series: *analyzer_read_tool
+      analyzer_export_package_json: *analyzer_read_tool
+  afs_gateway:
+    url: ${RAR_RUNTIME_AFS_MCP_URL}
+    transport: streamable_http
+    headers:
+      Authorization: "Bearer ${RAR_RUNTIME_AFS_MCP_TOKEN}"
+      x-rar-workspace-id: "${RAR_RUNTIME_AFS_WORKSPACE_ID}"
+      X-AFS-Agent-Id: redis-sre-agent
+      X-AFS-Client-Kind: mcp
+    tools:
+      workspace_current:
+        capability: utilities
+        action_kind: read
+      checkpoint_list:
+        capability: utilities
+        action_kind: read
+      checkpoint_create:
+        capability: utilities
+        action_kind: write
+      checkpoint_restore:
+        capability: utilities
+        action_kind: write
+      file_read:
+        capability: utilities
+        action_kind: read
+      file_lines:
+        capability: utilities
+        action_kind: read
+      file_list:
+        capability: utilities
+        action_kind: read
+      file_write:
+        capability: utilities
+        action_kind: write
+      file_create_exclusive:
+        capability: utilities
+        action_kind: write
+      file_replace:
+        capability: utilities
+        action_kind: write
+      file_insert:
+        capability: utilities
+        action_kind: write
+      file_delete_lines:
+        capability: utilities
+        action_kind: write

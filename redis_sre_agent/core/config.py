@@ -101,8 +101,9 @@ class MCPServerConfig(BaseModel):
         default=None,
         description="Transport type for URL-based connections: 'sse' for Server-Sent Events "
         "(legacy), 'streamable_http' for Streamable HTTP (recommended for modern servers like "
-        "GitHub's remote MCP). If not specified, defaults to 'streamable_http' for better "
-        "compatibility with modern MCP servers.",
+        "GitHub's remote MCP), or 'jsonrpc_http' for legacy JSON-RPC-over-HTTP endpoints such "
+        "as the hosted AFS MCP server. If not specified, defaults to 'streamable_http' for "
+        "better compatibility with modern MCP servers.",
     )
 
     # Tool constraints - if provided, only these tools are exposed to the agent

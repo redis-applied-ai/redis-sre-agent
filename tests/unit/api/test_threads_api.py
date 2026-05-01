@@ -141,6 +141,7 @@ class TestThreadsAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["thread_id"] == "th1"
+        assert data["task_id"] is None
         assert data["messages"] and data["messages"][0]["role"] == "user"
 
     def test_get_thread_includes_pending_approval_and_resume_supported(self, client):
@@ -187,6 +188,7 @@ class TestThreadsAPI:
 
         assert resp.status_code == 200
         data = resp.json()
+        assert data["task_id"] == "task-1"
         assert data["pending_approval"]["approval_id"] == "approval-1"
         assert data["task_id"] == "task-1"
         assert data["resume_supported"] is True

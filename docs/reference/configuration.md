@@ -69,6 +69,8 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `max_rejections` | `MAX_REJECTIONS` | `int` | `1` | Max correction attempts from safety/fact-check rejections. |
 | `recursion_limit` | `RECURSION_LIMIT` | `int` | `100` | LangGraph recursion limit. |
 | `tool_timeout` | `TOOL_TIMEOUT` | `int` | `60` | Tool execution timeout in seconds. |
+| `agent_permission_mode` | `AGENT_PERMISSION_MODE` | `Literal["read_only", "read_write"]` | `read_only` | Global approval mode for mutating tools. `read_only` blocks writes. `read_write` pauses and requires approval before writes execute. |
+| `agent_approval_ttl_seconds` | `AGENT_APPROVAL_TTL_SECONDS` | `int` | `3600` | Expiry window for pending approval requests, in seconds. |
 
 ### Tool Caching
 
@@ -154,5 +156,6 @@ For structured settings, environment variables must be JSON strings:
 ### See Also
 
 - [Configuration How-to](../how-to/configuration.md)
+- [Approval-aware task flow](../how-to/approvals.md)
 - [Advanced Encryption](../how-to/configuration/encryption.md)
 - [Tool Providers](../how-to/tool-providers.md)

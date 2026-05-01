@@ -1,0 +1,12 @@
+scenario_id: prompt/approval-write-resume-approved
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: prompt-approvals
+source_pack_version: "2026-04-23"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - Verify that the task first pauses for approval.
+  - Verify that an approved decision resumes the paused task and completes the turn.

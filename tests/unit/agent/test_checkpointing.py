@@ -38,6 +38,12 @@ def test_build_graph_config_sets_namespace_and_recursion_limit():
     assert config["recursion_limit"] == 25
 
 
+def test_build_graph_config_normalizes_empty_namespace_sentinel():
+    config = build_graph_config(graph_thread_id="task-1", checkpoint_ns="__empty__")
+
+    assert config["configurable"]["checkpoint_ns"] == ""
+
+
 @pytest.mark.asyncio
 async def test_open_graph_checkpointer_uses_async_redis_saver():
     fake_checkpointer = MagicMock()
@@ -173,6 +179,82 @@ async def test_persist_checkpoint_metadata_falls_back_to_sync_get_tuple():
     assert saved_state.thread_id == "thread-1"
     assert saved_state.graph_thread_id == "task-1"
     assert saved_state.checkpoint_id == "checkpoint-1"
+
+
+@pytest.mark.asyncio
+async def test_persist_checkpoint_metadata_falls_back_to_blank_namespace():
+    expected_tuple = SimpleNamespace(
+        config={
+            "configurable": {
+                "thread_id": "task-1",
+                "checkpoint_ns": "",
+                "checkpoint_id": "checkpoint-blank",
+            }
+        }
+    )
+    fake_checkpointer = MagicMock()
+    fake_checkpointer.aget_tuple = AsyncMock(side_effect=[None, expected_tuple])
+    fake_manager = SimpleNamespace(
+        get_resume_state=AsyncMock(return_value=None),
+        save_resume_state=AsyncMock(),
+    )
+
+    with patch("redis_sre_agent.agent.checkpointing.ApprovalManager", return_value=fake_manager):
+        await persist_checkpoint_metadata(
+            task_id="task-1",
+            thread_id="thread-1",
+            graph_thread_id="task-1",
+            graph_type="chat",
+            checkpointer=fake_checkpointer,
+            config=build_graph_config(graph_thread_id="task-1"),
+        )
+
+    assert fake_checkpointer.aget_tuple.await_count == 2
+    first_call, second_call = fake_checkpointer.aget_tuple.await_args_list
+    assert first_call.args[0]["configurable"]["checkpoint_ns"] == GRAPH_CHECKPOINT_NAMESPACE
+    assert second_call.args[0]["configurable"]["checkpoint_ns"] == ""
+    saved_state = fake_manager.save_resume_state.await_args.args[0]
+    assert saved_state.checkpoint_ns == ""
+    assert saved_state.checkpoint_id == "checkpoint-blank"
+
+
+@pytest.mark.asyncio
+async def test_persist_checkpoint_metadata_scans_thread_when_namespace_lookups_miss():
+    expected_tuple = SimpleNamespace(
+        config={
+            "configurable": {
+                "thread_id": "task-1",
+                "checkpoint_ns": "other-ns",
+                "checkpoint_id": "checkpoint-scan",
+            }
+        }
+    )
+    fake_checkpointer = MagicMock()
+    fake_checkpointer.aget_tuple = AsyncMock(return_value=None)
+
+    async def _alist(_config, limit=None):
+        assert limit == 1
+        yield expected_tuple
+
+    fake_checkpointer.alist = _alist
+    fake_manager = SimpleNamespace(
+        get_resume_state=AsyncMock(return_value=None),
+        save_resume_state=AsyncMock(),
+    )
+
+    with patch("redis_sre_agent.agent.checkpointing.ApprovalManager", return_value=fake_manager):
+        await persist_checkpoint_metadata(
+            task_id="task-1",
+            thread_id="thread-1",
+            graph_thread_id="task-1",
+            graph_type="chat",
+            checkpointer=fake_checkpointer,
+            config=build_graph_config(graph_thread_id="task-1"),
+        )
+
+    saved_state = fake_manager.save_resume_state.await_args.args[0]
+    assert saved_state.checkpoint_ns == "other-ns"
+    assert saved_state.checkpoint_id == "checkpoint-scan"
 
 
 @pytest.mark.asyncio

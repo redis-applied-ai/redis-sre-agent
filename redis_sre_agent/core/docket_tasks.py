@@ -201,14 +201,16 @@ def _build_resume_payload(
     """Build the resume payload passed back into LangGraph."""
 
     return {
-        "approval_id": approval_record.approval_id,
-        "interrupt_id": approval_record.interrupt_id,
-        "decision": decision.decision.value,
-        "decision_at": decision.decision_at,
-        "decision_by": decision.decision_by,
-        "decision_comment": decision.decision_comment,
-        "action_hash": approval_record.action_hash,
-        "tool_name": approval_record.tool_name,
+        approval_record.interrupt_id: {
+            "approval_id": approval_record.approval_id,
+            "interrupt_id": approval_record.interrupt_id,
+            "decision": decision.decision.value,
+            "decision_at": decision.decision_at,
+            "decision_by": decision.decision_by,
+            "decision_comment": decision.decision_comment,
+            "action_hash": approval_record.action_hash,
+            "tool_name": approval_record.tool_name,
+        }
     }
 
 
@@ -2140,6 +2142,9 @@ async def resume_task_after_approval(
     resume_context = dict(thread.context or {})
     resume_context["task_id"] = task_id
     resume_context["thread_id"] = thread_id
+    resume_context["graph_thread_id"] = resume_state.graph_thread_id
+    resume_context["checkpoint_ns"] = resume_state.checkpoint_ns
+    resume_context["checkpoint_id"] = resume_state.checkpoint_id
 
     if resume_state.graph_type == "chat":
         from redis_sre_agent.agent.chat_agent import ChatAgent

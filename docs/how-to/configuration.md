@@ -109,16 +109,33 @@ export SRE_AGENT_CONFIG=/path/to/my-config.toml
 - `TOOLS_PROMETHEUS_URL` / `TOOLS_LOKI_URL`: Tool-specific endpoints
 - `API_KEY`: API auth key (if you enable auth)
 - `ALLOWED_HOSTS`: CORS origins (default: `["*"]`)
+- `AGENT_PERMISSION_MODE`: `read_only` or `read_write` for human-in-the-loop approval behavior
+- `AGENT_APPROVAL_TTL_SECONDS`: Pending approval expiry window in seconds
 
 Example `.env` (local):
 
 ```bash
 OPENAI_API_KEY=your_openai_key
 REDIS_URL=redis://localhost:7843/0
+AGENT_PERMISSION_MODE=read_only
+AGENT_APPROVAL_TTL_SECONDS=3600
 # Optional tool endpoints
 TOOLS_PROMETHEUS_URL=http://localhost:9090
 TOOLS_LOKI_URL=http://localhost:3100
 ```
+
+### Approval mode
+
+The agent has two global modes for mutating tools:
+
+- `AGENT_PERMISSION_MODE=read_only`
+  The default. Read-capable tools can still run, but mutating tools are blocked and no approval record is created.
+- `AGENT_PERMISSION_MODE=read_write`
+  Read-capable tools still run normally. Write-capable tools pause at the approval boundary, create a pending approval record, and require an explicit approve or reject decision before execution continues.
+
+Use `AGENT_APPROVAL_TTL_SECONDS` to control how long a pending approval stays valid before it expires. The default is `3600` seconds.
+
+See [Approval-aware task flow](approvals.md) for the operator workflow once a task enters `awaiting_approval`.
 
 ### Tool caching
 

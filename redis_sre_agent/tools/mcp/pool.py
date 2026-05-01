@@ -20,6 +20,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from redis_sre_agent.core.runtime_overrides import get_active_mcp_servers
+from redis_sre_agent.tools.mcp.jsonrpc_http import JSONRPCHTTPSession
 
 if TYPE_CHECKING:
     from redis_sre_agent.core.config import MCPServerConfig
@@ -32,7 +33,7 @@ class PooledConnection:
     """A pooled MCP connection with its session and metadata."""
 
     server_name: str
-    session: ClientSession
+    session: Any
     tools: List[mcp_types.Tool]
     exit_stack: AsyncExitStack
     connected_at: float = field(default_factory=time.time)
@@ -133,6 +134,9 @@ class MCPConnectionPool:
                     stdio_client(server_params)
                 )
             elif config.url:
+                resolved_url = os.path.expandvars(config.url).strip()
+                if not resolved_url or "${" in resolved_url:
+                    raise ValueError(f"MCP server '{server_name}' has an unresolved URL: {config.url}")
                 headers = None
                 if config.headers:
                     headers = {k: os.path.expandvars(v) for k, v in config.headers.items()}
@@ -140,11 +144,30 @@ class MCPConnectionPool:
                 transport_type = (config.transport or "streamable_http").lower()
                 if transport_type == "sse":
                     read_stream, write_stream = await exit_stack.enter_async_context(
-                        sse_client(config.url, headers=headers)
+                        sse_client(resolved_url, headers=headers)
                     )
-                else:
+                elif transport_type == "streamable_http":
                     (read_stream, write_stream, _) = await exit_stack.enter_async_context(
-                        streamablehttp_client(config.url, headers=headers)
+                        streamablehttp_client(resolved_url, headers=headers)
+                    )
+                elif transport_type == "jsonrpc_http":
+                    session = await exit_stack.enter_async_context(
+                        JSONRPCHTTPSession(resolved_url, headers=headers)
+                    )
+                    await session.initialize()
+                    tools_result = await session.list_tools()
+
+                    conn = PooledConnection(
+                        server_name=server_name,
+                        session=session,
+                        tools=tools_result.tools,
+                        exit_stack=exit_stack,
+                    )
+                    self._connections[server_name] = conn
+                    return conn
+                else:
+                    raise ValueError(
+                        f"Unsupported MCP transport '{transport_type}' for server '{server_name}'"
                     )
             else:
                 raise ValueError(f"MCP server '{server_name}' needs 'command' or 'url'")

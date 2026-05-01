@@ -390,7 +390,10 @@ async def test_resume_task_after_rejection_resumes_with_rejected_decision():
     assert result["response"]["response"] == "Okay, I will not make that change."
     mock_approval_manager.record_decision.assert_awaited_once()
     resume_payload = mock_chat_agent.resume_query.await_args.kwargs["resume_payload"]
-    assert resume_payload["decision"] == ApprovalDecisionType.REJECTED.value
+    assert resume_payload["interrupt-1"]["decision"] == ApprovalDecisionType.REJECTED.value
+    resume_context = mock_chat_agent.resume_query.await_args.kwargs["context"]
+    assert resume_context["checkpoint_ns"] == "agent_turn"
+    assert resume_context["checkpoint_id"] == "ckpt-1"
     mock_approval_manager.delete_resume_state.assert_awaited_once_with("task-1")
 
 

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import threading
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -120,6 +121,7 @@ MAX_HISTORY_MESSAGES = 20
 DEFAULT_USER_ID = "runtime-user"
 _REDIS_BOOTSTRAP_LOCK = asyncio.Lock()
 _REDIS_BOOTSTRAP_COMPLETE = False
+INTERNAL_MCP_CAPABILITIES_TOOL = "__rar_runtime_capabilities__"
 
 
 def _runtime_state_dir() -> Path:
@@ -244,7 +246,36 @@ def _refresh_runtime_agent_surface() -> None:
     runtime_agent.mcp_capabilities = _build_mcp_capabilities()
 
 
+async def _refresh_runtime_agent_surface_async() -> None:
+    runtime_agent.mcp_tools = _build_runtime_mcp_tools()
+    runtime_agent.mcp_capabilities = await _build_mcp_capabilities_async()
+
+
 _bootstrap_runtime_environment()
+
+
+def _run_coroutine_sync(awaitable: Awaitable[Any]) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    result: Any | None = None
+    error: BaseException | None = None
+
+    def _runner() -> None:
+        nonlocal result, error
+        try:
+            result = asyncio.run(awaitable)
+        except BaseException as exc:  # pragma: no cover - propagated to caller
+            error = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if error is not None:
+        raise error
+    return result
 
 
 async def _ensure_runtime_redis_ready() -> None:
@@ -744,6 +775,82 @@ def _load_configured_external_mcp_tools() -> dict[str, dict[str, str]]:
     return tools
 
 
+def _configured_external_mcp_schema_cache_key(
+    *,
+    server_name: str,
+    server_config: Any,
+) -> tuple[str, str, str] | None:
+    command = getattr(server_config, "command", None)
+    raw_args = getattr(server_config, "args", None)
+    args = raw_args if isinstance(raw_args, list) else []
+    url = getattr(server_config, "url", None)
+    resolved_url = os.path.expandvars(url).strip() if isinstance(url, str) else ""
+    if isinstance(command, str) and command.strip():
+        target = json.dumps(
+            {
+                "command": command.strip(),
+                "args": [str(arg) for arg in args],
+            },
+            sort_keys=True,
+        )
+    elif resolved_url and "${" not in resolved_url:
+        target = json.dumps({"url": resolved_url}, sort_keys=True)
+    else:
+        return None
+    raw_tools = getattr(server_config, "tools", None)
+    tool_names = sorted(raw_tools.keys()) if isinstance(raw_tools, Mapping) else []
+    return (server_name, target, json.dumps(tool_names))
+
+
+_CONFIGURED_EXTERNAL_MCP_PARAMETERS_CACHE: dict[
+    tuple[str, str, str], dict[str, dict[str, Any]]
+] = {}
+
+
+def _should_skip_configured_external_schema_discovery() -> bool:
+    raw_value = os.environ.get("RAR_SKIP_CONFIGURED_EXTERNAL_MCP_SCHEMA_DISCOVERY", "").strip()
+    return raw_value.lower() in {"1", "true", "yes", "on"}
+
+
+async def _load_configured_external_mcp_tool_parameters() -> dict[str, dict[str, Any]]:
+    from redis_sre_agent.core.config import MCPServerConfig, settings
+    from redis_sre_agent.tools.mcp.provider import MCPToolProvider
+
+    if _should_skip_configured_external_schema_discovery():
+        return {}
+
+    parameters_by_name: dict[str, dict[str, Any]] = {}
+    for server_name, server_config in settings.mcp_servers.items():
+        if isinstance(server_config, dict):
+            server_config = MCPServerConfig.model_validate(server_config)
+        cache_key = _configured_external_mcp_schema_cache_key(
+            server_name=server_name,
+            server_config=server_config,
+        )
+        if cache_key is None:
+            continue
+        cached = _CONFIGURED_EXTERNAL_MCP_PARAMETERS_CACHE.get(cache_key)
+        if cached is None:
+            provider = MCPToolProvider(
+                server_name=server_name,
+                server_config=server_config,
+                use_pool=False,
+            )
+            try:
+                async with provider:
+                    cached = {
+                        str(tool_name): copy.deepcopy(dict(schema))
+                        for tool_name, schema in provider.get_input_schemas().items()
+                        if isinstance(schema, Mapping)
+                    }
+            except BaseException:
+                cached = {}
+            _CONFIGURED_EXTERNAL_MCP_PARAMETERS_CACHE[cache_key] = cached
+        for tool_name, parameters in cached.items():
+            parameters_by_name.setdefault(tool_name, copy.deepcopy(parameters))
+    return parameters_by_name
+
+
 async def _invoke_configured_external_mcp_tool(
     tool_name: str,
     arguments: Mapping[str, Any],
@@ -795,6 +902,13 @@ async def _dispatch_mcp_tool(task_input: Mapping[str, Any]) -> dict[str, Any]:
     arguments = task_input.get("arguments", {})
     if not isinstance(arguments, Mapping):
         raise RuntimeError("mcp arguments must be an object")
+    if tool_name == INTERNAL_MCP_CAPABILITIES_TOOL:
+        return {
+            "ok": True,
+            "mode": "mcp",
+            "tool": tool_name,
+            "result": copy.deepcopy(runtime_agent.mcp_capabilities),
+        }
 
     registry = _load_mcp_tool_registry()
     tool = registry.get(tool_name)
@@ -826,41 +940,50 @@ async def _dispatch_mcp_tool(task_input: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_mcp_capabilities() -> dict[str, list[dict[str, Any]]]:
+async def _build_mcp_capabilities_async() -> dict[str, list[dict[str, Any]]]:
     from redis_sre_agent.mcp_server.task_contract import tool_execution_contract
 
     tools: list[dict[str, Any]] = []
+    external_parameters_by_name = await _load_configured_external_mcp_tool_parameters()
     for name, spec in sorted(_load_runtime_mcp_tool_specs().items()):
         description = str(spec.get("description") or name).strip().splitlines()[0]
-        tools.append(
-            {
-                "name": name,
-                "description": description,
-                "executionContract": tool_execution_contract(name),
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": name,
+            "description": description,
+            "executionContract": tool_execution_contract(name),
+        }
+        parameters = spec.get("parameters")
+        if isinstance(parameters, Mapping):
+            entry["inputSchema"] = copy.deepcopy(dict(parameters))
+        tools.append(entry)
     for name, tool_spec in sorted(_load_configured_external_mcp_tools().items()):
         if any(existing["name"] == name for existing in tools):
             continue
-        tools.append(
-            {
-                "name": name,
-                "description": tool_spec["description"],
-                "executionContract": {
-                    "nativeMode": "inline",
-                    "runtimeMode": "inline",
-                    "nativeResultKind": "final_result",
-                    "runtimeResultKind": "final_result",
-                },
-            }
-        )
+        entry = {
+            "name": name,
+            "description": tool_spec["description"],
+            "executionContract": {
+                "nativeMode": "inline",
+                "runtimeMode": "inline",
+                "nativeResultKind": "final_result",
+                "runtimeResultKind": "final_result",
+            },
+        }
+        parameters = external_parameters_by_name.get(name)
+        if isinstance(parameters, Mapping):
+            entry["inputSchema"] = copy.deepcopy(dict(parameters))
+        tools.append(entry)
     return {"tools": tools, "resources": [], "prompts": []}
+
+
+def _build_mcp_capabilities() -> dict[str, list[dict[str, Any]]]:
+    return _run_coroutine_sync(_build_mcp_capabilities_async())
 
 
 async def runtime_sre_agent(task_input: Mapping[str, Any], emitter: TaskEmitter) -> dict[str, Any]:
     _apply_context_secret_env(task_input)
     _bootstrap_runtime_environment()
-    _refresh_runtime_agent_surface()
+    await _refresh_runtime_agent_surface_async()
     await _ensure_runtime_redis_ready()
     if isinstance(task_input.get("tool"), str) and str(task_input.get("tool")).strip():
         return await _dispatch_mcp_tool(task_input)

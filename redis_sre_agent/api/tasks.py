@@ -158,10 +158,13 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
     if not state:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    if state.status != TaskStatus.AWAITING_APPROVAL:
+    if state.status not in {TaskStatus.AWAITING_APPROVAL, TaskStatus.IN_PROGRESS}:
+        return await _build_task_response(task_id, task_manager)
+    if state.status == TaskStatus.IN_PROGRESS and not getattr(state, "resume_supported", False):
         return await _build_task_response(task_id, task_manager)
 
     resume_requested = False
+    original_status = state.status
     pending_approval = getattr(state, "pending_approval", None)
     try:
         await validate_task_resume_request(
@@ -191,7 +194,7 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
     except Exception:
         if resume_requested:
             await task_manager.set_pending_approval(task_id, pending_approval)
-            await task_manager.update_task_status(task_id, TaskStatus.AWAITING_APPROVAL)
+            await task_manager.update_task_status(task_id, original_status)
         raise
 
     return await _build_task_response(task_id, task_manager)

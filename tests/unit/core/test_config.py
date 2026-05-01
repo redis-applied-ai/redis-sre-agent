@@ -413,6 +413,12 @@ class TestMCPConfiguration:
         )
         assert config_sse.transport == "sse"
 
+        config_jsonrpc = MCPServerConfig(
+            url="http://localhost:3001/mcp",
+            transport="jsonrpc_http",
+        )
+        assert config_jsonrpc.transport == "jsonrpc_http"
+
     def test_mcp_server_config_with_tool_constraints(self):
         """Test MCPServerConfig with tool constraints."""
         from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig

@@ -22,6 +22,66 @@ logger = logging.getLogger(__name__)
 GRAPH_CHECKPOINT_NAMESPACE = "agent_turn"
 
 
+async def _load_checkpoint_tuple(
+    *,
+    checkpointer: Any,
+    config: Dict[str, Any],
+) -> Any | None:
+    """Load the latest checkpoint tuple, tolerating namespace drift.
+
+    In live runtime environments LangGraph may persist checkpoints under the
+    empty namespace even when the initial invoke config carried a logical
+    namespace. When that happens, a direct lookup by the requested namespace
+    returns no checkpoint even though the thread has resumable state.
+    """
+
+    if hasattr(checkpointer, "aget_tuple"):
+        checkpoint_tuple = await checkpointer.aget_tuple(config)
+    else:
+        checkpoint_tuple = await asyncio.to_thread(checkpointer.get_tuple, config)
+    if checkpoint_tuple is not None:
+        return checkpoint_tuple
+
+    configurable = config.get("configurable", {})
+    thread_id = str(configurable.get("thread_id") or "").strip()
+    checkpoint_ns = configurable.get("checkpoint_ns")
+    if not thread_id:
+        return None
+
+    # LangGraph Redis stores the empty namespace as "__empty__" in keys, but
+    # the runtime config uses the empty string. Retry the lookup using the
+    # empty-string namespace when the requested namespace missed.
+    if checkpoint_ns not in ("", None):
+        blank_ns_config = {
+            **config,
+            "configurable": {
+                "thread_id": thread_id,
+                "checkpoint_ns": "",
+            },
+        }
+        if hasattr(checkpointer, "aget_tuple"):
+            checkpoint_tuple = await checkpointer.aget_tuple(blank_ns_config)
+        else:
+            checkpoint_tuple = await asyncio.to_thread(checkpointer.get_tuple, blank_ns_config)
+        if checkpoint_tuple is not None:
+            return checkpoint_tuple
+
+    if hasattr(checkpointer, "alist"):
+        try:
+            async for checkpoint_tuple in checkpointer.alist(
+                {"configurable": {"thread_id": thread_id}},
+                limit=1,
+            ):
+                return checkpoint_tuple
+        except Exception:
+            logger.debug(
+                "Checkpoint thread scan failed for %s while recovering resume metadata",
+                thread_id,
+                exc_info=True,
+            )
+    return None
+
+
 def resolve_graph_thread_id(
     *,
     session_id: str,
@@ -37,14 +97,18 @@ def build_graph_config(
     graph_thread_id: str,
     recursion_limit: Optional[int] = None,
     checkpoint_ns: str = GRAPH_CHECKPOINT_NAMESPACE,
+    checkpoint_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the LangGraph runtime config for checkpointed execution."""
+    normalized_checkpoint_ns = "" if checkpoint_ns == "__empty__" else checkpoint_ns
     config: Dict[str, Any] = {
         "configurable": {
             "thread_id": graph_thread_id,
-            "checkpoint_ns": checkpoint_ns,
+            "checkpoint_ns": normalized_checkpoint_ns,
         }
     }
+    if checkpoint_id:
+        config["configurable"]["checkpoint_id"] = checkpoint_id
     if recursion_limit is not None:
         config["recursion_limit"] = recursion_limit
     return config
@@ -130,10 +194,7 @@ async def persist_checkpoint_metadata(
 
     try:
         redis_client = get_redis_client()
-        if hasattr(checkpointer, "aget_tuple"):
-            checkpoint_tuple = await checkpointer.aget_tuple(config)
-        else:
-            checkpoint_tuple = await asyncio.to_thread(checkpointer.get_tuple, config)
+        checkpoint_tuple = await _load_checkpoint_tuple(checkpointer=checkpointer, config=config)
         if checkpoint_tuple is None:
             return
 

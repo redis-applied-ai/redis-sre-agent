@@ -870,7 +870,19 @@ User Query: {query}"""
                 await emitter.emit("Chat agent processing your question...", "agent_start")
                 async with open_graph_checkpointer(durable=bool(task_id)) as checkpointer:
                     app = workflow.compile(checkpointer=checkpointer)
-                    final_state = await app.ainvoke(initial_state, config=thread_config)
+                    try:
+                        final_state = await app.ainvoke(initial_state, config=thread_config)
+                    except GraphInterrupt:
+                        await persist_checkpoint_metadata(
+                            task_id=task_id,
+                            thread_id=tool_thread_id,
+                            graph_thread_id=graph_thread_id,
+                            graph_type="chat",
+                            checkpointer=checkpointer,
+                            config=thread_config,
+                        )
+                        await persist_approval_wait_state(task_id=task_id)
+                        raise
                     await persist_checkpoint_metadata(
                         task_id=task_id,
                         thread_id=tool_thread_id,
@@ -970,15 +982,38 @@ User Query: {query}"""
                 session_id=session_id,
                 context=normalized_context,
             )
-            thread_config = build_graph_config(graph_thread_id=graph_thread_id)
+            checkpoint_ns_value = normalized_context.get("checkpoint_ns")
+            checkpoint_ns = (
+                "agent_turn"
+                if checkpoint_ns_value is None
+                else str(checkpoint_ns_value).strip()
+            )
+            checkpoint_id = str(normalized_context.get("checkpoint_id") or "").strip()
+            thread_config = build_graph_config(
+                graph_thread_id=graph_thread_id,
+                checkpoint_ns=checkpoint_ns,
+                checkpoint_id=checkpoint_id or None,
+            )
 
             try:
                 async with open_graph_checkpointer(durable=True) as checkpointer:
                     app = workflow.compile(checkpointer=checkpointer)
-                    final_state = await app.ainvoke(
-                        Command(resume=resume_payload or {}),
-                        config=thread_config,
-                    )
+                    try:
+                        final_state = await app.ainvoke(
+                            Command(resume=resume_payload or {}),
+                            config=thread_config,
+                        )
+                    except GraphInterrupt:
+                        await persist_checkpoint_metadata(
+                            task_id=task_id,
+                            thread_id=tool_thread_id,
+                            graph_thread_id=graph_thread_id,
+                            graph_type="chat",
+                            checkpointer=checkpointer,
+                            config=thread_config,
+                        )
+                        await persist_approval_wait_state(task_id=task_id)
+                        raise
                     await persist_checkpoint_metadata(
                         task_id=task_id,
                         thread_id=tool_thread_id,

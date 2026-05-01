@@ -2848,8 +2848,17 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     session_id=session_id,
                     context=normalized_context,
                 )
+                checkpoint_ns_value = normalized_context.get("checkpoint_ns")
+                checkpoint_ns = (
+                    "agent_turn"
+                    if checkpoint_ns_value is None
+                    else str(checkpoint_ns_value).strip()
+                )
+                checkpoint_id = str(normalized_context.get("checkpoint_id") or "").strip()
                 thread_config = build_graph_config(
                     graph_thread_id=graph_thread_id,
+                    checkpoint_ns=checkpoint_ns,
+                    checkpoint_id=checkpoint_id or None,
                     recursion_limit=self.settings.recursion_limit,
                 )
 

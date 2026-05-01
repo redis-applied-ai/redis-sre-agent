@@ -150,6 +150,46 @@ wscat -c ws://localhost:8080/api/v1/ws/tasks/<thread_id>
 # You will receive an initial_state event and subsequent progress updates
 ```
 
+#### Approval-aware task flow
+
+When `AGENT_PERMISSION_MODE=read_write`, write-capable tools do not run immediately. The task pauses in `awaiting_approval`, and the task/thread payloads include:
+
+- `status: "awaiting_approval"`
+- `pending_approval`
+- `resume_supported: true`
+
+Operator flow:
+
+```bash
+# Inspect the paused task
+curl -fsS http://localhost:8080/api/v1/tasks/<task_id> | jq
+
+# List approval history for the task
+curl -fsS http://localhost:8080/api/v1/tasks/<task_id>/approvals | jq
+
+# Approve and resume
+curl -fsS -X POST http://localhost:8080/api/v1/tasks/<task_id>/resume \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "approval_id": "<approval_id>",
+    "decision": "approved",
+    "decision_by": "operator@example.com",
+    "decision_comment": "Approved after change review"
+  }' | jq
+
+# Reject and resume
+curl -fsS -X POST http://localhost:8080/api/v1/tasks/<task_id>/resume \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "approval_id": "<approval_id>",
+    "decision": "rejected",
+    "decision_by": "operator@example.com",
+    "decision_comment": "Needs a maintenance window first"
+  }' | jq
+```
+
+If the resumed task hits another gated write later in the same run, it can return to `awaiting_approval` with a new pending approval. For a fuller operator-facing walkthrough, see [Approval-aware task flow](approvals.md).
+
 #### Alternative flow
 
 Alternative flow: create a thread first, then submit a task on that thread.
@@ -257,6 +297,8 @@ curl -fsS http://localhost:8080/api/v1/schedules/<schedule_id>/runs | jq
 
 ### 7) Tasks, threads, and streaming
 - Tasks: `GET /api/v1/tasks/{task_id}`
+- Task approvals: `GET /api/v1/tasks/{task_id}/approvals`
+- Task resume: `POST /api/v1/tasks/{task_id}/resume`
 - Threads: `GET /api/v1/threads`, `GET /api/v1/threads/{thread_id}`
 - WebSocket: `ws://localhost:8080/api/v1/ws/tasks/{thread_id}`
 

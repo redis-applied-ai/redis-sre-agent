@@ -19,6 +19,7 @@ Redis SRE Agent gives platform teams an AI operator for Redis. It answers Redis 
 
 - Ad-hoc triage from the CLI: [how-to/cli.md](how-to/cli.md)
 - Ad-hoc triage from the API: [how-to/api.md](how-to/api.md)
+- Approval-aware task handling: [how-to/approvals.md](how-to/approvals.md)
 - Eval system and live-suite workflows: [how-to/evals.md](how-to/evals.md)
 - Agent Memory Server integration: [how-to/agent-memory-server-integration.md](how-to/agent-memory-server-integration.md)
 - Scheduled health checks: [how-to/cli.md#7-schedule-recurring-checks](how-to/cli.md#7-schedule-recurring-checks)

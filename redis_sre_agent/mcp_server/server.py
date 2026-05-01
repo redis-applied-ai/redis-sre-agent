@@ -2549,7 +2549,6 @@ async def redis_sre_resume_task(
         pending_approval: Next pending approval if the task paused again
     """
     from redis_sre_agent.core.docket_tasks import (
-        get_redis_url,
         resume_task_after_approval,
         validate_task_resume_request,
     )
@@ -2561,7 +2560,15 @@ async def redis_sre_resume_task(
         task = await get_task_by_id(task_id=task_id)
         if task is None:
             raise ValueError(f"Task {task_id} not found")
-        if task.get("status") == "awaiting_approval":
+        task_status_raw = task.get("status")
+        if hasattr(task_status_raw, "value"):
+            task_status = str(task_status_raw.value or "").strip().lower()
+        else:
+            task_status = str(task_status_raw or "").strip().lower()
+        resume_supported = bool(task.get("resume_supported", False))
+        if task_status == "awaiting_approval" or (
+            task_status == "in_progress" and resume_supported
+        ):
             await validate_task_resume_request(
                 task_id=task_id,
                 approval_id=approval_id,
@@ -2569,15 +2576,13 @@ async def redis_sre_resume_task(
                 decision_by=decision_by,
                 decision_comment=decision_comment,
             )
-            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-                task_func = docket.add(resume_task_after_approval, key=task_id)
-                await task_func(
-                    task_id=task_id,
-                    approval_id=approval_id,
-                    decision=decision,
-                    decision_by=decision_by,
-                    decision_comment=decision_comment,
-                )
+            await resume_task_after_approval(
+                task_id=task_id,
+                approval_id=approval_id,
+                decision=decision,
+                decision_by=decision_by,
+                decision_comment=decision_comment,
+            )
         task = await get_task_by_id(task_id=task_id)
         if task is None:
             raise ValueError(f"Task {task_id} not found")

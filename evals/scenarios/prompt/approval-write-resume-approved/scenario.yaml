@@ -1,0 +1,31 @@
+id: prompt/approval-write-resume-approved
+name: Approval write resumes after approval
+description: Exercise the approval pause and then resume the paused chat task after an approved decision.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-approvals
+  source_pack_version: 2026-04-23
+  derived_from:
+    - redis_sre_agent.core.docket_tasks.resume_task_after_approval
+    - redis_sre_agent.core.approvals.ApprovalDecisionType
+  synthetic:
+    is_synthetic: false
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/approval-write-resume-approved/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+execution:
+  lane: full_turn
+  agent: chat
+  route_via_router: false
+  query: >
+    Enable maintenance mode for the current target and continue once approval is granted.
+  max_tool_steps: 3
+  llm_mode: replay
+knowledge:
+  mode: disabled
+  version: latest
+expectations:
+  expected_routing_decision: chat

@@ -1,0 +1,7 @@
+{
+  "expected_task_status": "awaiting_approval",
+  "expected_resume_supported": true,
+  "expected_pending_approval_status": "pending",
+  "expected_pending_tool_name_suffix": "enable_maintenance_mode",
+  "expected_provider_call_count": 0
+}
