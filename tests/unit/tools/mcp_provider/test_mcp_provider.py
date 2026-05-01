@@ -1,5 +1,6 @@
 """Unit tests for MCP tool provider."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -184,6 +185,82 @@ class TestMCPToolProviderAsync:
         # Without connecting, schemas should be empty
         schemas = provider.create_tool_schemas()
         assert schemas == []
+
+    @pytest.mark.asyncio
+    async def test_get_input_schemas_returns_raw_schema_by_operation_name(self):
+        """Test that raw MCP schemas stay keyed by original tool names."""
+        config = MCPServerConfig(
+            command="test",
+            tools={"file_write": MCPToolConfig()},
+        )
+        provider = MCPToolProvider(server_name="afs_gateway", server_config=config)
+        provider._mcp_tools = [
+            SimpleNamespace(
+                name="file_write",
+                description="Write a file",
+                inputSchema={
+                    "title": "file_writeArguments",
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "title": "Path"},
+                        "content": {"type": "string", "title": "Content"},
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": False,
+                },
+            )
+        ]
+
+        schemas = provider.get_input_schemas()
+
+        assert schemas == {
+            "file_write": {
+                "title": "file_writeArguments",
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "title": "Path"},
+                    "content": {"type": "string", "title": "Content"},
+                },
+                "required": ["path", "content"],
+                "additionalProperties": False,
+            }
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_input_schemas_coerces_model_like_input_schema(self):
+        """Test that MCP model objects are serialized into plain dict schemas."""
+        config = MCPServerConfig(
+            command="test",
+            tools={"analyzer_list_accounts": MCPToolConfig()},
+        )
+        provider = MCPToolProvider(server_name="re_analyzer", server_config=config)
+
+        class _SchemaModel:
+            def model_dump(self, mode: str = "json") -> dict[str, object]:
+                assert mode == "json"
+                return {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer"}},
+                }
+
+        provider._mcp_tools = [
+            SimpleNamespace(
+                name="analyzer_list_accounts",
+                description="List accounts",
+                inputSchema=_SchemaModel(),
+            )
+        ]
+
+        schemas = provider.get_input_schemas()
+
+        assert schemas == {
+            "analyzer_list_accounts": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {"limit": {"type": "integer"}},
+            }
+        }
 
     @pytest.mark.asyncio
     async def test_call_mcp_tool_not_connected(self):
