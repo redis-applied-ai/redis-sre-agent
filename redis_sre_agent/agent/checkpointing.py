@@ -161,6 +161,7 @@ async def persist_checkpoint_metadata(
                 ),
                 pending_approval_id=existing.pending_approval_id if existing else None,
                 pending_interrupt_id=existing.pending_interrupt_id if existing else None,
+                staged_session_instance=(existing.staged_session_instance if existing else None),
                 resume_count=existing.resume_count if existing else 0,
             )
         )
@@ -201,6 +202,7 @@ async def persist_approval_wait_state(
                 waiting_reason="approval_required",
                 pending_approval_id=pending.approval_id,
                 pending_interrupt_id=pending.interrupt_id,
+                staged_session_instance=resume_state.staged_session_instance,
                 resume_count=resume_state.resume_count,
             )
         )

@@ -186,6 +186,7 @@ async def test_persist_approval_wait_state_reuses_shared_redis_client():
         graph_version="v1",
         checkpoint_ns=GRAPH_CHECKPOINT_NAMESPACE,
         checkpoint_id="checkpoint-1",
+        staged_session_instance=None,
         resume_count=0,
     )
     fake_pending_approval = SimpleNamespace(approval_id="approval-1", interrupt_id="interrupt-1")

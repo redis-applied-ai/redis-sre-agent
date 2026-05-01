@@ -31,7 +31,14 @@ from redis_sre_agent.core.citation_message import (
 )
 from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.config import Settings, settings
-from redis_sre_agent.core.instances import create_instance, get_instance_by_id
+from redis_sre_agent.core.encryption import encrypt_secret, get_secret_value
+from redis_sre_agent.core.instances import (
+    RedisInstance,
+    RedisInstanceType,
+    add_session_instance,
+    get_instance_by_id,
+    get_session_instances,
+)
 from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
     search_knowledge_base_helper,
@@ -107,6 +114,130 @@ def _extract_pending_approval_from_interrupt(error: GraphInterrupt) -> Optional[
     return None
 
 
+async def _resolve_instance_for_thread(
+    instance_id: Optional[str], thread_id: Optional[str]
+) -> Optional[RedisInstance]:
+    """Resolve an instance ID against persistent storage, then thread-scoped session instances."""
+    if not instance_id:
+        return None
+
+    instance = await get_instance_by_id(instance_id)
+    if instance or not thread_id:
+        return instance
+
+    for session_instance in await get_session_instances(thread_id):
+        if session_instance.id == instance_id:
+            return session_instance
+    return None
+
+
+async def _stage_session_instance_from_message(
+    *,
+    thread_id: str,
+    thread_user_id: Optional[str],
+    instance_details: Dict[str, str],
+) -> RedisInstance:
+    """Stage extracted connection details as a thread-scoped instance without mutating global config."""
+    connection_url = instance_details["connection_url"]
+    name = instance_details["name"]
+
+    for session_instance in await get_session_instances(thread_id):
+        if (
+            session_instance.name == name
+            or session_instance.connection_url.get_secret_value() == connection_url
+        ):
+            return session_instance
+
+    session_instance = RedisInstance(
+        id=f"redis-{instance_details['environment']}-{ULID()}",
+        name=name,
+        connection_url=connection_url,
+        environment=instance_details["environment"],
+        usage=instance_details["usage"],
+        description=instance_details.get(
+            "description", "Staged by agent from user-provided connection details"
+        ),
+        created_by="agent",
+        user_id=thread_user_id,
+        instance_type=RedisInstanceType.unknown,
+    )
+    if not await add_session_instance(thread_id, session_instance):
+        raise ValueError("Failed to stage session instance from provided details")
+    return session_instance
+
+
+def _serialize_session_instance_snapshot(instance: RedisInstance) -> Dict[str, Any]:
+    """Persist a staged session instance in resume state with encrypted secrets."""
+    payload = instance.model_dump(mode="json")
+    if payload.get("connection_url"):
+        payload["connection_url"] = encrypt_secret(payload["connection_url"])
+    if payload.get("admin_password"):
+        payload["admin_password"] = encrypt_secret(payload["admin_password"])
+    return payload
+
+
+def _deserialize_session_instance_snapshot(payload: Dict[str, Any]) -> RedisInstance:
+    """Restore a staged session instance snapshot from resume state."""
+    data = dict(payload)
+    if data.get("connection_url"):
+        data["connection_url"] = get_secret_value(data["connection_url"])
+    if data.get("admin_password"):
+        data["admin_password"] = get_secret_value(data["admin_password"])
+    return RedisInstance(**data)
+
+
+async def _persist_staged_session_instance_for_resume(
+    *,
+    task_id: str,
+    thread_id: str,
+    redis_client: Any,
+) -> None:
+    """Store the current thread-scoped instance in durable resume state when needed."""
+    approval_manager = ApprovalManager(redis_client=redis_client)
+    resume_state = await approval_manager.get_resume_state(task_id)
+    if not resume_state:
+        return
+
+    thread = await ThreadManager(redis_client=redis_client).get_thread(thread_id)
+    thread_context = thread.context if thread else {}
+    instance_id = str(thread_context.get("instance_id") or "").strip() or None
+    if not instance_id:
+        return
+
+    for session_instance in await get_session_instances(thread_id):
+        if session_instance.id != instance_id:
+            continue
+        snapshot = _serialize_session_instance_snapshot(session_instance)
+        await approval_manager.save_resume_state(
+            resume_state.model_copy(update={"staged_session_instance": snapshot})
+        )
+        return
+
+
+async def _resolve_instance_for_resume(
+    *,
+    instance_id: Optional[str],
+    thread_id: str,
+    resume_state: Any,
+) -> Optional[RedisInstance]:
+    """Resolve a task target, falling back to a durable staged-instance snapshot."""
+    instance = await _resolve_instance_for_thread(instance_id, thread_id)
+    if instance is not None:
+        return instance
+
+    snapshot = getattr(resume_state, "staged_session_instance", None)
+    if not snapshot:
+        return None
+
+    restored = _deserialize_session_instance_snapshot(snapshot)
+    if instance_id and restored.id != instance_id:
+        return None
+
+    if not await add_session_instance(thread_id, restored):
+        raise ValueError("Failed to restore staged session instance for resume")
+    return restored
+
+
 async def _transition_task_to_awaiting_approval(
     *,
     task_manager: TaskManager,
@@ -150,6 +281,14 @@ async def _transition_task_to_awaiting_approval(
         "tool_name": error.decision.tool_name,
     }
     await task_manager.set_task_result(task_id, result)
+    try:
+        await _persist_staged_session_instance_for_resume(
+            task_id=task_id,
+            thread_id=thread_id,
+            redis_client=task_manager._redis,
+        )
+    except Exception:
+        logger.debug("Failed to persist staged session instance snapshot for task %s", task_id)
     try:
         await task_manager._publish_stream_update(
             thread_id,
@@ -394,6 +533,14 @@ async def _transition_task_to_awaiting_approval_from_interrupt(
     }
     await task_manager.set_task_result(task_id, result)
     await task_manager.update_task_status(task_id, TaskStatus.AWAITING_APPROVAL)
+    try:
+        await _persist_staged_session_instance_for_resume(
+            task_id=task_id,
+            thread_id=thread_id,
+            redis_client=task_manager._redis,
+        )
+    except Exception:
+        logger.debug("Failed to persist staged session instance snapshot for task %s", task_id)
     try:
         await task_manager._publish_stream_update(
             thread_id,
@@ -1383,6 +1530,7 @@ async def _process_agent_turn_impl(
         # Determine active targets
         active_instance_id = None
         active_cluster_id = None
+        staged_thread_instance: Optional[RedisInstance] = None
 
         if instance_id_from_client:
             # Client provided instance_id - use it and update thread
@@ -1464,23 +1612,22 @@ async def _process_agent_turn_impl(
             instance_details = _extract_instance_details_from_message(message)
 
             if instance_details:
-                # User provided connection details - create instance
+                # User provided connection details - stage a thread-scoped instance
                 try:
-                    logger.info("Creating instance from user-provided connection details")
-                    new_instance = await create_instance(
-                        name=instance_details["name"],
-                        connection_url=instance_details["connection_url"],
-                        environment=instance_details["environment"],
-                        usage=instance_details["usage"],
-                        description=instance_details.get(
-                            "description", "Created by agent from user-provided details"
-                        ),
-                        created_by="agent",
-                        user_id=thread.metadata.user_id,
+                    logger.info("Staging session instance from user-provided connection details")
+                    new_instance = await _stage_session_instance_from_message(
+                        thread_id=thread_id,
+                        thread_user_id=thread.metadata.user_id,
+                        instance_details=instance_details,
                     )
 
                     active_instance_id = new_instance.id
-                    logger.info(f"Created new instance: {new_instance.name} ({active_instance_id})")
+                    staged_thread_instance = new_instance
+                    logger.info(
+                        "Staged session instance: %s (%s)",
+                        new_instance.name,
+                        active_instance_id,
+                    )
 
                     # Save instance_id to thread context
                     await thread_manager.update_thread_context(
@@ -1498,15 +1645,18 @@ async def _process_agent_turn_impl(
                     _clear_attached_scope(thread.context)
                     await task_manager.add_task_update(
                         task_id,
-                        f"Created Redis instance: {new_instance.name} ({active_instance_id})",
-                        "instance_created",
+                        (
+                            "Using provided Redis connection details for this thread: "
+                            f"{new_instance.name} ({active_instance_id})"
+                        ),
+                        "instance_context",
                     )
 
                 except Exception as e:
-                    logger.warning(f"Failed to create instance from user details: {e}")
+                    logger.warning(f"Failed to stage session instance from user details: {e}")
                     await task_manager.add_task_update(
                         task_id,
-                        f"Could not create instance from provided details: {str(e)}",
+                        f"Could not stage provided Redis details for this thread: {str(e)}",
                         "instance_error",
                     )
                     # Continue without instance_id - will route to knowledge agent
@@ -1547,19 +1697,21 @@ async def _process_agent_turn_impl(
             routing_context.pop("instance_id", None)
 
         current_scope = _materialize_turn_scope(routing_context)
-        current_scope = await _ensure_handle_backed_turn_scope(
-            turn_scope=current_scope,
-            routing_context=routing_context,
-            thread_context=thread.context,
-            thread_id=thread_id,
-            task_id=task_id,
-            legacy_instance_id=(
-                routing_context.get("instance_id") or current_scope.seed_hints.get("instance_id")
-            ),
-            legacy_cluster_id=(
-                routing_context.get("cluster_id") or current_scope.seed_hints.get("cluster_id")
-            ),
-        )
+        if staged_thread_instance is None:
+            current_scope = await _ensure_handle_backed_turn_scope(
+                turn_scope=current_scope,
+                routing_context=routing_context,
+                thread_context=thread.context,
+                thread_id=thread_id,
+                task_id=task_id,
+                legacy_instance_id=(
+                    routing_context.get("instance_id")
+                    or current_scope.seed_hints.get("instance_id")
+                ),
+                legacy_cluster_id=(
+                    routing_context.get("cluster_id") or current_scope.seed_hints.get("cluster_id")
+                ),
+            )
         routing_context["turn_scope"] = current_scope.model_dump(mode="json")
 
         requested_agent_type = (context or {}).get("requested_agent_type")
@@ -1639,9 +1791,17 @@ async def _process_agent_turn_impl(
                 target_cluster = None
             else:
                 # Get the target instance for the chat agent
-                target_instance = (
-                    await get_instance_by_id(active_instance_id) if active_instance_id else None
-                )
+                target_instance = None
+                if active_instance_id:
+                    if (
+                        staged_thread_instance is not None
+                        and staged_thread_instance.id == active_instance_id
+                    ):
+                        target_instance = staged_thread_instance
+                    else:
+                        target_instance = await _resolve_instance_for_thread(
+                            active_instance_id, thread_id
+                        )
                 target_cluster = (
                     await get_cluster_by_id(active_cluster_id) if active_cluster_id else None
                 )
@@ -2147,7 +2307,11 @@ async def resume_task_after_approval(
 
         instance_id = str(resume_context.get("instance_id") or "").strip() or None
         cluster_id = str(resume_context.get("cluster_id") or "").strip() or None
-        redis_instance = await get_instance_by_id(instance_id) if instance_id else None
+        redis_instance = await _resolve_instance_for_resume(
+            instance_id=instance_id,
+            thread_id=thread_id,
+            resume_state=resume_state,
+        )
         redis_cluster = await get_cluster_by_id(cluster_id) if cluster_id else None
 
         excluded_categories = resume_context.get("exclude_mcp_categories") or []
@@ -2254,7 +2418,11 @@ async def resume_task_after_approval(
 
     instance_id = str(resume_context.get("instance_id") or "").strip() or None
     cluster_id = str(resume_context.get("cluster_id") or "").strip() or None
-    target_instance = await get_instance_by_id(instance_id) if instance_id else None
+    target_instance = await _resolve_instance_for_resume(
+        instance_id=instance_id,
+        thread_id=thread_id,
+        resume_state=resume_state,
+    )
     target_cluster = await get_cluster_by_id(cluster_id) if cluster_id else None
 
     agent = get_sre_agent(
