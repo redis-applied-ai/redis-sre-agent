@@ -33,6 +33,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _coerce_input_schema_dict(input_schema: Any) -> Optional[Dict[str, Any]]:
+    """Normalize MCP input schemas into plain JSON-serializable dicts."""
+    if isinstance(input_schema, dict):
+        return dict(input_schema)
+    if hasattr(input_schema, "model_dump"):
+        try:
+            payload = input_schema.model_dump(mode="json")
+        except TypeError:
+            payload = input_schema.model_dump()
+        if isinstance(payload, dict):
+            return dict(payload)
+    if hasattr(input_schema, "dict"):
+        payload = input_schema.dict()
+        if isinstance(payload, dict):
+            return dict(payload)
+    if hasattr(input_schema, "items"):
+        try:
+            return dict(input_schema.items())
+        except Exception:
+            return None
+    return None
+
+
 class MCPToolProvider(ToolProvider):
     """Dynamic tool provider that connects to an MCP server.
 
@@ -342,7 +365,7 @@ class MCPToolProvider(ToolProvider):
             capability = self._get_capability(tool_name)
 
             # Build parameters schema from MCP tool input schema
-            input_schema = mcp_tool.inputSchema or {}
+            input_schema = _coerce_input_schema_dict(mcp_tool.inputSchema) or {}
             parameters = {
                 "type": "object",
                 "properties": input_schema.get("properties", {}),
@@ -356,6 +379,21 @@ class MCPToolProvider(ToolProvider):
                 parameters=parameters,
             )
             schemas.append(schema)
+
+        return schemas
+
+    def get_input_schemas(self) -> Dict[str, Dict[str, Any]]:
+        """Return raw input schemas keyed by original MCP tool name."""
+        schemas: Dict[str, Dict[str, Any]] = {}
+
+        for mcp_tool in self._mcp_tools:
+            tool_name = mcp_tool.name
+            if not tool_name or not self._should_include_tool(tool_name):
+                continue
+
+            input_schema = _coerce_input_schema_dict(getattr(mcp_tool, "inputSchema", None))
+            if input_schema is not None:
+                schemas[tool_name] = input_schema
 
         return schemas
 
