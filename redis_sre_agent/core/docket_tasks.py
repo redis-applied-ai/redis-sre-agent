@@ -31,6 +31,7 @@ from redis_sre_agent.core.citation_message import (
 )
 from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.config import Settings, settings
+from redis_sre_agent.core.encryption import encrypt_secret, get_secret_value
 from redis_sre_agent.core.instances import (
     RedisInstance,
     RedisInstanceType,
@@ -165,6 +166,79 @@ async def _stage_session_instance_from_message(
     return session_instance
 
 
+def _serialize_session_instance_snapshot(instance: RedisInstance) -> Dict[str, Any]:
+    """Persist a staged session instance in resume state with encrypted secrets."""
+    payload = instance.model_dump(mode="json")
+    if payload.get("connection_url"):
+        payload["connection_url"] = encrypt_secret(payload["connection_url"])
+    if payload.get("admin_password"):
+        payload["admin_password"] = encrypt_secret(payload["admin_password"])
+    return payload
+
+
+def _deserialize_session_instance_snapshot(payload: Dict[str, Any]) -> RedisInstance:
+    """Restore a staged session instance snapshot from resume state."""
+    data = dict(payload)
+    if data.get("connection_url"):
+        data["connection_url"] = get_secret_value(data["connection_url"])
+    if data.get("admin_password"):
+        data["admin_password"] = get_secret_value(data["admin_password"])
+    return RedisInstance(**data)
+
+
+async def _persist_staged_session_instance_for_resume(
+    *,
+    task_id: str,
+    thread_id: str,
+    redis_client: Any,
+) -> None:
+    """Store the current thread-scoped instance in durable resume state when needed."""
+    approval_manager = ApprovalManager(redis_client=redis_client)
+    resume_state = await approval_manager.get_resume_state(task_id)
+    if not resume_state:
+        return
+
+    thread = await ThreadManager(redis_client=redis_client).get_thread(thread_id)
+    thread_context = thread.context if thread else {}
+    instance_id = str(thread_context.get("instance_id") or "").strip() or None
+    if not instance_id:
+        return
+
+    for session_instance in await get_session_instances(thread_id):
+        if session_instance.id != instance_id:
+            continue
+        snapshot = _serialize_session_instance_snapshot(session_instance)
+        if resume_state.staged_session_instance == snapshot:
+            return
+        await approval_manager.save_resume_state(
+            resume_state.model_copy(update={"staged_session_instance": snapshot})
+        )
+        return
+
+
+async def _resolve_instance_for_resume(
+    *,
+    instance_id: Optional[str],
+    thread_id: str,
+    resume_state: Any,
+) -> Optional[RedisInstance]:
+    """Resolve a task target, falling back to a durable staged-instance snapshot."""
+    instance = await _resolve_instance_for_thread(instance_id, thread_id)
+    if instance is not None:
+        return instance
+
+    snapshot = getattr(resume_state, "staged_session_instance", None)
+    if not snapshot:
+        return None
+
+    restored = _deserialize_session_instance_snapshot(snapshot)
+    if instance_id and restored.id != instance_id:
+        return None
+
+    await add_session_instance(thread_id, restored)
+    return restored
+
+
 async def _transition_task_to_awaiting_approval(
     *,
     task_manager: TaskManager,
@@ -209,6 +283,11 @@ async def _transition_task_to_awaiting_approval(
     }
     await task_manager.set_task_result(task_id, result)
     try:
+        await _persist_staged_session_instance_for_resume(
+            task_id=task_id,
+            thread_id=thread_id,
+            redis_client=task_manager._redis,
+        )
         await task_manager._publish_stream_update(
             thread_id,
             "awaiting_approval",
@@ -2218,7 +2297,11 @@ async def resume_task_after_approval(
 
         instance_id = str(resume_context.get("instance_id") or "").strip() or None
         cluster_id = str(resume_context.get("cluster_id") or "").strip() or None
-        redis_instance = await _resolve_instance_for_thread(instance_id, thread_id)
+        redis_instance = await _resolve_instance_for_resume(
+            instance_id=instance_id,
+            thread_id=thread_id,
+            resume_state=resume_state,
+        )
         redis_cluster = await get_cluster_by_id(cluster_id) if cluster_id else None
 
         excluded_categories = resume_context.get("exclude_mcp_categories") or []
@@ -2325,7 +2408,11 @@ async def resume_task_after_approval(
 
     instance_id = str(resume_context.get("instance_id") or "").strip() or None
     cluster_id = str(resume_context.get("cluster_id") or "").strip() or None
-    target_instance = await _resolve_instance_for_thread(instance_id, thread_id)
+    target_instance = await _resolve_instance_for_resume(
+        instance_id=instance_id,
+        thread_id=thread_id,
+        resume_state=resume_state,
+    )
     target_cluster = await get_cluster_by_id(cluster_id) if cluster_id else None
 
     agent = get_sre_agent(

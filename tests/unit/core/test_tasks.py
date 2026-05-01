@@ -3054,6 +3054,114 @@ class TestResumeTaskAfterApproval:
         mock_chat_agent.resume_query.assert_awaited_once()
         mock_approval_manager.delete_resume_state.assert_awaited_once_with("task-123")
 
+    @pytest.mark.asyncio
+    async def test_resume_task_after_approval_rehydrates_expired_thread_scoped_instance(self):
+        approval_error = _build_approval_required_error()
+        assert approval_error.approval_record is not None
+
+        staged_instance = RedisInstance(
+            id="redis-session-instance",
+            name="session-instance",
+            connection_url="redis://localhost:6379",
+            environment="development",
+            usage="cache",
+            description="Session-scoped instance",
+            instance_type="oss_single",
+        )
+
+        task_state = _build_awaiting_task_state(approval_error.pending_approval)
+        thread = Thread(
+            thread_id="thread-456",
+            messages=[],
+            context={"instance_id": "redis-session-instance"},
+            metadata=ThreadMetadata(session_id="session-1", user_id="user-1"),
+        )
+        resume_state = _build_resume_state(approval_error.approval_record).model_copy(
+            update={
+                "staged_session_instance": {
+                    **staged_instance.model_dump(mode="json"),
+                    "connection_url": "redis://localhost:6379",
+                }
+            }
+        )
+        decided_record = approval_error.approval_record.model_copy(
+            update={
+                "status": ApprovalStatus.APPROVED,
+                "decision": ApprovalDecision(decision=ApprovalDecisionType.APPROVED),
+            }
+        )
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(
+            side_effect=[task_state, MagicMock(status=TaskStatus.IN_PROGRESS)]
+        )
+        mock_task_manager.set_pending_approval = AsyncMock()
+        mock_task_manager.set_resume_supported = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=thread)
+        mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager.set_message_trace = AsyncMock()
+
+        mock_approval_manager = AsyncMock()
+        mock_approval_manager.get_resume_state = AsyncMock(return_value=resume_state)
+        mock_approval_manager.get_approval = AsyncMock(return_value=approval_error.approval_record)
+        mock_approval_manager.record_decision = AsyncMock(return_value=decided_record)
+        mock_approval_manager.save_resume_state = AsyncMock()
+        mock_approval_manager.delete_resume_state = AsyncMock()
+
+        mock_response = AgentResponse(
+            response="approved and completed",
+            search_results=[],
+            tool_envelopes=[],
+        )
+        mock_chat_agent = MagicMock()
+        mock_chat_agent.resume_query = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager",
+                return_value=mock_thread_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ApprovalManager",
+                return_value=mock_approval_manager,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._resolve_instance_for_thread",
+                new=AsyncMock(return_value=None),
+            ) as mock_resolve_instance,
+            patch(
+                "redis_sre_agent.core.docket_tasks.add_session_instance",
+                new=AsyncMock(return_value=True),
+            ) as mock_add_session_instance,
+            patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_chat_agent),
+            patch(
+                "redis_sre_agent.agent.checkpointing.persist_approval_wait_state",
+                new=AsyncMock(),
+            ),
+        ):
+            result = await resume_task_after_approval(
+                task_id="task-123",
+                approval_id=approval_error.approval_record.approval_id,
+                decision="approved",
+                redis_client=MagicMock(),
+            )
+
+        assert result["response"]["response"] == "approved and completed"
+        mock_resolve_instance.assert_awaited_once_with("redis-session-instance", "thread-456")
+        mock_add_session_instance.assert_awaited_once()
+        rehydrated_instance = mock_add_session_instance.await_args.args[1]
+        assert isinstance(rehydrated_instance, RedisInstance)
+        assert rehydrated_instance.id == "redis-session-instance"
+        assert rehydrated_instance.connection_url.get_secret_value() == "redis://localhost:6379"
+        assert mock_chat_agent.resume_query.await_count == 1
+
 
 class TestRunAgentWithProgress:
     """Test run_agent_with_progress function."""

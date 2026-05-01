@@ -140,6 +140,7 @@ class GraphResumeState(BaseModel):
     waiting_reason: str
     pending_approval_id: Optional[str] = None
     pending_interrupt_id: Optional[str] = None
+    staged_session_instance: Optional[Dict[str, Any]] = None
     resume_count: int = 0
     updated_at: str = Field(default_factory=_now_iso)
 
