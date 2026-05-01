@@ -17,7 +17,7 @@ from redis_sre_agent.core.approvals import (
     build_action_hash,
 )
 from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
-from redis_sre_agent.core.config import MCPServerConfig
+from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.targets import TargetBinding
 from redis_sre_agent.targets.contracts import (
@@ -935,8 +935,8 @@ class TestToolManagerMcpConfigValidation:
 
     def test_missing_local_mcp_arg_path_detects_relative_script_entrypoints(self):
         """Relative script paths with file extensions should still be validated."""
-        missing = _missing_local_mcp_arg_path(["vendor/re-analyzer-mcp/dist/src/index.js"])
-        assert missing == "vendor/re-analyzer-mcp/dist/src/index.js"
+        missing = _missing_local_mcp_arg_path(["vendor/definitely-missing-mcp/dist/src/index.js"])
+        assert missing == "vendor/definitely-missing-mcp/dist/src/index.js"
 
     def test_missing_local_mcp_arg_path_ignores_script_urls(self):
         """Remote script URLs should not be mistaken for missing local files."""
@@ -982,6 +982,38 @@ class TestToolManagerMcpConfigValidation:
             assert "mcp:re_analyzer" not in mgr._loaded_provider_keys
             assert "Skipping MCP provider 're_analyzer'" in caplog.text
             assert "/definitely/not/a/real/index.js" in caplog.text
+        finally:
+            await mgr._stack.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_load_mcp_providers_skips_fully_excluded_declared_server(self, caplog):
+        """Declared MCP catalogs should skip provider startup when fully excluded."""
+        mgr = ToolManager(exclude_mcp_categories=[ToolCapability.UTILITIES])
+        mgr._stack = AsyncExitStack()
+        await mgr._stack.__aenter__()
+        try:
+            caplog.set_level("INFO")
+            with (
+                patch("redis_sre_agent.core.config.settings") as mock_settings,
+                patch(
+                    "redis_sre_agent.tools.mcp.provider.MCPToolProvider",
+                    side_effect=AssertionError("provider should not be instantiated"),
+                ),
+            ):
+                mock_settings.mcp_servers = {
+                    "afs_gateway": MCPServerConfig(
+                        url="https://afs.example/mcp",
+                        tools={
+                            "file_read": MCPToolConfig(capability=ToolCapability.UTILITIES),
+                            "file_write": MCPToolConfig(capability=ToolCapability.UTILITIES),
+                        },
+                    )
+                }
+                await mgr._load_mcp_providers()
+
+            assert "mcp:afs_gateway" not in mgr._loaded_provider_keys
+            assert "Skipping MCP provider 'afs_gateway'" in caplog.text
+            assert "all declared tools are excluded" in caplog.text
         finally:
             await mgr._stack.__aexit__(None, None, None)
 

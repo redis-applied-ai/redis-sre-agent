@@ -129,6 +129,27 @@ def _missing_local_mcp_arg_path(args: Optional[List[str]]) -> Optional[str]:
     return None
 
 
+def _declared_mcp_server_fully_excluded(
+    server_config: Any,
+    excluded_caps: set[ToolCapability],
+) -> bool:
+    """Return True when config-declared MCP tools are all excluded by capability.
+
+    This lets the manager skip expensive MCP discovery for servers whose entire
+    declared catalog would be filtered out anyway.
+    """
+    if not excluded_caps:
+        return False
+    tools = getattr(server_config, "tools", None)
+    if not isinstance(tools, dict) or not tools:
+        return False
+    for tool_config in tools.values():
+        capability = getattr(tool_config, "capability", None) or ToolCapability.UTILITIES
+        if capability not in excluded_caps:
+            return False
+    return True
+
+
 class ToolManager:
     """Manages tool provider lifecycle and routing.
 
@@ -648,6 +669,14 @@ class ToolManager:
                         "Configure a valid artifact path or URL transport instead.",
                         server_name,
                         missing_arg_path,
+                    )
+                    continue
+
+                if _declared_mcp_server_fully_excluded(server_config, excluded_caps):
+                    logger.info(
+                        "Skipping MCP provider '%s': all declared tools are excluded by "
+                        "the current category filter.",
+                        server_name,
                     )
                     continue
 
