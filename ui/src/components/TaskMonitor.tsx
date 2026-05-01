@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import sreAgentApi, {
+  ApprovalRecord,
   PendingApprovalSummary,
 } from "../services/sreAgentApi";
 
@@ -45,6 +46,17 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<string>("unknown");
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] =
+    useState<PendingApprovalSummary | null>(null);
+  const [resumeSupported, setResumeSupported] = useState(false);
+  const [approvalHistory, setApprovalHistory] = useState<ApprovalRecord[]>([]);
+  const [approvalActionError, setApprovalActionError] = useState<string | null>(
+    null,
+  );
+  const [approvalSubmitting, setApprovalSubmitting] = useState<
+    "approved" | "rejected" | null
+  >(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -168,12 +180,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       const taskStatus = await sreAgentApi.getTaskStatus(threadId);
       // Convert to threadData format for mapThreadToMessages
       const threadData = {
+        task_id: taskStatus.task_id,
         thread_id: taskStatus.thread_id,
         messages: taskStatus.messages,
         updates: taskStatus.updates,
         result: taskStatus.result,
         error_message: taskStatus.error_message,
         status: taskStatus.status,
+        pending_approval: taskStatus.pending_approval,
+        resume_supported: taskStatus.resume_supported,
         metadata: taskStatus.metadata,
         context: taskStatus.context,
       };
@@ -203,6 +218,10 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       }
 
       setMessages(chatMessages);
+      setTaskId(taskStatus.task_id ?? null);
+      setPendingApproval(taskStatus.pending_approval ?? null);
+      setResumeSupported(Boolean(taskStatus.resume_supported));
+      setApprovalActionError(null);
 
       // Use status from API if available; fallback to deriving from thread data
       let derivedStatus = threadData?.status;
@@ -246,6 +265,48 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     }
   };
 
+  const loadApprovalHistory = async (targetTaskId: string) => {
+    try {
+      const response = await sreAgentApi.listTaskApprovals(targetTaskId);
+      setApprovalHistory(response.approvals || []);
+    } catch (error) {
+      console.error("Error loading approval history:", error);
+    }
+  };
+
+  const handleApprovalDecision = async (decision: "approved" | "rejected") => {
+    if (!taskId || !pendingApproval || approvalSubmitting) return;
+    try {
+      setApprovalSubmitting(decision);
+      setApprovalActionError(null);
+      const updated = await sreAgentApi.resumeTask(taskId, {
+        approval_id: pendingApproval.approval_id,
+        decision,
+      });
+      setCurrentStatus(updated.status);
+      setPendingApproval(updated.pending_approval ?? null);
+      setResumeSupported(Boolean(updated.resume_supported));
+      setIsThinking(
+        ["queued", "in_progress", "running"].includes(updated.status),
+      );
+      addStatusMessage(
+        decision === "approved"
+          ? "Approval recorded. The task has been resumed."
+          : "Rejection recorded. The task has been resumed with the denied decision.",
+        new Date().toISOString(),
+      );
+      await fetchThreadAndUpdate();
+      await loadApprovalHistory(taskId);
+    } catch (error) {
+      console.error("Error submitting approval decision:", error);
+      setApprovalActionError(
+        error instanceof Error ? error.message : "Failed to submit approval decision.",
+      );
+    } finally {
+      setApprovalSubmitting(null);
+    }
+  };
+
   const scheduleRefetch = () => {
     if (refetchTimeoutRef.current) return; // already scheduled
     refetchTimeoutRef.current = window.setTimeout(() => {
@@ -259,8 +320,19 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     console.log("Thread changed to:", threadId);
     lastMessageIdRef.current = null;
     lastRenderTimeRef.current = 0;
+    setApprovalHistory([]);
+    setApprovalActionError(null);
+    setTaskId(null);
+    setPendingApproval(null);
+    setResumeSupported(false);
     fetchThreadAndUpdate();
   }, [threadId]);
+
+  useEffect(() => {
+    if (taskId && (currentStatus === "awaiting_approval" || pendingApproval)) {
+      loadApprovalHistory(taskId);
+    }
+  }, [taskId, currentStatus, pendingApproval?.approval_id]);
 
   // Only scroll when messages change, not on every state update
   useEffect(() => {
@@ -588,6 +660,93 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         <div className="flex-shrink-0 p-4">
           <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-md">
             {connectionError}
+          </div>
+        </div>
+      )}
+
+      {pendingApproval && (
+        <div className="flex-shrink-0 px-4 pt-4">
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="font-semibold">
+                  Approval required for {pendingApproval.tool_name}
+                </div>
+                <div>{pendingApproval.summary}</div>
+                <div className="text-xs text-amber-800">
+                  Requested {formatTimestamp(pendingApproval.requested_at)}
+                  {pendingApproval.expires_at
+                    ? ` • Expires ${formatTimestamp(pendingApproval.expires_at)}`
+                    : ""}
+                </div>
+              </div>
+              <div className="rounded-full bg-amber-200 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-amber-900">
+                {currentStatus === "awaiting_approval"
+                  ? "Awaiting approval"
+                  : pendingApproval.status}
+              </div>
+            </div>
+
+            {approvalHistory.length > 0 && (
+              <div className="mt-3 border-t border-amber-200 pt-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  Approval history
+                </div>
+                <div className="space-y-2">
+                  {approvalHistory.slice(0, 3).map((approval) => (
+                    <div
+                      key={approval.approval_id}
+                      className="rounded border border-amber-200 bg-white/60 px-3 py-2 text-xs"
+                    >
+                      <div className="font-medium text-amber-950">
+                        {approval.tool_name}
+                      </div>
+                      <div className="text-amber-900">
+                        {approval.status}
+                        {approval.decision?.decision_by
+                          ? ` by ${approval.decision.decision_by}`
+                          : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {resumeSupported && taskId ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={approvalSubmitting !== null}
+                  onClick={() => void handleApprovalDecision("approved")}
+                  className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {approvalSubmitting === "approved"
+                    ? "Approving..."
+                    : "Approve and resume"}
+                </button>
+                <button
+                  type="button"
+                  disabled={approvalSubmitting !== null}
+                  onClick={() => void handleApprovalDecision("rejected")}
+                  className="rounded-md bg-rose-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {approvalSubmitting === "rejected"
+                    ? "Rejecting..."
+                    : "Reject and resume"}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-3 text-xs text-amber-900">
+                Resume controls are unavailable for this pending approval.
+              </div>
+            )}
+
+            {approvalActionError && (
+              <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {approvalActionError}
+              </div>
+            )}
           </div>
         </div>
       )}

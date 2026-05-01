@@ -5,6 +5,7 @@ and exposes its tools to the agent. It supports tool filtering and description
 overrides based on the MCPServerConfig.
 """
 
+import hashlib
 import logging
 import os
 from contextlib import AsyncExitStack
@@ -18,6 +19,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
 from redis_sre_agent.core.runtime_overrides import get_active_mcp_runtime
+from redis_sre_agent.tools.mcp.jsonrpc_http import JSONRPCHTTPSession
 from redis_sre_agent.tools.models import (
     Tool,
     ToolActionKind,
@@ -103,7 +105,10 @@ class MCPToolProvider(ToolProvider):
         super().__init__(redis_instance=redis_instance)
         self._server_name = server_name
         self._server_config = server_config
-        self._session: Optional[ClientSession] = None
+        # MCP tool names must stay stable across reconnects so persisted
+        # checkpoints can resume interrupted tool calls by name.
+        self._instance_hash = hashlib.sha256(f"mcp:{server_name}".encode()).hexdigest()[:6]
+        self._session: Optional[Any] = None
         self._exit_stack: Optional[AsyncExitStack] = None
         self._mcp_tools: List[mcp_types.Tool] = []
         self._tool_cache: List[Tool] = []
@@ -197,6 +202,11 @@ class MCPToolProvider(ToolProvider):
                 )
             elif self._server_config.url:
                 # URL-based transport (SSE or Streamable HTTP)
+                resolved_url = os.path.expandvars(self._server_config.url).strip()
+                if not resolved_url or "${" in resolved_url:
+                    raise ValueError(
+                        f"MCP server '{self._server_name}' has an unresolved URL: {self._server_config.url}"
+                    )
                 # Expand environment variables in headers (e.g., ${GITHUB_TOKEN})
                 headers = None
                 if self._server_config.headers:
@@ -213,9 +223,9 @@ class MCPToolProvider(ToolProvider):
                     # Legacy SSE transport
                     logger.info(f"Using SSE transport for '{self._server_name}'")
                     read_stream, write_stream = await self._exit_stack.enter_async_context(
-                        sse_client(self._server_config.url, headers=headers)
+                        sse_client(resolved_url, headers=headers)
                     )
-                else:
+                elif transport_type == "streamable_http":
                     # Streamable HTTP transport (default, works with GitHub remote MCP, etc.)
                     logger.info(f"Using Streamable HTTP transport for '{self._server_name}'")
                     (
@@ -223,7 +233,16 @@ class MCPToolProvider(ToolProvider):
                         write_stream,
                         _get_session_id,
                     ) = await self._exit_stack.enter_async_context(
-                        streamablehttp_client(self._server_config.url, headers=headers)
+                        streamablehttp_client(resolved_url, headers=headers)
+                    )
+                elif transport_type == "jsonrpc_http":
+                    logger.info(f"Using JSON-RPC HTTP transport for '{self._server_name}'")
+                    self._session = await self._exit_stack.enter_async_context(
+                        JSONRPCHTTPSession(resolved_url, headers=headers)
+                    )
+                else:
+                    raise ValueError(
+                        f"Unsupported MCP transport '{transport_type}' for server '{self._server_name}'"
                     )
             else:
                 raise ValueError(
@@ -231,9 +250,10 @@ class MCPToolProvider(ToolProvider):
                 )
 
             # Create and initialize the session
-            self._session = await self._exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
+            if self._session is None:
+                self._session = await self._exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
             await self._session.initialize()
 
             # Discover tools from the server
@@ -383,7 +403,12 @@ class MCPToolProvider(ToolProvider):
         return schemas
 
     def get_input_schemas(self) -> Dict[str, Dict[str, Any]]:
-        """Return raw input schemas keyed by original MCP tool name."""
+        """Return raw input schemas keyed by original MCP tool name.
+
+        This preserves the server-published JSON Schema shape so callers that
+        need fidelity beyond the LLM-facing ``ToolDefinition.parameters`` can
+        consume the manifest directly.
+        """
         schemas: Dict[str, Dict[str, Any]] = {}
 
         for mcp_tool in self._mcp_tools:

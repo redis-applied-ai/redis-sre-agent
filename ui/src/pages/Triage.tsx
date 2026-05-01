@@ -98,6 +98,7 @@ const Triage = () => {
   const [approvalHistory, setApprovalHistory] = useState<ApprovalRecord[]>([]);
   const [approvalComment, setApprovalComment] = useState("");
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+  const [isAwaitingApproval, setIsAwaitingApproval] = useState(false);
 
   const [liveModeLocked, setLiveModeLocked] = useState(false);
   const [expandedCitations, setExpandedCitations] = useState<Set<string>>(
@@ -145,6 +146,7 @@ const Triage = () => {
     setResumeSupported(false);
     setApprovalHistory([]);
     setApprovalComment("");
+    setIsAwaitingApproval(false);
   };
 
   const scrollToBottom = () => {
@@ -604,17 +606,19 @@ const Triage = () => {
       const active = ["queued", "in_progress", "running"].includes(
         status.status as any,
       );
+      const monitorable = active || status.status === "awaiting_approval";
       setIsThreadBusy(active);
       setActiveTaskId(status.task_id || null);
       setPendingApproval(status.pending_approval || null);
       setResumeSupported(Boolean(status.resume_supported));
+      setIsAwaitingApproval(status.status === "awaiting_approval");
       if (status.task_id) {
         const approvals = await sreAgentApi.getTaskApprovals(status.task_id);
         setApprovalHistory(approvals);
       } else {
         setApprovalHistory([]);
       }
-      if (!liveModeLocked) setShowWebSocketMonitor(active);
+      if (!liveModeLocked) setShowWebSocketMonitor(monitorable);
     } catch (err) {
       console.warn("Could not load thread status:", err);
       setIsThreadBusy(false);
@@ -641,6 +645,7 @@ const Triage = () => {
       setPendingApproval(null);
       setResumeSupported(false);
       setApprovalComment("");
+      setIsAwaitingApproval(false);
       await loadThreads();
       if (activeThreadId) {
         await selectThread(activeThreadId);
@@ -655,17 +660,33 @@ const Triage = () => {
   };
 
   const sendMessage = async () => {
-    if (!inputMessage.trim() || isLoading) return;
+    const messageContent = inputMessage.trim();
+    if (!messageContent || isLoading) return;
+
+    if (activeThreadId && isThreadBusy) {
+      return;
+    }
+    if (activeThreadId && approvalBlocked) {
+      setError(
+        "This task is waiting for human approval. Use the approval controls above to approve or reject it before continuing.",
+      );
+      return;
+    }
+    if (activeThreadId && isAwaitingApproval) {
+      setError(
+        "This task is awaiting approval. Use the approval controls before sending another message.",
+      );
+      return;
+    }
 
     const userMessage: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: "user",
-      content: inputMessage.trim(),
+      content: messageContent,
       timestamp: new Date().toISOString(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    const messageContent = inputMessage.trim();
     setInputMessage("");
     setIsLoading(true);
     setError("");
@@ -686,7 +707,6 @@ const Triage = () => {
         setIsLoading(false);
         return;
       }
-
       // If no active thread, create a new one
       if (!activeThreadId) {
         const triageResponse = await sreAgentApi.startNewConversation(
@@ -1121,9 +1141,12 @@ const Triage = () => {
                           "in_progress",
                           "running",
                         ].includes(status as any);
+                        const monitorable =
+                          active || status === "awaiting_approval";
                         setIsThreadBusy(active);
+                        setIsAwaitingApproval(status === "awaiting_approval");
                         // Only ever turn ON live view from status; do not turn OFF here
-                        if (active) {
+                        if (monitorable) {
                           setShowWebSocketMonitor(true);
                           setLiveModeLocked(true);
                         } else if (status === "awaiting_approval") {
@@ -1150,6 +1173,7 @@ const Triage = () => {
                       }}
                       onCompleted={async () => {
                         setIsThreadBusy(false);
+                        setIsAwaitingApproval(false);
                         setLiveModeLocked(false);
                         setShowWebSocketMonitor(false);
                         resetApprovalState();
@@ -1459,6 +1483,7 @@ const Triage = () => {
                         disabled={
                           !inputMessage.trim() ||
                           isLoading ||
+                          isAwaitingApproval ||
                           agentStatus !== "available"
                         }
                         className="self-end"
@@ -1472,10 +1497,15 @@ const Triage = () => {
                       ? "This task is paused for approval. Use the approval controls above to approve or reject it."
                       : isThreadBusy
                       ? "Task is running — press Stop to cancel before sending a new message."
+                      : isAwaitingApproval
+                        ? "Task is awaiting approval — use the approval controls before sending another message."
                       : agentStatus === "available"
                         ? "Press Enter to send, Shift+Enter for new line"
                         : "Agent is currently unavailable"}
                   </div>
+                  {error && (
+                    <div className="text-redis-xs text-red-600 mt-2">{error}</div>
+                  )}
                 </div>
               </>
             ) : (

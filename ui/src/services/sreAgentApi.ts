@@ -26,7 +26,7 @@ export interface ApprovalDecision {
   decision: "approved" | "rejected";
   decision_by?: string;
   decision_comment?: string;
-  decision_at: string;
+  decision_at?: string;
 }
 
 export interface ApprovalRecord {
@@ -49,9 +49,13 @@ export interface ApprovalRecord {
   decision?: ApprovalDecision | null;
 }
 
+export interface TaskApprovalListResponse {
+  task_id: string;
+  approvals: ApprovalRecord[];
+}
 export interface TaskStatusResponse {
-  thread_id: string;
   task_id?: string;
+  thread_id: string;
   status:
     | "queued"
     | "in_progress"
@@ -71,7 +75,7 @@ export interface TaskStatusResponse {
   result?: Record<string, any>;
   error_message?: string;
   pending_approval?: PendingApprovalSummary | null;
-  resume_supported: boolean;
+  resume_supported?: boolean;
   metadata: {
     created_at: string;
     updated_at: string;
@@ -529,7 +533,7 @@ class SREAgentAPI {
         : [],
       result: thread.result,
       error_message: thread.error_message,
-      pending_approval: thread.pending_approval || null,
+      pending_approval: thread.pending_approval ?? null,
       resume_supported: Boolean(thread.resume_supported),
       metadata: {
         created_at: thread?.metadata?.created_at,
@@ -554,6 +558,21 @@ class SREAgentAPI {
 
     const data = await response.json();
     return Array.isArray(data.approvals) ? data.approvals : [];
+  }
+
+  async listTaskApprovals(taskId: string): Promise<TaskApprovalListResponse> {
+    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}/approvals`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    return {
+      task_id: data.task_id || taskId,
+      approvals: Array.isArray(data.approvals) ? data.approvals : [],
+    };
   }
 
   async resumeTask(
@@ -589,7 +608,7 @@ class SREAgentAPI {
         : [],
       result: task.result,
       error_message: task.error_message,
-      pending_approval: task.pending_approval || null,
+      pending_approval: task.pending_approval ?? null,
       resume_supported: Boolean(task.resume_supported),
       metadata: {
         created_at: task.created_at,
@@ -599,7 +618,7 @@ class SREAgentAPI {
         subject: task.subject,
       },
       context: {},
-    };
+    } as TaskStatusResponse;
   }
 
   async listTasks(

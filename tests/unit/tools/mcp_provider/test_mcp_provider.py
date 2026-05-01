@@ -1,5 +1,6 @@
 """Unit tests for MCP tool provider."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ from redis_sre_agent.core.config import MCPServerConfig, MCPToolConfig
 from redis_sre_agent.evaluation.fake_mcp import build_fixture_mcp_runtime
 from redis_sre_agent.evaluation.injection import eval_injection_scope
 from redis_sre_agent.evaluation.scenarios import EvalScenario
+from redis_sre_agent.tools.mcp.jsonrpc_http import JSONRPCHTTPSession
 from redis_sre_agent.tools.mcp.provider import MCPToolProvider
 from redis_sre_agent.tools.models import ToolActionKind, ToolCapability
 
@@ -31,6 +33,16 @@ class TestMCPToolProvider:
 
         provider = MCPToolProvider(server_name="test123", server_config=config)
         assert provider.provider_name == "mcp_test123"
+
+    def test_tool_names_are_stable_per_server_name(self):
+        """Tool names should remain stable across provider instances for resume flows."""
+        config = MCPServerConfig(command="test")
+        first = MCPToolProvider(server_name="afs_gateway", server_config=config)
+        second = MCPToolProvider(server_name="afs_gateway", server_config=config)
+        third = MCPToolProvider(server_name="another_gateway", server_config=config)
+
+        assert first._make_tool_name("file_write") == second._make_tool_name("file_write")
+        assert first._make_tool_name("file_write") != third._make_tool_name("file_write")
 
     def test_should_include_tool_no_filter(self):
         """Test that all tools are included when no filter is specified."""
@@ -397,3 +409,176 @@ class TestMCPToolProviderAsync:
         assert tools[0].metadata.action_kind is ToolActionKind.READ
         assert result["status"] == "success"
         assert result["data"]["series"] == "memory_pressure"
+
+    @pytest.mark.asyncio
+    async def test_connect_expands_env_vars_in_streamable_http_url_and_headers(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("RAR_RUNTIME_AFS_MCP_URL", "http://127.0.0.1:8092/mcp")
+        monkeypatch.setenv("RAR_RUNTIME_AFS_MCP_TOKEN", "secret-token")
+
+        config = MCPServerConfig(
+            url="${RAR_RUNTIME_AFS_MCP_URL}",
+            headers={"Authorization": "Bearer ${RAR_RUNTIME_AFS_MCP_TOKEN}"},
+        )
+        provider = MCPToolProvider(server_name="afs_gateway", server_config=config, use_pool=False)
+
+        captured: dict[str, object] = {}
+
+        @asynccontextmanager
+        async def _fake_streamablehttp_client(url: str, headers=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            yield ("read-stream", "write-stream", lambda: "session-id")
+
+        class _FakeSession:
+            async def initialize(self) -> None:
+                captured["initialized"] = True
+
+            async def list_tools(self):
+                return SimpleNamespace(tools=[])
+
+        class _FakeClientSession:
+            def __init__(self, read_stream, write_stream) -> None:
+                captured["streams"] = (read_stream, write_stream)
+
+            async def __aenter__(self) -> _FakeSession:
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "redis_sre_agent.tools.mcp.provider.streamablehttp_client",
+            _fake_streamablehttp_client,
+        )
+        monkeypatch.setattr("redis_sre_agent.tools.mcp.provider.ClientSession", _FakeClientSession)
+
+        await provider._connect()
+
+        assert captured["url"] == "http://127.0.0.1:8092/mcp"
+        assert captured["headers"] == {"Authorization": "Bearer secret-token"}
+        assert captured["streams"] == ("read-stream", "write-stream")
+        assert captured["initialized"] is True
+
+    @pytest.mark.asyncio
+    async def test_connect_uses_jsonrpc_http_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("RAR_RUNTIME_AFS_MCP_URL", "http://127.0.0.1:8093/mcp")
+        monkeypatch.setenv("RAR_RUNTIME_AFS_MCP_TOKEN", "hosted-token")
+
+        config = MCPServerConfig(
+            url="${RAR_RUNTIME_AFS_MCP_URL}",
+            transport="jsonrpc_http",
+            headers={"Authorization": "Bearer ${RAR_RUNTIME_AFS_MCP_TOKEN}"},
+        )
+        provider = MCPToolProvider(server_name="afs_hosted", server_config=config, use_pool=False)
+
+        captured: dict[str, object] = {}
+
+        class _FakeJSONRPCHTTPSession:
+            def __init__(self, url: str, *, headers=None) -> None:
+                captured["url"] = url
+                captured["headers"] = headers
+
+            async def __aenter__(self):
+                captured["entered"] = True
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                captured["exited"] = True
+
+            async def initialize(self) -> None:
+                captured["initialized"] = True
+
+            async def list_tools(self):
+                return SimpleNamespace(
+                    tools=[
+                        SimpleNamespace(
+                            name="file_write",
+                            description="Write a file",
+                            inputSchema={
+                                "properties": {
+                                    "path": {"type": "string"},
+                                    "content": {"type": "string"},
+                                },
+                                "required": ["path", "content"],
+                            },
+                        )
+                    ]
+                )
+
+        monkeypatch.setattr(
+            "redis_sre_agent.tools.mcp.provider.JSONRPCHTTPSession",
+            _FakeJSONRPCHTTPSession,
+        )
+
+        await provider._connect()
+        tools = provider.tools()
+
+        assert captured["url"] == "http://127.0.0.1:8093/mcp"
+        assert captured["headers"] == {"Authorization": "Bearer hosted-token"}
+        assert captured["entered"] is True
+        assert captured["initialized"] is True
+        assert len(tools) == 1
+        assert tools[0].definition.name.endswith("_file_write")
+
+
+class TestJSONRPCHTTPSession:
+    @pytest.mark.asyncio
+    async def test_session_sets_streamable_http_headers_and_tracks_mcp_session_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: list[dict[str, object]] = []
+
+        class _FakeResponse:
+            def __init__(self, headers: dict[str, str], body: dict[str, object]) -> None:
+                self.headers = headers
+                self._body = body
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return self._body
+
+        class _FakeAsyncClient:
+            def __init__(self, *, headers=None, timeout=None) -> None:
+                captured.append({"client_headers": headers, "timeout": timeout})
+
+            async def post(self, url: str, *, json=None, headers=None):
+                captured.append({"url": url, "json": json, "headers": headers})
+                if len(captured) == 2:
+                    return _FakeResponse(
+                        {"mcp-session-id": "session-123"},
+                        {"result": {"protocolVersion": "2024-11-05"}},
+                    )
+                return _FakeResponse({}, {"result": {"tools": []}})
+
+            async def aclose(self) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "redis_sre_agent.tools.mcp.jsonrpc_http.httpx.AsyncClient",
+            _FakeAsyncClient,
+        )
+
+        session = JSONRPCHTTPSession(
+            "http://127.0.0.1:8092/mcp",
+            headers={"Authorization": "Bearer hosted-token"},
+        )
+
+        await session.initialize()
+        await session.list_tools()
+
+        assert captured[0]["client_headers"] == {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "Authorization": "Bearer hosted-token",
+        }
+        assert captured[1]["headers"] is None
+        assert captured[2]["headers"] == {"mcp-session-id": "session-123"}
