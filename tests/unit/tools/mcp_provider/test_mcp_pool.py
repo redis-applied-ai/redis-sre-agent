@@ -1,5 +1,7 @@
 """Unit tests for MCP connection pool."""
 
+import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -148,6 +150,55 @@ class TestMCPConnectionPool:
 
         assert len(pool._connections) == 0
         assert pool._started is False
+
+    @pytest.mark.asyncio
+    async def test_connect_server_times_out_during_tool_discovery(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        pool = MCPConnectionPool.get_instance()
+        config = MCPServerConfig(
+            url="http://127.0.0.1:8092/mcp",
+            tool_discovery_timeout_seconds=0.01,
+        )
+
+        captured: dict[str, object] = {}
+
+        @asynccontextmanager
+        async def _fake_streamablehttp_client(url: str, headers=None):
+            yield ("read-stream", "write-stream", lambda: "session-id")
+
+        class _FakeSession:
+            async def initialize(self) -> None:
+                captured["initialized"] = True
+
+            async def list_tools(self):
+                await asyncio.sleep(3600)
+
+        class _FakeClientSession:
+            def __init__(self, read_stream, write_stream) -> None:
+                captured["streams"] = (read_stream, write_stream)
+
+            async def __aenter__(self) -> _FakeSession:
+                captured["entered"] = True
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                captured["exited"] = True
+                return None
+
+        monkeypatch.setattr(
+            "redis_sre_agent.tools.mcp.pool.streamablehttp_client",
+            _fake_streamablehttp_client,
+        )
+        monkeypatch.setattr("redis_sre_agent.tools.mcp.pool.ClientSession", _FakeClientSession)
+
+        with pytest.raises(TimeoutError, match="afs_gateway'.*list_tools"):
+            await pool._connect_server("afs_gateway", config)
+
+        assert captured["initialized"] is True
+        assert captured["exited"] is True
+        assert pool.get_connection("afs_gateway") is None
 
     def test_stats_after_connections(self):
         """Test stats reflects connection state."""

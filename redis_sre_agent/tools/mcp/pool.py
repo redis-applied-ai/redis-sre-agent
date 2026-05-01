@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from redis_sre_agent.core.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
+_EXIT_STACK_CLOSE_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass
@@ -154,8 +155,18 @@ class MCPConnectionPool:
                     session = await exit_stack.enter_async_context(
                         JSONRPCHTTPSession(resolved_url, headers=headers)
                     )
-                    await session.initialize()
-                    tools_result = await session.list_tools()
+                    await _run_discovery_step(
+                        server_name,
+                        config.tool_discovery_timeout_seconds,
+                        "initialize",
+                        session.initialize(),
+                    )
+                    tools_result = await _run_discovery_step(
+                        server_name,
+                        config.tool_discovery_timeout_seconds,
+                        "list_tools",
+                        session.list_tools(),
+                    )
 
                     conn = PooledConnection(
                         server_name=server_name,
@@ -173,8 +184,18 @@ class MCPConnectionPool:
                 raise ValueError(f"MCP server '{server_name}' needs 'command' or 'url'")
 
             session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
-            await session.initialize()
-            tools_result = await session.list_tools()
+            await _run_discovery_step(
+                server_name,
+                config.tool_discovery_timeout_seconds,
+                "initialize",
+                session.initialize(),
+            )
+            tools_result = await _run_discovery_step(
+                server_name,
+                config.tool_discovery_timeout_seconds,
+                "list_tools",
+                session.list_tools(),
+            )
 
             conn = PooledConnection(
                 server_name=server_name,
@@ -185,7 +206,7 @@ class MCPConnectionPool:
             self._connections[server_name] = conn
             return conn
         except Exception:
-            await exit_stack.aclose()
+            await _close_exit_stack(exit_stack, server_name)
             raise
 
     def get_connection(self, server_name: str) -> Optional[PooledConnection]:
@@ -284,3 +305,33 @@ class MCPConnectionPool:
                 for name, conn in self._connections.items()
             },
         }
+
+
+async def _run_discovery_step(
+    server_name: str,
+    timeout_seconds: float | None,
+    step: str,
+    operation: Any,
+) -> Any:
+    if timeout_seconds is None:
+        return await operation
+    try:
+        return await asyncio.wait_for(operation, timeout=timeout_seconds)
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(
+            f"MCP server '{server_name}' timed out after {timeout_seconds:.1f}s during {step}"
+        ) from exc
+
+
+async def _close_exit_stack(exit_stack: AsyncExitStack, server_name: str) -> None:
+    try:
+        await asyncio.wait_for(
+            exit_stack.aclose(),
+            timeout=_EXIT_STACK_CLOSE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Timed out after %.1fs while closing pooled MCP server '%s'",
+            _EXIT_STACK_CLOSE_TIMEOUT_SECONDS,
+            server_name,
+        )

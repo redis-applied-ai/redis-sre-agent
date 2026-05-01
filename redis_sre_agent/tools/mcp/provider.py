@@ -5,6 +5,7 @@ and exposes its tools to the agent. It supports tool filtering and description
 overrides based on the MCPServerConfig.
 """
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from redis_sre_agent.core.instances import RedisInstance
 
 logger = logging.getLogger(__name__)
+_EXIT_STACK_CLOSE_TIMEOUT_SECONDS = 5.0
 
 
 def _coerce_input_schema_dict(input_schema: Any) -> Optional[Dict[str, Any]]:
@@ -254,10 +256,10 @@ class MCPToolProvider(ToolProvider):
                 self._session = await self._exit_stack.enter_async_context(
                     ClientSession(read_stream, write_stream)
                 )
-            await self._session.initialize()
+            await self._run_discovery_step("initialize", self._session.initialize())
 
             # Discover tools from the server
-            tools_result = await self._session.list_tools()
+            tools_result = await self._run_discovery_step("list_tools", self._session.list_tools())
             self._mcp_tools = tools_result.tools
             self._tool_cache = []
 
@@ -269,9 +271,7 @@ class MCPToolProvider(ToolProvider):
         except Exception as e:
             logger.error(f"Failed to connect to MCP server '{self._server_name}': {e}")
             # Clean up on failure
-            if self._exit_stack:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+            await self._close_owned_session()
             raise
 
     async def _disconnect(self) -> None:
@@ -296,11 +296,39 @@ class MCPToolProvider(ToolProvider):
         try:
             if self._exit_stack:
                 logger.info(f"Disconnecting from MCP server '{self._server_name}'")
-                await self._exit_stack.aclose()
-                self._exit_stack = None
-                self._session = None
+                await self._close_owned_session()
         except Exception as e:
             logger.warning(f"Error disconnecting from MCP server '{self._server_name}': {e}")
+
+    async def _run_discovery_step(self, step: str, operation: Any) -> Any:
+        timeout_seconds = self._server_config.tool_discovery_timeout_seconds
+        if timeout_seconds is None:
+            return await operation
+        try:
+            return await asyncio.wait_for(operation, timeout=timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f"MCP server '{self._server_name}' timed out after "
+                f"{timeout_seconds:.1f}s during {step}"
+            ) from exc
+
+    async def _close_owned_session(self) -> None:
+        if self._exit_stack is None:
+            return
+        exit_stack = self._exit_stack
+        self._exit_stack = None
+        self._session = None
+        try:
+            await asyncio.wait_for(
+                exit_stack.aclose(),
+                timeout=_EXIT_STACK_CLOSE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out after %.1fs while closing MCP server '%s'",
+                _EXIT_STACK_CLOSE_TIMEOUT_SECONDS,
+                self._server_name,
+            )
 
     def _get_tool_config(self, tool_name: str) -> Optional[MCPToolConfig]:
         """Get the configuration for a specific tool, if any."""

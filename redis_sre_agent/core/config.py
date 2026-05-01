@@ -106,6 +106,13 @@ class MCPServerConfig(BaseModel):
         "better compatibility with modern MCP servers.",
     )
 
+    tool_discovery_timeout_seconds: Optional[float] = Field(
+        default=20.0,
+        gt=0,
+        description="Maximum seconds to wait while initializing an MCP session and listing "
+        "its tools. Set to null to disable the timeout.",
+    )
+
     # Tool constraints - if provided, only these tools are exposed to the agent
     tools: Optional[Dict[str, MCPToolConfig]] = Field(
         default=None,

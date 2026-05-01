@@ -1,5 +1,6 @@
 """Unit tests for MCP tool provider."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -525,6 +526,54 @@ class TestMCPToolProviderAsync:
         assert captured["initialized"] is True
         assert len(tools) == 1
         assert tools[0].definition.name.endswith("_file_write")
+
+    @pytest.mark.asyncio
+    async def test_connect_times_out_during_tool_discovery(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config = MCPServerConfig(
+            url="http://127.0.0.1:8092/mcp",
+            tool_discovery_timeout_seconds=0.01,
+        )
+        provider = MCPToolProvider(server_name="afs_gateway", server_config=config, use_pool=False)
+
+        captured: dict[str, object] = {}
+
+        @asynccontextmanager
+        async def _fake_streamablehttp_client(url: str, headers=None):
+            yield ("read-stream", "write-stream", lambda: "session-id")
+
+        class _FakeSession:
+            async def initialize(self) -> None:
+                captured["initialized"] = True
+
+            async def list_tools(self):
+                await asyncio.sleep(3600)
+
+        class _FakeClientSession:
+            def __init__(self, read_stream, write_stream) -> None:
+                captured["streams"] = (read_stream, write_stream)
+
+            async def __aenter__(self) -> _FakeSession:
+                captured["entered"] = True
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                captured["exited"] = True
+                return None
+
+        monkeypatch.setattr(
+            "redis_sre_agent.tools.mcp.provider.streamablehttp_client",
+            _fake_streamablehttp_client,
+        )
+        monkeypatch.setattr("redis_sre_agent.tools.mcp.provider.ClientSession", _FakeClientSession)
+
+        with pytest.raises(TimeoutError, match="afs_gateway'.*list_tools"):
+            await provider._connect()
+
+        assert captured["initialized"] is True
+        assert captured["exited"] is True
 
 
 class TestJSONRPCHTTPSession:
