@@ -136,9 +136,46 @@ class TestMCPToolProvider:
         )
         provider = MCPToolProvider(server_name="test", server_config=config)
 
-        assert provider._get_action_kind("query_tool") == ToolActionKind.READ
-        assert provider._get_action_kind("mutate_tool") == ToolActionKind.WRITE
-        assert provider._get_action_kind("unknown") == ToolActionKind.UNKNOWN
+        assert (
+            provider._get_action_kind("query_tool", "Read current state.", ToolCapability.UTILITIES)
+            == ToolActionKind.READ
+        )
+        assert (
+            provider._get_action_kind(
+                "mutate_tool", "Write current state.", ToolCapability.UTILITIES
+            )
+            == ToolActionKind.WRITE
+        )
+
+    def test_get_action_kind_infers_from_mcp_tool_name_and_description(self):
+        """Test that MCP tools infer action kinds when no override is configured."""
+        config = MCPServerConfig(command="test")
+        provider = MCPToolProvider(server_name="github", server_config=config)
+
+        assert (
+            provider._get_action_kind(
+                "_create_branch",
+                "Create a new branch in the given repository.",
+                ToolCapability.REPOS,
+            )
+            == ToolActionKind.WRITE
+        )
+        assert (
+            provider._get_action_kind(
+                "_search_repositories",
+                "Search for a repository by name or description.",
+                ToolCapability.REPOS,
+            )
+            == ToolActionKind.READ
+        )
+        assert (
+            provider._get_action_kind(
+                "custom_operation",
+                "Runs a custom operation for the current selection.",
+                ToolCapability.REPOS,
+            )
+            == ToolActionKind.UNKNOWN
+        )
 
     def test_get_tool_config(self):
         """Test getting tool config."""

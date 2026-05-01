@@ -58,15 +58,26 @@ def test_tool_metadata_infers_write_action_for_builtin_mutating_operations():
     assert metadata.action_kind is ToolActionKind.WRITE
 
 
-def test_tool_metadata_keeps_mcp_tools_unknown_by_default():
+def test_tool_metadata_infers_write_action_for_mcp_mutating_operations():
     metadata = ToolMetadata(
-        name="mcp_atlassian_deadbeef_confluence_update_page",
-        description="Update a Confluence page.",
+        name="mcp_github_deadbeef__create_branch",
+        description="Create a new branch in the repository.",
         capability=ToolCapability.UTILITIES,
-        provider_name="mcp_atlassian",
+        provider_name="mcp_github",
     )
 
-    assert metadata.action_kind is ToolActionKind.UNKNOWN
+    assert metadata.action_kind is ToolActionKind.WRITE
+
+
+def test_tool_metadata_infers_read_action_for_mcp_read_operations():
+    metadata = ToolMetadata(
+        name="mcp_github_deadbeef__search_repositories",
+        description="Search repositories within the user's installations.",
+        capability=ToolCapability.REPOS,
+        provider_name="mcp_github",
+    )
+
+    assert metadata.action_kind is ToolActionKind.READ
 
 
 def test_tool_metadata_respects_explicit_action_override():

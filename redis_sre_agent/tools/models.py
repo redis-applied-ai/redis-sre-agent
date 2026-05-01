@@ -131,14 +131,11 @@ def infer_tool_action_kind(
 ) -> ToolActionKind:
     """Infer the approval-relevant action kind for a tool.
 
-    Built-in providers default to conservative name/description inference.
-    Dynamic MCP tools stay ``unknown`` unless explicitly overridden by callers.
+    Providers default to conservative name/description inference. Callers can
+    still override the result explicitly when a tool needs stricter handling.
     """
 
-    if provider_name.startswith("mcp_"):
-        return ToolActionKind.UNKNOWN
-
-    operation = _extract_operation_name(name, provider_name).lower()
+    operation = _extract_operation_name(name, provider_name).lower().lstrip("_")
     description_lower = description.lower()
 
     if operation in _READ_EXACT:

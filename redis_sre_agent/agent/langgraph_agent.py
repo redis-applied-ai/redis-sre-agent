@@ -2357,6 +2357,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
         ) as tool_mgr:
             # Get tools and bind to LLM via StructuredTool adapters
             tools = tool_mgr.get_tools()
+            llm_tools = tool_mgr.get_tools_for_llm()
 
             logger.info(f"Loaded {len(tools)} tools for this query")
             for tool in tools:
@@ -2402,7 +2403,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 ),
             }
 
-            adapters = await _build_adapters(tool_mgr, tools)
+            adapters = await _build_adapters(tool_mgr, llm_tools)
 
             # Rebind LLM with tools for this query
             self.llm_with_tools = self.llm.bind_tools(adapters)
@@ -2838,8 +2839,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 user_id=user_id,
                 graph_type="redis_triage",
             ) as tool_mgr:
-                tools = tool_mgr.get_tools()
-                adapters = await _build_adapters(tool_mgr, tools)
+                llm_tools = tool_mgr.get_tools_for_llm()
+                adapters = await _build_adapters(tool_mgr, llm_tools)
                 self.llm_with_tools = self.llm.bind_tools(adapters)
                 self.workflow = self._build_workflow(tool_mgr, target_instance)
 
