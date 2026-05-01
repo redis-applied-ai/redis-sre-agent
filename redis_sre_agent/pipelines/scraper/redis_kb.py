@@ -27,7 +27,7 @@ class RedisKBScraper(BaseScraper):
 
     def __init__(self, storage: ArtifactStorage, config: Optional[Dict[str, Any]] = None):
         default_config = {
-            "base_url": "https://redis.io/kb",
+            "base_url": "https://redis.io/faq",
             "timeout": 30,
             "delay_between_requests": 1.0,
             "max_concurrent_requests": 5,
@@ -75,6 +75,11 @@ class RedisKBScraper(BaseScraper):
             await self._discover_kb_urls()
 
             self.logger.info(f"Found {len(self.url_to_categories)} KB articles to scrape")
+            if not self.url_to_categories:
+                self.logger.warning(
+                    "Redis KB discovery returned no article URLs. "
+                    "The redis.io FAQ/KB site structure may have changed."
+                )
 
             # Step 2: Scrape articles with concurrency control
             # Product labels are extracted from each article page (authoritative source)
@@ -147,7 +152,8 @@ class RedisKBScraper(BaseScraper):
 
         while page <= 20:  # Safety limit to prevent infinite loops
             try:
-                url = f"https://redis.io/kb/public?cat={category_id}&page={page}"
+                base_url = self.config["base_url"].rstrip("/")
+                url = f"{base_url}/public?cat={category_id}&page={page}"
                 self.logger.debug(f"Scraping {category_name} page {page}: {url}")
 
                 async with self.session.get(url) as response:
@@ -202,11 +208,15 @@ class RedisKBScraper(BaseScraper):
                 link = first_cell.find("a")
                 if link and link.get("href"):
                     href = link.get("href")
-                    # Only include KB article links
-                    if "/kb/doc/" in href:
+                    if self._is_article_href(href):
                         article_links.append(href)
 
         return article_links
+
+    @staticmethod
+    def _is_article_href(href: str) -> bool:
+        """Return True when an href points to a Redis FAQ/KB article."""
+        return "/kb/doc/" in href or "/faq/doc/" in href
 
     def _has_next_page(self, soup: BeautifulSoup, current_page: int) -> bool:
         """Check if there's a next page in the pagination."""

@@ -215,30 +215,47 @@ class TestRedisKBScraper:
 
     def test_url_filtering_logic(self, scraper):
         """Test URL filtering logic for KB articles."""
-        # Test the URL filtering logic that would be used in search API discovery
         test_results = [
             {"url": "/kb/doc/article1", "title": "Article 1"},
+            {"url": "/faq/doc/article-faq", "title": "FAQ Article"},
             {"url": "/kb/doc/article2", "title": "Article 2"},
             {"url": "/docs/other", "title": "Other Doc"},  # Should be ignored
             {"url": "/kb/doc/article3", "title": "Article 3"},
         ]
 
-        # Simulate the filtering logic from _discover_through_search_api
         discovered_urls = set()
         for result in test_results:
-            if "url" in result and "/kb/doc/" in result["url"]:
+            if "url" in result and scraper._is_article_href(result["url"]):
                 from urllib.parse import urljoin
 
                 full_url = urljoin("https://redis.io", result["url"])
                 discovered_urls.add(full_url)
 
-        # Should have discovered 3 KB articles
-        kb_urls = [url for url in discovered_urls if "/kb/doc/" in url]
-        assert len(kb_urls) == 3
+        # Should have discovered 4 KB/FAQ articles
+        article_urls = [url for url in discovered_urls if "/kb/doc/" in url or "/faq/doc/" in url]
+        assert len(article_urls) == 4
         assert "https://redis.io/kb/doc/article1" in discovered_urls
+        assert "https://redis.io/faq/doc/article-faq" in discovered_urls
         assert "https://redis.io/kb/doc/article2" in discovered_urls
         assert "https://redis.io/kb/doc/article3" in discovered_urls
         assert "https://redis.io/docs/other" not in discovered_urls
+
+    def test_extract_article_links_accepts_faq_redirect_links(self, scraper):
+        """FAQ article links should still be accepted after the redis.io redirect."""
+        html_content = """
+        <table>
+            <tr><td><a href="/faq/doc/faq-article">FAQ Article</a></td></tr>
+            <tr><td><a href="/kb/doc/kb-article">KB Article</a></td></tr>
+            <tr><td><a href="/docs/other">Other Doc</a></td></tr>
+        </table>
+        """
+
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        assert scraper._extract_article_links_from_page(soup) == [
+            "/faq/doc/faq-article",
+            "/kb/doc/kb-article",
+        ]
 
     @pytest.mark.asyncio
     async def test_error_handling(self, scraper):
